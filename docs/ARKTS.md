@@ -78,10 +78,11 @@ TS100069 and requires the OpenHarmony SDK build transforms; ordinary TypeScript-
 
 ## Arkdown integration and scope
 
-Arkdown starts `tsrs --api --async` and uses `createSnapshot` / `updateSnapshot` directly. Its compiler programs
-always use `noEmit`; Rust/OXC/Rolldown own JS, declarations and runtime metadata, consuming tsrs type facts.
-There is no legacy `createProgram` compatibility layer. `ARKDOWN_TSRS_PATH` selects a development executable;
-release packages embed the binary built from the clean, fixed `third_party/tsrs` gitlink.
+Arkdown links `tsrs_api`, `tsrs_core` and `tsrs_vfs` from its fixed `third_party/tsrs` gitlink into the N-API
+binding. `tsrs_api::embedded::Compiler` creates and updates typed `ProgramSnapshot` leases in process. Its compiler
+programs always use `noEmit`; Rust/OXC/Rolldown own JS, declarations and runtime metadata, consuming tsrs type facts.
+Compiler calls use Rust values; only SDK CommonJS callbacks cross the JavaScript ABI. The executable locator,
+process transport and separate compiler distribution are removed. See the [embedding contract](NODE_API.md#in-process-rust-embedding).
 
 Use tsrs's owned Node SDK with this server: protocol 10 replaces protocol 9 for both TS and ETS ASTs. The SDK
 preserves virtual nodes, parser metadata, clones and leases; sync and async Program objects expose the ArkTS

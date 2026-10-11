@@ -78,7 +78,7 @@ pub struct CheckerHandle {
 enum checkerHandleKind {
     // The built-in pool's checkers live behind a mutex per checker (Go `locks[i]`).
     // The scope makes the checker's region (`SlotChecker::region`) the allocation target while the handle is held.
-    Locked { guard: MutexGuard<'static, SlotChecker>, _scope: Option<tsrs_core::arena::ScratchScope> },
+    Locked { guard: MutexGuard<'static, SlotChecker>, _scope: Option<CheckerScope> },
     // A checker owned by an external pool, which tracks exclusivity itself (Go project pool's `heldBy`).
     External { checker: NonNull<Checker>, release: Option<Box<dyn FnOnce()>> },
 }
@@ -222,25 +222,41 @@ struct CheckerSlot(Mutex<SlotChecker>);
 pub(crate) struct SlotChecker {
     checker: Box<Checker>,
     region: Option<tsrs_core::arena::Region>,
+    snapshot_owned: bool,
+}
+
+enum CheckerScope {
+    Scratch { _scope: tsrs_core::arena::ScratchScope },
+    Snapshot { _scope: tsrs_core::arena::RegionScope },
 }
 
 impl SlotChecker {
     fn new(program: &'static Program, in_region: bool, factory: fn(&'static Program) -> Box<Checker>) -> SlotChecker {
-        if !in_region {
-            return SlotChecker { checker: factory(program), region: None };
+        // API/LSP programs have an external project pool and are freed with their
+        // snapshots. Their additional ArkTS build/linter pools must own allocations
+        // too: strict options retain SDK hosts, which can keep Node's event loop alive.
+        let snapshot_owned = program.compiler_checker_pool().is_none();
+        if !in_region && !snapshot_owned {
+            return SlotChecker { checker: factory(program), region: None, snapshot_owned };
         }
-        let region = tsrs_core::arena::Region::new_scratch(1 << 20);
+        let region = if snapshot_owned { tsrs_core::arena::Region::new(1 << 20) }
+            else { tsrs_core::arena::Region::new_scratch(1 << 20) };
         let checker = {
-            let _scope = region.enter_scratch();
+            let _scope = Self::enter_region(&region, snapshot_owned);
             factory(program)
         };
-        SlotChecker { checker, region: Some(region) }
+        SlotChecker { checker, region: Some(region), snapshot_owned }
     }
 
-    // Makes the checker's region the allocation target (and the thread's scratch region, so that lazily filled
-    // data of shared objects and diagnostics escape it: `arena::escape_scratch`) until the scope is dropped.
-    fn enter(&self) -> Option<tsrs_core::arena::ScratchScope> {
-        self.region.as_ref().map(tsrs_core::arena::Region::enter_scratch)
+    // Snapshot checkers use the same registered-region ownership as the project
+    // pool. CLI recycling uses scratch regions so shared data survives retirement.
+    fn enter(&self) -> Option<CheckerScope> {
+        self.region.as_ref().map(|region| Self::enter_region(region, self.snapshot_owned))
+    }
+
+    fn enter_region(region: &tsrs_core::arena::Region, snapshot_owned: bool) -> CheckerScope {
+        if snapshot_owned { CheckerScope::Snapshot { _scope: region.enter() } }
+        else { CheckerScope::Scratch { _scope: region.enter_scratch() } }
     }
 
     // Bytes of arena the checker holds (its region's chunks), 0 without a region.

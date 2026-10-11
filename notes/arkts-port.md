@@ -78,3 +78,37 @@ The earlier timeouts were `crossProductUnionIntersectionRepeatedPropDeclarations
 
 The OH reference uses Go 1.26.0; base reference tooling uses Go 1.27.0. Rust is pinned to 1.99.0.
 See `docs/ARKTS.md` for reproducible commands and the remaining general tsrs limitations.
+
+## In-process crate integration (2026-10-11)
+
+The later integration replaces Arkdown's executable transport with `tsrs_api::embedded`. The compiler
+algorithms and diagnostic ordering are unchanged. Typed snapshots retain their options regions and filesystem
+owners; type handles retain the snapshot and reject foreign owners. SDK callback policies are shared with the
+wire API. The configuration parser's previously leaked host is now request-region owned. A serial worker keeps
+the same large compiler stack supplied by the transport, required when called from small Node/Tokio stacks.
+This is a functional embedding and ownership change; no performance or RSS improvement is claimed.
+
+The results above describe the earlier dynamic-language port. The executable-based Arkdown results are
+historical; the current integration is covered by the embedded API and linked Arkdown tests. The ordinary
+conformance counts were measured again below; the fourslash, tsctests and emit-oracle counts remain from that port's run.
+
+The real SDK project exposed two additional porting/ownership gaps, both fixed here:
+
+- `scanner.GetTextOfNodeFromSourceText` in the pinned OH fork swaps substring bounds when a virtual
+  zero-width node's trivia advances beyond its end. That branch was missing in tsrs and caused a panic
+  while linting a multiline ArkUI `Text` call. The scanner regression follows the reference branch exactly.
+- The API's added ArkTS build/strict pools still allocated strict compiler options in batch arenas.
+  Their SDK executor kept N-API's callback alive after checking, preventing Node from exiting. Snapshot
+  programs now use registered checker regions, like the existing project pool; batch CLI/recycling
+  behavior stays unchanged. The regression fails on the old code using a weak SDK-host reference and
+  passes after dropping the program, including with `TSRS_ARENA_POISON=1`. Arkdown's Node regression
+  requires natural child-process exit, rather than forcibly ending a test runner with live handles.
+
+Current compiler validation:
+
+- 86 API tests pass, including 7 embedded regressions; the embedded tests also pass with arena poisoning.
+- 243/243 OH fixture programs again match complete syntactic, semantic and linter responses.
+- 15,197 ordinary compiler/conformance variants: diagnostics 13,462 pass; `.types` and `.symbols`
+  12,779 each; `.js` 13,392; `.js.map` 149; `.sourcemap.txt` 156. No failures, crashes or timeouts;
+  skip counts remain 1,735 / 2,418 / 2,418 / 1,805 / 15,048 / 15,041 respectively.
+- 7 scanner and 5 ArkTS CLI tests pass. The protocol-10 Node SDK regression passes.

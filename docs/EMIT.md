@@ -1,7 +1,7 @@
 # Emit: JavaScript, declarations, source maps, `--build`
 
 Dynamic ArkTS is a separate overlay: `.ets` can emit `.d.ets`, preserving annotation declarations and defaults.
-ArkUI/annotation JavaScript lowering reports TS100069 in tsrs; Arkdown keeps tsrs in `noEmit` and owns lowering
+ArkUI/annotation JavaScript lowering reports TS100069 in tsrs; Arkdown embeds the Rust compiler crates in `noEmit` and owns lowering
 in Rust/OXC/Rolldown, consuming annotation and transform type facts from the native snapshot API. The full TypeScript
 emit status below does not include SDK transforms; see [ARKTS.md](ARKTS.md).
 

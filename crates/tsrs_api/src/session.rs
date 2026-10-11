@@ -101,8 +101,6 @@ pub struct CheckerSetup {
 pub struct Session {
     id: String,
     pub(crate) snapshot_host: Arc<SnapshotHost>,
-    /// Leaked once per session: tsoptions requires a `&'static dyn ParseConfigHost`.
-    pub(crate) parse_config_host: &'static crate::config::ApiParseConfigHost,
     binary_responses: bool,
     sdk_plugin_callbacks: bool,
     pub(crate) oh_sdk_plugin_executor: std::sync::OnceLock<Arc<dyn tsrs_core::OhSdkPluginExecutor>>,
@@ -149,14 +147,11 @@ impl Session {
             // transform content-mapped files yet (phase 2, notes/contentmappers.md): `--runExternalCode` is accepted
             // and recorded in the session options, and its projects get no content mapper project.
         };
-        let parse_config_host: &'static crate::config::ApiParseConfigHost =
-            Box::leak(Box::new(crate::config::ApiParseConfigHost { fs: Arc::clone(&init.fs), cwd: init.options.current_directory.clone() }));
         let id = SESSION_ID_COUNTER.fetch_add(1, Ordering::SeqCst) + 1;
         let base_fs = Arc::clone(&init.fs);
         Arc::new_cyclic(|weak_self| Session {
             id: format!("api-session-{id}"),
             snapshot_host: tsrs_project::new_snapshot_host(&init),
-            parse_config_host,
             binary_responses: options.binary_responses,
             sdk_plugin_callbacks: options.sdk_plugin_callbacks,
             oh_sdk_plugin_executor: Default::default(),
@@ -205,7 +200,7 @@ impl Session {
 
     pub fn set_connection(&self, conn: Arc<dyn ClientConn>) {
         if self.sdk_plugin_callbacks {
-            let _ = self.oh_sdk_plugin_executor.set(Arc::new(crate::ohsdkplugin::ClientOhSdkPluginExecutor::new(Arc::clone(&conn))));
+            let _ = self.oh_sdk_plugin_executor.set(Arc::new(crate::ohsdkplugin::SdkPluginExecutor::from_connection(Arc::clone(&conn))));
         }
         *self.conn.lock().unwrap() = Some(conn);
     }

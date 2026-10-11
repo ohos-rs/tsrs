@@ -130,18 +130,7 @@ impl Session {
         let mut options = gojson::compiler_options_from_go_json(p.get("compilerOptions")).map_err(ApiError::invalid_request)?;
         crate::predecode::exact_compiler_options_ints(p.get("compilerOptions"), &mut options);
         options.oh_sdk_plugin_executor = self.oh_sdk_plugin_executor.get().cloned();
-        if let Some(executor) = &options.oh_sdk_plugin_executor {
-            let mut loaded = Vec::new();
-            for plugin in options.oh_sdk_class_check_plugins.take().unwrap_or_default() {
-                let descriptor = tsrs_core::OhSdkCheckPlugin {
-                    path: plugin.path.clone(), function_name: plugin.class_name.clone(), ..Default::default()
-                };
-                let response = executor.call(&descriptor, "prepareClass", Vec::new()).map_err(|error|
-                    ApiError::internal(format!("failed to initialize OH SDK checker {}#{}: {error}", plugin.path, plugin.class_name)))?;
-                if response.found { loaded.push(plugin); }
-            }
-            options.oh_sdk_class_check_plugins = Some(loaded);
-        }
+        crate::ohsdkplugin::prepare_class_plugins(&mut options)?;
         let mut request = APICreateProgramRequest {
             root_file_names,
             compiler_options: Some(P::new(options)),

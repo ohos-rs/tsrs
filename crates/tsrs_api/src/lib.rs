@@ -13,6 +13,7 @@ pub mod batch;
 pub mod build;
 pub mod config;
 pub mod diagnostics;
+pub mod embedded;
 pub mod handler;
 pub mod module_resolution;
 pub mod methods;

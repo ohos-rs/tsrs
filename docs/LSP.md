@@ -8,7 +8,7 @@ crate map, progress table and list of known gaps.
 The dynamic ArkTS overlay recognizes `.ets` / `.d.ets` and the `arkts` / `ets` language IDs, and uses the same
 SDK-configured parser and component checker as the CLI. Parse-cache identity includes the `ets` options and
 annotation switch and Kit config content. The compiler also provides the SDK restrictions linter and build
-diagnostics through native snapshot APIs. Static ArkTS syntax is excluded; see [ARKTS.md](ARKTS.md).
+diagnostics through native snapshot APIs, including the in-process Rust API used for Arkdown watch updates. Static ArkTS syntax is excluded; see [ARKTS.md](ARKTS.md).
 
 ## Crate map
 

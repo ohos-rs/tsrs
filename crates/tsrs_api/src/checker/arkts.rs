@@ -1,8 +1,9 @@
 //! OH API annotation and transform facts. All types come from the checker.
-use tsrs_ast::{self as ast, Node, SourceFile};
+use tsrs_ast::{self as ast, SourceFile};
 use tsrs_checker::{AnnotationConstant, AnnotationInfo, LiteralValue, TypeFormatFlags};
 use tsrs_core::{json::Value, P};
 use crate::wire::{Obj, b, s};
+use crate::embedded::{queries::collect_nodes, ArktsTransformTypeQuery, TypeQueryRange, ResolvedTypeIdentity};
 use super::{host::{CheckerHost, CheckerResult}, params::Params, setup::{Setup, SnapshotCtx}};
 
 fn annotation_constant(value: Option<&AnnotationConstant>) -> Value {
@@ -76,14 +77,6 @@ impl Setup<'_> {
     }
 }
 
-fn collect_nodes(node: P<Node>, nodes: &mut Vec<P<Node>>) {
-    node.for_each_child(&mut |child| {
-        nodes.push(child);
-        collect_nodes(child, nodes);
-        false
-    });
-}
-
 pub(crate) fn get_annotation_info(host: &dyn CheckerHost, p: &Params) -> CheckerResult<Value> {
     let mut setup = Setup::new(host, p.u64("snapshot")?, p.project()?)?;
     let node = setup.resolve_node(p.string("location")?)?;
@@ -104,87 +97,39 @@ pub(crate) fn get_annotation_transform_infos(host: &dyn CheckerHost, p: &Params)
     Ok(Value::Array(result))
 }
 
-fn type_identity(typ: P<tsrs_checker::Type>) -> Value {
-    use tsrs_checker::TypeFlags as F;
-    let flags = typ.flags();
-    let basic = F::String | F::Number | F::Boolean | F::Enum | F::BigInt | F::StringLiteral
-        | F::NumberLiteral | F::BooleanLiteral | F::EnumLiteral | F::BigIntLiteral;
-    let symbol = typ.symbol();
-    let name = symbol.map_or("", |symbol| symbol.name());
-    let observed = symbol.is_some_and(|symbol| symbol.declarations().iter().any(|&node|
-        ast::is_class_declaration(node) && ast::has_arkui_bare_decorator(node.modifiers(), &["ObservedV2"])));
-    let types = if flags.intersects(F::UnionOrIntersection) { typ.types().iter().map(|&t| type_identity(t)).collect() } else { Vec::new() };
-    Obj::new().set("isNullable", b(flags.intersects(F::Nullable))).set("isUnion", b(flags.intersects(F::Union)))
-        .set("isEnum", b(flags.intersects(F::EnumLike))).set("isBasic", b(flags.intersects(basic)))
-        .set("isObservedV2", b(observed)).set("isFunction", b(name == "Function"))
-        .set("symbolName", s(name)).set("types", Value::Array(types)).build()
+fn identity_response(t: &ResolvedTypeIdentity) -> Value {
+    Obj::new().set("isNullable", b(t.is_nullable)).set("isUnion", b(t.is_union))
+        .set("isEnum", b(t.is_enum)).set("isBasic", b(t.is_basic)).set("isObservedV2", b(t.is_observed_v2))
+        .set("isFunction", b(t.is_function)).set("symbolName", s(&t.symbol_name))
+        .set("types", Value::Array(t.types.iter().map(identity_response).collect())).build()
 }
 
 pub(crate) fn get_transform_type_facts(host: &dyn CheckerHost, p: &Params) -> CheckerResult<Value> {
     let sd = SnapshotCtx::new(host, p.u64("snapshot")?, p.project()?)?;
-    let program = sd.program()?;
-    let mut result = Vec::new();
+    let mut queries = Vec::new();
     for query in p.array("queries")? {
         let query = Params::new(query, "ArkTSTransformTypeFactsFileQuery")?;
-        let Some(file) = program.get_source_file(&query.document("file")?.to_file_name()) else { continue; };
-        let mut checker = program.get_arkts_build_checker_for_file(file);
-        let positions = file.get_position_map();
-        let ends = |key| -> CheckerResult<rustc_hash::FxHashSet<i32>> {
+        let ranges = |key| -> CheckerResult<Vec<TypeQueryRange>> {
             query.array(key)?.iter().map(|item| {
                 let item = Params::new(item, "ArkTSTypeQueryRange")?;
-                Ok(positions.utf16_to_utf8(item.u32("end")? as i32))
+                Ok(TypeQueryRange { pos: 0, end: item.u32("end")? as usize })
             }).collect()
         };
-        let property_ends = ends("properties")?;
-        let builder_ends = ends("builderAccesses")?;
-        let member_ends = ends("memberAccesses")?;
-        let mut properties = Vec::new();
-        let mut builders = Vec::new();
-        let mut members = Vec::new();
-        if !property_ends.is_empty() || !builder_ends.is_empty() || !member_ends.is_empty() {
-            let mut nodes = Vec::new();
-            collect_nodes(file.as_node(), &mut nodes);
-            for node in nodes {
-                if ast::is_property_declaration(node) && !node.parent().is_some_and(ast::is_annotation_declaration)
-                    && node.name().is_some_and(|name| property_ends.contains(&name.end())) {
-                    let name = node.name().unwrap();
-                    let typ = node.type_node().map(|node| type_identity(checker.get_type_from_type_node_exported(node)));
-                    properties.push(Obj::new().set("namePos", Value::Number(positions.utf8_to_utf16(name.pos()) as f64))
-                        .set("nameEnd", Value::Number(positions.utf8_to_utf16(name.end()) as f64)).set_opt("type", typ).build());
-                }
-                if ast::is_property_access_expression(node) {
-                    let range = || Obj::new().set("pos", Value::Number(positions.utf8_to_utf16(node.pos()) as f64))
-                        .set("end", Value::Number(positions.utf8_to_utf16(node.end()) as f64));
-                    if builder_ends.contains(&node.end()) && node.name().unwrap().text() == "builder" {
-                        let typ = checker.get_type_at_location(node.expression().unwrap());
-                        builders.push(range().set("receiverType", type_identity(typ)).build());
-                    }
-                    if member_ends.contains(&node.end()) && ast::is_identifier(node.expression().unwrap()) {
-                        let typ = checker.get_type_at_location(node);
-                        members.push(range().set("type", type_identity(typ)).build());
-                    }
-                }
-            }
-        }
-        result.push(Obj::new().set("fileName", s(file.file_name())).set("properties", Value::Array(properties))
+        queries.push(ArktsTransformTypeQuery { file: query.document("file")?.to_file_name().into(),
+            properties: ranges("properties")?, builder_accesses: ranges("builderAccesses")?, member_accesses: ranges("memberAccesses")? });
+    }
+    let sdk_files: Vec<_> = p.documents("sdkApiUseFiles")?.iter().map(|d| d.to_file_name()).collect();
+    let facts = crate::embedded::queries::transform_type_facts(sd.program()?, &queries, &sdk_files, &host.context()).map_err(super::from_api_error)?;
+    Ok(Value::Array(facts.iter().map(|f| {
+        let properties = f.properties.iter().map(|p| Obj::new().set("namePos", Value::Number(p.name_pos as f64))
+            .set("nameEnd", Value::Number(p.name_end as f64)).set_opt("type", p.r#type.as_ref().map(identity_response)).build()).collect();
+        let builders = f.builder_accesses.iter().map(|p| Obj::new().set("pos", Value::Number(p.pos as f64))
+            .set("end", Value::Number(p.end as f64)).set("receiverType", identity_response(&p.receiver_type)).build()).collect();
+        let members = f.member_accesses.iter().map(|p| Obj::new().set("pos", Value::Number(p.pos as f64))
+            .set("end", Value::Number(p.end as f64)).set("type", identity_response(&p.r#type)).build()).collect();
+        Obj::new().set("fileName", s(f.file_name.to_str().unwrap())).set("properties", Value::Array(properties))
             .set("builderAccesses", Value::Array(builders)).set("memberAccesses", Value::Array(members))
-            .set("sdkApiUses", Value::Array(Vec::new())).build());
-    }
-    for name in p.documents("sdkApiUseFiles")? {
-        let Some(file) = program.get_source_file(&name.to_file_name()) else { continue; };
-        let mut checker = program.get_arkts_build_checker_for_file(file);
-        checker.get_diagnostics_exported(&host.context(), file);
-        let facts = checker.oh_sdk_use_facts(file.file_name());
-        if facts.is_empty() { continue; }
-        let index = result.iter().position(|r| crate::wire::Params(r).str("fileName").ok() == Some(file.file_name()));
-        let index = index.unwrap_or_else(|| {
-            result.push(Obj::new().set("fileName", s(file.file_name())).set("properties", Value::Array(Vec::new()))
-                .set("builderAccesses", Value::Array(Vec::new())).set("memberAccesses", Value::Array(Vec::new())).build());
-            result.len()-1
-        });
-        let Value::Object(response) = &mut result[index] else { unreachable!() };
-        response.insert("sdkApiUses".to_string(), Value::Array(facts.into_iter().map(|fact|
-            Obj::new().set("apiModule", s(fact.api_module)).set("function", s(fact.function)).build()).collect()));
-    }
-    Ok(Value::Array(result))
+            .set("sdkApiUses", Value::Array(f.sdk_api_uses.iter().map(|p| Obj::new().set("apiModule", s(&p.api_module))
+                .set("function", s(&p.function)).build()).collect())).build()
+    }).collect()))
 }

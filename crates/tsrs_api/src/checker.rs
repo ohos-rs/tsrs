@@ -14,7 +14,7 @@ mod handlers_symbols;
 mod handlers_types;
 pub mod host;
 mod json;
-mod lease;
+pub(crate) mod lease;
 mod params;
 pub mod registry;
 mod setup;

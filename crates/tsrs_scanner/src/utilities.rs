@@ -84,7 +84,13 @@ pub fn get_text_of_node_from_source_text(source_text: &str, node: P<Node>, inclu
     if !include_trivia {
         pos = skip_trivia(source_text, pos);
     }
-    let mut text = source_text[pos as usize..node.end() as usize].to_string();
+    let mut end = node.end();
+    // OH scanner/utilities.go: String.substring swaps bounds when trivia moves
+    // a virtual zero-width node's start past its end.
+    if node.is_virtual() && pos > end {
+        std::mem::swap(&mut pos, &mut end);
+    }
+    let mut text = source_text[pos as usize..end as usize].to_string();
     if is_jsdoc_type_expression_or_child(node) {
         text = normalize_jsdoc_type_source_text(&text);
     }

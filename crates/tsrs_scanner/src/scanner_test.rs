@@ -120,3 +120,16 @@ fn test_get_text_of_node_from_jsdoc_type_preserves_asterisk_type() {
     node.set_loc(tsrs_core::TextRange::new(0, source_text.len() as i32));
     assert_eq!(crate::get_text_of_node_from_source_text(&source_text, node, false /*includeTrivia*/), "*");
 }
+
+#[test]
+fn virtual_zero_width_node_text_uses_oh_substring_bounds() {
+    let factory = tsrs_ast::NodeFactory::default();
+    let node = factory.new_identifier("TextAttribute");
+    node.set_virtual(true);
+    node.set_loc(tsrs_core::TextRange::new(1, 1));
+    let source = "{\n    Text(\"你好\")";
+    assert_eq!(crate::get_text_of_node_from_source_text(source, node, false), "\n    ");
+    assert_eq!(crate::get_text_of_node_from_source_text(source, node, true), "");
+    node.set_loc(tsrs_core::TextRange::new(6, 6));
+    assert_eq!(crate::get_text_of_node_from_source_text(source, node, false), "");
+}

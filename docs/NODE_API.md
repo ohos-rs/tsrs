@@ -11,7 +11,8 @@ node word and ETS parse metadata; the old protocol-9 client is incompatible. The
 reapplied by `npm/sdk/sync-upstream.mjs`. Native `createSnapshot` / `updateSnapshot` programs expose
 `getArkTSBuildDiagnostics`, `getArkTSLinterDiagnostics`, `getProgramSourceGraph`, `getAnnotationInfo`,
 `getAnnotationTransformInfos` and `getArkTSTransformTypeFacts`. SDK checkers use the opt-in
-`--sdkPluginCallbacks` host protocol. Arkdown owns this callback host and keeps compiler programs in `noEmit`.
+`--sdkPluginCallbacks` host protocol. Rust embedders supply the equivalent typed SDK host. Arkdown keeps
+compiler programs in `noEmit`.
 See [ARKTS.md](ARKTS.md) for configuration and validation.
 
 Status: shipped (in the npm package since 0.3.0, docs/STATUS.md), with the gaps below. The matrix at the end is
@@ -49,7 +50,54 @@ The API was developed in parallel lanes; the names stay in use below and in the 
 | sdk | `npm/**` (ported `unstable/sync` / `unstable/async` client, AST package, Node tests) |
 | parity | `tools/node-api/**`, `.depot/workflows/node-api.yml`, `.github/workflows/node-api.yml` |
 
-## Integration contract (Rust)
+## In-process Rust embedding
+
+`tsrs_api::embedded` is the integration surface used by Arkdown. Depend on `tsrs_api`, `tsrs_core` and
+`tsrs_vfs` from the same pinned source revision (Arkdown uses Cargo path dependencies into its submodule).
+These workspace crates are not separately published to crates.io.
+
+```rust,ignore
+use std::sync::Arc;
+use tsrs_api::{embedded::{Compiler, FileChanges}, SessionOptions};
+use tsrs_core::{CompilerOptions, Tristate};
+use tsrs_vfs::{bundled, osvfs, FS};
+
+let fs: Arc<dyn FS> = Arc::new(bundled::wrap_fs(osvfs::fs()));
+let compiler = Compiler::new(SessionOptions::new(
+    cwd, bundled::lib_path(), Arc::clone(&fs), false,
+))?;
+let options = CompilerOptions { no_emit: Tristate::True, ..Default::default() };
+let program = compiler.create_program(&roots, options.clone(), Arc::clone(&fs))?;
+let diagnostics = program.arkts_build_diagnostics()?;
+let next = compiler.update_program(&program, &roots, options, fs, &FileChanges {
+    changed: changed_files, ..Default::default()
+})?;
+```
+
+Creation, updates and queries use the existing snapshot/project/checker owners directly. They do not use
+`Handler::handle_request`, JSON compiler messages, pipes or an executable. Methods return owned diagnostics,
+source graphs, annotation facts and transform type facts. Diagnostic ranges and query offsets are UTF-16;
+source-less diagnostic ranges remain signed. `TypeHandle` privately retains its owning snapshot and rejects
+use with a different snapshot. Cloning a `ProgramSnapshot` retains it; dropping the last snapshot/type lease
+releases the snapshot, compiler options, host and checker resources. Old snapshots remain queryable after updates.
+
+Each compiler owns one serial execution thread with the transport handler's 256 MiB stack reservation, so
+parsing/checking does not run on a small Node/Tokio host stack. Compiler calls are synchronous; async hosts must
+call from their blocking-work boundary so SDK callbacks can run on the JavaScript event loop. Same-worker
+reentrant calls return an error. Rust panics become API errors; an abort (including a true stack exhaustion)
+is not recoverable. No cancellation or time limit is imposed.
+
+Pass immutable overlay contents for every filesystem snapshot and explicit changed/created/deleted paths for
+updates, including Kit configuration inputs. OS fallback reads remain the host's responsibility: do not mutate
+disk inputs during a request. `SdkPluginExecutor` accepts `Arc<dyn SdkPluginHost>` and can be installed in
+`CompilerOptions::oh_sdk_plugin_executor`; its callback policies and source/config identities are shared with
+the wire API. Callback argument JSON values belong to the existing SDK JavaScript ABI, not the compiler API.
+
+Validation: `cargo test -p tsrs_api --test embedded_test` covers retained leases, foreign handles, Kit updates,
+UTF-16 diagnostic parity, resource release, configuration-host lifetime and small host stacks. Arkdown's linked
+checker tests exercise the full build diagnostic pipeline, annotations, type facts and SDK callbacks.
+
+## Integration contract (Rust transport)
 
 ### Session boundary (core, `tsrs_api::handler`)
 
