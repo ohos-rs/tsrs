@@ -1,0 +1,29 @@
+# tsrs dynamic ArkTS API and binary AST protocol 10.
+--- a/src/ast/is.ts
++++ b/src/ast/is.ts
+@@ -1,3 +1,8 @@
++import type {
++    CallExpression,
++    ClassDeclaration,
++    PropertyDeclaration,
++} from "./ast.ts";
+ // is.ts — Hand-written type guard functions
+ // Generated guards are in is.generated.ts
+ 
+@@ -580,3 +585,16 @@
+         || kind === SyntaxKind.PropertyAccessExpression
+         || kind === SyntaxKind.JsxNamespacedName;
+ }
++
++export function isStructDeclaration(node: Node): node is ClassDeclaration {
++    return node.kind === SyntaxKind.ClassDeclaration && (node.flags & NodeFlags.Struct) !== 0;
++}
++export function isAnnotationDeclaration(node: Node): node is ClassDeclaration {
++    return node.kind === SyntaxKind.ClassDeclaration && (node.flags & NodeFlags.Annotation) !== 0;
++}
++export function isAnnotationPropertyDeclaration(node: Node): node is PropertyDeclaration {
++    return node.kind === SyntaxKind.PropertyDeclaration && (node.flags & NodeFlags.Annotation) !== 0;
++}
++export function isEtsComponentExpression(node: Node): node is CallExpression {
++    return node.kind === SyntaxKind.CallExpression && (node.flags & NodeFlags.EtsComponent) !== 0;
++}

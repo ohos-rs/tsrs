@@ -270,7 +270,7 @@ impl Walker for EncodeState {
         self.table.push(None);
         self.link_prev();
         let (pos, end) = (self.cx.utf16(list.pos()), self.cx.utf16(list.end()));
-        let values = [SYNTAX_KIND_NODE_LIST, pos, end, 0, self.parent_index, list.nodes().len() as u32, list.has_trailing_comma() as u32];
+        let values = [SYNTAX_KIND_NODE_LIST, pos, end, 0, self.parent_index, list.nodes().len() as u32, list.has_trailing_comma() as u32, 0];
         append_u32s(&mut self.nodes, &values);
         self.descend()
     }
@@ -286,7 +286,7 @@ impl Walker for EncodeState {
                 0
             }
         };
-        let values = [node.kind() as u32, self.cx.utf16(node.pos()), self.cx.utf16(node.end()), 0, self.parent_index, data, node.flags().bits()];
+        let values = [node.kind() as u32, self.cx.utf16(node.pos()), self.cx.utf16(node.end()), 0, self.parent_index, data, node.flags().bits(), node.is_virtual() as u32];
         append_u32s(&mut self.nodes, &values);
         if let Some(map) = &mut self.node_index_map {
             if let Some(slot) = map.get_mut(&node) {
@@ -363,14 +363,14 @@ fn encode_tree(root: P<Node>, source_file: Option<&'static SourceFile>) -> Resul
         error: None,
     };
     state.table.push(None); // index 0 = nil sentinel
-    append_u32s(&mut state.nodes, &[0, 0, 0, 0, 0, 0, 0]);
+    append_u32s(&mut state.nodes, &[0, 0, 0, 0, 0, 0, 0, 0]);
 
     state.node_count += 1;
     state.parent_index += 1;
     state.table.push(Some(root)); // index 1 = root node
     let sf_extended_data_offset = state.cx.extended_data.len();
     let data = get_node_data(root, &mut state.cx)?;
-    let values = [root.kind() as u32, state.cx.utf16(root.pos()), state.cx.utf16(root.end()), 0, 0, data, root.flags().bits()];
+    let values = [root.kind() as u32, state.cx.utf16(root.pos()), state.cx.utf16(root.end()), 0, 0, data, root.flags().bits(), root.is_virtual() as u32];
     append_u32s(&mut state.nodes, &values);
 
     let state = Rc::new(RefCell::new(state));
@@ -402,6 +402,8 @@ fn encode_tree(root: P<Node>, source_file: Option<&'static SourceFile>) -> Resul
         ext[sf_extended_data_offset + 44..sf_extended_data_offset + 48].copy_from_slice(&emi_index.to_le_bytes());
     }
 
+    let ets_json = is_source_file.then(|| source_file_arkts_options_json(root.as_source_file())).unwrap_or_default();
+    let ets_options_index = if ets_json.is_empty() { NO_STRUCTURED_DATA } else { state.cx.strs.add(&ets_json, Kind::Unknown, 0, 0) };
     let metadata = (PROTOCOL_VERSION as u32) << 24;
     let offset_string_offsets = HEADER_SIZE;
     let offset_string_data = HEADER_SIZE + state.cx.strs.offsets_len() * 4;
@@ -430,6 +432,7 @@ fn encode_tree(root: P<Node>, source_file: Option<&'static SourceFile>) -> Resul
         0,
         0, // source file lease ID
         0, // binder data offset
+        ets_options_index,
     ];
     let mut out = Vec::with_capacity(total);
     append_u32s(&mut out, &header);
@@ -618,4 +621,29 @@ fn encode_string_array(strs: &[&str], buf: &mut Vec<u8>) -> u32 {
         msgpack::write_string(buf, s);
     }
     offset
+}
+
+/// Protocol 10 ArkTS metadata, also used by source-file descriptor identities.
+pub fn source_file_arkts_options_json(sf: &SourceFile) -> String {
+    let opts = sf.parse_options();
+    if sf.script_kind() != tsrs_core::ScriptKind::ETS && !opts.ets_annotations_enable
+        && !opts.open_harmony49 && opts.ets_loader_path.is_empty()
+        && !opts.no_transformed_kit_in_parser && *opts.ets == tsrs_core::EtsOptions::default()
+    { return String::new(); }
+    let positions = PositionMap::compute(sf.text());
+    let ranges: Vec<_> = sf.marked_kit_import_ranges.get().iter().map(|range|
+        [positions.utf8_to_utf16(i64::from(range.pos())), positions.utf8_to_utf16(i64::from(range.end()))]).collect();
+    serde_json::json!({
+        "ets": opts.ets,
+        "etsAnnotationsEnable": opts.ets_annotations_enable,
+        "openHarmony49": opts.open_harmony49,
+        "etsLoaderPath": opts.ets_loader_path,
+        "noTransformedKitInParser": opts.no_transformed_kit_in_parser,
+        "kitConfigKey": opts.kit_config_key,
+        "markedKitImportRanges": ranges,
+    }).to_string()
+}
+
+pub fn source_file_parse_options_key(sf: &SourceFile) -> String {
+    format!("{}:{}", encode_parse_options(sf.parse_options().external_module_indicator_options), source_file_arkts_options_json(sf))
 }

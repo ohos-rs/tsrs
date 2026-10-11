@@ -20,6 +20,10 @@ pub(crate) fn new_emit_resolver(_checker: &mut Checker) -> P<EmitResolver> {
 }
 
 impl EmitResolver {
+    pub fn is_ets_annotation(&self, c: &mut Checker, node: P<Node>) -> bool {
+        ast::is_decorator(node) && c.annotation_for_decorator(node).is_some()
+    }
+
     // emitresolver.go:53
     pub fn get_jsx_factory_entity(&self, c: &mut Checker, location: P<Node>) -> Option<P<Node>> {
         c.get_jsx_factory_entity(Some(location))

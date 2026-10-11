@@ -3,7 +3,7 @@ use std::fmt::Display;
 use rustc_hash::FxHashMap;
 use tsrs_ast as ast;
 use tsrs_ast::{DiagnosticExt, Kind, ModifierFlags, ModifierList, Node, NodeFlags, NodeList, OperatorPrecedence, TokenFlags};
-use tsrs_core::{LanguageVariant, TextRange, Tristate, P};
+use tsrs_core::{ScriptKind, LanguageVariant, TextRange, Tristate, P};
 use tsrs_diagnostics as diagnostics;
 use tsrs_diagnostics::Message;
 use tsrs_scanner as scanner;
@@ -79,6 +79,13 @@ impl Parser {
             return self.make_binary_expression(expr, operator_token, right, pos);
         }
         // It wasn't an assignment or a lambda.  This is a conditional expression:
+        if self.arkui.build && ast::is_call_expression(expr) && !ast::is_ets_component_expression(expr) && self.token == Kind::OpenBraceToken {
+            let body = self.parse_function_block(ParseFlags::None, None);
+            let node = self.factory.new_call_expression(expr.expression().unwrap(), None, expr.type_argument_list(), expr.as_call_expression().arguments, Some(body), NodeFlags::None);
+            let node = self.finish_node(node, pos);
+            node.set_flags(node.flags() | NodeFlags::EtsComponent);
+            return node;
+        }
         self.parse_conditional_expression_rest(expr, pos, allow_return_type_in_arrow_function)
     }
 
@@ -394,6 +401,16 @@ impl Parser {
     }
 
     pub(crate) fn parse_arrow_function_expression_body(&mut self, is_async: bool, allow_return_type_in_arrow_function: bool) -> P<Node> {
+        let (ui, styles, build) = (self.arkui.ui, self.arkui.styles, self.arkui.build);
+        self.arkui.ui = self.arkui.callback;
+        self.arkui.styles = false;
+        self.arkui.build &= self.arkui.callback;
+        let result = self.parse_arrow_function_expression_body_worker(is_async, allow_return_type_in_arrow_function);
+        (self.arkui.ui, self.arkui.styles, self.arkui.build) = (ui, styles, build);
+        result
+    }
+
+    fn parse_arrow_function_expression_body_worker(&mut self, is_async: bool, allow_return_type_in_arrow_function: bool) -> P<Node> {
         if self.token == Kind::OpenBraceToken {
             return self.parse_function_block(if is_async { ParseFlags::Await } else { ParseFlags::None }, None /*diagnosticMessage*/);
         }
@@ -1463,9 +1480,15 @@ impl Parser {
                     expression = expression.as_expression_with_type_arguments().expression;
                 }
                 let inner = expression;
-                let argument_list = self.parse_argument_list();
+                let saved_callback = self.arkui.callback;
+            self.arkui.callback = (self.arkui.build || self.arkui.styles) && self.is_arkui_iteration(expression);
+            let state_property;
+            (type_arguments, state_property) = self.ets_attribute_arguments(expression, pos, type_arguments);
+            let argument_list = self.parse_arkui_argument_list(expression);
+            if state_property { self.arkui.state_root = ""; }
+            self.arkui.callback = saved_callback;
                 let is_optional_chain = question_dot_token.is_some() || self.try_reparse_optional_chain(expression);
-                let node = self.factory.new_call_expression(expression, question_dot_token, type_arguments, argument_list, if is_optional_chain { NodeFlags::OptionalChain } else { NodeFlags::None });
+                let node = self.factory.new_call_expression(expression, question_dot_token, type_arguments, argument_list, None, if is_optional_chain { NodeFlags::OptionalChain } else { NodeFlags::None });
                 let node = self.finish_node(node, pos);
                 expression = self.check_js_syntax(node);
                 self.unparse_expression_with_type_arguments(Some(inner), type_arguments, expression);
@@ -1560,6 +1583,18 @@ impl Parser {
     }
 
     pub(crate) fn parse_primary_expression(&mut self) -> P<Node> {
+        if self.script_kind == ScriptKind::ETS && self.token == Kind::DotToken {
+            if let Some(declaration) = self.arkui.style_declaration {
+                return self.ets_virtual_identifier(&declaration.instance, self.node_pos());
+            }
+            if !self.arkui.state_root.is_empty() && (self.arkui.build || self.arkui.styles) {
+                return self.ets_virtual_identifier(&format!("{}Instance", self.arkui.state_root), self.node_pos());
+            }
+        }
+        if self.script_kind == ScriptKind::ETS && self.arkui.ui && !self.arkui.new_
+            && tsrs_core::ets_contains(&self.opts.ets.components, self.scanner.token_text()) {
+            return self.parse_ets_component();
+        }
         let token = self.token;
         match token {
             Kind::NoSubstitutionTemplateLiteral | Kind::NumericLiteral | Kind::BigIntLiteral | Kind::StringLiteral => {
@@ -1713,7 +1748,9 @@ impl Parser {
         let type_parameters = self.parse_type_parameters();
         let parameters = self.parse_parameters(signature_flags);
         let return_type = self.parse_return_type(Kind::ColonToken, false /*isType*/);
+        let saved_ets = self.enter_ets_function(None, "", false);
         let body = self.parse_function_block(signature_flags, None /*diagnosticMessage*/);
+        self.arkui = saved_ets;
         self.context_flags = save_contex_flags;
         let result = self.factory.new_function_expression(modifiers, asterisk_token, name, type_parameters, Some(parameters), return_type, None /*fullSignature*/, Some(body));
         self.finish_node(result, pos);
@@ -1762,6 +1799,7 @@ impl Parser {
             let node = self.factory.new_meta_property(Kind::NewKeyword, name);
             return self.finish_node(node, pos);
         }
+        self.arkui.new_ = self.arkui.ui;
         let expression_pos = self.node_pos();
         let primary = self.parse_primary_expression();
         let mut expression = self.parse_member_expression_rest(expression_pos, primary, false /*allowOptionalChain*/);
@@ -1779,6 +1817,7 @@ impl Parser {
         if self.token == Kind::OpenParenToken {
             argument_list = Some(self.parse_argument_list());
         }
+        self.arkui.new_ = false;
         let node = self.factory.new_new_expression(expression, type_arguments, argument_list);
         let node = self.finish_node(node, pos);
         let result = self.check_js_syntax(node);
@@ -1833,6 +1872,9 @@ impl Parser {
     }
 
     pub(crate) fn parse_identifier_name_with_diagnostic(&mut self, diagnostic_message: Option<&'static Message>) -> P<Node> {
+        if self.token == Kind::DotToken && !self.arkui.state_root.is_empty() && (self.arkui.build || self.arkui.styles) {
+            return self.ets_virtual_identifier(&format!("{}Instance", self.arkui.state_root), self.node_pos());
+        }
         self.create_identifier_with_diagnostic(token_is_identifier_or_keyword(self.token), diagnostic_message, None)
     }
 
@@ -1940,6 +1982,7 @@ impl Parser {
     }
 
     pub(crate) fn scan_type_member_start(&mut self) -> bool {
+        if self.script_kind == tsrs_core::ScriptKind::ETS && self.token == Kind::AtToken { return true; }
         // Return true if we have the start of a signature member
         if self.token == Kind::OpenParenToken || self.token == Kind::LessThanToken || self.token == Kind::GetKeyword || self.token == Kind::SetKeyword {
             return true;
@@ -2102,6 +2145,7 @@ impl Parser {
 
     pub(crate) fn scan_start_of_declaration(&mut self) -> bool {
         loop {
+            if self.is_struct_declaration() || self.is_annotation_declaration() { return true; }
             match self.token {
                 Kind::VarKeyword | Kind::LetKeyword | Kind::ConstKeyword | Kind::FunctionKeyword | Kind::ClassKeyword | Kind::EnumKeyword => {
                     return true;
@@ -2175,6 +2219,7 @@ impl Parser {
     }
 
     pub(crate) fn is_start_of_expression(&mut self) -> bool {
+        if self.arkui.styles && self.token == Kind::DotToken { return true; }
         if self.is_start_of_left_hand_side_expression() {
             return true;
         }

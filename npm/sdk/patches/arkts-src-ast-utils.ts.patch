@@ -1,0 +1,11 @@
+# tsrs dynamic ArkTS API and binary AST protocol 10.
+--- a/src/ast/utils.ts
++++ b/src/ast/utils.ts
+@@ -353,6 +353,7 @@
+         path: sourceFile.path,
+         languageVariant: sourceFile.languageVariant,
+         scriptKind: sourceFile.scriptKind,
++        arktsParseOptions: sourceFile.arktsParseOptions,
+         isDeclarationFile: sourceFile.isDeclarationFile,
+         referencedFiles: sourceFile.referencedFiles,
+         typeReferenceDirectives: sourceFile.typeReferenceDirectives,

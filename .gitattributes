@@ -1,0 +1,3 @@
+# The owned SDK preserves its pinned upstream CRLF files and patches byte for byte.
+npm/tsrs/src/** whitespace=cr-at-eol
+npm/sdk/patches/*.patch -whitespace

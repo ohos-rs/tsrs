@@ -421,6 +421,7 @@ fn virtual_position_to_original(script: &dyn Script, position: TextPos, feature:
 pub fn language_kind_to_script_kind(language_id: lsproto::LanguageKind) -> ScriptKind {
     match language_id.0 {
         "typescript" => ScriptKind::TS,
+        "arkts" | "ets" => ScriptKind::ETS,
         "typescriptreact" => ScriptKind::TSX,
         "javascript" => ScriptKind::JS,
         "javascriptreact" => ScriptKind::JSX,

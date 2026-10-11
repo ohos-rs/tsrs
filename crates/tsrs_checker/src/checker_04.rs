@@ -15,6 +15,11 @@ use rustc_hash::FxHashMap;
 impl Checker {
     // checker.go:6527
     pub(crate) fn get_iteration_types_of_iterable_fast(&mut self, t: P<Type>, r: P<IterationTypesResolver>) -> IterationTypes {
+        if !self.compiler_options.ets_loader_path.is_empty() {
+            let iterable = r.get_global_iterable_type(self);
+            let iterator = r.get_global_iterable_iterator_type(self);
+            if self.is_reference_to_type(Some(t), iterable) || self.is_reference_to_type(Some(t), iterator) { return IterationTypes::default(); }
+        }
         // As an optimization, if the type is an instantiation of the following global type, then
         // just grab its related type arguments:
         // - `Iterable<T, TReturn, TNext>` or `AsyncIterable<T, TReturn, TNext>`
@@ -216,6 +221,10 @@ impl Checker {
 
     // checker.go:6676
     pub(crate) fn get_iteration_types_of_iterator_fast(&mut self, t: P<Type>, r: P<IterationTypesResolver>) -> IterationTypes {
+        if !self.compiler_options.ets_loader_path.is_empty() {
+            let iterator = r.get_global_iterable_iterator_type(self);
+            if self.is_reference_to_type(Some(t), iterator) { return IterationTypes::default(); }
+        }
         // As an optimization, if the type is an instantiation of the following global type, then
         // just grab its related type arguments:
         // - `Iterable<T, TReturn, TNext>` or `AsyncIterable<T, TReturn, TNext>`
@@ -465,7 +474,8 @@ impl Checker {
                 && {
                     let global_async_iterable_type = self.get_global_async_iterable_type();
                     let any_type = self.any_type;
-                    let target = self.create_type_from_generic_global_type(global_async_iterable_type, &[any_type, any_type, any_type]);
+                    let arguments = self.open_harmony_iterable_type_arguments(any_type);
+                    let target = self.create_type_from_generic_global_type(global_async_iterable_type, &arguments);
                     self.is_type_assignable_to(t, target)
                 });
         let type_string = self.type_to_string(t, None);
@@ -473,7 +483,10 @@ impl Checker {
     }
 
     // checker.go:6884
-    pub(crate) fn get_iteration_diagnostic_details(&mut self, use_: IterationUse, input_type: P<Type>, allows_strings: bool) -> (&'static Message, bool) {
+    pub(crate) fn get_iteration_diagnostic_details(&mut self, use_: IterationUse, input_type: P<Type>, allows_strings: bool, downlevel_iteration: bool) -> (&'static Message, bool) {
+        if !self.compiler_options.ets_loader_path.is_empty() && downlevel_iteration {
+            return (if allows_strings { &diagnostics::Type_0_is_not_an_array_type_or_a_string_type_or_does_not_have_a_Symbol_iterator_method_that_returns_an_iterator } else { &diagnostics::Type_0_is_not_an_array_type_or_does_not_have_a_Symbol_iterator_method_that_returns_an_iterator }, true);
+        }
         let yield_type = self.get_iteration_type_of_iterable(use_, IterationTypeKind::Yield, input_type, None /*errorNode*/);
         if yield_type.is_some() {
             return (&diagnostics::Type_0_can_only_be_iterated_through_when_using_the_downlevelIteration_flag_or_with_a_target_of_es2015_or_higher, false);
@@ -503,6 +516,9 @@ impl Checker {
     pub(crate) fn check_alias_symbol(&mut self, node: P<Node>) {
         let mut symbol = self.get_symbol_of_declaration(node).unwrap();
         let target = self.resolve_alias(symbol);
+        if is_annotation_symbol(Some(target)) && (is_import_specifier(node) || is_export_specifier(node)) && node.property_name().is_some() {
+            self.error(Some(node), &diagnostics::Annotation_cannot_be_renamed_in_import_or_export, &[]);
+        }
         if target == self.unknown_symbol {
             return;
         }
@@ -2394,14 +2410,27 @@ impl Checker {
      */
     // checker.go:8496
     pub(crate) fn check_call_expression(&mut self, node: P<Node>, check_mode: CheckMode) -> P<Type> {
+        if is_call_expression(node) { self.check_source_element(node.as_call_expression().ets_body()); }
         self.check_grammar_type_arguments(node, node.type_argument_list());
+        self.check_api_available_version(node);
         let signature = self.get_resolved_signature(node, None /*candidatesOutArray*/, check_mode);
         if signature == self.resolving_signature {
             // CheckMode.SkipGenericFunctions is enabled and this is a call to a generic function that
             // returns a function type. We defer checking and return silentNeverType.
             return self.silent_never_type;
         }
+        self.check_oh_sdk_overload_use(node, signature.declaration());
         self.check_deprecated_signature(signature, node);
+        if get_source_file_of_node(node).is_some_and(|file| file.script_kind() == tsrs_core::ScriptKind::ETS)
+            && node.expression().is_some_and(is_identifier)
+            && !is_new_expression(node)
+            && self.is_system_ets_component(node.expression().unwrap())
+            && !self.is_in_build_or_page_transition_context(node)
+        {
+            let expression = node.expression().unwrap();
+            self.error(Some(expression), &diagnostics::UI_component_0_cannot_be_used_in_this_place, &[&expression.text()]);
+        }
+        self.check_throws_call(node, signature.declaration());
         if node.expression().unwrap().kind() == Kind::SuperKeyword {
             return self.void_type;
         }
@@ -2635,6 +2664,10 @@ impl Checker {
         // with multiple call signatures.
         if call_signatures.is_empty() {
             if num_construct_signatures != 0 {
+                if apparent_type.symbol().is_some_and(|symbol| symbol.declarations().iter().any(|node| is_struct_declaration(*node))) {
+                    let signatures = self.get_signatures_of_type(apparent_type, SignatureKind::Construct);
+                    return self.resolve_call(node, signatures, candidates_out_array, check_mode, SignatureFlags::None, None);
+                }
                 let type_string = self.type_to_string(func_type, None);
                 self.error(Some(node), &diagnostics::Value_of_type_0_is_not_callable_Did_you_mean_to_include_new, &[&type_string]);
             } else {

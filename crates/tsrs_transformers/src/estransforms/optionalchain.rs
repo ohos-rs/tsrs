@@ -57,7 +57,7 @@ impl optionalChainTransformer {
                     self.emit_context().set_original(res, node);
                     return res;
                 }
-                return self.factory().update_call_expression(node, expression, None /*questionDotToken*/, None /*typeArguments*/, args, node.flags());
+                return self.factory().update_call_expression(node, expression, None /*questionDotToken*/, None /*typeArguments*/, args, node.as_call_expression().ets_body(), node.flags());
             }
         }
         self.visitor().visit_each_child(Some(node)).unwrap()
@@ -218,7 +218,7 @@ impl optionalChainTransformer {
                         }
                         right_expression = f.new_function_call_call(right_expression, Some(call_this_arg), self.visitor().visit_nodes(segment.argument_list()).unwrap().nodes());
                     } else {
-                        right_expression = f.new_call_expression(right_expression, None, None, self.visitor().visit_nodes(segment.argument_list()).unwrap(), NodeFlags::None);
+                        right_expression = f.new_call_expression(right_expression, None, None, self.visitor().visit_nodes(segment.argument_list()).unwrap(), None, NodeFlags::None);
                     }
                 }
                 _ => {}

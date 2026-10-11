@@ -406,3 +406,53 @@ fn test_resolve_peer_dependency_nil_contents_race() {
         assert!(second_result.1, "{:?} failed to resolve pkg", second_result.0);
     });
 }
+
+#[test]
+fn arkts_extension_priority_and_cache_identity() {
+    let fs = vfstest::from_map([
+        ("/repo/foo.ts", "export const kind = 'ts';"),
+        ("/repo/foo.ets", "export const kind = 'ets';"),
+        ("/repo/types.d.ets", "export declare const value: number;"),
+    ], true);
+    let resolver = new_resolver(ResolverOptions::new(host(fs, "/repo"), bundler_options()));
+    for (specifier, from, expected) in [
+        ("./foo", "/repo/a.ts", "/repo/foo.ts"),
+        ("./foo", "/repo/a.ets", "/repo/foo.ets"),
+        ("./foo.ets", "/repo/a.ets", "/repo/foo.ets"),
+        ("./types", "/repo/a.ets", "/repo/types.d.ets"),
+    ] {
+        let (r, _) = resolver.resolve_module_name(specifier, from, ModuleKind::ESNext, None).unwrap();
+        assert_eq!(r.resolved_file_name, expected, "{specifier} from {from}");
+    }
+}
+
+#[test]
+fn ohpm_json5_and_sdk_fallback() {
+    let fs = vfstest::from_map([
+        ("/repo/oh_modules/pkg/oh-package.json5", "{name: 'pkg', version: '1.0.0', /* order matters */ exports: {default: './first.d.ets', types: './second.d.ets',},}"),
+        ("/repo/oh_modules/pkg/first.d.ets", "export declare const value: string;"),
+        ("/repo/oh_modules/pkg/second.d.ets", "export declare const value: number;"),
+        ("/sdk/api/@ohos.test.d.ts", "export declare const value: string;"),
+        ("/sdk/overlay/@ohos.test.d.ets", "export declare const value: number;"),
+        ("/fallback/libtest.so.d.ets", "declare const native: number; export default native;"),
+    ], true);
+    let options = P::new(CompilerOptions {
+        package_manager_type: "ohpm".into(),
+        oh_sdk_configs: Some(vec![tsrs_core::OhSdkConfig { api_paths: vec!["/sdk/api".into(), "/sdk/overlay".into()] }]),
+        oh_system_modules: Some(vec!["@ohos.test.d.ets".into()]),
+        oh_fallback_module_roots: Some(vec!["/fallback".into()]),
+        module_resolution: ModuleResolutionKind::Bundler,
+        module: ModuleKind::ESNext,
+        ..Default::default()
+    });
+    let resolver = new_resolver(ResolverOptions::new(host(fs, "/repo"), options));
+    for (specifier, expected) in [
+        ("pkg", "/repo/oh_modules/pkg/first.d.ets"),
+        ("@ohos.test", "/sdk/overlay/@ohos.test.d.ets"),
+        ("libtest.so", "/fallback/libtest.so.d.ets"),
+        ("@ohos.absent", ""),
+    ] {
+        let (r, _) = resolver.resolve_module_name(specifier, "/repo/a.ets", ModuleKind::ESNext, None).unwrap();
+        assert_eq!(r.resolved_file_name, expected, "{specifier}");
+    }
+}

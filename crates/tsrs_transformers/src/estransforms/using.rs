@@ -69,7 +69,7 @@ impl usingDeclarationTransformer {
         let f = self.factory();
         let emit_context = self.emit_context();
         let visited: P<Node>;
-        let using_kind = get_using_kind_of_statements(node.statements.nodes());
+        let using_kind = get_using_kind_of_statements(node.statements().nodes());
         if using_kind != usingKind::None {
             // Imports and exports must stay at the top level. This means we must hoist all imports, exports, and
             // top-level function declarations and bindings out of the `try` statements we generate (see using.go for
@@ -83,7 +83,7 @@ impl usingDeclarationTransformer {
             *self.export_bindings.borrow_mut() = Some(FxHashMap::default());
             self.export_vars.borrow_mut().clear();
 
-            let (prologue, rest) = f.split_standard_prologue(node.statements.nodes());
+            let (prologue, rest) = f.split_standard_prologue(node.statements().nodes());
             let mut top_level_statements: Vec<P<Node>> = Vec::new();
             top_level_statements.extend_from_slice(self.visitor().visit_slice(prologue).0);
 

@@ -49,6 +49,7 @@ pub struct Diagnostic {
     related_information: OwnedCell<&'static [P<Diagnostic>]>,
     reports_unnecessary: bool,
     reports_deprecated: bool,
+    filter_flag: OwnedCell<bool>,
     skipped_on_no_emit: OwnedCell<bool>,
     repopulate_info: OwnedCell<Option<&'static RepopulateDiagnosticInfo>>,
 }
@@ -70,6 +71,7 @@ pub(crate) fn census_layout() {
         offset_of!(Diagnostic, related_information),
         offset_of!(Diagnostic, reports_unnecessary),
         offset_of!(Diagnostic, reports_deprecated),
+        offset_of!(Diagnostic, filter_flag),
         offset_of!(Diagnostic, skipped_on_no_emit),
         offset_of!(Diagnostic, repopulate_info),
     ];
@@ -80,6 +82,7 @@ pub(crate) fn census_layout() {
         offset_of!(Diagnostic, category),
         offset_of!(Diagnostic, reports_unnecessary),
         offset_of!(Diagnostic, reports_deprecated),
+        offset_of!(Diagnostic, filter_flag),
         offset_of!(Diagnostic, skipped_on_no_emit),
     ];
     let fields: Vec<_> = scalars.iter().map(|&o| tsrs_core::CensusField::scalar(0, o, &offsets, size)).collect();
@@ -135,6 +138,8 @@ impl Diagnostic {
     pub fn reports_deprecated(&self) -> bool {
         self.reports_deprecated
     }
+    pub fn filter_flag(&self) -> bool { self.filter_flag.get() }
+    pub fn set_filter_flag(&self) { self.filter_flag.set(true); }
     pub fn skipped_on_no_emit(&self) -> bool {
         self.skipped_on_no_emit.get()
     }
@@ -231,6 +236,7 @@ impl DiagnosticExt for P<Diagnostic> {
             related_information: OwnedCell::new(self.related_information.get()),
             reports_unnecessary: self.reports_unnecessary,
             reports_deprecated: self.reports_deprecated,
+            filter_flag: OwnedCell::new(self.filter_flag.get()),
             skipped_on_no_emit: OwnedCell::new(self.skipped_on_no_emit.get()),
             repopulate_info: OwnedCell::new(self.repopulate_info.get()),
         })
@@ -317,6 +323,7 @@ pub fn new_diagnostic(file: Option<P<SourceFile>>, loc: TextRange, message: &'st
         related_information: OwnedCell::new(&[]),
         reports_unnecessary: message.reports_unnecessary(),
         reports_deprecated: message.reports_deprecated(),
+        filter_flag: OwnedCell::new(false),
         skipped_on_no_emit: OwnedCell::new(false),
         repopulate_info: OwnedCell::new(None),
     })
@@ -352,6 +359,7 @@ pub fn new_diagnostic_from_serialized(
         related_information: OwnedCell::new(alloc_slice(related_information)),
         reports_unnecessary,
         reports_deprecated,
+        filter_flag: OwnedCell::new(false),
         skipped_on_no_emit: OwnedCell::new(skipped_on_no_emit),
         repopulate_info: OwnedCell::new(None),
     })
@@ -398,6 +406,7 @@ pub fn new_external_diagnostic(
         related_information: OwnedCell::new(&[]),
         reports_unnecessary: false,
         reports_deprecated: false,
+        filter_flag: OwnedCell::new(false),
         skipped_on_no_emit: OwnedCell::new(false),
         repopulate_info: OwnedCell::new(None),
     })
@@ -820,6 +829,7 @@ pub fn new_diagnostic_from_text(
         related_information: OwnedCell::new(alloc_slice(related_information)),
         reports_unnecessary,
         reports_deprecated,
+        filter_flag: OwnedCell::new(false),
         skipped_on_no_emit: OwnedCell::new(false),
         repopulate_info: OwnedCell::new(None),
     })

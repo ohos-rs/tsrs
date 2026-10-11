@@ -37,7 +37,7 @@ bitflags! {
         const ConstEnumOnlyModule = 1 << 28; // Module contains only const enums or other modules with only const enums
         const ReplaceableByMethod = 1 << 29;
         const GlobalLookup = 1 << 30; // Flag to signal this is a global lookup
-        const All = (1 << 30) - 1; // All flags except SymbolFlagsGlobalLookup
+        const All = ((1 << 30) - 1) | Self::Annotation.bits(); // All flags except SymbolFlagsGlobalLookup
 
         const Enum = Self::RegularEnum.bits() | Self::ConstEnum.bits();
         const Variable = Self::FunctionScopedVariable.bits() | Self::BlockScopedVariable.bits();
@@ -80,5 +80,6 @@ bitflags! {
         const ExportSupportsDefaultModifier = Self::Class.bits() | Self::Function.bits() | Self::Interface.bits();
         const ExportDoesNotSupportDefaultModifier = !Self::ExportSupportsDefaultModifier.bits();
         const LateBindingContainer = Self::Class.bits() | Self::Interface.bits() | Self::TypeLiteral.bits() | Self::ObjectLiteral.bits() | Self::Function.bits();
+        const Annotation = 1 << 31; // ETS annotation identity, also carries Class
     }
 }

@@ -1,11 +1,16 @@
 # Emit: JavaScript, declarations, source maps, `--build`
 
+Dynamic ArkTS is a separate overlay: `.ets` can emit `.d.ets`, preserving annotation declarations and defaults.
+ArkUI/annotation JavaScript lowering reports TS100069 in tsrs; Arkdown keeps tsrs in `noEmit` and owns lowering
+in Rust/OXC/Rolldown, consuming annotation and transform type facts from the native snapshot API. The full TypeScript
+emit status below does not include SDK transforms; see [ARKTS.md](ARKTS.md).
+
 Status: **emit is fully ported and on by default, like tsgo** (since tsrs 0.3.0). Every transformer, the printer's
 emit paths, source maps, `.tsbuildinfo` and `--build` are ported; no stub is left. The `TSRS_EMIT=1` opt-in gate of
 section 6 is removed: the project's/CLI's `noEmit`, `emitDeclarationOnly`, `noEmitOnError` and
 `incremental`/`composite` decide as in Go (an incremental `--noEmit` program still writes its tsbuildinfo), and the
 old variable no longer changes anything (regression test: `crates/tsrs_cli/tests/default_emit.rs`). Current pass
-counts are in the README capability table ("What it does and doesn't do": 13,392 `.js` baselines pass, 0 fail; 149 `.js.map` and 156
+counts are in the README capability table ("What it does and doesn't do": 13,392 `.js` baselines pass, 0 fail, 0 timeouts; 149 `.js.map` and 156
 `.sourcemap.txt` baselines pass; the `tsbuild`/`tsc` scenario counts).
 
 Sections 2, 10, 10b and 12 describe the current code, except where a line says otherwise; sections 1, 3–9 and 11

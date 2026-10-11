@@ -172,6 +172,11 @@ impl CommandLineOption {
         if self.kind != CommandLineOptionKind::List && self.kind != CommandLineOptionKind::ListOrElement {
             return None;
         }
+        match self.name {
+            "ohSdkConfigs" => return Some(&CommandLineOption { kind: CommandLineOptionKind::Object, ..CommandLineOption::DEFAULT }),
+            "ohSystemModules" | "ohSdkConfigPrefixes" | "ohFallbackModuleRoots" | "ohExternalApiPaths" => return Some(&CommandLineOption::DEFAULT),
+            _ => {}
+        }
         COMMAND_LINE_OPTION_ELEMENTS.get(self.name)
     }
 

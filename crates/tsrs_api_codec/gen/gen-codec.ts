@@ -168,6 +168,14 @@ function analyzeNode(node: NodeType): Info {
 
 function getAutoEncodedLayout(info: Info): { member: MemberInfo; bitPos: number; bitWidth: number; }[] {
     const layout: { member: MemberInfo; bitPos: number; bitWidth: number; }[] = [];
+    // Keep protocol 9's phase modifier bits in place; ArkTS lazy uses a spare bit.
+    if (info.node.name === "ImportClause") {
+        return [
+            { member: info.autoUnionBits[0], bitPos: 0, bitWidth: 2 },
+            { member: info.autoBoolBits[0], bitPos: 2, bitWidth: 1 },
+        ];
+    }
+
     let bitPos = 0;
     for (const m of info.autoBoolBits) {
         layout.push({ member: m, bitPos, bitWidth: 1 });

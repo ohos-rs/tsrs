@@ -433,7 +433,7 @@ pub(crate) fn get_new_imports(
             ct.node_factory.new_import_declaration(
                 None, /*modifiers*/
                 Some(ct.node_factory.new_import_clause(
-                    /*phaseModifier*/ if should_use_type_only(namespace_like_import.add_as_type_only, preferences) { Kind::TypeKeyword } else { Kind::Unknown },
+                    /*phaseModifier*/ if should_use_type_only(namespace_like_import.add_as_type_only, preferences) { Kind::TypeKeyword } else { Kind::Unknown }, false,
                     None, /*name*/
                     Some(ct.node_factory.new_namespace_import(ct.node_factory.new_identifier(alloc_str(&namespace_like_import.name)))),
                 )),
@@ -521,7 +521,7 @@ fn create_const_equals_require_declaration(change_tracker: &change::Tracker, nam
                     f.new_identifier("require"),
                     None, /*questionDotToken*/
                     None, /*typeArguments*/
-                    f.new_node_list(vec![quoted_module_specifier]),
+                    f.new_node_list(vec![quoted_module_specifier]), None,
                     NodeFlags::None,
                 )),
             )]),
@@ -533,9 +533,9 @@ fn create_const_equals_require_declaration(change_tracker: &change::Tracker, nam
 // fix.go:503
 pub(crate) fn insert_imports(ct: &mut change::Tracker, source_file: P<SourceFile>, imports: &[P<Node>], blank_line_between: bool, preferences: &UserPreferences) {
     let existing_import_statements: Vec<P<Node>> = if imports[0].kind() == Kind::VariableStatement {
-        source_file.statements.nodes().iter().copied().filter(|&s| ast::is_require_variable_statement(s)).collect()
+        source_file.statements().nodes().iter().copied().filter(|&s| ast::is_require_variable_statement(s)).collect()
     } else {
-        source_file.statements.nodes().iter().copied().filter(|&s| ast::is_any_import_syntax(s)).collect()
+        source_file.statements().nodes().iter().copied().filter(|&s| ast::is_any_import_syntax(s)).collect()
     };
     let (comparer, is_sorted) = lsutil::get_organize_imports_string_comparer_with_detection(&existing_import_statements, preferences);
     let comparer = comparer.expect("nil comparer");
@@ -551,7 +551,7 @@ pub(crate) fn insert_imports(ct: &mut change::Tracker, source_file: P<SourceFile
             if insertion_index == 0 {
                 // If the first import is top-of-file, insert after the leading comment which is likely the header.
                 let mut leading_trivia_option = change::LeadingTriviaOption::None;
-                if existing_import_statements[0] == source_file.statements.nodes()[0] {
+                if existing_import_statements[0] == source_file.statements().nodes()[0] {
                     leading_trivia_option = change::LeadingTriviaOption::Exclude;
                 }
                 ct.insert_node_before(source_file, existing_import_statements[0], new_import, false /*blankLineBetween*/, leading_trivia_option);
@@ -576,7 +576,7 @@ fn make_import(ct: &change::Tracker, default_import: Option<P<Node>>, named_impo
     }
     let mut import_clause: Option<P<Node>> = None;
     if default_import.is_some() || new_named_imports.is_some() {
-        import_clause = Some(f.new_import_clause(if is_type_only { Kind::TypeKeyword } else { Kind::Unknown }, default_import, new_named_imports));
+        import_clause = Some(f.new_import_clause(if is_type_only { Kind::TypeKeyword } else { Kind::Unknown }, false, default_import, new_named_imports));
     }
     f.new_import_declaration(None /*modifiers*/, import_clause, module_specifier, None /*attributes*/)
 }
@@ -875,7 +875,7 @@ fn get_import_kind(importing_file: P<SourceFile>, export: &Export, program: &Pro
                 return lsproto::ImportKind::Named;
             }
             // !!! cache this?
-            for &statement in importing_file.statements.nodes() {
+            for &statement in importing_file.statements().nodes() {
                 // `import foo` parses as an ImportEqualsDeclaration even though it could be an ImportDeclaration
                 if ast::is_import_equals_declaration(statement) && !ast::node_is_missing(Some(statement.as_import_equals_declaration().module_reference)) {
                     return lsproto::ImportKind::CommonJS;

@@ -1,4 +1,4 @@
-use crate::flowmemo::{FlowMemoMode, FrameTaint, MemoHit, ShadowHit, FLAG_EFFECTS, FLAG_COUNT_RESET, FLAG_TYPE_CACHE, FLOW_DEPTH_LIMIT, UNTAINTED};
+use crate::flowmemo::{FlowMemoMode, FrameTaint, MemoHit, ShadowHit, FLAG_EFFECTS, FLAG_COUNT_RESET, FLAG_TYPE_CACHE, UNTAINTED};
 use crate::*;
 use tsrs_ast::*;
 use tsrs_ast as ast;
@@ -213,7 +213,7 @@ impl Checker {
     pub(crate) fn get_type_at_flow_node(&mut self, f: P<FlowState>, flow: P<FlowNode>) -> FlowType {
         let entry_flow = flow;
         let mut flow = flow;
-        if f.depth.get() == FLOW_DEPTH_LIMIT {
+        if f64::from(f.depth.get()) == self.open_harmony_flow_depth_limit() {
             if f.memo_used.get() {
                 // Go, which walked the sub-graphs this walk took from the memo, may not be this deep here:
                 // get_flow_type_of_reference_ex walks again without the memo.
@@ -434,7 +434,7 @@ impl Checker {
         }
         // Go's walk of this sub-graph reaches at most `height` levels below here: it must not reach the limit, or Go
         // would report TS2563 inside it.
-        if entry_depth + hit.height as i32 >= FLOW_DEPTH_LIMIT {
+        if f64::from(entry_depth + hit.height as i32) >= self.open_harmony_flow_depth_limit() {
             self.flow_memo.stats.height_misses += 1;
             return None;
         }

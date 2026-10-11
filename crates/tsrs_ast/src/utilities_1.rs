@@ -141,7 +141,7 @@ pub fn get_locals(container: P<Node>) -> P<SymbolTable> {
 pub fn node_is_missing(node: impl Into<Option<P<Node>>>) -> bool {
     match node.into() {
         None => true,
-        Some(node) => node.pos() == node.end() && node.pos() >= 0 && node.kind() != Kind::EndOfFile,
+        Some(node) => !node.is_virtual() && node.pos() == node.end() && node.pos() >= 0 && node.kind() != Kind::EndOfFile,
     }
 }
 

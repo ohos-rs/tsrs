@@ -269,7 +269,7 @@ impl CommonJSModuleTransformer {
                     f.new_node_list(vec![f.new_property_assignment(None /*modifiers*/, f.new_identifier("value"), None /*postfixToken*/, None /*typeNode*/, f.new_true_expression())]),
                     false, /*multiLine*/
                 ),
-            ]),
+            ]), None,
             NodeFlags::None,
         ));
         self.emit_context().set_emit_flags(statement, EmitFlags::CustomPrologue);
@@ -283,7 +283,7 @@ impl CommonJSModuleTransformer {
         emit_context.start_variable_environment();
 
         // emit standard prologue directives (e.g. "use strict")
-        let (prologue, rest) = f.split_standard_prologue(node.statements.nodes());
+        let (prologue, rest) = f.split_standard_prologue(node.statements().nodes());
         let mut statements: Vec<P<Node>> = prologue.to_vec();
 
         // emit custom prologues from other transformations
@@ -346,7 +346,7 @@ impl CommonJSModuleTransformer {
         let statements = emit_context.end_and_merge_variable_environment(&statements);
 
         let statement_list = f.new_node_list(statements);
-        statement_list.loc.set(node.statements.loc.get());
+        statement_list.loc.set(node.statements().loc.get());
         let mut result = f.update_source_file(node.as_node(), statement_list, node.end_of_file_token).as_source_file_p();
         emit_context.add_emit_helper(result.as_node(), &emit_context.read_emit_helpers());
 
@@ -360,14 +360,14 @@ impl CommonJSModuleTransformer {
             false, /*hasImportDefault*/
         );
         if let Some(external_helpers_import_declaration) = external_helpers_import_declaration {
-            let (prologue, rest) = f.split_standard_prologue(result.statements.nodes());
+            let (prologue, rest) = f.split_standard_prologue(result.statements().nodes());
             let (custom, rest) = f.split_custom_prologue(rest);
             let mut statements: Vec<P<Node>> = prologue.to_vec();
             statements.extend_from_slice(custom);
             statements.extend(self.top_level_visitor().visit_node(Some(external_helpers_import_declaration)));
             statements.extend_from_slice(rest);
             let statement_list = f.new_node_list(statements);
-            statement_list.loc.set(result.statements.loc.get());
+            statement_list.loc.set(result.statements().loc.get());
             result = f.update_source_file(result.as_node(), statement_list, node.end_of_file_token).as_source_file_p();
         }
 

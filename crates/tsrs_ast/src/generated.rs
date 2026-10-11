@@ -3595,6 +3595,7 @@ pub struct CallExpression {
 pub struct CallExpressionRare {
     pub question_dot_token: Option<P<Node>>,
     pub type_arguments: Option<P<NodeList>>,
+    pub ets_body: Option<P<Node>>,
 }
 
 impl NodeRareTail for CallExpression {
@@ -3617,6 +3618,10 @@ impl CallExpression {
     #[inline]
     pub fn arguments(&self) -> P<NodeList> {
         self.arguments
+    }
+    #[inline]
+    pub fn ets_body(&self) -> Option<P<Node>> {
+        rare_tail(self).and_then(|r| r.ets_body)
     }
     #[inline]
     pub fn symbol(&self) -> Option<P<Symbol>> {
@@ -5704,6 +5709,7 @@ pub struct ImportClause {
     pub declaration_base: DeclarationBase,
     pub exportable_base: ExportableBase,
     pub phase_modifier: OwnedCell<Kind>,
+    pub is_lazy: bool,
     pub name: Option<P<Node>>,
     pub named_bindings: Option<P<Node>>,
 }
@@ -5716,6 +5722,10 @@ impl ImportClause {
     #[inline]
     pub fn set_phase_modifier(&self, value: Kind) {
         self.phase_modifier.set(value)
+    }
+    #[inline]
+    pub fn is_lazy(&self) -> bool {
+        self.is_lazy
     }
     #[inline]
     pub fn name(&self) -> Option<P<Node>> {
@@ -11239,8 +11249,8 @@ impl NodeFactory {
         node
     }
 
-    pub fn new_call_expression(&self, expression: P<Node>, question_dot_token: Option<P<Node>>, type_arguments: Option<P<NodeList>>, arguments: P<NodeList>, flags: NodeFlags) -> P<Node> {
-        let node = if question_dot_token.is_some() || type_arguments.is_some() {
+    pub fn new_call_expression(&self, expression: P<Node>, question_dot_token: Option<P<Node>>, type_arguments: Option<P<NodeList>>, arguments: P<NodeList>, ets_body: Option<P<Node>>, flags: NodeFlags) -> P<Node> {
+        let node = if question_dot_token.is_some() || type_arguments.is_some() || ets_body.is_some() {
             self.new_node_with_rare(Kind::CallExpression, CallExpression {
                 declaration_base: DeclarationBase {
                     symbol: OwnedCell::new(None),
@@ -11250,6 +11260,7 @@ impl NodeFactory {
             }, CallExpressionRare {
                 question_dot_token: question_dot_token,
                 type_arguments: type_arguments,
+                ets_body: ets_body,
             })
         } else {
             self.new_node(Kind::CallExpression, CallExpression {
@@ -11264,10 +11275,10 @@ impl NodeFactory {
         node
     }
 
-    pub fn update_call_expression(&self, node: P<Node>, expression: P<Node>, question_dot_token: Option<P<Node>>, type_arguments: Option<P<NodeList>>, arguments: P<NodeList>, flags: NodeFlags) -> P<Node> {
+    pub fn update_call_expression(&self, node: P<Node>, expression: P<Node>, question_dot_token: Option<P<Node>>, type_arguments: Option<P<NodeList>>, arguments: P<NodeList>, ets_body: Option<P<Node>>, flags: NodeFlags) -> P<Node> {
         let data = node.as_call_expression();
-        if expression != data.expression() || question_dot_token != data.question_dot_token() || type_arguments != data.type_arguments() || arguments != data.arguments() || flags != node.flags.get() {
-            return update_node(self.new_call_expression(expression, question_dot_token, type_arguments, arguments, flags), node, &self.hooks);
+        if expression != data.expression() || question_dot_token != data.question_dot_token() || type_arguments != data.type_arguments() || arguments != data.arguments() || ets_body != data.ets_body() || flags != node.flags.get() {
+            return update_node(self.new_call_expression(expression, question_dot_token, type_arguments, arguments, ets_body, flags), node, &self.hooks);
         }
         node
     }
@@ -12878,7 +12889,7 @@ impl NodeFactory {
         node
     }
 
-    pub fn new_import_clause(&self, phase_modifier: Kind, name: Option<P<Node>>, named_bindings: Option<P<Node>>) -> P<Node> {
+    pub fn new_import_clause(&self, phase_modifier: Kind, is_lazy: bool, name: Option<P<Node>>, named_bindings: Option<P<Node>>) -> P<Node> {
         self.new_node(Kind::ImportClause, ImportClause {
             declaration_base: DeclarationBase {
                 symbol: OwnedCell::new(None),
@@ -12887,15 +12898,16 @@ impl NodeFactory {
                 local_symbol: OwnedCell::new(None),
             },
             phase_modifier: OwnedCell::new(phase_modifier),
+            is_lazy: is_lazy,
             name: name,
             named_bindings: named_bindings,
         })
     }
 
-    pub fn update_import_clause(&self, node: P<Node>, phase_modifier: Kind, name: Option<P<Node>>, named_bindings: Option<P<Node>>) -> P<Node> {
+    pub fn update_import_clause(&self, node: P<Node>, phase_modifier: Kind, is_lazy: bool, name: Option<P<Node>>, named_bindings: Option<P<Node>>) -> P<Node> {
         let data = node.as_import_clause();
-        if phase_modifier != data.phase_modifier() || name != data.name() || named_bindings != data.named_bindings() {
-            return update_node(self.new_import_clause(phase_modifier, name, named_bindings), node, &self.hooks);
+        if phase_modifier != data.phase_modifier() || is_lazy != data.is_lazy() || name != data.name() || named_bindings != data.named_bindings() {
+            return update_node(self.new_import_clause(phase_modifier, is_lazy, name, named_bindings), node, &self.hooks);
         }
         node
     }
@@ -14740,6 +14752,7 @@ impl CallExpression {
             || visit(v, self.question_dot_token())
             || visit_node_list(v, self.type_arguments())
             || visit_node_list(v, Some(self.arguments()))
+            || visit(v, self.ets_body())
     }
 }
 
@@ -14749,13 +14762,14 @@ impl CallExpression {
         let question_dot_token_ = v.visit_node_hooked(self.question_dot_token());
         let type_arguments_ = v.visit_nodes_hooked(self.type_arguments());
         let arguments_ = required_child(v.visit_nodes_hooked(Some(self.arguments())), self.arguments());
-        v.factory.update_call_expression(node, expression_, question_dot_token_, type_arguments_, arguments_, node.flags.get())
+        let ets_body_ = v.visit_node_hooked(self.ets_body());
+        v.factory.update_call_expression(node, expression_, question_dot_token_, type_arguments_, arguments_, ets_body_, node.flags.get())
     }
 }
 
 impl CallExpression {
     pub fn clone_node(&self, node: P<Node>, f: &NodeFactory) -> P<Node> {
-        clone_node(f.new_call_expression(self.expression(), self.question_dot_token(), self.type_arguments(), self.arguments(), node.flags.get()), node, &f.hooks)
+        clone_node(f.new_call_expression(self.expression(), self.question_dot_token(), self.type_arguments(), self.arguments(), self.ets_body(), node.flags.get()), node, &f.hooks)
     }
 }
 
@@ -16706,13 +16720,13 @@ impl ImportClause {
     pub fn visit_each_child(&self, node: P<Node>, v: &mut NodeVisitor) -> P<Node> {
         let name_ = v.visit_node_hooked(self.name());
         let named_bindings_ = v.visit_node_hooked(self.named_bindings());
-        v.factory.update_import_clause(node, self.phase_modifier(), name_, named_bindings_)
+        v.factory.update_import_clause(node, self.phase_modifier(), self.is_lazy(), name_, named_bindings_)
     }
 }
 
 impl ImportClause {
     pub fn clone_node(&self, node: P<Node>, f: &NodeFactory) -> P<Node> {
-        clone_node(f.new_import_clause(self.phase_modifier(), self.name(), self.named_bindings()), node, &f.hooks)
+        clone_node(f.new_import_clause(self.phase_modifier(), self.is_lazy(), self.name(), self.named_bindings()), node, &f.hooks)
     }
 }
 

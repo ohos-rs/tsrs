@@ -137,10 +137,13 @@ impl ExpectedValue for TypeScriptFields {
 }
 
 pub fn parse(data: &str) -> Result<Fields, String> {
-    let value = json::parse(data)?;
+    parse_value(&json::parse(data)?)
+}
+
+pub(super) fn parse_value(value: &json::Json) -> Result<Fields, String> {
     let mut parsed = Fields::default();
     let mut type_script: Expected<TypeScriptFields> = Expected::default();
-    match &value {
+    match value {
         // Unmarshaling `null` into a struct leaves it zero.
         Json::Null => {}
         Json::Object(members) => {
@@ -166,7 +169,7 @@ pub fn parse(data: &str) -> Result<Fields, String> {
                 }
             }
         }
-        _ => return Err(format!("json: cannot unmarshal JSON {} into Go packagejson.Fields", json_kind_name(&value))),
+        _ => return Err(format!("json: cannot unmarshal JSON {} into Go packagejson.Fields", json_kind_name(value))),
     }
     // Go ignores the validity flag here and takes whatever was decoded.
     parsed.content_mapper = type_script.value.content_mapper;

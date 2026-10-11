@@ -406,7 +406,7 @@ impl forawaitTransformer {
             f.new_property_access_expression(iterator, None, f.new_identifier("next"), NodeFlags::None),
             None,
             None,
-            f.new_node_list(vec![]),
+            f.new_node_list(vec![]), None,
             NodeFlags::None,
         );
         let get_done = f.new_property_access_expression(result, None, f.new_identifier("done"), NodeFlags::None);

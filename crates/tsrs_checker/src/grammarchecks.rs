@@ -240,6 +240,11 @@ impl Checker {
         if node.modifiers().is_none() {
             return false;
         }
+        for &modifier in node.modifier_nodes() {
+            if ast::is_decorator(modifier) {
+                if let Some(declaration) = self.annotation_for_decorator(modifier) { self.check_annotation_use(modifier, declaration); }
+            }
+        }
         if self.report_obvious_decorator_errors(node) || self.report_obvious_modifier_errors(node) {
             return true;
         }
@@ -265,7 +270,13 @@ impl Checker {
         let modifiers = node.modifier_nodes();
         for &modifier in modifiers {
             if is_decorator(modifier) {
-                if !ast::node_can_be_decorated(self.legacy_decorators, node, Some(parent), parent.parent()) {
+                if self.annotation_for_decorator(modifier).is_some() { continue; }
+                let ets_grammar_target = ast::get_source_file_of_node(node).unwrap().script_kind() == tsrs_core::ScriptKind::ETS
+                    && !ast::is_constructor_declaration(node)
+                    && (ast::is_ets_builder(node, &self.compiler_options.ets) || ast::has_ets_styles_decorator(node, &self.compiler_options.ets));
+                let ets_function = ast::is_function_declaration(node) && ast::has_ets_decorator(node, &self.compiler_options.ets);
+                if !ets_grammar_target && !ets_function && !ast::is_sendable_function_or_type(node)
+                    && !ast::node_can_be_decorated(self.legacy_decorators, node, Some(parent), parent.parent()) {
                     if node.kind() == Kind::MethodDeclaration && !ast::node_is_present(node.body()) {
                         return self.grammar_error_on_first_token(node, &diagnostics::A_decorator_can_only_decorate_a_method_implementation_not_an_overload, &[]);
                     } else {
@@ -675,8 +686,8 @@ impl Checker {
 
     // grammarchecks.go:650
     pub(crate) fn find_first_illegal_decorator(&mut self, node: P<Node>) -> Option<P<Node>> {
-        if ast::can_have_illegal_decorators(node) {
-            node.modifier_nodes().iter().copied().find(|&m| is_decorator(m))
+        if ast::can_have_illegal_decorators(node) && !ast::has_ets_decorator(node, &self.compiler_options.ets) && !ast::is_sendable_function_or_type(node) {
+            node.modifier_nodes().iter().copied().find(|&m| is_decorator(m) && self.annotation_for_decorator(m).is_none())
         } else {
             None
         }
@@ -2164,7 +2175,7 @@ impl Checker {
 
     // grammarchecks.go:2014
     pub(crate) fn check_grammar_top_level_elements_for_required_declare_modifier(&mut self, file: P<SourceFile>) -> bool {
-        for &decl in file.statements.nodes() {
+        for &decl in file.statements().nodes() {
             if ast::is_declaration_node(decl) || decl.kind() == Kind::VariableStatement {
                 if self.check_grammar_top_level_element_for_required_declare_modifier(decl) {
                     return true;

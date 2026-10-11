@@ -203,7 +203,7 @@ impl crate::NodeFactory {
                 self.new_property_access_expression(object, None, method_name, NodeFlags::None),
                 None,
                 None,
-                self.new_node_list(arguments_list),
+                self.new_node_list(arguments_list), None,
                 NodeFlags::OptionalChain,
             );
         }
@@ -211,7 +211,7 @@ impl crate::NodeFactory {
             self.new_property_access_expression(object, None, method_name, NodeFlags::None),
             None,
             None,
-            self.new_node_list(arguments_list),
+            self.new_node_list(arguments_list), None,
             NodeFlags::None,
         )
     }
@@ -449,7 +449,7 @@ impl crate::NodeFactory {
             self.new_unscoped_helper_name(name),
             None, /*questionDotToken*/
             None, /*typeArguments*/
-            self.new_node_list(arguments),
+            self.new_node_list(arguments), None,
             NodeFlags::None,
         )
     }
@@ -538,7 +538,7 @@ impl crate::NodeFactory {
             self.new_property_access_expression(self.new_identifier(object), None, self.new_identifier(method), NodeFlags::None),
             None, /*questionDotToken*/
             None, /*typeArguments*/
-            self.new_node_list(arguments),
+            self.new_node_list(arguments), None,
             NodeFlags::None,
         )
     }
@@ -586,7 +586,7 @@ impl crate::NodeFactory {
             self.new_parenthesized_expression(arrow),
             None, /*questionDotToken*/
             None, /*typeArguments*/
-            self.new_node_list(vec![]),
+            self.new_node_list(vec![]), None,
             NodeFlags::None,
         )
     }
@@ -613,7 +613,7 @@ impl crate::NodeFactory {
             self.new_property_access_expression(self.new_identifier("Object"), None, self.new_identifier("assign"), NodeFlags::None),
             None,
             None,
-            self.new_node_list(attributes_segments),
+            self.new_node_list(attributes_segments), None,
             NodeFlags::None,
         )
     }
@@ -650,7 +650,7 @@ impl crate::NodeFactory {
         }
         let prop_names = self.new_array_literal_expression(self.new_node_list(property_names), false);
         prop_names.set_loc(location);
-        self.new_call_expression(self.new_unscoped_helper_name("__rest"), None, None, self.new_node_list(vec![value, prop_names]), NodeFlags::None)
+        self.new_call_expression(self.new_unscoped_helper_name("__rest"), None, None, self.new_node_list(vec![value, prop_names]), None, NodeFlags::None)
     }
 
     // ES2018 Helpers

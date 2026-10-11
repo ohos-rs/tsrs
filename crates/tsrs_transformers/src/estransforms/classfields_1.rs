@@ -1377,7 +1377,7 @@ impl classFieldsTransformer {
                     self.factory().new_property_access_expression(visited_target, call.question_dot_token(), self.factory().new_identifier("call"), NodeFlags::OptionalChain),
                     None, /*questionDotToken*/
                     None, /*typeArguments*/
-                    self.factory().new_node_list(all_args),
+                    self.factory().new_node_list(all_args), node.as_call_expression().ets_body(),
                     node.flags(),
                 ));
             }
@@ -1386,7 +1386,7 @@ impl classFieldsTransformer {
                 self.factory().new_property_access_expression(visited_target, None, self.factory().new_identifier("call"), NodeFlags::None),
                 None, /*questionDotToken*/
                 None, /*typeArguments*/
-                self.factory().new_node_list(all_args),
+                self.factory().new_node_list(all_args), node.as_call_expression().ets_body(),
                 node.flags(),
             ));
         }
@@ -1424,7 +1424,7 @@ impl classFieldsTransformer {
                 self.factory().new_property_access_expression(self.visitor().visit_node(Some(target)).unwrap(), None, self.factory().new_identifier("bind"), NodeFlags::None),
                 None, /*questionDotToken*/
                 None, /*typeArguments*/
-                self.factory().new_node_list(vec![self.visitor().visit_node(Some(this_arg)).unwrap()]),
+                self.factory().new_node_list(vec![self.visitor().visit_node(Some(this_arg)).unwrap()]), None,
                 NodeFlags::None,
             );
             return Some(self.factory().update_tagged_template_expression(

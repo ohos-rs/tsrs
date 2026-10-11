@@ -16,6 +16,7 @@ pub mod diagnostics;
 pub mod handler;
 pub mod module_resolution;
 pub mod methods;
+mod ohsdkplugin;
 pub mod printing;
 pub(crate) mod paramfields;
 pub(crate) mod predecode;

@@ -313,7 +313,7 @@ impl DeclarationTransformer {
         *self.cjs_export_members.borrow_mut() = Vec::new();
         self.cjs_export_assignment_visitor().visit_node(Some(node.as_node())); // collect nested module.exports= assignments
         self.expression_visitor().visit_node(Some(node.as_node())); // collect expando members (requires any export assignment be located in advance)
-        let statements = self.visitor().visit_nodes(Some(node.statements)).unwrap();
+        let statements = self.visitor().visit_nodes(Some(node.statements())).unwrap();
         let mut combined_statements = self.transform_and_replace_late_painted_statements(statements);
         combined_statements = self.append_cjs_exports(combined_statements);
         combined_statements.loc.set(statements.loc.get()); // setTextRange
@@ -860,7 +860,7 @@ impl DeclarationTransformer {
             }
             Some(self.factory().new_import_declaration(
                 None,
-                Some(self.factory().new_import_clause(Kind::Unknown, None, Some(self.factory().new_named_imports(self.factory().new_node_list(import_specifiers))))),
+                Some(self.factory().new_import_clause(Kind::Unknown, false, None, Some(self.factory().new_named_imports(self.factory().new_node_list(import_specifiers))))),
                 specifier,
                 None,
             ))
@@ -944,6 +944,9 @@ impl DeclarationTransformer {
 
     // transform.go:985
     pub(crate) fn transform_property_declaration(&self, input: P<Node>) -> Option<P<Node>> {
+        if ast::is_annotation_property_declaration(input) {
+            return Some(self.factory().update_property_declaration(input, None, input.name().unwrap(), None, self.ensure_type(input, false), input.initializer()));
+        }
         if ast::is_private_identifier(input.name().unwrap()) {
             return None;
         }

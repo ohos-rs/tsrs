@@ -918,7 +918,7 @@ impl SnapshotFS {
 // isRelevantExtension returns true if the given extension is a known TypeScript
 // or JavaScript extension that can affect the project.
 pub(crate) fn is_relevant_extension(ext: &str) -> bool {
-    matches!(ext, ".js" | ".jsx" | ".mjs" | ".cjs" | ".ts" | ".tsx" | ".mts" | ".cts" | ".json")
+    matches!(ext, ".js" | ".jsx" | ".mjs" | ".cjs" | ".ts" | ".tsx" | ".mts" | ".cts" | ".ets" | ".json" | ".json5")
 }
 
 // snapshotfs.go:688
@@ -926,7 +926,7 @@ pub(crate) fn is_relevant_extension(ext: &str) -> bool {
 // lives inside one. Used to preserve node_modules watch deletions, whose package
 // files are read transiently and therefore never tracked in cacheDirectories.
 pub(crate) fn is_node_modules_path(path: &Path) -> bool {
-    path.ends_with("/node_modules") || path.contains("/node_modules/")
+    path.ends_with("/node_modules") || path.contains("/node_modules/") || path.ends_with("/oh_modules") || path.contains("/oh_modules/")
 }
 
 // snapshotfs.go:693

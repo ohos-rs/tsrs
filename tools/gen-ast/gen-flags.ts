@@ -62,6 +62,18 @@ function genFlags(file: string, typeName: string) {
         if (!m) throw new Error(`bad line in ${file}: ${line}`);
         out += `        const ${m[1]} = ${convertExpr(m[2], typeName)};${comment}\n`;
     }
+    if (typeName === "SymbolFlags") {
+        out = out.replace("const All = (1 << 30) - 1;", "const All = ((1 << 30) - 1) | Self::Annotation.bits();");
+        out += "        const Annotation = 1 << 31; // ETS annotation identity, also carries Class\n";
+    }
+    if (typeName === "NodeFlags") {
+        out += `        // ArkTS 1.1 class/call identities; ordinary TS keeps its existing flags.
+        const Struct = 1 << 29;
+        const EtsComponent = 1 << 30;
+        const Annotation = Self::EtsComponent.bits();
+        const KitImport = 1 << 31;
+`;
+    }
     out += "    }\n}\n";
     fs.writeFileSync(path.join(outDir, file + ".rs"), out.replace(/\n\n\n+/g, "\n\n").replace(/\{\n\n/g, "{\n").replace(/\n\n    \}/g, "\n    }"));
 }

@@ -86,6 +86,7 @@ impl Checker {
             self.error(Some(node), &diagnostics::An_expression_of_type_void_cannot_be_tested_for_truthiness, &[]);
             return t;
         }
+        if !self.compiler_options.ets_loader_path.is_empty() { return t; }
         let semantics = self.get_syntactic_truthy_semantics(node);
         if semantics != PredicateSemantics::Sometimes {
             self.error(
@@ -178,7 +179,7 @@ impl Checker {
                 );
             }
         }
-        self.check_nullish_coalesce_operand_left(left);
+        if self.compiler_options.ets_loader_path.is_empty() { self.check_nullish_coalesce_operand_left(left); }
     }
 
     // checker.go:13144
@@ -590,6 +591,7 @@ impl Checker {
                     }
                     self.add_intra_expression_inference_site(inference_context.unwrap(), inference_node, t);
                 }
+                if is_annotation_symbol(t.symbol()) { self.error(Some(member_decl), &diagnostics::Annotation_cannot_be_used_as_a_value, &[]); }
             } else if member_decl.kind() == Kind::SpreadAssignment {
                 if !st.properties_array.is_empty() {
                     let object_literal_type = create_object_literal_type(self, node, &st);

@@ -1195,7 +1195,7 @@ impl esDecoratorTransformer {
             None => f.new_token(Kind::NullKeyword),
         };
 
-        let object_create = f.new_call_expression(f.new_property_access_expression(f.new_identifier("Object"), None, f.new_identifier("create"), NodeFlags::None), None, None, f.new_node_list(vec![super_metadata]), NodeFlags::None);
+        let object_create = f.new_call_expression(f.new_property_access_expression(f.new_identifier("Object"), None, f.new_identifier("create"), NodeFlags::None), None, None, f.new_node_list(vec![super_metadata]), None, NodeFlags::None);
 
         let symbol_check = f.new_logical_and_expression(f.new_type_check(f.new_identifier("Symbol"), "function"), f.new_property_access_expression(f.new_identifier("Symbol"), None, f.new_identifier("metadata"), NodeFlags::None));
 
@@ -1221,7 +1221,7 @@ impl esDecoratorTransformer {
         ];
         let descriptor = f.new_object_literal_expression(f.new_node_list(descriptor_props), false);
 
-        let define_property = f.new_call_expression(f.new_property_access_expression(f.new_identifier("Object"), None, f.new_identifier("defineProperty"), NodeFlags::None), None, None, f.new_node_list(vec![target, symbol_metadata, descriptor]), NodeFlags::None);
+        let define_property = f.new_call_expression(f.new_property_access_expression(f.new_identifier("Object"), None, f.new_identifier("defineProperty"), NodeFlags::None), None, None, f.new_node_list(vec![target, symbol_metadata, descriptor]), None, NodeFlags::None);
 
         let if_statement = f.new_if_statement(value, f.new_expression_statement(define_property), None);
         self.base.emit_context().set_emit_flags(if_statement, EmitFlags::SingleLine);

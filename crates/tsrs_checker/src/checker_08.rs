@@ -190,6 +190,16 @@ impl Checker {
         }
         let import_attributes_type = import_attributes_type.unwrap_or(self.empty_object_type);
 
+        let is_so_file = module_reference.contains(".so");
+        if self.compiler_options.ts_import_so_check != Tristate::True && is_so_file
+            && !(location.and_then(ast::get_source_file_of_node).is_some_and(|file| file.script_kind() == tsrs_core::ScriptKind::ETS)
+                && self.compiler_options.need_do_ark_ts_linter == Tristate::True
+                && self.compiler_options.is_compatible_version != Tristate::True)
+        {
+            if let Some(error_node) = error_node { self.report_unchecked_so_module(error_node, module_reference); }
+            return None;
+        }
+
         let ambient_module = self.try_find_ambient_module(module_reference, true /*withAugmentations*/);
         if ambient_module.is_some() {
             return self.try_resolve_pattern_ambient_module(ambient_module, module_reference, import_attributes_type);
@@ -247,7 +257,14 @@ impl Checker {
         }
 
         let resolved_module = self.program.get_resolved_module(importing_source_file, module_reference, mode);
+        if resolved_module.is_some_and(|r| r.is_not_oh_export) && !tspath::normalize_path(importing_source_file.file_name()).contains("/oh_modules/") {
+            self.error(error_node, &diagnostics::Cannot_find_module_0_This_module_is_not_exported, &[&module_reference]);
+            return None;
+        }
         let is_resolved = resolved_module.is_some_and(|r| r.is_resolved());
+        if resolved_module.is_some_and(|r| r.is_resolved() && matches!(r.extension, tspath::EXTENSION_ETS | tspath::EXTENSION_DETS)) {
+            self.check_ts_import_ets(importing_source_file, context_specifier, error_node);
+        }
 
         let mut resolution_diagnostic: Option<&'static Message> = None;
         if error_node.is_some() && is_resolved {
@@ -446,6 +463,8 @@ impl Checker {
                     } else {
                         self.error(Some(error_node), &diagnostics::Relative_import_paths_need_explicit_file_extensions_in_ECMAScript_imports_when_moduleResolution_is_node16_or_nodenext_Consider_adding_an_extension_to_the_import_path, &[]);
                     }
+                } else if self.compiler_options.ts_import_so_check != Tristate::True && is_so_file {
+                    self.report_unchecked_so_module(error_node, module_reference);
                 } else if resolved_module.is_some_and(|r| !r.alternate_result.is_empty()) {
                     let error_info = self.create_module_not_found_chain(resolved_module.unwrap(), error_node, module_reference, mode, module_reference);
                     self.add_diagnostic(new_diagnostic_chain_for_node(Some(error_info), error_node, Some(module_not_found_error), &[&module_reference]));

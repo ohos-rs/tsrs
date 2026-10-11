@@ -527,7 +527,7 @@ impl Checker {
             globals: Some(self.globals),
             arguments_symbol: Cell::new(Some(self.arguments_symbol)),
             require_symbol: Some(self.require_symbol),
-            lookup: Some(|c, symbols, name, meaning| c.get_symbol(symbols, name, meaning)),
+            lookup: Some(|c, symbols, name, meaning, location| c.get_symbol_with_location(symbols, name, meaning, location)),
             symbol_referenced: Some(|c, symbol, meaning| c.symbol_referenced(symbol, meaning)),
             set_requires_scope_change_cache: Some(|c, node, value| c.set_requires_scope_change_cache(node, value)),
             get_requires_scope_change_cache: Some(|c, node| c.get_requires_scope_change_cache(node)),
@@ -554,7 +554,7 @@ impl Checker {
             globals: Some(self.globals),
             arguments_symbol: Cell::new(Some(self.arguments_symbol)),
             require_symbol: Some(self.require_symbol),
-            lookup: Some(|c, symbols, name, meaning| c.get_suggestion_for_symbol_name_lookup(symbols, name, meaning)),
+            lookup: Some(|c, symbols, name, meaning, location| c.get_suggestion_for_symbol_name_lookup(symbols, name, meaning, location)),
             symbol_referenced: Some(|c, symbol, meaning| c.symbol_referenced(symbol, meaning)),
             set_requires_scope_change_cache: Some(|c, node, value| c.set_requires_scope_change_cache(node, value)),
             get_requires_scope_change_cache: Some(|c, node| c.get_requires_scope_change_cache(node)),
@@ -916,8 +916,8 @@ pub(crate) fn get_primitive_type_alias_suggestions(symbols: Option<P<SymbolTable
 
 impl Checker {
     // checker.go:1816
-    pub(crate) fn get_suggestion_for_symbol_name_lookup(&mut self, symbols: Option<P<SymbolTable>>, name: &str, meaning: SymbolFlags) -> Option<P<Symbol>> {
-        let symbol = self.get_symbol(symbols, name, meaning);
+    pub(crate) fn get_suggestion_for_symbol_name_lookup(&mut self, symbols: Option<P<SymbolTable>>, name: &str, meaning: SymbolFlags, location: Option<P<Node>>) -> Option<P<Symbol>> {
+        let symbol = self.get_symbol_with_location(symbols, name, meaning, location);
         if symbol.is_some() {
             return symbol;
         }
@@ -1108,6 +1108,8 @@ impl Checker {
             let declaration_name = tsrs_scanner::declaration_name_to_string(ast::get_name_of_declaration(declaration));
             if result.flags().intersects(SymbolFlags::BlockScopedVariable) {
                 diagnostic = Some(self.error(Some(error_location), &diagnostics::Block_scoped_variable_0_used_before_its_declaration, &[&declaration_name]));
+            } else if is_annotation_symbol(Some(result)) {
+                diagnostic = Some(self.error(Some(error_location), &diagnostics::Annotation_0_used_before_its_declaration, &[&declaration_name]));
             } else if result.flags().intersects(SymbolFlags::Class) {
                 diagnostic = Some(self.error(Some(error_location), &diagnostics::Class_0_used_before_its_declaration, &[&declaration_name]));
             } else if result.flags().intersects(SymbolFlags::RegularEnum) {

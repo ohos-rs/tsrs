@@ -42,6 +42,7 @@ pub enum ParsingContext {
     ImportOrExportSpecifiers, // Named import clause's import specifier list
     ImportAttributes,        // Import attributes
     JSDocComment,            // Parsing via JSDocParser
+    AnnotationMembers,
     Count,                   // Number of parsing contexts
 }
 
@@ -52,6 +53,7 @@ impl ParsingContext {
         ParsingContext::SwitchClauses,
         ParsingContext::SwitchClauseStatements,
         ParsingContext::TypeMembers,
+        ParsingContext::AnnotationMembers,
         ParsingContext::ClassMembers,
         ParsingContext::EnumMembers,
         ParsingContext::HeritageClauseElement,
@@ -94,6 +96,7 @@ bitflags! {
 }
 
 pub struct Parser {
+    pub(crate) arkui: crate::arkui::ArkUIState,
     pub(crate) scanner: Scanner,
     pub(crate) factory: NodeFactory,
 
@@ -143,7 +146,7 @@ pub struct Parser {
 
 pub(crate) fn new_parser() -> Parser {
     Parser {
-        scanner: Scanner::new(),
+        arkui: Default::default(),        scanner: Scanner::new(),
         factory: NodeFactory::default(),
         opts: SourceFileParseOptions::default(),
         source_text: "",
@@ -325,8 +328,8 @@ impl Parser {
         node.as_source_file().text_index.set(self.source_text_index);
         let node = self.finish_node(node, pos);
         let result = node.as_source_file_p();
-        if !result.statements.nodes().is_empty() {
-            let value = result.statements.nodes()[0].expression();
+        if !result.statements().nodes().is_empty() {
+            let value = result.statements().nodes()[0].expression();
             self.validate_json_value(result, value);
         }
         self.finish_source_file(result, false);
@@ -451,6 +454,7 @@ impl Parser {
             panic!("ScriptKind must be specified when parsing source file: {}", opts.file_name);
         }
 
+        self.arkui = Default::default();
         self.scanner.reset();
         self.opts = opts;
         self.source_text = source_text;
@@ -465,6 +469,7 @@ impl Parser {
         self.scanner.set_text(self.source_text);
         self.scanner.set_on_error(true);
         self.scanner.set_language_variant(self.language_variant);
+        self.scanner.set_open_harmony49(self.script_kind == ScriptKind::ETS || self.opts.open_harmony49);
     }
 
     pub(crate) fn scan_error(&mut self, message: &'static Message, pos: i32, length: i32, args: &[&dyn Display]) {
@@ -513,6 +518,7 @@ impl Parser {
 
 #[derive(Clone, Copy)]
 pub struct ParserState {
+    pub(crate) arkui: crate::arkui::ArkUIState,
     pub(crate) scanner_state: ScannerState,
     pub(crate) context_flags: NodeFlags,
     pub(crate) diagnostics_len: usize,
@@ -531,7 +537,7 @@ pub struct ParserState {
 impl Parser {
     pub(crate) fn mark(&mut self) -> ParserState {
         ParserState {
-            arena: tsrs_core::arena_checkpoint(),
+            arkui: self.arkui,            arena: tsrs_core::arena_checkpoint(),
             scanner_state: self.scanner.mark(),
             context_flags: self.context_flags,
             diagnostics_len: self.diagnostics.len(),
@@ -552,6 +558,7 @@ impl Parser {
 
     /// `rewind` for a caller that keeps nodes it parsed after `mark` (the top-level await reparse).
     pub(crate) fn rewind_keeping_nodes(&mut self, state: ParserState) {
+        self.arkui = state.arkui;
         self.scanner.rewind(state.scanner_state);
         self.token = self.scanner.token();
         self.context_flags = state.context_flags;
@@ -736,7 +743,7 @@ impl Parser {
         if self.possible_await_spans.len() % 2 == 1 {
             panic!("possibleAwaitSpans malformed: odd number of indices, not paired into spans.");
         }
-        let source_statements: &'static [P<Node>] = source_file.statements.nodes();
+        let source_statements: &'static [P<Node>] = source_file.statements().nodes();
         let mut statements: Vec<P<Node>> = Vec::new();
         let saved_parse_diagnostics = std::mem::take(&mut self.diagnostics);
 
@@ -813,7 +820,7 @@ impl Parser {
             }
         }
 
-        let loc = source_file.statements.loc.get();
+        let loc = source_file.statements().loc.get();
         let list = self.new_node_list(loc, &statements);
         let result = {
             // See parse_source_file_worker.
@@ -1084,6 +1091,9 @@ impl Parser {
             ParsingContext::RestProperties | ParsingContext::TypeMembers => {
                 self.parse_error_at_current_token(&diagnostics::Property_or_signature_expected, &[]);
             }
+            ParsingContext::AnnotationMembers => {
+                self.parse_error_at_current_token(&diagnostics::Unexpected_token_An_annotation_property_was_expected, &[]);
+            }
             ParsingContext::ClassMembers => {
                 self.parse_error_at_current_token(&diagnostics::Unexpected_token_A_constructor_method_accessor_or_property_was_expected, &[]);
             }
@@ -1168,6 +1178,7 @@ impl Parser {
                 !(self.token == Kind::SemicolonToken && in_error_recovery) && self.is_start_of_statement()
             }
             ParsingContext::SwitchClauses => self.token == Kind::CaseKeyword || self.token == Kind::DefaultKeyword,
+            ParsingContext::AnnotationMembers => self.look_ahead(Parser::scan_annotation_member_start),
             ParsingContext::TypeMembers => self.look_ahead(Parser::scan_type_member_start),
             ParsingContext::ClassMembers => {
                 // We allow semicolons as class elements (as specified by ES6) as long as we're
@@ -1251,6 +1262,7 @@ impl Parser {
             ParsingContext::BlockStatements
             | ParsingContext::SwitchClauses
             | ParsingContext::TypeMembers
+            | ParsingContext::AnnotationMembers
             | ParsingContext::ClassMembers
             | ParsingContext::EnumMembers
             | ParsingContext::ObjectLiteralMembers
@@ -1363,6 +1375,7 @@ impl Parser {
             }
             return true;
         }
+        if !self.arkui.state_root.is_empty() && (self.arkui.build || self.arkui.styles) { return true; }
         self.report_expected(kind, message)
     }
 
@@ -1427,6 +1440,9 @@ impl Parser {
     }
 
     pub(crate) fn parse_statement(&mut self) -> P<Node> {
+        if self.is_struct_declaration() {
+            return self.parse_class_declaration(self.node_pos(), self.jsdoc_scanner_info(), None);
+        }
         match self.token {
             Kind::SemicolonToken => return self.parse_empty_statement(),
             Kind::OpenBraceToken => return self.parse_block(false /*ignoreMissingOpenBrace*/, None),
@@ -1534,6 +1550,8 @@ impl Parser {
     }
 
     pub(crate) fn parse_declaration_worker(&mut self, pos: i32, jsdoc: JsdocScannerInfo, modifiers: Option<P<ModifierList>>) -> P<Node> {
+        if self.is_annotation_declaration() { return self.parse_annotation_declaration(pos, jsdoc, modifiers); }
+        if self.is_struct_declaration() { return self.parse_class_declaration(pos, jsdoc, modifiers); }
         match self.token {
             Kind::VarKeyword | Kind::LetKeyword | Kind::ConstKeyword | Kind::UsingKeyword => {
                 return self.parse_variable_statement(pos, jsdoc, modifiers);
@@ -2131,6 +2149,7 @@ impl Parser {
     }
 
     pub(crate) fn parse_function_declaration(&mut self, pos: i32, jsdoc: JsdocScannerInfo, modifiers: Option<P<ModifierList>>) -> P<Node> {
+        let saved_ets = self.enter_ets_function(modifiers, "", false);
         self.parse_expected(Kind::FunctionKeyword);
         let asterisk_token = self.parse_optional_token(Kind::AsteriskToken);
         // We don't parse the name here in await context, instead we will report a grammar error in the checker.
@@ -2144,19 +2163,20 @@ impl Parser {
             } else {
                 ParseFlags::None
             });
-        let type_parameters = self.parse_type_parameters();
+        let type_parameters = self.parse_ets_function_type_parameters();
         let save_context_flags = self.context_flags;
         if modifiers.is_some_and(|modifiers| modifiers.modifier_flags.intersects(ModifierFlags::Export)) {
             self.set_context_flags(NodeFlags::AwaitContext, true);
         }
         let parameters = self.parse_parameters(signature_flags);
-        let return_type = self.parse_return_type(Kind::ColonToken, false /*isType*/);
+        let return_type = self.parse_ets_function_return_type();
         let body = self.parse_function_block_or_semicolon(signature_flags, Some(&diagnostics::X_or_expected));
         self.context_flags = save_context_flags;
         let result = self.factory.new_function_declaration(modifiers, asterisk_token, name, type_parameters, Some(parameters), return_type, None /*fullSignature*/, body);
         let result = self.finish_node(result, pos);
         self.with_jsdoc(result, jsdoc);
         self.check_js_syntax(result);
+        self.arkui = saved_ets;
         result
     }
 
@@ -2179,7 +2199,10 @@ impl Parser {
     ) -> P<Node> {
         let save_context_flags = self.context_flags;
         let save_has_await_identifier = self.statement_has_await_identifier;
-        self.parse_expected(Kind::ClassKeyword);
+        let is_struct = self.is_struct_declaration();
+        let saved_struct = self.arkui.struct_;
+        self.arkui.struct_ = is_struct;
+        if is_struct { self.next_token(); } else { self.parse_expected(Kind::ClassKeyword); }
         // We don't parse the name here in await context, instead we will report a grammar error in the checker.
         let name = self.parse_name_of_class_declaration_or_expression();
         let type_parameters = self.parse_type_parameters();
@@ -2190,12 +2213,17 @@ impl Parser {
         {
             self.set_context_flags(NodeFlags::AwaitContext, true /*value*/);
         }
-        let heritage_clauses = self.parse_heritage_clauses(false /*isInterface*/);
-        let members: P<NodeList>;
+        let mut heritage_clauses = self.parse_heritage_clauses(false /*isInterface*/);
+        if is_struct && heritage_clauses.is_none() {
+            let ets = std::sync::Arc::clone(&self.opts.ets);
+            if let Some(base) = ets.custom_component.as_deref().filter(|base| !base.is_empty()) { heritage_clauses = Some(self.ets_struct_heritage(base)); }
+        }
+        let mut members: P<NodeList>;
         if self.parse_expected(Kind::OpenBraceToken) {
             // ClassTail[Yield,Await] : (Modified) See 14.5
             //      ClassHeritage[?Yield,?Await]opt { ClassBody[?Yield,?Await]opt }
             members = self.parse_member_list(ParsingContext::ClassMembers, Parser::parse_class_element);
+            if is_struct { members = self.add_ets_struct_constructor(members, pos); }
             self.parse_expected(Kind::CloseBraceToken);
         } else {
             members = self.create_missing_list();
@@ -2209,6 +2237,8 @@ impl Parser {
         } else {
             self.factory.new_class_expression(modifiers, name, type_parameters, heritage_clauses, members)
         };
+        if is_struct { result.set_flags(result.flags() | NodeFlags::Struct); }
+        self.arkui.struct_ = saved_struct;
         self.set_lazy_owner(members, result);
         self.finish_node(result, pos);
         self.with_jsdoc(result, jsdoc);
@@ -2343,6 +2373,7 @@ impl Parser {
             return result;
         }
         let modifiers = self.parse_modifiers_ex(true /*allowDecorators*/, true /*permitConstAsModifier*/, true /*stopOnStartOfClassStaticBlock*/);
+        let modifiers = self.add_arkui_readonly(modifiers);
         if self.token == Kind::StaticKeyword && self.look_ahead(Parser::next_token_is_open_brace) {
             return self.parse_class_static_block_declaration(pos, jsdoc, modifiers);
         }
@@ -2459,16 +2490,18 @@ impl Parser {
         question_token: Option<P<Node>>,
         diagnostic_message: Option<&'static Message>,
     ) -> P<Node> {
+        let saved_ets = self.enter_ets_function(modifiers, ast::try_get_text_of_property_name(name).as_deref().unwrap_or(""), true);
         let signature_flags = (if asterisk_token.is_some() { ParseFlags::Yield } else { ParseFlags::None })
             | (if modifier_list_has_async(modifiers) { ParseFlags::Await } else { ParseFlags::None });
-        let type_parameters = self.parse_type_parameters();
+        let type_parameters = self.parse_ets_function_type_parameters();
         let parameters = self.parse_parameters(signature_flags);
-        let type_node = self.parse_return_type(Kind::ColonToken, false /*isType*/);
+        let type_node = self.parse_ets_function_return_type();
         let body = self.parse_function_block_or_semicolon(signature_flags, diagnostic_message);
         let result = self.factory.new_method_declaration(modifiers, asterisk_token, name, question_token, type_parameters, Some(parameters), type_node, None /*fullSignature*/, body);
         let result = self.finish_node(result, pos);
         self.with_jsdoc(result, jsdoc);
         self.check_js_syntax(result);
+        self.arkui = saved_ets;
         result
     }
 }
@@ -2798,6 +2831,7 @@ impl Parser {
             identifier = Some(self.parse_identifier());
         }
         let mut phase_modifier = Kind::Unknown;
+        let mut is_lazy = false;
         if identifier.is_some_and(|identifier| identifier.text() == "type")
             && (self.token != Kind::FromKeyword || self.is_identifier() && self.look_ahead(Parser::next_token_is_from_keyword_or_equals_token))
             && (self.is_identifier() || self.token_after_import_definitely_produces_import_declaration())
@@ -2807,6 +2841,13 @@ impl Parser {
             if self.is_identifier() {
                 identifier = Some(self.parse_identifier());
             }
+        } else if identifier.is_some_and(|identifier| identifier.text() == "lazy")
+            && (self.token == Kind::OpenBraceToken || self.is_identifier() && self.look_ahead(|p| {
+                p.next_token();
+                p.token == Kind::FromKeyword || p.token == Kind::CommaToken && p.next_token() == Kind::OpenBraceToken
+            })) {
+            is_lazy = true;
+            identifier = if self.is_identifier() { Some(self.parse_identifier()) } else { None };
         } else if identifier.is_some_and(|identifier| identifier.text() == "defer") {
             let should_parse_as_defer_modifier = if self.token == Kind::FromKeyword {
                 !self.look_ahead(Parser::next_token_is_token_string_literal)
@@ -2830,6 +2871,10 @@ impl Parser {
             }
         }
         let import_clause = self.try_parse_import_clause(identifier, after_import_pos, phase_modifier, false /*skipJSDocLeadingAsterisks*/);
+        let import_clause = import_clause.map(|node| {
+            let clause = node.as_import_clause();
+            self.factory.update_import_clause(node, clause.phase_modifier(), is_lazy, clause.name(), clause.named_bindings)
+        });
         self.statement_has_await_identifier = save_has_await_identifier; // import clause is always parsed in an Await context
         let module_specifier = self.parse_module_specifier();
         let attributes = self.try_parse_import_attributes();
@@ -2951,7 +2996,7 @@ impl Parser {
                 self.scanner.set_skip_jsdoc_leading_asterisks(false);
             }
         }
-        let result = self.factory.new_import_clause(phase_modifier, identifier, named_bindings);
+        let result = self.factory.new_import_clause(phase_modifier, false, identifier, named_bindings);
         let result = self.finish_node(result, pos);
         self.statement_has_await_identifier = save_has_await_identifier;
         result

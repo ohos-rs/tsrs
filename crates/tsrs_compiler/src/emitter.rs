@@ -269,6 +269,16 @@ mod emit {
         }
 
         // emitter.go:192
+        fn contains_arkui_syntax(&self, file: P<SourceFile>) -> bool {
+            if file.script_kind() != tsrs_core::ScriptKind::ETS { return false; }
+            fn visit(node: P<ast::Node>, host: &'static EmitHost) -> bool {
+                ast::is_struct_declaration(node) || ast::is_annotation_declaration(node) || ast::is_ets_component_expression(node)
+                    || ast::is_decorator(node) && (ast::has_ets_decorator(node.parent().unwrap(), &host.options().ets) || host.get_emit_resolver().is_ets_annotation(node))
+                    || node.for_each_child(&mut |child| visit(child, host))
+            }
+            visit(file.as_node(), self.host)
+        }
+
         fn emit_js_file(&mut self, source_file: Option<P<SourceFile>>, js_file_path: &str, source_map_file_path: &str) {
             let options = self.host.options();
 
@@ -281,6 +291,12 @@ mod emit {
 
             if !self.force_emit && (options.no_emit == Tristate::True || self.host.is_emit_blocked(js_file_path)) {
                 self.emit_result.emit_skipped = true;
+                return;
+            }
+
+            if self.contains_arkui_syntax(source_file) {
+                self.emit_result.emit_skipped = true;
+                self.emitter_diagnostics.add(ast::new_diagnostic(Some(source_file), tsrs_core::new_text_range(0, 0), &diagnostics::ArkUI_JavaScript_emit_requires_the_OpenHarmony_SDK_compiler_Use_noEmit_or_emitDeclarationOnly, &[]));
                 return;
             }
 

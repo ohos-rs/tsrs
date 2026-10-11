@@ -67,7 +67,7 @@ fn decode_js_client_encodings() {
 fn decoded_tree_shape() {
     let decoded = decode_source_file(&golden("basic.ts")).unwrap();
     let sf = decoded.root().as_source_file();
-    let stmts = sf.statements.nodes();
+    let stmts = sf.statements().nodes();
     assert_eq!(stmts.iter().map(|s| s.kind()).collect::<Vec<_>>(), [Kind::ImportDeclaration, Kind::FunctionDeclaration, Kind::ExpressionStatement]);
     let f = stmts[1].as_function_declaration();
     assert_eq!(f.name().unwrap().text(), "foo");
@@ -85,7 +85,7 @@ fn decoded_tree_shape() {
 fn decode_non_source_file_node() {
     // A subtree encoding (Go EncodeNode / client encodeNode): the root keeps its own kind.
     let (_region, file) = parse_like_server("x.ts", "type T = { a: string; b?: number[] } | `x${1}`;");
-    let alias = file.statements.nodes()[0];
+    let alias = file.statements().nodes()[0];
     let ty = alias.as_type_alias_declaration().type_().unwrap();
     let (bytes, table) = encode_node(ty, Some(file.get())).unwrap();
     assert_eq!(&bytes[4..24], &[0u8; 20], "non-SourceFile encodings have no hash or parse options");
@@ -162,7 +162,7 @@ fn decode_reencode_matches_pinned_go() {
     names.sort();
     for f in &names {
         let (base, go) = if let Some(b) = f.strip_suffix(".goreencoded.bin") {
-            (b, Ok(std::fs::read(dir.join(f)).unwrap()))
+            (b, Ok(upgrade_reference(&std::fs::read(dir.join(f)).unwrap())))
         } else if let Some(b) = f.strip_suffix(".goreencoded.err") {
             (b, Err(std::fs::read_to_string(dir.join(f)).unwrap()))
         } else {
@@ -172,7 +172,7 @@ fn decode_reencode_matches_pinned_go() {
             .into_iter()
             .find(|p| p.exists())
             .unwrap();
-        let input = std::fs::read(input_path).unwrap();
+        let input = upgrade_reference(&std::fs::read(input_path).unwrap());
         let rust = decode_nodes(&input).map_err(|e| e.to_string()).and_then(|d| {
             let _scope = d.region().enter();
             let root = d.root();

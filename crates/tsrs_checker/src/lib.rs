@@ -20,6 +20,20 @@ pub(crate) use tsrs_modulespecifiers as modulespecifiers;
 pub(crate) use tsrs_modulespecifiers::ModuleSpecifierGenerationHost;
 pub(crate) use tsrs_pseudochecker::{new_pseudo_checker, PseudoChecker, PseudoParameter, PseudoType};
 
+mod oh_sdk_jsdoc;
+pub use oh_sdk_jsdoc::OhSdkUseFact;
+mod oh_sdk_api;
+mod oh_sdk_plugin;
+mod throws;
+mod ets_libs;
+mod arkts_linter;
+mod oh_imports;
+mod annotation;
+pub use annotation::{AnnotationConstant, AnnotationInfo, AnnotationPropertyInfo};
+use annotation::{is_annotation_symbol, AnnotationLinks};
+mod arkui;
+mod ets_styles;
+
 // Data model (checker-foundation).
 pub mod workcensus;
 pub mod checker;
@@ -131,3 +145,5 @@ pub use utilities::{
     is_external_module_symbol, is_in_type_query, is_known_symbol, is_private_identifier_symbol, is_type_any, new_diagnostic_chain_for_node, skip_alias,
     value_to_string,
 };
+
+mod oh_compat;

@@ -143,7 +143,7 @@ impl superAccessState {
             all_args.extend_from_slice(visited_args.nodes());
         }
 
-        let result = f.new_call_expression(call_target, None, None, f.new_node_list(all_args), NodeFlags::None);
+        let result = f.new_call_expression(call_target, None, None, f.new_node_list(all_args), None, NodeFlags::None);
         result.set_loc(call.loc());
         result
     }
@@ -152,7 +152,7 @@ impl superAccessState {
     // utilities.go:158
     pub fn create_super_element_access_in_async_method(&self, argument_expression: P<Node>) -> P<Node> {
         let f = self.factory();
-        let super_index_call = f.new_call_expression(self.super_index_binding.get().unwrap(), None, None, f.new_node_list(vec![argument_expression]), NodeFlags::None);
+        let super_index_call = f.new_call_expression(self.super_index_binding.get().unwrap(), None, None, f.new_node_list(vec![argument_expression]), None, NodeFlags::None);
         if self.has_super_property_assignment.get() {
             return f.new_property_access_expression(super_index_call, None, f.new_identifier("value"), NodeFlags::None);
         }
@@ -205,7 +205,7 @@ impl superAccessState {
             f.new_property_access_expression(f.new_identifier("Object"), None, f.new_identifier("create"), NodeFlags::None),
             None,
             None,
-            f.new_node_list(vec![f.new_keyword_expression(Kind::NullKeyword), descriptors_object]),
+            f.new_node_list(vec![f.new_keyword_expression(Kind::NullKeyword), descriptors_object]), None,
             NodeFlags::None,
         );
 

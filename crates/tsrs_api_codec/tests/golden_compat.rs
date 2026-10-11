@@ -132,7 +132,7 @@ fn bench_encode_large_file() {
     let decode = t.elapsed();
     eprintln!("{} bytes text, {} records, encoded {} bytes: encode {encode:?}, index {index:?}, decode {decode:?}", text.len(), table.len(), bytes.len());
     assert_eq!(built.len(), table.len());
-    assert_eq!(decoded.root().as_source_file().statements.nodes().len(), file.statements.nodes().len());
+    assert_eq!(decoded.root().as_source_file().statements().nodes().len(), file.statements().nodes().len());
 }
 
 /// Go `NodeIndexTable.GetIndex` on freshly parsed+bound files (no prior node ids from a checker): for nodes

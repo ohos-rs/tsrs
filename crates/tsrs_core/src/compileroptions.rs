@@ -15,6 +15,63 @@ pub struct PluginImport {
 // Go `[]string` options are `Option<Vec<String>>` because the Go code distinguishes nil (unset) from empty.
 #[derive(Clone, Debug, Default)]
 pub struct CompilerOptions {
+    pub is_compile_js_har: Tristate,
+    pub module_root_path: String,
+    pub max_flow_depth: f64,
+    pub compile_sdk_version: Option<f64>,
+    pub no_transformed_kit_in_parser: Tristate,
+    pub ts_import_so_check: Tristate,
+    pub need_do_ark_ts_linter: Tristate,
+    pub is_compatible_version: Tristate,
+    pub ts_import_sendable_enable: Tristate,
+    pub emit_node_modules_files: Tristate,
+    pub skip_tsc_oh_module_check: Tristate,
+    pub skip_ark_ts_static_blocks_check: Tristate,
+    pub skip_paths_in_key_for_compilation_settings: Tristate,
+    pub skip_base_url_in_key_for_compilation_settings: Tristate,
+    pub compatible_sdk_version: Option<f64>,
+    pub compatible_sdk_version_stage: String,
+    pub skip_oh_modules_lint: Tristate,
+    pub enable_strict_check_oh_module: Tristate,
+    pub disable_strict_check_paths: Option<Vec<String>>,
+    pub disable_sendable_check_rules: Option<Vec<String>>,
+    pub mix_compile: Tristate,
+    pub strict_checker_only: Tristate,
+    pub oh_runtime_os: String,
+    pub oh_origin_compatible_sdk_version: String,
+    pub oh_project_root_path: String,
+    pub oh_module_path: String,
+    pub oh_all_module_paths: Option<Vec<String>>,
+    pub oh_global_module_paths: Option<Vec<String>>,
+    pub oh_ark_ui_declaration_dirs: Option<Vec<String>>,
+    pub oh_request_permissions: Option<Vec<String>>,
+    pub oh_syscap_intersection: Option<Vec<String>>,
+    pub oh_syscap_union: Option<Vec<String>>,
+    pub oh_device_types: Option<Vec<String>>,
+    pub oh_card_entry_files: Option<Vec<String>>,
+    pub oh_crossplatform: Tristate,
+    pub oh_ignore_crossplatform_check: Tristate,
+    pub oh_compile_mode: String,
+    pub oh_bundle_type: String,
+    pub oh_api_compatibility_check: String,
+    pub oh_sdk_check_plugins: Option<Vec<crate::OhSdkCheckPlugin>>,
+    pub oh_sdk_class_check_plugins: Option<Vec<crate::OhSdkClassCheckPlugin>>,
+    pub oh_sdk_plugin_project_config: Option<serde_json::Map<String, serde_json::Value>>,
+    pub oh_sdk_plugin_executor: Option<std::sync::Arc<dyn crate::OhSdkPluginExecutor>>,
+    pub ets: std::sync::Arc<crate::EtsOptions>,
+    pub ets_annotations_enable: Tristate,
+    pub ets_loader_path: String,
+    pub package_manager_type: String,
+    pub oh_sdk_configs: Option<Vec<crate::OhSdkConfig>>,
+    pub oh_system_modules: Option<Vec<String>>,
+    pub oh_sdk_config_prefixes: Option<Vec<String>>,
+    pub oh_fallback_module_roots: Option<Vec<String>>,
+    pub oh_loader_module_root: String,
+    pub oh_project_path: String,
+    pub oh_external_api_paths: Option<Vec<String>>,
+    pub oh_package_exports: Option<OrderedMap<String, Vec<String>>>,
+
+
     /// API only (`gojson`): `moduleDetection` and `newLine` numbers decoded from the wire with no Rust variant (Go
     /// keeps any int32), by JSON name. The typed field stays at its default (which behaves like Go's fallback) and
     /// the value is echoed back. (`target`, `module`, `jsx` and `moduleResolution` hold any int32 directly.)
@@ -250,7 +307,7 @@ impl CompilerOptions {
     }
 
     pub fn allow_importing_ts_extensions_from(&self, file_name: &str) -> bool {
-        self.get_allow_importing_ts_extensions() || tspath::is_declaration_file_name(file_name)
+        self.uses_oh_module_resolution() || self.get_allow_importing_ts_extensions() || tspath::is_declaration_file_name(file_name)
     }
 
     pub fn get_resolve_json_module(&self) -> bool {
@@ -305,7 +362,7 @@ impl CompilerOptions {
 
         let mut type_roots = Vec::with_capacity(base_dir.matches('/').count());
         tspath::for_each_ancestor_directory(&base_dir, |dir| -> Option<()> {
-            type_roots.push(tspath::combine_paths(dir, &["node_modules", "@types"]));
+            type_roots.push(tspath::combine_paths(dir, &[self.package_manager_modules_directory(), "@types"]));
             None
         });
         (type_roots, false)
@@ -734,5 +791,33 @@ impl JsxEmit {
 impl fmt::Display for JsxEmit {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.string())
+    }
+}
+
+impl CompilerOptions {
+    pub fn uses_oh_module_resolution(&self) -> bool {
+        self.ets_annotations_enable.is_true() || !self.ets_loader_path.is_empty() || self.package_manager_type == "ohpm"
+            || self.oh_sdk_configs.as_ref().is_some_and(|v| !v.is_empty())
+            || self.oh_fallback_module_roots.as_ref().is_some_and(|v| !v.is_empty())
+            || !self.oh_loader_module_root.is_empty()
+            || !self.oh_project_path.is_empty()
+            || self.oh_external_api_paths.as_ref().is_some_and(|v| !v.is_empty())
+            || self.oh_package_exports.as_ref().is_some_and(|v| !v.is_empty())
+    }
+    pub fn package_manager_modules_directory(&self) -> &'static str {
+        if self.package_manager_type == "ohpm" { "oh_modules" } else { "node_modules" }
+    }
+    pub fn package_manager_manifest_name(&self) -> &'static str {
+        if self.package_manager_type == "ohpm" { "oh-package.json5" } else { "package.json" }
+    }
+}
+
+impl CompilerOptions {
+    pub fn is_oh_sdk_module_specifier(&self, module_name: &str) -> bool {
+        let Some((prefix, _)) = module_name.strip_prefix('@').and_then(|n| n.split_once('.')) else { return false; };
+        match self.oh_sdk_config_prefixes.as_deref().filter(|p| !p.is_empty()) {
+            Some(prefixes) => prefixes.iter().any(|p| p.eq_ignore_ascii_case(prefix)),
+            None => ["ohos", "system", "kit", "arkts"].iter().any(|p| p.eq_ignore_ascii_case(prefix)),
+        }
     }
 }

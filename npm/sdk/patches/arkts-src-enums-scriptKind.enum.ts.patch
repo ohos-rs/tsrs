@@ -1,0 +1,9 @@
+# tsrs dynamic ArkTS API and binary AST protocol 10.
+--- a/src/enums/scriptKind.enum.ts
++++ b/src/enums/scriptKind.enum.ts
+@@ -7,4 +7,5 @@
+     TS = 3,
+     TSX = 4,
+     JSON = 6,
++    ETS = 8,
+ }

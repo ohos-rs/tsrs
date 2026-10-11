@@ -42,4 +42,8 @@ export enum NodeFlags {
     IdentifierHasExtendedUnicodeEscape = ContainsThis,
     IdentifierIsInJSDocNamespace = HasAsyncFunctions,
     NestedNamespace = OptionalChain,
+    Struct = 536870912,
+    EtsComponent = 1073741824,
+    Annotation = 1073741824,
+    KitImport = 2147483648,
 }

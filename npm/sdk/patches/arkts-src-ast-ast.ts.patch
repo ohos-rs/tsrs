@@ -1,0 +1,55 @@
+--- a/src/ast/ast.ts
++++ b/src/ast/ast.ts
+@@ -88,6 +88,7 @@
+ export interface Node extends ReadonlyTextRange {
+     readonly kind: SyntaxKind;
+     readonly flags: NodeFlags;
++    readonly isVirtual?: boolean;
+     readonly parent: Node;
+     readonly jsDoc?: readonly Node[] | undefined;
+     childrenIter<TNext = void>(): Generator<Node, TNext | undefined, TNext>;
+@@ -149,6 +150,7 @@
+     readonly path: Path;
+     readonly languageVariant: LanguageVariant;
+     readonly scriptKind: ScriptKind;
++    readonly arktsParseOptions?: ArkTSParseOptions;
+     readonly isDeclarationFile: boolean;
+     readonly referencedFiles: readonly FileReference[];
+     readonly typeReferenceDirectives: readonly FileReference[];
+@@ -229,3 +231,36 @@
+ export interface ObjectAssignmentInitializer extends ShorthandPropertyAssignment {
+     readonly objectAssignmentInitializer: Expression;
+ }
++
++/** Dynamic ArkTS parser configuration. Undefined tables retain upstream defaults. */
++export interface EtsOptions {
++    render?: { method?: readonly string[] | null; decorator?: readonly string[] | null; };
++    components?: readonly string[] | null;
++    libs?: readonly string[] | null;
++    extend?: { decorator?: readonly string[] | null; components?: readonly EtsComponentDeclaration[] | null; };
++    styles?: { decorator?: string | null; component?: EtsComponentDeclaration | null; property?: string | null; };
++    concurrent?: { decorator?: string | null; };
++    customComponent?: string | null;
++    propertyDecorators?: readonly { name: string; needInitialization: boolean; }[] | null;
++    emitDecorators?: readonly { name: string; emitParameters: boolean; }[] | null;
++    syntaxComponents?: {
++        paramsUICallback?: readonly string[] | null;
++        attrUICallback?: readonly { name: string; attributes?: readonly string[] | null; }[] | null;
++    };
++}
++export interface EtsComponentDeclaration {
++    name: string;
++    type: string;
++    instance: string;
++}
++export interface ArkTSParseOptions {
++    ets: EtsOptions;
++    etsAnnotationsEnable: boolean;
++    openHarmony49: boolean;
++    etsLoaderPath: string;
++    noTransformedKitInParser: boolean;
++    /** Snapshot identity of the Kit config inputs; opaque to clients. */
++    kitConfigKey: string;
++    /** UTF-16 offsets in SourceFile.text, as with other Node API ranges. */
++    markedKitImportRanges: readonly (readonly [number, number])[];
++}

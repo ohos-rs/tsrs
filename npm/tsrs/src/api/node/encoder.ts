@@ -14,6 +14,7 @@ import {
 import { MsgpackWriter } from "./msgpack.ts";
 import {
     childProperties,
+    HEADER_OFFSET_ETS_OPTIONS,
     HEADER_OFFSET_EXTENDED_DATA,
     HEADER_OFFSET_METADATA,
     HEADER_OFFSET_NODES,
@@ -204,11 +205,11 @@ export function encodeNode(node: Node): Uint8Array {
     const extendedDataValues: number[] = [];
     const structuredWriter = new MsgpackWriter();
 
-    // We'll build an array of uint32 values for the nodes section, 7 per node
+    // We'll build an array of uint32 values for the nodes section, 8 per node
     const nodeValues: number[] = [];
 
     // Nil node (index 0)
-    nodeValues.push(0, 0, 0, 0, 0, 0, 0);
+    nodeValues.push(0, 0, 0, 0, 0, 0, 0, 0);
 
     let nodeCount = 0;
     let parentIndex = 0;
@@ -232,6 +233,7 @@ export function encodeNode(node: Node): Uint8Array {
             parentIndex,
             data,
             node.flags,
+            node.isVirtual ? 1 : 0,
         );
 
         const saveParentIndex = parentIndex;
@@ -265,6 +267,7 @@ export function encodeNode(node: Node): Uint8Array {
             parentIndex,
             list.length, // data for NodeList is its length
             list.hasTrailingComma ? 1 : 0, // NodeLists have no AST flags; this slot is reused for hasTrailingComma
+            0,
         );
 
         const saveParentIndex = parentIndex;
@@ -310,6 +313,7 @@ export function encodeNode(node: Node): Uint8Array {
         0,
         rootData,
         node.flags,
+        node.isVirtual ? 1 : 0,
     );
 
     const saveParent = parentIndex;
@@ -327,6 +331,9 @@ export function encodeNode(node: Node): Uint8Array {
 
     // Encode structured data section
     const structuredDataBytes = structuredWriter.finish();
+
+    const etsOptions = node.kind === SyntaxKind.SourceFile ? (node as SourceFile).arktsParseOptions : undefined;
+    const etsOptionsIndex = etsOptions ? strs.add(JSON.stringify(etsOptions)) : 0xFFFFFFFF;
 
     // Encode string table
     const strsBytes = strs.encode();
@@ -350,6 +357,7 @@ export function encodeNode(node: Node): Uint8Array {
     const headerView = new DataView(header.buffer);
     const metadata = PROTOCOL_VERSION << 24;
     headerView.setUint32(HEADER_OFFSET_METADATA, metadata, true);
+    headerView.setUint32(HEADER_OFFSET_ETS_OPTIONS, etsOptionsIndex, true);
     // bytes 4-19: hash (zero for non-SourceFile, we don't have access to xxh3 here)
     // byte 20-23: parse options (zero for non-SourceFile)
     headerView.setUint32(HEADER_OFFSET_STRING_TABLE_OFFSETS, offsetStringTableOffsets, true);

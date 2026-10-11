@@ -70,6 +70,9 @@ fn normalize(v: &Value, ids: &mut Ids, in_symbol: bool) -> Value {
                     (key, Value::Array(a)) if ID_ARRAY_KEYS.contains(&key) => {
                         Value::Array(a.iter().map(|x| if let Value::Number(n) = x { ids.num(*n) } else { x.clone() }).collect())
                     }
+                    // Protocol 10 adds the ArkTS parser identity after a colon;
+                    // the pinned plain-TS oracle has only the module bitmask.
+                    ("parseOptionsKey", Value::String(s)) if s.ends_with(':') => Value::String(s.trim_end_matches(':').to_string()),
                     ("file", Value::String(s)) | ("nodeId", Value::String(s)) => ids.str(s),
                     // Escaped names of well-known-symbol members embed the unique ES symbol's
                     // process-wide symbol id: `__@iterator@1360`.
@@ -185,7 +188,7 @@ fn session() -> S {
 pub(super) fn session_with(extra: &[(&str, &str)], configs: &[&str]) -> S {
     let mut files = vec![("/p/tsconfig.json", TSCONFIG), ("/p/main.ts", MAIN), ("/p/types.d.ts", TYPES), ("/p/other.ts", OTHER)];
     files.extend_from_slice(extra);
-    let fs: Arc<dyn FS> = Arc::new(bundled::wrap_fs(vfstest::from_map(files.iter().map(|(k, v)| (k.to_string(), v.to_string())), false)));
+    let fs = pinned_oracle_fs(&files);
     let session = Session::new(SessionOptions::new("/".to_string(), bundled::lib_path(), fs, false));
     let mut s = S { session, snapshot: 0.0, project: String::new(), lines: Vec::new() };
     let open = Value::Array(configs.iter().map(|c| Value::String(c.to_string())).collect());
@@ -454,7 +457,7 @@ fn type_flags_and_tuple_targets_match_pinned_go() {
         ("/m/tsconfig.json", include_str!("testdata/go_probe/flags/m/tsconfig.json")),
         ("/m/models.ts", include_str!("testdata/go_probe/flags/m/models.ts")),
     ];
-    let fs: Arc<dyn FS> = Arc::new(bundled::wrap_fs(vfstest::from_map(files.iter().map(|(k, v)| (k.to_string(), v.to_string())), false)));
+    let fs = pinned_oracle_fs(&files);
     let session = Session::new(SessionOptions::new("/".to_string(), bundled::lib_path(), fs, false));
     let s = S { session: session.clone(), snapshot: 0.0, project: String::new(), lines: Vec::new() };
     let mut snaps = HashMap::new();
@@ -523,4 +526,29 @@ fn type_flags_and_tuple_targets_match_pinned_go() {
         }
     }
     assert!(diffs.is_empty(), "{} of {} differ from pinned Go:\n{}", diffs.len(), golden.len(), diffs.join("\n"));
+}
+
+// The ordinary TS oracle predates OH's ESObject alias. Keep its library input
+// identical, rather than weakening node-handle or content-hash comparisons.
+fn pinned_oracle_fs(files: &[(&str, &str)]) -> Arc<dyn FS> {
+    let inner = bundled::wrap_fs(vfstest::from_map(files.iter().map(|(path, text)| (path.to_string(), text.to_string())), false));
+    Arc::new(PinnedOracleFS { inner: Box::new(inner) })
+}
+
+struct PinnedOracleFS { inner: Box<dyn FS> }
+impl FS for PinnedOracleFS {
+    fn read_file(&self, path: &str) -> Option<String> {
+        let text = self.inner.read_file(path)?;
+        Some(if path == "bundled:///libs/lib.es5.d.ts" { text.replace("type ESObject = any;\n\n", "") } else { text })
+    }
+    fn use_case_sensitive_file_names(&self) -> bool { self.inner.use_case_sensitive_file_names() }
+    fn file_exists(&self, path: &str) -> bool { self.inner.file_exists(path) }
+    fn write_file(&self, path: &str, text: &str) -> Result<(), String> { self.inner.write_file(path, text) }
+    fn append_file(&self, path: &str, text: &str) -> Result<(), String> { self.inner.append_file(path, text) }
+    fn remove(&self, path: &str) -> Result<(), String> { self.inner.remove(path) }
+    fn chtimes(&self, path: &str, a: std::time::SystemTime, m: std::time::SystemTime) -> Result<(), String> { self.inner.chtimes(path, a, m) }
+    fn directory_exists(&self, path: &str) -> bool { self.inner.directory_exists(path) }
+    fn get_accessible_entries(&self, path: &str) -> tsrs_vfs::Entries { self.inner.get_accessible_entries(path) }
+    fn stat(&self, path: &str) -> Option<tsrs_vfs::FileInfo> { self.inner.stat(path) }
+    fn realpath(&self, path: &str) -> String { self.inner.realpath(path) }
 }

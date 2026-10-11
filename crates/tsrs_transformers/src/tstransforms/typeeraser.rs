@@ -285,7 +285,7 @@ impl TypeEraserTransformer {
 
             Kind::CallExpression => {
                 let n = node.as_call_expression();
-                Some(f.update_call_expression(node, v.visit_node(node.expression()).unwrap(), n.question_dot_token(), None, v.visit_nodes(Some(n.arguments)).unwrap(), node.flags()))
+                Some(f.update_call_expression(node, v.visit_node(node.expression()).unwrap(), n.question_dot_token(), None, v.visit_nodes(Some(n.arguments)).unwrap(), v.visit_node(n.ets_body()), node.flags()))
             }
 
             Kind::NewExpression => {
@@ -361,7 +361,7 @@ impl TypeEraserTransformer {
                     // all import bindings were elided
                     return None;
                 }
-                Some(f.update_import_clause(node, n.phase_modifier(), name, named_bindings))
+                Some(f.update_import_clause(node, n.phase_modifier(), node.as_import_clause().is_lazy, name, named_bindings))
             }
 
             Kind::NamedImports => {

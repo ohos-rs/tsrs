@@ -32,7 +32,7 @@ pub(crate) fn delete_declaration(t: &mut Tracker, deleted_nodes_in_lists: &mut O
         Kind::ImportDeclaration | Kind::ImportEqualsDeclaration => {
             let imports = source_file.imports();
             let is_first_import = !imports.is_empty() && Some(node) == imports[0].parent()
-                || Some(node) == source_file.statements.nodes().iter().copied().find(|&s| ast::is_any_import_syntax(s));
+                || Some(node) == source_file.statements().nodes().iter().copied().find(|&s| ast::is_any_import_syntax(s));
             // For first import, leave header comment in place, otherwise only delete JSDoc comments
             let mut leading_trivia = LeadingTriviaOption::StartLine;
             if is_first_import {

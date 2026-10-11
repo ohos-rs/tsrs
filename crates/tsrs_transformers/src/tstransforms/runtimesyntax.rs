@@ -371,7 +371,7 @@ impl RuntimeSyntaxTransformer {
         let enum_param = f.new_parameter_declaration(None, None, enum_param_name, None, None, None);
         let enum_body = self.transform_enum_body(node);
         let enum_func = f.new_function_expression(None, None, None, None, Some(f.new_node_list(vec![enum_param])), None, None, Some(enum_body));
-        let enum_call = f.new_call_expression(f.new_parenthesized_expression(enum_func), None, None, f.new_node_list(vec![enum_arg]), NodeFlags::None);
+        let enum_call = f.new_call_expression(f.new_parenthesized_expression(enum_func), None, None, f.new_node_list(vec![enum_arg]), None, NodeFlags::None);
         let enum_statement = f.new_expression_statement(enum_call);
         emit_context.set_original(enum_statement, node);
         emit_context.assign_comment_and_source_map_ranges(enum_statement, node);
@@ -507,7 +507,7 @@ impl RuntimeSyntaxTransformer {
         let module_param = f.new_parameter_declaration(None, None, module_param_name, None, None, None);
         let module_body = self.transform_module_body(node, self.get_namespace_container_name(node));
         let module_func = f.new_function_expression(None, None, None, None, Some(f.new_node_list(vec![module_param])), None, None, Some(module_body));
-        let module_call = f.new_call_expression(f.new_parenthesized_expression(module_func), None, None, f.new_node_list(vec![module_arg]), NodeFlags::None);
+        let module_call = f.new_call_expression(f.new_parenthesized_expression(module_func), None, None, f.new_node_list(vec![module_arg]), None, NodeFlags::None);
         let module_statement = f.new_expression_statement(module_call);
         emit_context.set_original(module_statement, node);
         emit_context.assign_comment_and_source_map_ranges(module_statement, node);

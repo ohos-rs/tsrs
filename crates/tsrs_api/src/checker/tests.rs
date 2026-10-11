@@ -852,7 +852,7 @@ fn core_session_hook_maps_errors_and_encodings() {
         default_library_path: bundled::lib_path(),
         fs,
         binary_responses: false,
-        run_external_code: false,
+        run_external_code: false, sdk_plugin_callbacks: false,
     });
     let err = session.handle_request("getTypeAtPosition", br#"{"snapshot":1,"project":"/p/tsconfig.json","file":"/p/a.ts","position":0}"#).unwrap_err();
     assert_eq!(err.kind, ErrorKind::ClientError, "{err}");

@@ -7,6 +7,7 @@
 // borrow snapshots, node handles, source-file descriptors and the AST encoder for one request;
 // `SessionHost` adapts core's `Session` to it.
 
+mod arkts;
 mod dispatch;
 mod handlers_ls;
 mod handlers_symbols;

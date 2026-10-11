@@ -11,6 +11,7 @@ pub enum ScriptKind {
     // Value 5 is reserved (formerly ScriptKindExternal).
     JSON = 6,
     // Value 7 is reserved (formerly ScriptKindDeferred).
+    ETS = 8,
 }
 
 impl ScriptKind {
@@ -22,6 +23,7 @@ impl ScriptKind {
             ScriptKind::TS => "ScriptKindTS",
             ScriptKind::TSX => "ScriptKindTSX",
             ScriptKind::JSON => "ScriptKindJSON",
+            ScriptKind::ETS => "ScriptKindETS",
         }
     }
 }

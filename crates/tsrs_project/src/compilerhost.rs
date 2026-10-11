@@ -31,6 +31,7 @@ pub(crate) struct hostBuilder {
 // compilerhost.go:21 (Go's configFilePath field is never read)
 pub(crate) struct compilerHost {
     current_directory: String,
+    kit_imports: Arc<tsrs_compiler::KitImportProcessor>,
     pub(crate) session_options: Arc<SessionOptions>,
 
     pub(crate) source_fs: Arc<sourceFS>,
@@ -46,6 +47,7 @@ pub(crate) struct compilerHost {
 pub(crate) fn new_compiler_host(current_directory: &str, project: &Project, builder: &ProjectCollectionBuilder, logger: LogTree) -> Arc<compilerHost> {
     Arc::new(compilerHost {
         current_directory: current_directory.to_string(),
+        kit_imports: Arc::default(),
         session_options: Arc::clone(&builder.session_options),
 
         source_fs: Arc::new(new_source_fs(true, Arc::<crate::snapshotfs::snapshotFSBuilder>::clone(&builder.fs), Arc::clone(&builder.to_path))),
@@ -135,12 +137,34 @@ impl CompilerHost for compilerHost {
     // compilerhost.go:103
     // GetSourceFile implements compiler.CompilerHost. Files are cached in parseCache
     // and acquired immediately for the in-progress program.
-    fn get_source_file(&self, opts: SourceFileParseOptions) -> Option<P<SourceFile>> {
+    fn get_source_file(&self, mut opts: SourceFileParseOptions) -> Option<P<SourceFile>> {
         self.ensure_alive();
         let fh = self.source_fs.get_file_by_path(&opts.file_name, &opts.path)?;
+        // A reused file's options describe the previous snapshot's Kit inputs.
+        opts.kit_config_key.clear();
         let key = new_parse_cache_key(opts, fh.hash(), fh.kind());
         let (cache, journal) = self.builder_parse_cache_journal();
-        Some(journal.acquire(&cache, key, fh))
+        let file = journal.acquire(&cache, key.clone(), Arc::clone(&fh).into());
+        let mut hash = xxhash_rust::xxh3::Xxh3::new();
+        let needs_transform = tsrs_compiler::KitImportProcessor::configuration_inputs(file, self.fs(), |path, text| {
+            hash.update(&(path.len() as u64).to_le_bytes());
+            hash.update(path.as_bytes());
+            hash.update(&[u8::from(text.is_some())]);
+            if let Some(text) = text {
+                hash.update(&(text.len() as u64).to_le_bytes());
+                hash.update(text.as_bytes());
+            }
+        });
+        if !needs_transform { return Some(file); }
+        let mut transformed_key = key.clone();
+        transformed_key.source_file_parse_options.kit_config_key = format!("{:032x}", hash.digest128());
+        let input = crate::parsecache::ParseCacheInput {
+            file: fh,
+            kit_imports: Some((Arc::clone(&self.kit_imports), Arc::clone(&self.source_fs) as Arc<dyn FS>)),
+        };
+        let transformed = journal.acquire(&cache, transformed_key, input);
+        journal.deref(&cache, &key);
+        Some(transformed)
     }
 
     // compilerhost.go:113. Phase 1 of the content-mapper port (notes/contentmappers.md): the project system's builder

@@ -72,5 +72,10 @@ bitflags! {
 
         // The following flag repurposes other NodeFlags for ModuleDeclaration nodes
         const NestedNamespace = Self::OptionalChain.bits(); // If ModuleDeclaration is a nested namespace (e.g. inner part of A.B.C)
+        // ArkTS 1.1 class/call identities; ordinary TS keeps its existing flags.
+        const Struct = 1 << 29;
+        const EtsComponent = 1 << 30;
+        const Annotation = Self::EtsComponent.bits();
+        const KitImport = 1 << 31;
     }
 }

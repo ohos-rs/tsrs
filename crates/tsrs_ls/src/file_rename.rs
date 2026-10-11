@@ -402,7 +402,7 @@ fn create_string_text_range(source_file: P<SourceFile>, node: P<Node>) -> TextRa
 // file_rename.go:370
 fn get_ts_config_object_literal_expression(ts_config_source_file: Option<P<SourceFile>>) -> Option<P<Node>> {
     let ts_config_source_file = ts_config_source_file?;
-    let statements = ts_config_source_file.statements.nodes();
+    let statements = ts_config_source_file.statements().nodes();
     if !statements.is_empty() {
         let expression = statements[0].expression()?;
         if ast::is_object_literal_expression(expression) {

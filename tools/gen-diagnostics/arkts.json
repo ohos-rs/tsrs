@@ -1,0 +1,378 @@
+[
+  [
+    "Should_not_add_return_type_to_the_function_that_is_annotated_by_Extend",
+    28000,
+    "Error",
+    "Should_not_add_return_type_to_the_function_that_is_annotated_by_Extend_28000",
+    "Should not add return type to the function that is annotated by Extend.",
+    []
+  ],
+  [
+    "A_struct_declaration_without_the_default_modifier_must_have_a_name",
+    28002,
+    "Error",
+    "A_struct_declaration_without_the_default_modifier_must_have_a_name_28002",
+    "A struct declaration without the 'default' modifier must have a name.",
+    []
+  ],
+  [
+    "Should_not_add_return_type_to_the_function_that_is_annotated_by_Styles",
+    28003,
+    "Error",
+    "Should_not_add_return_type_to_the_function_that_is_annotated_by_Styles_28003",
+    "Should not add return type to the function that is annotated by Styles.",
+    []
+  ],
+  [
+    "Unable_to_resolve_signature_of_function_decorator_when_decorators_are_not_valid",
+    28004,
+    "Error",
+    "Unable_to_resolve_signature_of_function_decorator_when_decorators_are_not_valid_28004",
+    "Unable to resolve signature of function decorator when decorators are not valid.",
+    []
+  ],
+  [
+    "The_statement_must_be_written_use_the_function_0_under_the_if_condition",
+    28005,
+    "Warning",
+    "The_statement_must_be_written_use_the_function_0_under_the_if_condition_28005",
+    "The statement must be written use the function '{0}' under the if condition.",
+    []
+  ],
+  [
+    "The_struct_name_cannot_contain_reserved_tag_name_Colon_0",
+    28006,
+    "Error",
+    "The_struct_name_cannot_contain_reserved_tag_name_Colon_0_28006",
+    "The struct name cannot contain reserved tag name: '{0}'.",
+    []
+  ],
+  [
+    "This_API_has_been_Special_Markings_exercise_caution_when_using_this_API",
+    28007,
+    "Warning",
+    "This_API_has_been_Special_Markings_exercise_caution_when_using_this_API_28007",
+    "This API has been Special Markings. exercise caution when using this API.",
+    []
+  ],
+  [
+    "Looking_up_in_oh_modules_folder_initial_location_0",
+    28008,
+    "Message",
+    "Looking_up_in_oh_modules_folder_initial_location_0_28008",
+    "Looking up in 'oh_modules' folder, initial location '{0}'.",
+    []
+  ],
+  [
+    "Containing_file_is_not_specified_and_root_directory_cannot_be_determined_skipping_lookup_in_oh_modules_folder",
+    28009,
+    "Message",
+    "Containing_file_is_not_specified_and_root_directory_cannot_be_determined_skipping_lookup_in_oh_modul_28009",
+    "Containing file is not specified and root directory cannot be determined, skipping lookup in 'oh_modules' folder.",
+    []
+  ],
+  [
+    "Loading_module_0_from_oh_modules_folder_target_file_type_1",
+    28010,
+    "Message",
+    "Loading_module_0_from_oh_modules_folder_target_file_type_1_28010",
+    "Loading module '{0}' from 'oh_modules' folder, target file type '{1}'.",
+    []
+  ],
+  [
+    "Found_oh_package_json5_at_0",
+    28011,
+    "Message",
+    "Found_oh_package_json5_at_0_28011",
+    "Found 'oh-package.json5' at '{0}'.",
+    []
+  ],
+  [
+    "X_oh_package_json5_does_not_have_a_0_field",
+    28012,
+    "Message",
+    "oh_package_json5_does_not_have_a_0_field_28012",
+    "'oh-package.json5' does not have a '{0}' field.",
+    []
+  ],
+  [
+    "X_oh_package_json5_has_0_field_1_that_references_2",
+    28013,
+    "Message",
+    "oh_package_json5_has_0_field_1_that_references_2_28013",
+    "'oh-package.json5' has '{0}' field '{1}' that references '{2}'.",
+    []
+  ],
+  [
+    "Currently_module_for_0_is_not_verified_If_you_re_importing_napi_its_verification_will_be_enabled_in_later_SDK_version_Please_make_sure_the_corresponding_d_ts_file_is_provided_and_the_napis_are_correctly_declared",
+    28014,
+    "Warning",
+    "Currently_module_for_0_is_not_verified_If_you_re_importing_napi_its_verification_will_be_enabled_in__28014",
+    "Currently module for '{0}' is not verified. If you're importing napi, its verification will be enabled in later SDK version. Please make sure the corresponding .d.ts file is provided and the napis are correctly declared.",
+    []
+  ],
+  [
+    "UI_component_0_cannot_be_used_in_this_place",
+    28015,
+    "Error",
+    "UI_component_0_cannot_be_used_in_this_place_28015",
+    "UI component '{0}' cannot be used in this place.",
+    []
+  ],
+  [
+    "Importing_ArkTS_files_in_JS_and_TS_files_is_about_to_be_forbidden",
+    28016,
+    "Warning",
+    "Importing_ArkTS_files_in_JS_and_TS_files_is_about_to_be_forbidden_28016",
+    "Importing ArkTS files in JS and TS files is about to be forbidden.",
+    []
+  ],
+  [
+    "Importing_ArkTS_files_in_JS_and_TS_files_is_forbidden",
+    28017,
+    "Error",
+    "Importing_ArkTS_files_in_JS_and_TS_files_is_forbidden_28017",
+    "Importing ArkTS files in JS and TS files is forbidden.",
+    []
+  ],
+  [
+    "Unexpected_token_An_annotation_property_was_expected",
+    28018,
+    "Error",
+    "Unexpected_token_An_annotation_property_was_expected_28018",
+    "Unexpected token. An annotation property was expected.",
+    []
+  ],
+  [
+    "When_annotation_0_is_applied_all_fields_without_default_values_must_be_provided",
+    28019,
+    "Error",
+    "When_annotation_0_is_applied_all_fields_without_default_values_must_be_provided_28019",
+    "When annotation '{0}' is applied, all fields without default values must be provided.",
+    []
+  ],
+  [
+    "Only_an_object_literal_have_to_be_provided_as_annotation_parameters_list_got_Colon_0",
+    28020,
+    "Error",
+    "Only_an_object_literal_have_to_be_provided_as_annotation_parameters_list_got_Colon_0_28020",
+    "Only an object literal have to be provided as annotation parameters list, got: '{0}'.",
+    []
+  ],
+  [
+    "Annotation_have_to_be_applied_only_for_non_abstract_class_declarations_and_method_declarations_in_non_abstract_classes_got_Colon_0",
+    28021,
+    "Error",
+    "Annotation_have_to_be_applied_only_for_non_abstract_class_declarations_and_method_declarations_in_no_28021",
+    "Annotation have to be applied only for non-abstract class declarations and method declarations in non-abstract classes, got: '{0}'.",
+    []
+  ],
+  [
+    "Annotation_have_to_be_applied_for_classes_or_methods_in_classes_only_got_Colon_0",
+    28022,
+    "Error",
+    "Annotation_have_to_be_applied_for_classes_or_methods_in_classes_only_got_Colon_0_28022",
+    "Annotation have to be applied for classes or methods in classes only, got: '{0}'.",
+    []
+  ],
+  [
+    "Repeatable_annotation_are_not_supported_got_Colon_0",
+    28023,
+    "Error",
+    "Repeatable_annotation_are_not_supported_got_Colon_0_28023",
+    "Repeatable annotation are not supported, got: '{0}'.",
+    []
+  ],
+  [
+    "Annotation_must_be_defined_at_top_level_only",
+    28024,
+    "Error",
+    "Annotation_must_be_defined_at_top_level_only_28024",
+    "Annotation must be defined at top-level only.",
+    []
+  ],
+  [
+    "Annotation_name_cannot_be_0",
+    28025,
+    "Error",
+    "Annotation_name_cannot_be_0_28025",
+    "Annotation name cannot be '{0}'.",
+    []
+  ],
+  [
+    "Annotation_cannot_be_applied_for_annotation_declaration",
+    28026,
+    "Error",
+    "Annotation_cannot_be_applied_for_annotation_declaration_28026",
+    "Annotation cannot be applied for annotation declaration.",
+    []
+  ],
+  [
+    "Annotation_cannot_be_used_as_type_or_variable_or_function_or_method",
+    28027,
+    "Error",
+    "Annotation_cannot_be_used_as_type_or_variable_or_function_or_method_28027",
+    "Annotation cannot be used as type or variable or function or method.",
+    []
+  ],
+  [
+    "Annotation_cannot_be_used_as_a_type",
+    28028,
+    "Error",
+    "Annotation_cannot_be_used_as_a_type_28028",
+    "Annotation cannot be used as a type.",
+    []
+  ],
+  [
+    "Annotation_cannot_be_used_as_a_value",
+    28029,
+    "Error",
+    "Annotation_cannot_be_used_as_a_value_28029",
+    "Annotation cannot be used as a value.",
+    []
+  ],
+  [
+    "Annotation_cannot_be_renamed_in_import_or_export",
+    28030,
+    "Error",
+    "Annotation_cannot_be_renamed_in_import_or_export_28030",
+    "Annotation cannot be renamed in import or export.",
+    []
+  ],
+  [
+    "Annotation_cannot_be_exported_as_default",
+    28031,
+    "Error",
+    "Annotation_cannot_be_exported_as_default_28031",
+    "Annotation cannot be exported as default.",
+    []
+  ],
+  [
+    "An_annotation_property_must_have_a_type_or_Slashand_an_initializer",
+    28032,
+    "Error",
+    "An_annotation_property_must_have_a_type_or_Slashand_an_initializer_28032",
+    "An annotation property must have a type or/and an initializer.",
+    []
+  ],
+  [
+    "A_type_of_annotation_property_have_to_be_number_boolean_string_const_enumeration_types_or_array_of_above_types_got_Colon_0",
+    28033,
+    "Error",
+    "A_type_of_annotation_property_have_to_be_number_boolean_string_const_enumeration_types_or_array_of_a_28033",
+    "A type of annotation property have to be number, boolean, string, const enumeration types or array of above types, got: '{0}'.",
+    []
+  ],
+  [
+    "Default_value_of_annotation_property_can_be_a_constant_expression_got_Colon_0",
+    28034,
+    "Error",
+    "Default_value_of_annotation_property_can_be_a_constant_expression_got_Colon_0_28034",
+    "Default value of annotation property can be a constant expression, got: '{0}'.",
+    []
+  ],
+  [
+    "All_members_of_object_literal_which_is_provided_as_annotation_parameters_list_have_to_be_constant_expressions_got_Colon_0",
+    28035,
+    "Error",
+    "All_members_of_object_literal_which_is_provided_as_annotation_parameters_list_have_to_be_constant_ex_28035",
+    "All members of object literal which is provided as annotation parameters list, have to be constant expressions, got: '{0}'.",
+    []
+  ],
+  [
+    "Annotation_0_used_before_its_declaration",
+    28036,
+    "Error",
+    "Annotation_0_used_before_its_declaration_28036",
+    "Annotation '{0}' used before its declaration.",
+    []
+  ],
+  [
+    "In_annotation_declaration_any_symbols_between_and_interface_are_forbidden",
+    28037,
+    "Error",
+    "In_annotation_declaration_any_symbols_between_and_interface_are_forbidden_28037",
+    "In annotation declaration any symbols between '@' and 'interface' are forbidden.",
+    []
+  ],
+  [
+    "Enable_support_of_ETS_annotations",
+    28038,
+    "Message",
+    "Enable_support_of_ETS_annotations_28038",
+    "Enable support of ETS annotations",
+    []
+  ],
+  [
+    "Annotation_can_only_be_exported_in_declaration_statement",
+    28039,
+    "Error",
+    "Annotation_can_only_be_exported_in_declaration_statement_28039",
+    "Annotation can only be exported in declaration statement.",
+    []
+  ],
+  [
+    "Function_may_throw_exceptions_Special_handling_is_required",
+    28040,
+    "Warning",
+    "Function_may_throw_exceptions_Special_handling_is_required_28040",
+    "Function may throw exceptions. Special handling is required.",
+    []
+  ],
+  [
+    "Annotations_are_not_supported_in_Hars_compiled_to_JavaScript_files",
+    28041,
+    "Error",
+    "Annotations_are_not_supported_in_Hars_compiled_to_JavaScript_files_28041",
+    "Annotations are not supported in Hars compiled to JavaScript files.",
+    []
+  ],
+  [
+    "Annotation_cannot_be_applied_for_getter_or_setter_got_Colon_0",
+    28042,
+    "Error",
+    "Annotation_cannot_be_applied_for_getter_or_setter_got_Colon_0_28042",
+    "Annotation cannot be applied for getter or setter, got: '{0}'.",
+    []
+  ],
+  [
+    "X_0_annotation_are_not_valid_here_got_Colon_1",
+    28043,
+    "Error",
+    "_0_annotation_are_not_valid_here_got_Colon_1_28043",
+    "{0} annotation are not valid here, got: '{1}'.",
+    []
+  ],
+  [
+    "Annotation_cannot_be_applied_for_constructor_got_Colon_0",
+    28044,
+    "Error",
+    "Annotation_cannot_be_applied_for_constructor_got_Colon_0_28044",
+    "Annotation cannot be applied for constructor, got: '{0}'.",
+    []
+  ],
+  [
+    "Cannot_find_module_0_This_module_is_not_exported",
+    28045,
+    "Error",
+    "Cannot_find_module_0_This_module_is_not_exported_28045",
+    "Cannot find module '{0}'. This module is not exported.",
+    []
+  ],
+  [
+    "X_0_should_only_be_applied_to_annotation_declarations",
+    28046,
+    "Error",
+    "_0_should_only_be_applied_to_annotation_declarations_28046",
+    "{0} should only be applied to annotation declarations.",
+    []
+  ],
+  [
+    "ArkUI_JavaScript_emit_requires_the_OpenHarmony_SDK_compiler_Use_noEmit_or_emitDeclarationOnly",
+    100069,
+    "Error",
+    "ArkUI_JavaScript_emit_requires_the_OpenHarmony_SDK_compiler_Use_noEmit_or_emitDeclarationOnly_100069",
+    "ArkUI JavaScript emit requires the OpenHarmony SDK compiler. Use noEmit or emitDeclarationOnly.",
+    []
+  ]
+]

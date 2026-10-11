@@ -42,4 +42,8 @@ export var NodeFlags: any;
     NodeFlags[NodeFlags["IdentifierHasExtendedUnicodeEscape"] = 128] = "IdentifierHasExtendedUnicodeEscape";
     NodeFlags[NodeFlags["IdentifierIsInJSDocNamespace"] = 262144] = "IdentifierIsInJSDocNamespace";
     NodeFlags[NodeFlags["NestedNamespace"] = 32] = "NestedNamespace";
+    NodeFlags[NodeFlags["Struct"] = 536870912] = "Struct";
+    NodeFlags[NodeFlags["EtsComponent"] = 1073741824] = "EtsComponent";
+    NodeFlags[NodeFlags["Annotation"] = 1073741824] = "Annotation";
+    NodeFlags[NodeFlags["KitImport"] = 2147483648] = "KitImport";
 })(NodeFlags || (NodeFlags = {}));

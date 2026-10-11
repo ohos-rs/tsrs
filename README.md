@@ -6,9 +6,12 @@
 tsrs is a Rust port of the TypeScript 7 compiler and language server. It's a drop-in replacement for `tsc`: same
 flags, same tsconfig, same errors.
 
+This branch also supports the dynamic ArkTS (`.ets` / `.d.ets`), ArkUI checking, the restrictions linter, SDK policies,
+Kit imports, OHPM resolution and native snapshot APIs. Build it from source and use your project's SDK declarations and `ets` options; see
+[ArkTS configuration and boundaries](docs/ARKTS.md). ArkTS static syntax is excluded.
+
 On the vscode codebase it type-checks **18x faster than tsc 7** using about a third of the memory, and 1.6x faster than
-`bun check`. On TypeScript's own test suite it produces the same errors as the reference compiler in all but 4 of
-13,462 tests.
+`bun check`. The current TypeScript regression run matches all 13,462 error baselines without failures or timeouts.
 
 ## Quick start
 
@@ -92,9 +95,10 @@ tsrs is a function-by-function port of the Go implementation of TypeScript (`mic
 `b85298b6a81f`, TypeScript 7.1.0-dev). The Go code is the spec: any difference from it in diagnostics, their order,
 message text or exit code is a tsrs bug, even when tsrs's output looks better.
 
-On TypeScript's conformance suite, tsrs matches the reference on 13,458 of 13,462 error baselines (the other four are
-test-harness artifacts) and on all 12,779 `.types` and `.symbols` baselines. On the 38k-file codebase it reports the
-same diagnostics and emits the same 9,257 files byte for byte. [`docs/STATUS.md`](docs/STATUS.md) has the details.
+The current conformance run matches 13,462 error baselines and 12,779 `.types` / `.symbols` baselines, with no
+failures, crashes or timeouts. The ArkTS port loses no previously passing cases
+([validation](notes/arkts-port.md)). Earlier validation on the 38k-file codebase found the same diagnostics and
+9,257 byte-identical output files. [`docs/STATUS.md`](docs/STATUS.md) has the details.
 
 ## What it does and doesn't do
 
@@ -102,11 +106,19 @@ same diagnostics and emits the same 9,257 files byte for byte. [`docs/STATUS.md`
 
 | feature | status | evidence and notes |
 | --- | --- | --- |
-| Type checking (`--noEmit`) | yes | 13,458 of 13,462 error baselines and all 12,779 `.types` / `.symbols` baselines match; same diagnostics on the 38k-file codebase |
+| Dynamic ArkTS frontend and component checking | SDK `ets` options | `struct`, UI bodies, builders/styles, lazy imports and annotation checks; reference fixtures and validation in [notes/arkts-port.md](notes/arkts-port.md) |
+| OHPM and SDK module resolution | `packageManagerType: "ohpm"` / SDK host options | `.ets` / `.d.ets`, `oh_modules`, JSON5 manifests, SDK/fallback roots and package export restrictions ([configuration](docs/ARKTS.md)) |
+| ArkTS declarations | `--emitDeclarationOnly` | `.d.ets`, annotation defaults and supported retained decorators; reference declaration test |
+| Dynamic ArkTS restrictions linter / Sendable | `needDoArkTsLinter` | 1,003/1,003 complete diagnostic responses match the pinned OH compiler |
+| OH TypeScript 4.9 compatibility, Kit imports and SDK policy checks | SDK host options | 243/243 OH compiler fixture programs match; SDK plugin callbacks and Arkdown service tests pass |
+| ArkTS binary AST and Node SDK | yes | protocol 10; virtual nodes, parse identity, lazy imports, UI bodies, sync/async snapshots and annotation/type facts ([API](docs/NODE_API.md)) |
+| ArkUI/annotation JavaScript lowering | no | TS100069 in direct tsrs emit; Arkdown's Rust/OXC/Rolldown pipeline owns lowering |
+| ArkTS static syntax | no | deliberately excluded from this dynamic-language port |
+| Type checking (`--noEmit`) | yes | 13,462 error baselines and 12,779 `.types` / `.symbols` baselines match, zero failures/timeouts ([validation](notes/arkts-port.md)); previously verified on the 38k-file codebase |
 | Multithreaded checking, `--singleThreaded`, `--pretty`, `--extendedDiagnostics`, `--listFiles`, `--listFilesOnly` | yes | |
 | Memory target (`--maxMemory <size>`) | `--noEmit` checks, opt-in | the 38k-file codebase at 8 checkers: peak 18.0 GB without it; `--maxMemory 12G` 12.9 GB (+11% instructions), `10G` 10.8 GB (+16%), `8G` 8.7 GB (+35%), same diagnostics; testdata/regressions identical with a checker retired after nearly every file, also in poison mode (notes/mem-recycle-checkers.md) |
 | Same output regardless of thread count | yes, with known exceptions (tsgo: no) | a few projects still depend on file order through tsgo's own logic (notes/open-history-dependence.md); `--checkerAssignment go` reproduces tsgo exactly |
-| JavaScript emit | yes | all of tsgo's transforms; 13,392 `.js` baselines pass, 0 fail |
+| JavaScript emit | yes | all of tsgo's TypeScript transforms; 13,392 `.js` baselines pass, 0 fail, 0 timeouts |
 | Declaration emit (`.d.ts`) | yes | part of the `.js` baselines |
 | Source maps, declaration maps | yes | 149 `.js.map` and 156 `.sourcemap.txt` baselines pass, 0 fail |
 | Incremental builds (`.tsbuildinfo`) | yes | identical tsbuildinfo files |

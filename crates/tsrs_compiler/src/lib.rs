@@ -12,6 +12,8 @@ mod fileloader;
 mod fileregions;
 mod filesparser;
 mod host;
+mod kitimports;
+pub use kitimports::KitImportProcessor;
 mod includeprocessor;
 mod affinity;
 mod outputpaths;
@@ -49,3 +51,9 @@ pub use program::{
     filter_no_emit_semantic_diagnostics, free_program, free_unshared_program, shared_program_data, SharedProgramData, get_diagnostics_of_any_program, new_program, sort_and_deduplicate_diagnostics, CreateCheckerPool,
     CreateModuleResolver, Program, ProgramConfig, ProgramOptions, worker_pool,
 };
+
+#[cfg(feature = "checker")]
+pub use program::ArkTsBuildDiagnostics;
+
+#[cfg(all(test, feature = "checker"))]
+mod kitimports_test;

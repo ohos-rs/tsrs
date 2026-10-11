@@ -225,14 +225,14 @@ pub(crate) struct SlotChecker {
 }
 
 impl SlotChecker {
-    fn new(program: &'static Program, in_region: bool) -> SlotChecker {
+    fn new(program: &'static Program, in_region: bool, factory: fn(&'static Program) -> Box<Checker>) -> SlotChecker {
         if !in_region {
-            return SlotChecker { checker: new_checker(program), region: None };
+            return SlotChecker { checker: factory(program), region: None };
         }
         let region = tsrs_core::arena::Region::new_scratch(1 << 20);
         let checker = {
             let _scope = region.enter_scratch();
-            new_checker(program)
+            factory(program)
         };
         SlotChecker { checker, region: Some(region) }
     }
@@ -444,6 +444,7 @@ pub fn assignment_stats_enabled() -> bool {
 }
 
 pub(crate) struct checkerPool {
+    factory: fn(&'static Program) -> Box<Checker>,
     program: &'static Program,
     checker_count: usize,
     single_threaded: bool,
@@ -635,6 +636,15 @@ fn get_checker_association_weights(base_weights: &[i64], import_counts: &[i64]) 
 impl checkerPool {
     // checkerpool.go:305 newCheckerPool / checkerpool.go:309 newCheckerPoolWithTracing (tracing is not ported).
     pub(crate) fn new(program: &'static Program) -> checkerPool {
+        Self::with_factory(program, new_checker)
+    }
+
+    #[cfg(feature = "checker")]
+    pub(crate) fn new_arkts_linter(program: &'static Program) -> checkerPool {
+        Self::with_factory(program, |p| tsrs_checker::new_arkts_linter_checker(p))
+    }
+
+    fn with_factory(program: &'static Program, factory: fn(&'static Program) -> Box<Checker>) -> checkerPool {
         // Go's default is a constant 4; tsrs picks it per machine and program (default_checker_count).
         let checker_count: i64 = if program.single_threaded() {
             1
@@ -647,7 +657,7 @@ impl checkerPool {
         // Go `max(min(checkerCount, len(files), 256), 1)` on int: a negative or zero count is one checker.
         let checker_count = checker_count.min(program.files.len() as i64).min(256).max(1) as usize;
 
-        checkerPool { program, checker_count, single_threaded: program.single_threaded() || checker_count == 1, state: OnceLock::new() }
+        checkerPool { factory, program, checker_count, single_threaded: program.single_threaded() || checker_count == 1, state: OnceLock::new() }
     }
 
     // checkerpool.go:331
@@ -709,7 +719,7 @@ impl checkerPool {
                 tsrs_checker::links::set_multiple_checkers(self.checker_count > 1);
                 let slots: Vec<Mutex<Option<CheckerSlot>>> = (0..self.checker_count).map(|_| Mutex::new(None)).collect();
                 run_work_group(self.single_threaded, self.checker_count, |i| {
-                    *slots[i].lock().unwrap() = Some(CheckerSlot(Mutex::new(SlotChecker::new(program, recycle))));
+                    *slots[i].lock().unwrap() = Some(CheckerSlot(Mutex::new(SlotChecker::new(program, recycle, self.factory))));
                 });
                 let checkers: &'static [CheckerSlot] =
                     Box::leak(slots.into_iter().map(|s| s.into_inner().unwrap().unwrap()).collect::<Vec<_>>().into_boxed_slice());
@@ -988,7 +998,7 @@ impl checkerPool {
     // diagnostics of the files the old checker checked have been collected, and no later pass runs a checker over
     // them (the CLI's `--noEmit` check, as for leaf freeing).
     fn retire_checker(&self, state: &poolState, slot: &mut SlotChecker) {
-        let mut old = std::mem::replace(slot, SlotChecker::new(self.program, true));
+        let mut old = std::mem::replace(slot, SlotChecker::new(self.program, true, self.factory));
         {
             let _scope = old.enter();
             let globals = old.checker.get_global_diagnostics();
@@ -1121,7 +1131,7 @@ fn plan_splits(program: &Program, files: &[P<SourceFile>], positions: &mut [Vec<
             }
             let lengths: Vec<u64> = pieces
                 .iter()
-                .map(|r| file.statements.nodes()[r.clone()].iter().map(|s| (s.end() - s.pos()).max(1) as u64).sum())
+                .map(|r| file.statements().nodes()[r.clone()].iter().map(|s| (s.end() - s.pos()).max(1) as u64).sum())
                 .collect();
             let length: u64 = lengths.iter().sum();
             let piece_weights: Vec<u64> = lengths.iter().map(|&l| (w * l / length.max(1)).max(1)).collect();

@@ -5,6 +5,15 @@ use crate::*;
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug, Default)]
 pub struct SourceFileParseOptions {
+    pub ets: std::sync::Arc<tsrs_core::EtsOptions>,
+    pub ets_annotations_enable: bool,
+    pub open_harmony49: bool,
+    pub ets_loader_path: String,
+    pub no_transformed_kit_in_parser: bool,
+    /// Snapshot parse identity for the Kit configuration inputs used before binding.
+    /// Empty for an untransformed syntax tree; not a compiler option.
+    pub kit_config_key: String,
+
     pub file_name: String,
     pub path: Path,
     pub external_module_indicator_options: ExternalModuleIndicatorOptions,
@@ -83,7 +92,7 @@ fn get_external_module_indicator(file: &SourceFile, opts: ExternalModuleIndicato
 }
 
 fn is_file_probably_external_module(source_file: &SourceFile) -> Option<P<Node>> {
-    for &statement in source_file.statements.nodes() {
+    for &statement in source_file.statements().nodes() {
         if is_an_external_module_indicator_node(statement) {
             return Some(statement);
         }

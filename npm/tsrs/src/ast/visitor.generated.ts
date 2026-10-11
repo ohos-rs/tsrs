@@ -903,7 +903,8 @@ const visitEachChildTable: Record<number, VisitEachChildFunction> = {
         const _questionDotToken = visitNode(node.questionDotToken, visitor, isQuestionDotToken);
         const _typeArguments = visitNodes(node.typeArguments, visitor);
         const _arguments = visitNodes(node.arguments, visitor);
-        return updateCallExpression(node, _expression, _questionDotToken, _typeArguments, _arguments);
+        const _etsBody = visitNode(node.etsBody, visitor, isBlock);
+        return updateCallExpression(node, _expression, _questionDotToken, _typeArguments, _arguments, _etsBody);
     },
     [SyntaxKind.NewExpression]: (node: NewExpression, visitor: Visitor): NewExpression => {
         const _expression = visitNode(node.expression, visitor, isExpression);

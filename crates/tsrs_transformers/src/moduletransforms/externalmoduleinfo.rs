@@ -38,7 +38,7 @@ impl externalModuleInfoCollector {
     fn collect(mut self) -> externalModuleInfo {
         let mut has_import_star = false;
         let mut has_import_default = false;
-        for &node in self.source_file.statements.nodes() {
+        for &node in self.source_file.statements().nodes() {
             // Look through NotEmittedStatement to find elided export= declarations
             // (e.g., `declare export = x` is elided by the type eraser but must still be collected)
             if ast::is_not_emitted_statement(node) {
@@ -321,7 +321,7 @@ pub(crate) fn create_external_helpers_import_declaration_if_needed(
 
                 let external_helpers_import_declaration = f.new_import_declaration(
                     None, /*modifiers*/
-                    Some(f.new_import_clause(Kind::Unknown /*phaseModifier*/, None /*name*/, Some(named_bindings))),
+                    Some(f.new_import_clause(Kind::Unknown /*phaseModifier*/, false, None /*name*/, Some(named_bindings))),
                     f.new_string_literal(externalHelpersModuleNameText, TokenFlags::None),
                     None, /*attributes*/
                 );

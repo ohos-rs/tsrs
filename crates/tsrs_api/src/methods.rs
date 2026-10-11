@@ -194,11 +194,25 @@ pub const METHODS: [MethodInfo; 172] = [
 ];
 
 pub fn method_info(name: &str) -> Option<&'static MethodInfo> {
-    METHODS.iter().find(|m| m.name == name)
+    METHODS.iter().chain(ARKTS_METHODS).find(|m| m.name == name)
 }
+pub const ARKTS_METHODS: &[MethodInfo] = &[
+    MethodInfo { name: "getArkTSLinterDiagnostics", owner: Owner::Core, status: Status::Partial },
+    MethodInfo { name: "getArkTSBuildDiagnostics", owner: Owner::Core, status: Status::Partial },
+    MethodInfo { name: "getProgramSourceGraph", owner: Owner::Core, status: Status::Partial },
+    MethodInfo { name: "getArkTSTransformTypeFacts", owner: Owner::Checker, status: Status::Partial },
+    MethodInfo { name: "getAnnotationInfo", owner: Owner::Checker, status: Status::Partial },
+    MethodInfo { name: "getAnnotationTransformInfos", owner: Owner::Checker, status: Status::Partial },
+];
 // Go `unmarshalers` (proto.go): the params type each method decodes into, for Go's error text
 // `failed to unmarshal *api.<Type>`. `None` = `noParams`.
 pub const PARAMS_TYPES: &[(&str, Option<&str>)] = &[
+    ("getArkTSLinterDiagnostics", Some("GetDiagnosticsParams")),
+    ("getArkTSBuildDiagnostics", Some("GetProjectDiagnosticsParams")),
+    ("getProgramSourceGraph", Some("GetSourceFileNamesParams")),
+    ("getArkTSTransformTypeFacts", Some("ArkTSTransformTypeFactsParams")),
+    ("getAnnotationInfo", Some("CheckerNodeParams")),
+    ("getAnnotationTransformInfos", Some("SelectedFilesEmitParams")),
     ("batchRequests", Some("BatchRequestsParams")),
     ("release", Some("ReleaseParams")),
     ("releaseSourceFile", Some("ReleaseSourceFileParams")),

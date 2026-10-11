@@ -1,0 +1,12 @@
+{
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "etsAnnotationsEnable": true,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "outDir": "../../../target/arkts-annotation"
+  },
+  "files": ["annotation.ets"]
+}

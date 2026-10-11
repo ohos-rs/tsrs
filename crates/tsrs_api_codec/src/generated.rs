@@ -444,6 +444,7 @@ pub(crate) fn children_property_mask(node: P<Node>) -> u8 {
                 | ((present(n.question_dot_token()) as u8) << 1)
                 | ((present(n.type_arguments()) as u8) << 2)
                 | ((present(n.arguments()) as u8) << 3)
+                | ((present(n.ets_body()) as u8) << 4)
         }
         Kind::NewExpression => {
             let n = node.as_new_expression();
@@ -1030,7 +1031,7 @@ pub(crate) fn node_common_data(node: P<Node>) -> Result<u32, EncodeError> {
         Kind::ImportClause => {
             let n = node.as_import_clause();
             let phase_modifier_idx: u32 = match n.phase_modifier() { Kind::TypeKeyword => 1, Kind::DeferKeyword => 2, _ => 0 };
-            (phase_modifier_idx << 24)
+            (phase_modifier_idx << 24) | ((n.is_lazy() as u32) << 26)
         }
         Kind::ImportSpecifier => {
             let n = node.as_import_specifier();
@@ -1619,7 +1620,8 @@ impl Decoder<'_> {
                 let question_dot_token = from_node(self.node_at_opt(it.next_if(mask, 1))?)?;
                 let type_arguments = from_list(self.list_at(it.next_if(mask, 2))?)?;
                 let arguments = from_list(self.list_at(it.next_if(mask, 3))?)?;
-                f.new_call_expression(expression, question_dot_token, type_arguments, arguments, absent()?)
+                let ets_body = from_node(self.node_at_opt(it.next_if(mask, 4))?)?;
+                f.new_call_expression(expression, question_dot_token, type_arguments, arguments, ets_body, absent()?)
             }
             Kind::NewExpression => {
                 let mut it = ChildIter::new(child_indices);
@@ -2160,10 +2162,11 @@ impl Decoder<'_> {
             }
             Kind::ImportClause => {
                 let phase_modifier = match common_data & 3 { 1 => Kind::TypeKeyword, 2 => Kind::DeferKeyword, _ => Kind::Unknown };
+                let is_lazy = common_data & 4 != 0;
                 let mut it = ChildIter::new(child_indices);
                 let name = from_node(self.node_at_opt(it.next_if(mask, 0))?)?;
                 let named_bindings = from_node(self.node_at_opt(it.next_if(mask, 1))?)?;
-                f.new_import_clause(phase_modifier, name, named_bindings)
+                f.new_import_clause(phase_modifier, is_lazy, name, named_bindings)
             }
             Kind::ImportSpecifier => {
                 let is_type_only = common_data & 1 != 0;

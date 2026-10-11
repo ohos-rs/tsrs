@@ -25,11 +25,11 @@ pub fn fixtures() -> Vec<(String, String)> {
 }
 
 pub fn golden(name: &str) -> Vec<u8> {
-    std::fs::read(crate_dir().join("tests/golden").join(format!("{name}.bin"))).unwrap()
+    upgrade_reference(&std::fs::read(crate_dir().join("tests/golden").join(format!("{name}.bin"))).unwrap())
 }
 
 pub fn client_golden(name: &str) -> Vec<u8> {
-    std::fs::read(crate_dir().join("tests/golden").join(format!("{name}.client.bin"))).unwrap()
+    upgrade_reference(&std::fs::read(crate_dir().join("tests/golden").join(format!("{name}.client.bin"))).unwrap())
 }
 
 /// Parses and binds `text` the way the pinned server's `createSourceFile` does (snapshothost.AcquireSourceFile →
@@ -43,6 +43,7 @@ pub fn parse_like_server(name: &str, text: &str) -> (Region, P<SourceFile>) {
             file_name: file_name.clone(),
             path: tspath::Path(file_name.as_str().into()),
             external_module_indicator_options: ExternalModuleIndicatorOptions::default(),
+            ..Default::default()
         };
         let kind = tsrs_core::ensure_script_kind_from_file_name(&file_name);
         let file = tsrs_parser::parse_source_file(opts, text, kind);
@@ -200,4 +201,23 @@ pub fn diff_lines(expected: &[String], actual: &[String]) -> Option<String> {
         }
     }
     (expected.len() != actual.len()).then(|| format!("line count: expected {} actual {}", expected.len(), actual.len()))
+}
+
+/// Preserve all pinned TS oracle fields while adding protocol 10's empty ArkTS
+/// header slot and virtual-node word. This is test-only, not a legacy API path.
+pub fn upgrade_reference(bytes: &[u8]) -> Vec<u8> {
+    assert_eq!(bytes[3], 9);
+    let nodes = rd(bytes, HEADER_OFFSET_NODES) as usize;
+    let mut result = bytes[..64].to_vec();
+    result[3] = PROTOCOL_VERSION;
+    result.extend_from_slice(&NO_STRUCTURED_DATA.to_le_bytes());
+    result.extend_from_slice(&bytes[64..nodes]);
+    for offset in [24, 28, 32, 36, 40] {
+        result[offset..offset + 4].copy_from_slice(&(rd(bytes, offset) + 4).to_le_bytes());
+    }
+    for record in bytes[nodes..].chunks_exact(28) {
+        result.extend_from_slice(record);
+        result.extend_from_slice(&0u32.to_le_bytes());
+    }
+    result
 }

@@ -13,6 +13,12 @@ license = "Apache-2.0"
 version = "7.1.0-dev.20260929"
 commit = "b85298b6a81f772d080b0455de0ca9d744cd6fd6"
 
+# Dynamic ArkTS behavioral reference, formerly pinned by Arkdown's Go submodule.
+[workspace.metadata.arkts]
+repository = "https://github.com/ohos-rs/TypeScript"
+commit = "583e9e8b5450c6de49bbe985bd836d7941c7a961"
+oxc-reference = "1cf56806270753cac864b2b6d324280021e5d7a0"
+
 [workspace.dependencies]
 rustc-hash = "2"
 indexmap = "2"

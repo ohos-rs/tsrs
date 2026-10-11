@@ -26,6 +26,7 @@ pub(crate) struct ApiFlags {
     pub is_async: bool,
     pub timing: bool,
     pub run_external_code: bool,
+    pub sdk_plugin_callbacks: bool,
 }
 
 /// Go `parseAPIFlags`.
@@ -37,6 +38,7 @@ pub(crate) fn parse_api_flags(args: &[String]) -> Result<ApiFlags, ()> {
     flags.bool("useCaseSensitiveFileNames", "treat filesystem paths as case-sensitive");
     flags.bool("async", "use JSON-RPC protocol instead of MessagePack (for async API)");
     flags.bool("timing", "collect per-request server processing time, folded into the client's timing snapshot");
+    flags.bool("sdkPluginCallbacks", "enable OH SDK plugin host callbacks");
     flags.bool("runExternalCode", "allow projects to execute configured external plugins");
     flags.parse(args)?;
     // Go defaults: cwd = os.Getwd(), useCaseSensitiveFileNames = the OS filesystem's sensitivity.
@@ -58,6 +60,7 @@ pub(crate) fn parse_api_flags(args: &[String]) -> Result<ApiFlags, ()> {
         is_async: flags.bool_value("async"),
         timing: flags.bool_value("timing"),
         run_external_code: flags.bool_value("runExternalCode"),
+        sdk_plugin_callbacks: flags.bool_value("sdkPluginCallbacks"),
     })
 }
 
@@ -70,6 +73,7 @@ pub(crate) fn new_api_session(flags: &ApiFlags) -> Result<(Arc<Session>, Arc<Cal
     let fs: Arc<dyn FS> = Arc::<CallbackFs>::clone(&callback_fs);
     let mut options = SessionOptions::new(flags.cwd.clone(), bundled::lib_path(), fs, !flags.is_async);
     options.run_external_code = flags.run_external_code;
+    options.sdk_plugin_callbacks = flags.sdk_plugin_callbacks;
     let session = Session::new(options);
     session.set_build_backend(Arc::new(CliBuildBackend));
     Ok((session, callback_fs))
@@ -334,7 +338,7 @@ mod tests {
         w("app/tsconfig.json", r#"{ "compilerOptions": { "composite": true, "outDir": "out" }, "references": [{ "path": "../core" }] }"#);
         w("app/main.ts", "import { one } from '../core/index';\nexport const two: number = one + 1;\n");
         let cwd = dir.canonicalize().unwrap().to_string_lossy().into_owned();
-        let flags = ApiFlags { cwd: cwd.clone(), pipe_path: String::new(), callbacks: Vec::new(), case_sensitive: true, is_async: true, timing: false, run_external_code: false };
+        let flags = ApiFlags { cwd: cwd.clone(), pipe_path: String::new(), callbacks: Vec::new(), case_sensitive: true, is_async: true, timing: false, run_external_code: false, sdk_plugin_callbacks: false };
         let (s, _) = new_api_session(&flags).unwrap();
         let s = s;
         let r = call(&s, "createBuildOrchestrator", r#"{"rootNames":["app"]}"#);
@@ -476,7 +480,7 @@ mod memory_tests {
         assert!(exe.exists(), "build the tsrs binary first: {}", exe.display());
         let status = std::process::Command::new(&exe).args(["-b", "app"]).current_dir(&cli).status().unwrap();
         let cwd = api.canonicalize().unwrap().to_string_lossy().into_owned();
-        let flags = ApiFlags { cwd, pipe_path: String::new(), callbacks: Vec::new(), case_sensitive: true, is_async: true, timing: false, run_external_code: false };
+        let flags = ApiFlags { cwd, pipe_path: String::new(), callbacks: Vec::new(), case_sensitive: true, is_async: true, timing: false, run_external_code: false, sdk_plugin_callbacks: false };
         let (s, _) = new_api_session(&flags).unwrap();
         let r = match s.handle_request("createBuildOrchestrator", br#"{"rootNames":["app"]}"#).unwrap() {
             Response::Json(t) => t,
@@ -514,7 +518,7 @@ mod memory_tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("tsconfig.json"), r#"{ "compilerOptions": { "composite": true, "outDir": "out" } }"#).unwrap();
         let cwd = dir.canonicalize().unwrap().to_string_lossy().into_owned();
-        let flags = ApiFlags { cwd, pipe_path: String::new(), callbacks: Vec::new(), case_sensitive: true, is_async: true, timing: false, run_external_code: false };
+        let flags = ApiFlags { cwd, pipe_path: String::new(), callbacks: Vec::new(), case_sensitive: true, is_async: true, timing: false, run_external_code: false, sdk_plugin_callbacks: false };
         let (s, _) = new_api_session(&flags).unwrap();
         let id = match s.handle_request("createBuildOrchestrator", br#"{"rootNames":["."]}"#).unwrap() {
             Response::Json(t) => {
@@ -557,7 +561,7 @@ mod memory_tests {
         std::fs::write(dir.join("tsconfig.json"), r#"{ "compilerOptions": { "outDir": "out" } }"#).unwrap();
         std::fs::write(dir.join("w.ts"), "export const w = 1;\n").unwrap();
         let cwd = dir.canonicalize().unwrap().to_string_lossy().into_owned();
-        let flags = ApiFlags { cwd, pipe_path: String::new(), callbacks: Vec::new(), case_sensitive: true, is_async: true, timing: false, run_external_code: false };
+        let flags = ApiFlags { cwd, pipe_path: String::new(), callbacks: Vec::new(), case_sensitive: true, is_async: true, timing: false, run_external_code: false, sdk_plugin_callbacks: false };
         let (s, _) = new_api_session(&flags).unwrap();
         let create = || match s.handle_request("createBuildOrchestrator", br#"{"rootNames":["."],"compilerOptions":{"moduleResolution":-1}}"#).unwrap() {
             Response::Json(t) => match json::unmarshal(&t).unwrap() {

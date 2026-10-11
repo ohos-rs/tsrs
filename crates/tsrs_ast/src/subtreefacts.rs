@@ -593,7 +593,7 @@ impl Node {
             NodeData::JsxClosingElement(d) => prop(d.tag_name()) | F::ContainsJsx,
             NodeData::JsxExpression(d) => propagate_subtree_facts(d.expression()) | F::ContainsJsx,
             NodeData::JsxText(_) => F::ContainsJsx,
-            NodeData::SourceFile(d) => propagate_node_list_subtree_facts(d.statements, propagate_subtree_facts),
+            NodeData::SourceFile(d) => propagate_node_list_subtree_facts(d.statements(), propagate_subtree_facts),
 
             // Generated (ast_generated.go)
             NodeData::QualifiedName(d) => prop(d.left()) | prop(d.right()),

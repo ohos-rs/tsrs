@@ -498,6 +498,18 @@ impl Checker {
     pub(crate) fn get_declared_type_of_enum(&mut self, symbol: P<Symbol>) -> P<Type> {
         let links = self.declared_type_links.get(symbol);
         if links.declared_type.get().is_none() {
+            if !self.compiler_options.ets_loader_path.is_empty() && !self.is_open_harmony_literal_enum(symbol) {
+                let enum_type = self.create_computed_enum_type(symbol);
+                for declaration in symbol.declarations() {
+                    if declaration.kind() != Kind::EnumDeclaration { continue; }
+                    for &member in declaration.members() {
+                        let member_symbol = self.get_symbol_of_declaration(member).unwrap();
+                        self.declared_type_links.get(member_symbol).declared_type.set(Some(enum_type));
+                    }
+                }
+                links.declared_type.set(Some(enum_type));
+                return enum_type;
+            }
             let mut member_type_list: Vec<P<Type>> = Vec::new();
             let declarations = symbol.declarations();
             for declaration in declarations {
@@ -1526,7 +1538,8 @@ impl Checker {
     // checker.go:25167
     pub(crate) fn create_iterable_type(&mut self, iterated_type: P<Type>) -> P<Type> {
         let generic_global_type = self.get_global_iterable_type_checked();
-        self.create_type_from_generic_global_type(generic_global_type, &[iterated_type, self.void_type, self.undefined_type])
+        let arguments = self.open_harmony_iterable_type_arguments(iterated_type);
+        self.create_type_from_generic_global_type(generic_global_type, &arguments)
     }
 
     // checker.go:25171

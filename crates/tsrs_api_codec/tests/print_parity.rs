@@ -33,7 +33,7 @@ fn print_node_matches_pinned_go_server() {
     for e in std::fs::read_dir(&dir).unwrap() {
         let f = e.unwrap().file_name().into_string().unwrap();
         if let Some(base) = f.strip_suffix(".client.bin") {
-            cases.push((base.to_string(), std::fs::read(dir.join(&f)).unwrap()));
+            cases.push((base.to_string(), upgrade_reference(&std::fs::read(dir.join(&f)).unwrap())));
         }
     }
     cases.sort();

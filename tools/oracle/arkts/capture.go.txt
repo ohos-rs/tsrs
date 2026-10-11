@@ -1,0 +1,38 @@
+// Temporary instrumentation installed by capture.py into the reference compiler.
+package compiler
+
+import (
+    "crypto/sha256"
+    "fmt"
+    "os"
+    "path/filepath"
+    "runtime"
+    "strings"
+    "github.com/go-json-experiment/json"
+)
+
+func captureArkTSOracleInput(opts ProgramOptions) {
+    root := os.Getenv("TSRS_ARKTS_CAPTURE")
+    if root == "" || opts.Host.GetCurrentDirectory() != "/" || len(opts.Config.FileNames()) == 0 { return }
+    files := map[string]string{}
+    var walk func(string)
+    walk = func(directory string) {
+        entries := opts.Host.FS().GetAccessibleEntries(directory)
+        for _, name := range entries.Files {
+            path := filepath.ToSlash(filepath.Join(directory, name))
+            if text, ok := opts.Host.FS().ReadFile(path); ok { files[path] = text }
+        }
+        for _, name := range entries.Directories { walk(filepath.ToSlash(filepath.Join(directory, name))) }
+    }
+    // Only capture the in-memory compiler fixtures, never walk an OS filesystem.
+    if !opts.Host.FS().FileExists(opts.Config.FileNames()[0]) { return }
+    walk("/")
+    name := "program"
+    pcs := make([]uintptr, 32)
+    frames := runtime.CallersFrames(pcs[:runtime.Callers(2, pcs)])
+    for { frame, more := frames.Next(); if strings.Contains(frame.Function, ".Test") { name = strings.Split(frame.Function, ".Test")[1]; break }; if !more { break } }
+    data, err := json.Marshal(map[string]any{"name": name, "files": files, "rootFiles": opts.Config.FileNames(), "compilerOptions": opts.Config.CompilerOptions(), "cwd": opts.Host.GetCurrentDirectory()}, json.Deterministic(true))
+    if err != nil { panic(err) }
+    digest := sha256.Sum256(data)
+    if err := os.WriteFile(filepath.Join(root, fmt.Sprintf("%s-%x.json", name, digest[:6])), data, 0644); err != nil { panic(err) }
+}

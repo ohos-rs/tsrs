@@ -263,7 +263,7 @@ impl JSXTransformer {
                 for (import_source, import_specifiers_map) in &imports {
                     let s = f.new_import_declaration(
                         None,
-                        Some(f.new_import_clause(Kind::Unknown, None, Some(f.new_named_imports(f.new_node_list(get_sorted_specifiers(import_specifiers_map)))))),
+                        Some(f.new_import_clause(Kind::Unknown, false, None, Some(f.new_named_imports(f.new_node_list(get_sorted_specifiers(import_specifiers_map)))))),
                         f.new_string_literal(alloc_str(import_source), TokenFlags::None),
                         None,
                     );
@@ -289,7 +289,7 @@ impl JSXTransformer {
                                 f.new_binding_pattern(Kind::ObjectBindingPattern, f.new_node_list(as_binding_elems)),
                                 None,
                                 None,
-                                Some(f.new_call_expression(f.new_identifier("require"), None, None, f.new_node_list(vec![f.new_string_literal(alloc_str(import_source), TokenFlags::None)]), NodeFlags::None)),
+                                Some(f.new_call_expression(f.new_identifier("require"), None, None, f.new_node_list(vec![f.new_string_literal(alloc_str(import_source), TokenFlags::None)]), None, NodeFlags::None)),
                             )]),
                             NodeFlags::Const,
                         ),
@@ -650,7 +650,7 @@ impl JSXTransformer {
             }
         }
 
-        let element = f.new_call_expression(self.get_jsx_factory_callee(is_static_children), None, None, f.new_node_list(args), NodeFlags::None);
+        let element = f.new_call_expression(self.get_jsx_factory_callee(is_static_children), None, None, f.new_node_list(args), None, NodeFlags::None);
         element.set_loc(location);
 
         if self.in_jsx_child.get() {
@@ -773,7 +773,7 @@ impl JSXTransformer {
         args.push(object_properties);
         args.extend(new_children);
 
-        let result = f.new_call_expression(callee, None, None, f.new_node_list(args), NodeFlags::None);
+        let result = f.new_call_expression(callee, None, None, f.new_node_list(args), None, NodeFlags::None);
         result.set_loc(location);
 
         if self.in_jsx_child.get() {
@@ -809,7 +809,7 @@ impl JSXTransformer {
         args.push(f.new_keyword_expression(Kind::NullKeyword));
         args.extend(new_children);
 
-        let result = f.new_call_expression(callee, None, None, f.new_node_list(args), NodeFlags::None);
+        let result = f.new_call_expression(callee, None, None, f.new_node_list(args), None, NodeFlags::None);
         result.set_loc(location);
 
         if self.in_jsx_child.get() {

@@ -151,6 +151,8 @@ pub struct Program {
     pub(crate) resolution_data: P<module::ResolutionData>,
     // Always set once the program is constructed (see `init_checker_pool`).
     checker_pool: OnceLock<programCheckerPool>,
+    arkts_build_checker_pool: OnceLock<checkerPool>,
+    arkts_linter_checker_pool: OnceLock<checkerPool>,
     pub(crate) include_processor: includeProcessor,
     module_resolution_error: Option<String>,
 
@@ -403,6 +405,8 @@ pub fn new_program(opts: ProgramOptions) -> &'static Program {
         host,
         resolution_data,
         checker_pool: OnceLock::new(),
+        arkts_build_checker_pool: OnceLock::new(),
+        arkts_linter_checker_pool: OnceLock::new(),
         include_processor: includeProcessor::default(),
         module_resolution_error,
         files,
@@ -619,6 +623,8 @@ impl Program {
             host: new_host,
             resolution_data: self.resolution_data.clone_data(),
             checker_pool: OnceLock::new(),
+        arkts_build_checker_pool: OnceLock::new(),
+        arkts_linter_checker_pool: OnceLock::new(),
             include_processor: includeProcessor::default(),
             module_resolution_error: None,
             compare_paths_options: self.compare_paths_options.clone(),
@@ -1101,6 +1107,14 @@ impl Program {
 
     // program.go:806
     pub fn get_semantic_diagnostics(&'static self, ctx: &Context, source_file: Option<P<SourceFile>>) -> Vec<P<Diagnostic>> {
+        if self.options().strict_checker_only == tsrs_core::Tristate::True {
+            if source_file.is_some_and(|f| f.script_kind() == tsrs_core::ScriptKind::ETS) { return Vec::new(); }
+            if source_file.is_none() {
+                let files: Vec<_> = self.files.iter().copied().filter(|f| f.script_kind() != tsrs_core::ScriptKind::ETS).collect();
+                return filter_and_sort_diagnostics(&self.collect_checker_diagnostics_from_files(ctx, &files, &|ctx, c, f| self.get_semantic_diagnostics_with_checker(ctx, c, f)).concat());
+            }
+        }
+
         let collect = |ctx: &Context, c: &mut Checker, file: P<SourceFile>| self.get_semantic_diagnostics_with_checker(ctx, c, file);
         match source_file {
             // All files: the type-check pass, the one that may move files between checkers.
@@ -1201,7 +1215,7 @@ impl Program {
             }
         }
 
-        if source_file.script_kind.get() == ScriptKind::TS || source_file.script_kind.get() == ScriptKind::TSX {
+        if matches!(source_file.script_kind.get(), ScriptKind::TS | ScriptKind::TSX | ScriptKind::ETS) {
             return true;
         }
 
@@ -2086,6 +2100,19 @@ impl Program {
     // caller-provided checker, including bind diagnostics, checker diagnostics, and handling
     // of @ts-ignore/@ts-expect-error directives.
     // program.go:1498
+    fn filter_oh_check_diagnostics(&self, file: P<SourceFile>, mut diagnostics: Vec<P<Diagnostic>>) -> Vec<P<Diagnostic>> {
+        let options = self.options();
+        if options.need_do_ark_ts_linter != tsrs_core::Tristate::True { return diagnostics; }
+        let oh_module = tspath::normalize_path(file.file_name()).contains("/oh_modules/");
+        let forbidden_import_code = if options.is_compatible_version == tsrs_core::Tristate::True { 28016 } else { 28017 };
+        diagnostics.retain(|d| {
+            if oh_module { return options.skip_tsc_oh_module_check != tsrs_core::Tristate::True && !file.is_declaration_file() && d.code() != forbidden_import_code; }
+            if file.script_kind() == tsrs_core::ScriptKind::TS && file.is_declaration_file() { return !tspath::get_base_file_name(file.file_name()).starts_with("@kit.") && d.code() == forbidden_import_code; }
+            true
+        });
+        diagnostics
+    }
+
     fn get_bind_and_check_diagnostics_with_checker(
         &self,
         ctx: &Context,
@@ -2104,7 +2131,7 @@ impl Program {
 
         // Checker creation forces binding, so bind diagnostics will be populated.
         let mut diags: Vec<P<Diagnostic>> = source_file.bind_diagnostics().to_vec();
-        diags.extend(file_checker.get_diagnostics_exported(ctx, source_file));
+        diags.extend(self.filter_oh_check_diagnostics(source_file, file_checker.get_diagnostics_exported(ctx, source_file)));
 
         if include_deferred_globals {
             if file_checker.was_canceled() {
@@ -3130,3 +3157,9 @@ impl tsoptions::outputpaths::OutputPathsHost for Program {
         Program::use_case_sensitive_file_names(self)
     }
 }
+
+#[cfg(feature = "checker")]
+#[path = "arkts_diagnostics.rs"]
+mod arkts_diagnostics;
+#[cfg(feature = "checker")]
+pub use arkts_diagnostics::ArkTsBuildDiagnostics;

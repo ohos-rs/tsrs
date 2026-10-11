@@ -53,23 +53,24 @@ fn script_kind_from(n: u64) -> Option<ScriptKind> {
         3 => ScriptKind::TS,
         4 => ScriptKind::TSX,
         6 => ScriptKind::JSON,
+        8 => ScriptKind::ETS,
         _ => return None,
     })
 }
 
 fn is_valid_create_script_kind(k: ScriptKind) -> bool {
-    matches!(k, ScriptKind::JS | ScriptKind::JSX | ScriptKind::TS | ScriptKind::TSX | ScriptKind::JSON)
+    matches!(k, ScriptKind::JS | ScriptKind::JSX | ScriptKind::TS | ScriptKind::TSX | ScriptKind::JSON | ScriptKind::ETS)
 }
 
 /// Go `newSourceFileDescriptor` as the wire object.
 pub fn source_file_descriptor(file: P<SourceFile>) -> Value {
     let o = file.parse_options();
-    let key = u32::from(o.external_module_indicator_options.jsx) | (u32::from(o.external_module_indicator_options.force) << 1);
+    let key = codec::encoder::source_file_parse_options_key(file.get());
     Obj::new()
         .set("fileName", s(o.file_name.clone()))
         .set("path", s(o.path.as_str()))
         .set("contentHash", s(codec::source_file_hash(&file)))
-        .set("parseOptionsKey", s(key.to_string()))
+        .set("parseOptionsKey", s(key))
         .set("scriptKind", Value::Number(file.script_kind() as i32 as f64))
         .set("nodeId", s(source_file_node_id(file).to_string()))
         .build()
@@ -85,17 +86,20 @@ fn parse_cache_key(d: &Value) -> Result<tsrs_project::ParseCacheKey, String> {
     let hi = u64::from_str_radix(&hash[..16], 16).map_err(|e| format!("invalid content hash: {e}"))?;
     let lo = u64::from_str_radix(&hash[16..], 16).map_err(|e| format!("invalid content hash: {e}"))?;
     let key_text = p.str("parseOptionsKey").map_err(|e| e.message)?;
+    let (key_text, arkts) = key_text.split_once(':').ok_or_else(|| "invalid parse options key".to_string())?;
     let key: u32 = key_text.parse().ok().filter(|k| k & !3 == 0).ok_or_else(|| format!("invalid parse options key {key_text:?}"))?;
     let sk = match p.get("scriptKind") {
         Value::Number(n) if n.fract() == 0.0 && *n >= 0.0 => script_kind_from(*n as u64),
         _ => None,
     };
     let sk = sk.filter(|k| is_valid_create_script_kind(*k)).ok_or_else(|| format!("invalid script kind {}", tsrs_core::json::marshal(p.get("scriptKind")).unwrap_or_default()))?;
-    let options = SourceFileParseOptions {
+    let mut options = SourceFileParseOptions {
         file_name: p.str("fileName").map_err(|e| e.message)?.to_string(),
         path: tspath::Path::new(p.str("path").map_err(|e| e.message)?),
         external_module_indicator_options: tsrs_ast::ExternalModuleIndicatorOptions { jsx: key & 1 != 0, force: key & 2 != 0 },
+        ..Default::default()
     };
+    if !arkts.is_empty() { codec::decoder::apply_arkts_parse_options(&mut options, arkts)?; }
     Ok(tsrs_project::new_parse_cache_key(options, ((hi as u128) << 64) | lo as u128, sk))
 }
 
@@ -232,7 +236,9 @@ impl Session {
             return Err(ApiError::client(format!("invalid scriptKind {}", if raw_kind != 0 { raw_kind } else { sk as i64 })));
         }
         let file_name = tspath::get_normalized_absolute_path(file_name, self.current_directory());
-        let options = SourceFileParseOptions { path: self.to_path(&file_name), file_name, ..Default::default() };
+        let json = tsrs_core::json::marshal(options).map_err(ApiError::client)?;
+        let mut options = SourceFileParseOptions { path: self.to_path(&file_name), file_name, ..Default::default() };
+        codec::decoder::apply_arkts_parse_options(&mut options, &json).map_err(ApiError::client)?;
         Ok(self.snapshot_host.acquire_source_file(options, text, sk))
     }
 

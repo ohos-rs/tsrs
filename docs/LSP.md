@@ -5,6 +5,11 @@ Port of Go's language server: `tsgo --lsp -stdio` (`cmd/tsc/lsp.go` -> `internal
 snake_case, `// file.go:LINE` origin markers, Go quirks preserved, no redesign. This file is the design record,
 crate map, progress table and list of known gaps.
 
+The dynamic ArkTS overlay recognizes `.ets` / `.d.ets` and the `arkts` / `ets` language IDs, and uses the same
+SDK-configured parser and component checker as the CLI. Parse-cache identity includes the `ets` options and
+annotation switch and Kit config content. The compiler also provides the SDK restrictions linter and build
+diagnostics through native snapshot APIs. Static ArkTS syntax is excluded; see [ARKTS.md](ARKTS.md).
+
 ## Crate map
 
 | Go package (`ts-ref/tsc/internal/…`) | Rust crate / module | notes |

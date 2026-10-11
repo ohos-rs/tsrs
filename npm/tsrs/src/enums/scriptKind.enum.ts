@@ -7,4 +7,5 @@ export enum ScriptKind {
     TS = 3,
     TSX = 4,
     JSON = 6,
+    ETS = 8,
 }

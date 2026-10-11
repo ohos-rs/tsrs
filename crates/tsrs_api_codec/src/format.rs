@@ -11,7 +11,8 @@ pub const NODE_OFFSET_PARENT: usize = 16;
 pub const NODE_OFFSET_DATA: usize = 20;
 pub const NODE_OFFSET_FLAGS: usize = 24;
 /// Bytes per node record.
-pub const NODE_SIZE: usize = 28;
+pub const NODE_OFFSET_VIRTUAL: usize = 28;
+pub const NODE_SIZE: usize = 32;
 
 pub const NODE_DATA_TYPE_CHILDREN: u32 = 0 << 30;
 pub const NODE_DATA_TYPE_STRING: u32 = 1 << 30;
@@ -39,10 +40,11 @@ pub const HEADER_OFFSET_NODES: usize = 40;
 pub const HEADER_OFFSET_SOURCE_FILE_ID: usize = 44;
 pub const HEADER_OFFSET_SOURCE_FILE_LEASE: usize = 52;
 pub const HEADER_OFFSET_BINDER_DATA: usize = 60;
-pub const HEADER_SIZE: usize = 64;
+pub const HEADER_OFFSET_ETS_OPTIONS: usize = 64;
+pub const HEADER_SIZE: usize = 68;
 
 /// Pinned `encoder.ProtocolVersion`, stored in the high byte of the metadata word.
-pub const PROTOCOL_VERSION: u8 = 9;
+pub const PROTOCOL_VERSION: u8 = 10;
 
 /// "No data" marker for optional structured data / string indices in the SourceFile extended data.
 pub const NO_STRUCTURED_DATA: u32 = 0xFFFF_FFFF;

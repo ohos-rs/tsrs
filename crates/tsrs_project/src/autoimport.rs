@@ -150,7 +150,7 @@ impl RegistryCloneHost for autoImportRegistryCloneHost {
         let fh = self.fs.get_file(file_name)?;
         let opts = SourceFileParseOptions { file_name: file_name.to_string(), path: path.clone(), ..Default::default() };
         let key = new_parse_cache_key(opts, fh.hash(), fh.kind());
-        let result = self.parse_cache.acquire(&key, fh);
+        let result = self.parse_cache.acquire(&key, fh.into());
 
         self.files.lock().unwrap().push(key);
 

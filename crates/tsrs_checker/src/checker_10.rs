@@ -1379,6 +1379,7 @@ impl Checker {
             // Fall back to the global IterableIterator type.
             let global_iterable_iterator_type = resolver.get_global_iterable_iterator_type(self);
             if global_iterable_iterator_type != self.empty_generic_type {
+                if !self.compiler_options.ets_loader_path.is_empty() { return self.create_type_from_generic_global_type(global_iterable_iterator_type, &[yield_type]); }
                 return self.create_type_from_generic_global_type(global_iterable_iterator_type, &[yield_type, return_type, next_type]);
             }
             // The global Generator type doesn't exist, so report an error
@@ -1674,6 +1675,14 @@ impl Checker {
         self.set_structured_type_members(t, members, &[], &[], &[]);
         if symbol.flags().intersects(SymbolFlags::Class) {
             let class_type = self.get_declared_type_of_class_or_interface(symbol);
+            if is_annotation_symbol(Some(symbol)) {
+                let symbol_type = self.get_type_of_symbol(symbol);
+                let parameter = self.get_property_of_type(symbol_type, "prototype").unwrap();
+                let signature = self.new_signature(SignatureFlags::None, None, &[], None, &[parameter], Some(self.void_type), None, 1);
+                d.set_signatures(alloc_slice(&[signature]));
+                d.set_call_signature_count(1);
+                return;
+            }
             let base_constructor_type = self.get_base_constructor_type_of_class(class_type);
             if base_constructor_type.flags().intersects(TypeFlags::Object | TypeFlags::Intersection | TypeFlags::TypeVariable) {
                 members = members.map(|m| m.clone_table());

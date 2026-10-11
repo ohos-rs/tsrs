@@ -79,7 +79,7 @@ impl ESModuleTransformer {
         );
         let import_require_statements = self.import_require_statements.borrow().clone();
         if external_helpers_import_declaration.is_some() || import_require_statements.is_some() {
-            let (prologue, rest) = f.split_standard_prologue(result.statements.nodes());
+            let (prologue, rest) = f.split_standard_prologue(result.statements().nodes());
             let (custom, rest) = f.split_custom_prologue(rest);
             let mut statements: Vec<P<Node>> = prologue.to_vec();
             statements.extend_from_slice(custom);
@@ -94,15 +94,15 @@ impl ESModuleTransformer {
             }
             statements.extend_from_slice(rest);
             let statement_list = f.new_node_list(statements);
-            statement_list.loc.set(result.statements.loc.get());
+            statement_list.loc.set(result.statements().loc.get());
             result = f.update_source_file(result.as_node(), statement_list, node.end_of_file_token).as_source_file_p();
         }
 
-        if ast::is_external_module(result) && self.compiler_options.get_emit_module_kind() != ModuleKind::Preserve && !result.statements.nodes().iter().any(|&s| ast::is_external_module_indicator(s)) {
-            let mut statements: Vec<P<Node>> = result.statements.nodes().to_vec();
+        if ast::is_external_module(result) && self.compiler_options.get_emit_module_kind() != ModuleKind::Preserve && !result.statements().nodes().iter().any(|&s| ast::is_external_module_indicator(s)) {
+            let mut statements: Vec<P<Node>> = result.statements().nodes().to_vec();
             statements.push(create_empty_imports(f));
             let statement_list = f.new_node_list(statements);
-            statement_list.loc.set(result.statements.loc.get());
+            statement_list.loc.set(result.statements().loc.get());
             result = f.update_source_file(result.as_node(), statement_list, node.end_of_file_token).as_source_file_p();
         }
 
@@ -215,7 +215,7 @@ impl ESModuleTransformer {
         let import_decl = f.new_import_declaration(
             None, /*modifiers*/
             Some(f.new_import_clause(
-                Kind::Unknown, /*phaseModifier*/
+                Kind::Unknown, false, /*phaseModifier*/
                 None,          /*name*/
                 Some(f.new_namespace_import(synth_name)),
             )),
@@ -275,7 +275,7 @@ impl ESModuleTransformer {
 
         let argument_list = f.new_node_list(arguments);
         argument_list.loc.set(n.arguments.loc.get());
-        f.update_call_expression(node, expression, n.question_dot_token(), None /*typeArguments*/, argument_list, node.flags())
+        f.update_call_expression(node, expression, n.question_dot_token(), None /*typeArguments*/, argument_list, node.as_call_expression().ets_body(), node.flags())
     }
 
     // esmodule.go:297
@@ -290,7 +290,7 @@ impl ESModuleTransformer {
         }
 
         if self.compiler_options.get_emit_module_kind() == ModuleKind::Preserve {
-            return f.new_call_expression(f.new_identifier("require"), None /*questionDotToken*/, None /*typeArguments*/, f.new_node_list(args), NodeFlags::None);
+            return f.new_call_expression(f.new_identifier("require"), None /*questionDotToken*/, None /*typeArguments*/, f.new_node_list(args), None, NodeFlags::None);
         }
 
         if self.import_require_statements.borrow().is_none() {
@@ -298,7 +298,7 @@ impl ESModuleTransformer {
             let import_statement = f.new_import_declaration(
                 None, /*modifiers*/
                 Some(f.new_import_clause(
-                    Kind::Unknown, /*phaseModifier*/
+                    Kind::Unknown, false, /*phaseModifier*/
                     None,          /*name*/
                     Some(f.new_named_imports(f.new_node_list(vec![f.new_import_specifier(false /*isTypeOnly*/, Some(f.new_identifier("createRequire")), create_require_name)]))),
                 )),
@@ -324,7 +324,7 @@ impl ESModuleTransformer {
                                 None, /*questionDotToken*/
                                 f.new_identifier("url"),
                                 NodeFlags::None,
-                            )]),
+                            )]), None,
                             NodeFlags::None,
                         )),
                     )]),
@@ -336,6 +336,6 @@ impl ESModuleTransformer {
         }
 
         let require_helper_name = self.import_require_statements.borrow().as_ref().unwrap().require_helper_name;
-        f.new_call_expression(require_helper_name.clone_node(f), None /*questionDotToken*/, None /*typeArguments*/, f.new_node_list(args), NodeFlags::None)
+        f.new_call_expression(require_helper_name.clone_node(f), None /*questionDotToken*/, None /*typeArguments*/, f.new_node_list(args), None, NodeFlags::None)
     }
 }

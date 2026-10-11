@@ -93,6 +93,7 @@ macro_rules! trace {
 }
 
 pub(crate) struct ResolutionState<'r> {
+    supports_ets: bool,
     resolver: &'r DefaultResolver,
     tracer: Option<Tracer>,
 
@@ -128,6 +129,7 @@ fn new_resolution_state<'r>(
     trace_builder: Option<Tracer>,
 ) -> ResolutionState<'r> {
     let mut state = ResolutionState {
+        supports_ets: compiler_options.uses_oh_module_resolution(),
         name: name.to_string(),
         containing_directory: containing_directory.to_string(),
         compiler_options: get_compiler_options_with_redirect(compiler_options, redirected_reference),
@@ -358,6 +360,7 @@ impl DefaultResolver {
         let mut trace_builder = self.new_trace_builder();
 
         let cache_key = ModuleResolutionCacheKey {
+            containing_file_is_ets: tspath::file_extension_is(containing_file, tspath::EXTENSION_ETS),
             containing_directory: containing_directory.to_string(),
             module_name: module_name.to_string(),
             resolution_mode,
@@ -396,6 +399,7 @@ impl DefaultResolver {
                     self,
                     trace_builder,
                 );
+                state.supports_ets |= tspath::file_extension_is(containing_file, tspath::EXTENSION_ETS);
                 result = state.resolve_node_like();
                 trace_builder = state.tracer.take();
             }
@@ -417,7 +421,8 @@ impl DefaultResolver {
             }
         }
 
-        let final_result = P::new(self.try_resolve_from_typings_location(module_name, containing_directory, result, &mut trace_builder));
+        let result = self.try_resolve_from_typings_location(module_name, containing_directory, result, &mut trace_builder);
+        let final_result = P::new(self.resolve_oh_module_name(module_name, containing_file, &compiler_options, result));
         self.module_resolution_cache.set(cache_key, final_result);
 
         (final_result, get_traces(trace_builder))
@@ -570,6 +575,7 @@ impl<'r> ResolutionState<'r> {
     // Go's `&resolutionState{compilerOptions: ..., resolver: r}` literals.
     fn bare(resolver: &'r DefaultResolver, compiler_options: P<CompilerOptions>) -> ResolutionState<'r> {
         ResolutionState {
+            supports_ets: compiler_options.uses_oh_module_resolution(),
             resolver,
             tracer: None,
             name: String::new(),
@@ -775,7 +781,7 @@ impl<'r> ResolutionState<'r> {
         } else {
             let candidate = normalize_path_for_cjs_resolution(&self.containing_directory, &self.name);
             let resolved = self.node_load_module_by_relative_name(self.extensions, &candidate, true);
-            let is_external_library_import = resolved.as_ref().is_some_and(|r| r.path.contains("/node_modules/"));
+            let is_external_library_import = resolved.as_ref().is_some_and(|r| r.path.contains("/node_modules/") || r.path.contains("/oh_modules/"));
             return self.create_resolved_module(resolved, is_external_library_import);
         }
         self.create_resolved_module(None, false)
@@ -1213,7 +1219,7 @@ impl<'r> ResolutionState<'r> {
         let containing_directory = self.containing_directory.clone();
         tspath::for_each_ancestor_directory(&containing_directory, |directory| {
             // !!! stop at global cache
-            if tspath::get_base_file_name(directory) != "node_modules" {
+            if tspath::get_base_file_name(directory) != self.compiler_options.package_manager_modules_directory() {
                 return self.load_module_from_immediate_node_modules_directory(ext, directory, types_scope_only);
             }
             continue_searching()
@@ -1221,7 +1227,7 @@ impl<'r> ResolutionState<'r> {
     }
 
     fn load_module_from_immediate_node_modules_directory(&mut self, extensions: Extensions, directory: &str, types_scope_only: bool) -> Option<Resolved> {
-        let node_modules_folder = tspath::combine_paths(directory, &["node_modules"]);
+        let node_modules_folder = tspath::combine_paths(directory, &[self.compiler_options.package_manager_modules_directory()]);
         if !self.fs().directory_exists(&node_modules_folder) {
             trace!(self.tracer, diagnostics::Directory_0_does_not_exist_skipping_all_lookups_in_it, node_modules_folder);
             return continue_searching();
@@ -1365,7 +1371,7 @@ impl<'r> ResolutionState<'r> {
     }
 
     fn create_resolved_module_handling_symlink(&mut self, mut resolved: Option<Resolved>) -> ResolvedModule {
-        let is_external_library_import = resolved.as_ref().is_some_and(|r| r.path.contains("/node_modules/"));
+        let is_external_library_import = resolved.as_ref().is_some_and(|r| r.path.contains("/node_modules/") || r.path.contains("/oh_modules/"));
         if self.compiler_options.preserve_symlinks != Tristate::True && is_external_library_import && !tspath::is_external_module_name_relative(&self.name) {
             let r = resolved.as_mut().unwrap();
             if r.original_path.is_empty() {
@@ -1757,7 +1763,21 @@ impl<'r> ResolutionState<'r> {
                 }
                 continue_searching()
             }
+            tspath::EXTENSION_ETS | tspath::EXTENSION_DETS => {
+                if !self.supports_ets { return continue_searching(); }
+                if extensions.intersects(Extensions::TypeScript) {
+                    let resolved = self.try_extension(tspath::EXTENSION_ETS, extensionless, true);
+                    if !resolved.should_continue_searching() { return resolved; }
+                }
+                if extensions.intersects(Extensions::Declaration) { return self.try_extension(tspath::EXTENSION_DETS, extensionless, true); }
+                continue_searching()
+            }
             tspath::EXTENSION_TS | tspath::EXTENSION_DTS | tspath::EXTENSION_JS | "" => {
+                let ets_candidate = original_extension == "" || original_extension == tspath::EXTENSION_JS;
+                if self.supports_ets && ets_candidate && extensions.intersects(Extensions::TypeScript) {
+                    let resolved = self.try_extension(tspath::EXTENSION_ETS, extensionless, false);
+                    if !resolved.should_continue_searching() { return resolved; }
+                }
                 if extensions.intersects(Extensions::TypeScript) {
                     let resolved = self.try_extension(
                         tspath::EXTENSION_TS,
@@ -1775,6 +1795,10 @@ impl<'r> ResolutionState<'r> {
                     if !resolved.should_continue_searching() {
                         return resolved;
                     }
+                }
+                if self.supports_ets && ets_candidate && extensions.intersects(Extensions::Declaration) {
+                    let resolved = self.try_extension(tspath::EXTENSION_DETS, extensionless, false);
+                    if !resolved.should_continue_searching() { return resolved; }
                 }
                 if extensions.intersects(Extensions::Declaration) {
                     let resolved = self.try_extension(
@@ -2033,7 +2057,7 @@ impl<'r> ResolutionState<'r> {
     }
 
     fn get_package_json_info(&mut self, package_directory: &str) -> Option<P<InfoCacheEntry>> {
-        let package_json_path = tspath::combine_paths(package_directory, &["package.json"]);
+        let package_json_path = tspath::combine_paths(package_directory, &[self.compiler_options.package_manager_manifest_name()]);
 
         if let Some(existing) = InfoCache::get(&self.resolver.package_json_info_cache, &package_json_path) {
             if existing.contents.is_some() {
@@ -2051,7 +2075,7 @@ impl<'r> ResolutionState<'r> {
         if directory_exists && self.fs().file_exists(&package_json_path) {
             // Ignore error
             let contents = self.fs().read_file(&package_json_path).unwrap_or_default();
-            let parsed = packagejson::parse(&contents);
+            let parsed = if self.compiler_options.package_manager_type == "ohpm" { packagejson::parse_json5(&contents) } else { packagejson::parse(&contents) };
             trace!(self.tracer, diagnostics::Found_package_json_at_0, package_json_path);
             let parseable = parsed.is_ok();
             let owner = tsrs_core::arena::enter_table_owner(self.resolver.package_json_info_cache.owner_addr());
@@ -2349,9 +2373,9 @@ fn extension_is_ok(extensions: Extensions, extension: &str) -> bool {
     (extensions.intersects(Extensions::JavaScript)
         && (extension == tspath::EXTENSION_JS || extension == tspath::EXTENSION_JSX || extension == tspath::EXTENSION_MJS || extension == tspath::EXTENSION_CJS))
         || (extensions.intersects(Extensions::TypeScript)
-            && (extension == tspath::EXTENSION_TS || extension == tspath::EXTENSION_TSX || extension == tspath::EXTENSION_MTS || extension == tspath::EXTENSION_CTS))
+            && (extension == tspath::EXTENSION_ETS || extension == tspath::EXTENSION_TS || extension == tspath::EXTENSION_TSX || extension == tspath::EXTENSION_MTS || extension == tspath::EXTENSION_CTS))
         || (extensions.intersects(Extensions::Declaration)
-            && (extension == tspath::EXTENSION_DTS || extension == tspath::EXTENSION_DMTS || extension == tspath::EXTENSION_DCTS))
+            && (extension == tspath::EXTENSION_DETS || extension == tspath::EXTENSION_DTS || extension == tspath::EXTENSION_DMTS || extension == tspath::EXTENSION_DCTS))
         || (extensions.intersects(Extensions::Json) && extension == tspath::EXTENSION_JSON)
 }
 
@@ -2378,11 +2402,11 @@ pub fn get_automatic_type_directive_names(options: &CompilerOptions, host: &dyn 
         if host.fs().directory_exists(root) {
             for type_directive_path in host.fs().get_accessible_entries(root).directories {
                 let normalized = tspath::normalize_path(&type_directive_path);
-                let package_json_path = tspath::combine_paths(root, &[&normalized, "package.json"]);
+                let package_json_path = tspath::combine_paths(root, &[&normalized, options.package_manager_manifest_name()]);
                 let mut is_not_needed_package = false;
                 if host.fs().file_exists(&package_json_path) {
                     let contents = host.fs().read_file(&package_json_path).unwrap_or_default();
-                    let package_json_content = packagejson::parse(&contents).unwrap_or_default();
+                    let package_json_content = if options.package_manager_type == "ohpm" { packagejson::parse_json5(&contents) } else { packagejson::parse(&contents) }.unwrap_or_default();
                     // `types-publisher` sometimes creates packages with `"typings": null` for packages that don't provide their own types.
                     // See `createNotNeededPackageJSON` in the types-publisher` repo.
                     is_not_needed_package = package_json_content.typings.null;
@@ -2737,4 +2761,85 @@ mod last_path_component_test {
             assert_eq!(last_path_component(path), parts[parts.len() - 1], "{path:?}");
         }
     }
+}
+
+impl DefaultResolver {
+    fn resolve_oh_module_name(&self, module_name: &str, containing_file: &str, options: &CompilerOptions, mut result: ResolvedModule) -> ResolvedModule {
+        if !options.uses_oh_module_resolution() { return result; }
+        if result.is_resolved() {
+            if let Some(exports) = options.oh_package_exports.as_ref().and_then(|m| m.get(result.package_id.name)) {
+                result.is_not_oh_export = !exports.iter().any(|p| tspath::normalize_path(p) == tspath::normalize_path(result.resolved_file_name));
+            }
+            for root in options.oh_external_api_paths.as_deref().unwrap_or_default() {
+                if self.oh_path_is_under(result.resolved_file_name, root) || self.oh_path_is_under(result.original_path, root) {
+                    return ResolvedModule { resolution_diagnostics: result.resolution_diagnostics, ..Default::default() };
+                }
+            }
+            if tspath::get_any_extension_from_path(result.resolved_file_name, &[], false) == tspath::EXTENSION_JS {
+                let declaration = result.resolved_file_name.replacen(tspath::EXTENSION_JS, tspath::EXTENSION_DETS, 1);
+                if self.host.fs().file_exists(&declaration) { return resolved_oh_module(&declaration, tspath::EXTENSION_DETS, result.resolution_diagnostics); }
+            }
+            return result;
+        }
+        let diagnostics = result.resolution_diagnostics;
+        let trimmed = module_name.trim();
+        if options.is_oh_sdk_module_specifier(trimmed) {
+            for config in options.oh_sdk_configs.as_deref().unwrap_or_default() {
+                let mut found = None;
+                for root in &config.api_paths {
+                    for extension in [tspath::EXTENSION_DTS, tspath::EXTENSION_DETS] {
+                        let candidate = tspath::get_normalized_absolute_path(&format!("{trimmed}{extension}"), root);
+                        if self.host.fs().file_exists(&candidate) { found = Some((candidate, extension)); break; }
+                    }
+                }
+                if let Some((path, extension)) = found {
+                    if options.oh_system_modules.as_deref().unwrap_or_default().contains(&format!("{trimmed}{extension}")) {
+                        return resolved_oh_module(&path, extension, diagnostics);
+                    }
+                }
+            }
+            return ResolvedModule { resolution_diagnostics: diagnostics, ..Default::default() };
+        }
+        let containing_directory = tspath::get_directory_path(containing_file);
+        for extension in [tspath::EXTENSION_ETS, tspath::EXTENSION_TS] {
+            if module_name.ends_with(extension) && (extension != tspath::EXTENSION_ETS || !module_name.ends_with(tspath::EXTENSION_DETS)) {
+                let path = tspath::get_normalized_absolute_path(module_name, &containing_directory);
+                return if self.host.fs().file_exists(&path) { resolved_oh_module(&path, extension, diagnostics) }
+                    else { ResolvedModule { resolution_diagnostics: diagnostics, ..Default::default() } };
+            }
+        }
+        for root in options.oh_fallback_module_roots.as_deref().unwrap_or_default() {
+            for extension in [tspath::EXTENSION_DTS, tspath::EXTENSION_DETS] {
+                let path = tspath::get_normalized_absolute_path(&format!("{module_name}{extension}"), root);
+                if self.host.fs().file_exists(&path) { return resolved_oh_module(&path, extension, diagnostics); }
+            }
+        }
+        if !options.oh_loader_module_root.is_empty() {
+            let js_name = if module_name.ends_with(tspath::EXTENSION_JS) { module_name.to_string() } else { format!("{module_name}.js") };
+            for name in [js_name, tspath::combine_paths(module_name, &["index.js"])] {
+                let path = tspath::get_normalized_absolute_path(&name, &options.oh_loader_module_root);
+                if self.host.fs().file_exists(&path) { return resolved_oh_module(&path, tspath::EXTENSION_JS, diagnostics); }
+            }
+        }
+        let declaration_name = if module_name.ends_with(tspath::EXTENSION_DETS) { module_name.to_string() } else { format!("{module_name}.d.ets") };
+        let path = tspath::get_normalized_absolute_path(&declaration_name, &containing_directory);
+        if self.host.fs().file_exists(&path) { return resolved_oh_module(&path, tspath::EXTENSION_DETS, diagnostics); }
+        let project_path = tspath::normalize_path(&options.oh_project_path);
+        if let Some(index) = project_path.find("/src/main").filter(|&i| i > 0) {
+            let path = tspath::get_normalized_absolute_path(&tspath::combine_paths(module_name, &["index.d.ets"]), &project_path[..index]);
+            if self.host.fs().file_exists(&path) { return resolved_oh_module(&path, tspath::EXTENSION_DETS, diagnostics); }
+        }
+        ResolvedModule { resolution_diagnostics: diagnostics, ..Default::default() }
+    }
+
+    fn oh_path_is_under(&self, target: &str, root: &str) -> bool {
+        if target.is_empty() || root.is_empty() { return false; }
+        let root = tspath::get_normalized_absolute_path(root, self.host.get_current_directory());
+        let target = tspath::get_normalized_absolute_path(target, self.host.get_current_directory());
+        target == root || target.starts_with(&tspath::ensure_trailing_directory_separator(&root))
+    }
+}
+
+fn resolved_oh_module(path: &str, extension: &'static str, resolution_diagnostics: &'static [P<Diagnostic>]) -> ResolvedModule {
+    ResolvedModule { resolved_file_name: tsrs_core::alloc_str(path), extension, resolution_diagnostics, ..Default::default() }
 }

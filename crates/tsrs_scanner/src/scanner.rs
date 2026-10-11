@@ -306,6 +306,7 @@ pub struct Scanner {
     pub(crate) text: &'static str,
     pub(crate) end: i32,
     language_variant: LanguageVariant,
+    open_harmony49: bool,
     script_target: ScriptTarget,
     on_error: bool,
     errors: Vec<ScanError>,
@@ -604,6 +605,8 @@ impl Scanner {
         self.end = text.len() as i32;
         self.state = ScannerState::default();
     }
+
+    pub fn set_open_harmony49(&mut self, enabled: bool) { self.open_harmony49 = enabled; }
 
     pub fn set_language_variant(&mut self, language_variant: LanguageVariant) {
         self.language_variant = language_variant;
@@ -2000,6 +2003,17 @@ impl Scanner {
         self.state.pos += 1;
         match ch {
             0x30..=0x37 /* 0-7 */ => {
+                if self.open_harmony49 && !flags.intersects(EscapeSequenceScanningFlags::RegularExpression) {
+                    if ch == '0' as i32 {
+                        if !flags.intersects(EscapeSequenceScanningFlags::ReportErrors) && stringutil::is_digit(self.char()) {
+                            self.state.pos += 1;
+                            self.state.token_flags |= TokenFlags::ContainsInvalidEscape;
+                            return Cow::Borrowed(self.slice(start, self.state.pos));
+                        }
+                        return Cow::Borrowed("\x00");
+                    }
+                    return Cow::Owned(rune_string(ch));
+                }
                 if ch == '0' as i32 {
                     // Although '0' preceding any digit is treated as LegacyOctalEscapeSequence,
                     // '\08' should separately be interpreted as '\0' + '8'.
@@ -2042,6 +2056,7 @@ impl Scanner {
                 Cow::Borrowed(self.slice(start, self.state.pos))
             }
             0x38 | 0x39 /* 8 9 */ => {
+                if self.open_harmony49 && !flags.intersects(EscapeSequenceScanningFlags::RegularExpression) { return Cow::Owned(rune_string(ch)); }
                 // the invalid '\8' and '\9'
                 self.state.token_flags |= TokenFlags::ContainsInvalidEscape;
                 if flags.intersects(EscapeSequenceScanningFlags::ReportInvalidEscapeErrors) {
@@ -2945,6 +2960,7 @@ pub fn get_token_pos_of_node(node: P<Node>, source_file: P<SourceFile>, include_
             return get_token_pos_of_node(jsdoc[0], source_file, false /*includeJSDoc*/);
         }
     }
+    if node.is_virtual() { return node.pos(); }
     skip_trivia_ex(
         source_file.text(),
         node.pos(),
@@ -3086,7 +3102,7 @@ pub fn get_error_range_for_node(source_file: P<SourceFile>, node: P<Node>) -> Te
         return get_range_of_token_at_position(source_file, node.pos());
     };
     let mut pos = error_node.pos();
-    if !ast::node_is_missing(Some(error_node)) && !ast::is_jsx_text(error_node) {
+    if !ast::node_is_missing(Some(error_node)) && !ast::is_jsx_text(error_node) && !node.is_virtual() {
         pos = skip_trivia(source_file.text(), pos);
     }
     TextRange::new(pos, error_node.end())

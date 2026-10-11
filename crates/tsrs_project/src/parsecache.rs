@@ -47,7 +47,14 @@ pub(crate) fn parse_cache_key_for_duplicate(file: &DuplicateSourceFile) -> Parse
     new_parse_cache_key(file.parse_options.clone(), file.hash, file.script_kind)
 }
 
-pub type ParseCache = RefCountCache<ParseCacheKey, P<SourceFile>, Arc<dyn FileHandle>>;
+pub struct ParseCacheInput {
+    pub file: Arc<dyn FileHandle>,
+    pub kit_imports: Option<(Arc<tsrs_compiler::KitImportProcessor>, Arc<dyn tsrs_vfs::FS>)>,
+}
+impl From<Arc<dyn FileHandle>> for ParseCacheInput {
+    fn from(file: Arc<dyn FileHandle>) -> Self { Self { file, kit_imports: None } }
+}
+pub type ParseCache = RefCountCache<ParseCacheKey, P<SourceFile>, ParseCacheInput>;
 
 /// The parse-cache references one snapshot clone takes for the programs it builds (`compilerHost::get_source_file`
 /// acquires, the program-update refs and derefs in `Project::create_program`). They are handed to the new snapshot,
@@ -58,8 +65,8 @@ pub type ParseCache = RefCountCache<ParseCacheKey, P<SourceFile>, Arc<dyn FileHa
 pub(crate) struct ParseCacheJournal(Mutex<FxHashMap<ParseCacheKey, i64>>);
 
 impl ParseCacheJournal {
-    pub(crate) fn acquire(&self, cache: &ParseCache, key: ParseCacheKey, fh: Arc<dyn FileHandle>) -> P<SourceFile> {
-        let file = cache.acquire(&key, fh);
+    pub(crate) fn acquire(&self, cache: &ParseCache, key: ParseCacheKey, input: ParseCacheInput) -> P<SourceFile> {
+        let file = cache.acquire(&key, input);
         *self.0.lock().unwrap_or_else(|e| e.into_inner()).entry(key).or_default() += 1;
         file
     }
@@ -95,13 +102,15 @@ impl ParseCacheJournal {
 pub fn new_parse_cache(options: RefCountCacheOptions) -> ParseCache {
     let regions: Arc<Mutex<FxHashMap<usize, Region>>> = Arc::default();
     let parse_regions = Arc::clone(&regions);
-    let mut cache = new_ref_count_cache(options, move |key: &ParseCacheKey, fh: Arc<dyn FileHandle>| {
+    let mut cache = new_ref_count_cache(options, move |key: &ParseCacheKey, input: ParseCacheInput| {
+        let fh = input.file;
         let text = fh.content();
         let region = Region::new(file_region_first_chunk(text.len()));
         let file = {
             let _scope = region.enter();
             let file = tsrs_parser::parse_source_file(key.source_file_parse_options.clone(), text, key.script_kind);
             file.hash.set(fh.hash());
+            if let Some((processor, fs)) = input.kit_imports { processor.process(file, fs.as_ref()); }
             tsrs_binder::bind_source_file(file);
             file
         };

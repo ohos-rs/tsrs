@@ -13,6 +13,7 @@ pub type ModeAwareCache<T> = FxHashMap<ModeAwareCacheKey, T>;
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub(crate) struct ModuleResolutionCacheKey {
+    pub(crate) containing_file_is_ets: bool,
     pub(crate) containing_directory: String,
     pub(crate) module_name: String,
     pub(crate) resolution_mode: ResolutionMode,

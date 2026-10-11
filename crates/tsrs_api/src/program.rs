@@ -36,6 +36,7 @@ pub(crate) enum DiagnosticKind {
     Semantic,
     Suggestion,
     Declaration,
+    ArkTsLinter,
 }
 
 impl Session {
@@ -56,6 +57,7 @@ impl Session {
                 DiagnosticKind::Semantic => program.get_semantic_diagnostics(&ctx, file),
                 DiagnosticKind::Suggestion => program.get_suggestion_diagnostics(&ctx, file),
                 DiagnosticKind::Declaration => program.get_declaration_diagnostics(&ctx, file),
+                DiagnosticKind::ArkTsLinter => program.get_arkts_linter_diagnostics(&ctx, file),
             }
         };
         if p.has("files") {
@@ -67,6 +69,14 @@ impl Session {
             return Ok(nullable_diagnostics(&all));
         }
         Ok(nullable_diagnostics(&get(None)))
+    }
+
+    pub(crate) fn handle_get_arkts_build_diagnostics(&self, p: Params) -> ApiResult<Value> {
+        let (_sd, program) = self.program_of(p)?;
+        let diagnostics = program.get_arkts_build_diagnostics(&Context::background());
+        Ok(Obj::new().set("linterDiagnostics", diagnostic_responses(&diagnostics.linter))
+            .set("syntacticDiagnostics", diagnostic_responses(&diagnostics.syntactic))
+            .set("semanticDiagnostics", diagnostic_responses(&diagnostics.semantic)).build())
     }
 
     pub(crate) fn handle_get_config_file_parsing_diagnostics(&self, p: Params) -> ApiResult<Value> {
@@ -205,5 +215,37 @@ impl Session {
             .set("packageJsonDirectory", s(meta.package_json_directory))
             .set("impliedNodeFormat", Value::Number(meta.implied_node_format.value() as f64))
             .build())
+    }
+}
+
+impl Session {
+    /// OH `handleGetProgramSourceGraph`: resolved .ts/.ets edges (including
+    /// declaration files), sorted and deduplicated; JavaScript is a leaf.
+    #[expect(clippy::iter_over_hash_type, reason = "dependency and type reference lists are sorted before serialization")]
+    pub(crate) fn handle_get_program_source_graph(&self, p: Params) -> ApiResult<Value> {
+        let (_sd, program) = self.program_of(p)?;
+        let mut files = Vec::new();
+        for file in program.get_source_files() {
+            let mut dependencies = Vec::new();
+            if let Some(resolutions) = program.get_resolved_modules().get(file.path()) {
+                for resolution in resolutions.values() {
+                    if resolution.is_resolved() && (resolution.resolved_file_name.ends_with(".ets") || resolution.resolved_file_name.ends_with(".ts")) {
+                        dependencies.push(resolution.resolved_file_name);
+                    }
+                }
+            }
+            dependencies.sort_unstable();
+            dependencies.dedup();
+            files.push(Obj::new().set("fileName", s(file.file_name())).set("dependencies", strings(dependencies)).build());
+        }
+        let mut references = Vec::new();
+        for resolutions in program.get_resolved_type_reference_directives().values() {
+            for resolution in resolutions.values() {
+                if resolution.is_resolved() { references.push(resolution.resolved_file_name); }
+            }
+        }
+        references.sort_unstable();
+        references.dedup();
+        Ok(Obj::new().set("files", Value::Array(files)).set("typeReferenceFiles", strings(references)).build())
     }
 }

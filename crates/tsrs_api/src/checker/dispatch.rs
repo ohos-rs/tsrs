@@ -33,6 +33,9 @@ fn dispatch(h: &dyn CheckerHost, method: &str, p: &Params) -> CheckerResult<Chec
         _ => {}
     }
     json(match method {
+        "getAnnotationInfo" => super::arkts::get_annotation_info(h, p),
+        "getAnnotationTransformInfos" => super::arkts::get_annotation_transform_infos(h, p),
+        "getArkTSTransformTypeFacts" => super::arkts::get_transform_type_facts(h, p),
         "getSymbolAtPosition" => sym::get_symbol_at_position(h, p),
         "getSymbolsAtPositions" => sym::get_symbols_at_positions(h, p),
         "getSymbolAtLocation" => sym::get_symbol_at_location(h, p),
@@ -157,6 +160,7 @@ fn dispatch(h: &dyn CheckerHost, method: &str, p: &Params) -> CheckerResult<Chec
 
 /// Every method this lane dispatches.
 pub const CHECKER_METHODS: &[&str] = &[
+    "getAnnotationInfo", "getAnnotationTransformInfos", "getArkTSTransformTypeFacts",
     "getSymbolAtPosition", "getSymbolsAtPositions", "getSymbolAtLocation", "getSymbolsAtLocations", "getSymbolOfSourceFile",
     "getSymbolsOfSourceFiles", "getTypeOfSymbol", "getTypesOfSymbols", "getDeclaredTypeOfSymbol", "getNonMissingTypeOfSymbol",
     "resolveName", "getSymbolsInScope", "getSignaturesOfType", "getResolvedSignature", "getTypeAtLocation", "getTypeAtLocations",

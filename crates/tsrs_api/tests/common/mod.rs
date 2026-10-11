@@ -50,7 +50,7 @@ pub fn session(cwd: &str, binary: bool) -> Arc<Session> {
         default_library_path: bundled::lib_path(),
         fs,
         binary_responses: binary,
-        run_external_code: false,
+        run_external_code: false, sdk_plugin_callbacks: false,
     })
 }
 

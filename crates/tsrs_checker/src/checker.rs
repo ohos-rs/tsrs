@@ -1064,6 +1064,10 @@ pub struct Checker {
     pub signature_links: KeyedLinkStore<Node, SignatureLinks>,
     pub symbol_node_links: NodeLinkStore<SymbolNodeLinks>,
     pub type_node_links: KeyedLinkStore<Node, TypeNodeLinks>,
+    pub(crate) oh_sdk: crate::oh_sdk_jsdoc::OhSdkState,
+    pub(crate) ets_lib_files: FxHashSet<String>,
+    pub(crate) throws: Option<crate::throws::ThrowsChecker>,
+    pub annotation_links: LinkStore<Node, AnnotationLinks>,
     pub enum_member_links: LinkStore<Node, EnumMemberLinks>,
     pub assertion_links: LinkStore<Node, AssertionLinks>,
     pub array_literal_links: LinkStore<Node, ArrayLiteralLinks>,
@@ -1350,11 +1354,24 @@ pub struct Checker {
 // checker.go:911
 /// Go `NewChecker(program, tracer)`. The tracer and the returned mutex are not ported.
 pub fn new_checker(program: &'static dyn Program) -> Box<Checker> {
+    new_checker_with_options(program, program.options(), false)
+}
+
+/// The ArkTS linter checks the same bound program with exactly four strict overrides.
+pub fn new_arkts_linter_checker(program: &'static dyn Program) -> Box<Checker> {
+    let mut options = (*program.options()).clone();
+    options.strict_null_checks = Tristate::True;
+    options.strict_function_types = Tristate::True;
+    options.strict_property_initialization = Tristate::True;
+    options.no_implicit_returns = Tristate::True;
+    new_checker_with_options(program, P::new(options), true)
+}
+
+fn new_checker_with_options(program: &'static dyn Program, compiler_options: P<CompilerOptions>, for_arkts_linter: bool) -> Box<Checker> {
     program.bind_source_files();
     crate::types::census_layouts();
 
     // Placeholders for pointer fields Go leaves nil until they are assigned below.
-    let compiler_options = program.options();
     let dummy_type = Type::alloc(TypeFlags::None, ObjectFlags::None, TypeId(0), IntrinsicType::default());
     let dummy_symbol = P::new(Symbol::default());
     let dummy_mapper = new_simple_type_mapper(dummy_type, dummy_type);
@@ -1471,6 +1488,10 @@ pub fn new_checker(program: &'static dyn Program) -> Box<Checker> {
         signature_links: KeyedLinkStore::default(),
         symbol_node_links: NodeLinkStore::default(),
         type_node_links: KeyedLinkStore::default(),
+        oh_sdk: crate::oh_sdk_jsdoc::OhSdkState::new(),
+        throws: None,
+        ets_lib_files: FxHashSet::default(),
+        annotation_links: LinkStore::default(),
         enum_member_links: LinkStore::default(),
         assertion_links: LinkStore::default(),
         array_literal_links: LinkStore::default(),
@@ -1829,6 +1850,8 @@ pub fn new_checker(program: &'static dyn Program) -> Box<Checker> {
     typeof_names.sort_unstable();
     let typeof_types: Vec<P<Type>> = typeof_names.iter().map(|name| c.get_string_literal_type(name)).collect();
     c.typeof_type = c.get_union_type(&typeof_types);
+    c.oh_sdk.enabled = !for_arkts_linter || compiler_options.strict_checker_only == Tristate::True;
+    c.initialize_ets_lib_files();
     c.initialize_closures();
     c.initialize_iteration_resolvers();
     c.initialize_checker();
@@ -2153,7 +2176,7 @@ impl Checker {
         if let Some(t) = self.get_global_iterable_type_cache {
             return t;
         }
-        let t = self.get_global_type("Iterable", 3 /*arity*/, false /*reportErrors*/);
+        let t = self.get_global_type("Iterable", if self.compiler_options.ets_loader_path.is_empty() { 3 } else { 1 } /* OH 4.9 arity */, false /*reportErrors*/);
         self.get_global_iterable_type_cache = Some(t);
         t
     }
@@ -2162,7 +2185,7 @@ impl Checker {
         if let Some(t) = self.get_global_iterable_type_checked_cache {
             return t;
         }
-        let t = self.get_global_type("Iterable", 3 /*arity*/, true /*reportErrors*/);
+        let t = self.get_global_type("Iterable", if self.compiler_options.ets_loader_path.is_empty() { 3 } else { 1 } /* OH 4.9 arity */, true /*reportErrors*/);
         self.get_global_iterable_type_checked_cache = Some(t);
         t
     }
@@ -2171,7 +2194,7 @@ impl Checker {
         if let Some(t) = self.get_global_iterable_iterator_type_cache {
             return t;
         }
-        let t = self.get_global_type("IterableIterator", 3 /*arity*/, false /*reportErrors*/);
+        let t = self.get_global_type("IterableIterator", if self.compiler_options.ets_loader_path.is_empty() { 3 } else { 1 } /* OH 4.9 arity */, false /*reportErrors*/);
         self.get_global_iterable_iterator_type_cache = Some(t);
         t
     }
@@ -2180,7 +2203,7 @@ impl Checker {
         if let Some(t) = self.get_global_iterable_iterator_type_checked_cache {
             return t;
         }
-        let t = self.get_global_type("IterableIterator", 3 /*arity*/, true /*reportErrors*/);
+        let t = self.get_global_type("IterableIterator", if self.compiler_options.ets_loader_path.is_empty() { 3 } else { 1 } /* OH 4.9 arity */, true /*reportErrors*/);
         self.get_global_iterable_iterator_type_checked_cache = Some(t);
         t
     }
@@ -2216,7 +2239,7 @@ impl Checker {
         if let Some(t) = self.get_global_async_iterable_type_cache {
             return t;
         }
-        let t = self.get_global_type("AsyncIterable", 3 /*arity*/, false /*reportErrors*/);
+        let t = self.get_global_type("AsyncIterable", if self.compiler_options.ets_loader_path.is_empty() { 3 } else { 1 } /* OH 4.9 arity */, false /*reportErrors*/);
         self.get_global_async_iterable_type_cache = Some(t);
         t
     }
@@ -2225,7 +2248,7 @@ impl Checker {
         if let Some(t) = self.get_global_async_iterable_type_checked_cache {
             return t;
         }
-        let t = self.get_global_type("AsyncIterable", 3 /*arity*/, true /*reportErrors*/);
+        let t = self.get_global_type("AsyncIterable", if self.compiler_options.ets_loader_path.is_empty() { 3 } else { 1 } /* OH 4.9 arity */, true /*reportErrors*/);
         self.get_global_async_iterable_type_checked_cache = Some(t);
         t
     }
@@ -2234,7 +2257,7 @@ impl Checker {
         if let Some(t) = self.get_global_async_iterable_iterator_type_cache {
             return t;
         }
-        let t = self.get_global_type("AsyncIterableIterator", 3 /*arity*/, false /*reportErrors*/);
+        let t = self.get_global_type("AsyncIterableIterator", if self.compiler_options.ets_loader_path.is_empty() { 3 } else { 1 } /* OH 4.9 arity */, false /*reportErrors*/);
         self.get_global_async_iterable_iterator_type_cache = Some(t);
         t
     }
@@ -2243,7 +2266,7 @@ impl Checker {
         if let Some(t) = self.get_global_async_iterable_iterator_type_checked_cache {
             return t;
         }
-        let t = self.get_global_type("AsyncIterableIterator", 3 /*arity*/, true /*reportErrors*/);
+        let t = self.get_global_type("AsyncIterableIterator", if self.compiler_options.ets_loader_path.is_empty() { 3 } else { 1 } /* OH 4.9 arity */, true /*reportErrors*/);
         self.get_global_async_iterable_iterator_type_checked_cache = Some(t);
         t
     }

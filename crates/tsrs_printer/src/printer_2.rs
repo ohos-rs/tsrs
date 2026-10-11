@@ -140,6 +140,10 @@ impl Printer {
         self.emit_token_node(n.question_dot_token());
         self.emit_type_arguments(node, n.type_arguments());
         self.emit_list(Printer::emit_argument, node, Some(n.arguments()), ListFormat::CallExpressionArguments);
+        if let Some(body) = n.ets_body() {
+            self.write_space();
+            self.emit_block(body);
+        }
         self.exit_node(node, state);
     }
 
@@ -730,7 +734,7 @@ impl Printer {
                 Kind::CallExpression => {
                     let ce = node.as_call_expression();
                     let expression = self.parenthesize_expression_for_no_asi(ce.expression());
-                    return self.emit_context.factory.update_call_expression(node, expression, ce.question_dot_token(), ce.type_arguments(), ce.arguments(), node.flags());
+                    return self.emit_context.factory.update_call_expression(node, expression, ce.question_dot_token(), ce.type_arguments(), ce.arguments(), node.as_call_expression().ets_body(), node.flags());
                 }
                 Kind::TaggedTemplateExpression => {
                     let tte = node.as_tagged_template_expression();
@@ -1277,7 +1281,7 @@ impl Printer {
         let state = self.enter_node(node);
         let n = node.as_function_declaration();
         self.generate_name_if_needed(n.name());
-        self.emit_modifier_list(node, node.modifiers(), false /*allowDecorators*/);
+        self.emit_modifier_list(node, node.modifiers(), self.current_source_file().is_some_and(|file| file.script_kind() == ScriptKind::ETS));
         self.write_keyword("function");
         self.emit_token_node(n.asterisk_token());
         self.write_space();
@@ -1299,7 +1303,14 @@ impl Printer {
         let n = node.as_class_declaration();
         self.generate_name_if_needed(n.name());
         let pos = self.emit_modifier_list(node, node.modifiers(), true /*allowDecorators*/);
-        self.emit_token(Kind::ClassKeyword, pos, WriteKind::Keyword, node);
+        if tsrs_ast::is_annotation_declaration(node) {
+            self.write_punctuation("@");
+            self.write_keyword("interface");
+        } else if tsrs_ast::is_struct_declaration(node) {
+            self.write_keyword("struct");
+        } else {
+            self.emit_token(Kind::ClassKeyword, pos, WriteKind::Keyword, node);
+        }
         if let Some(name) = n.name() {
             self.write_space();
             self.emit_identifier_name(name);
@@ -1487,6 +1498,9 @@ impl Printer {
         let n = node.as_import_clause();
         if n.phase_modifier() != Kind::Unknown {
             self.emit_token(n.phase_modifier(), node.pos(), WriteKind::Keyword, node);
+            self.write_space();
+        } else if n.is_lazy {
+            self.write_keyword("lazy");
             self.write_space();
         }
         if let Some(name) = n.name() {
@@ -2201,29 +2215,29 @@ impl Printer {
         self.write_line();
 
         self.push_name_generation_scope(Some(node));
-        self.generate_all_names(Some(file.statements));
+        self.generate_all_names(Some(file.statements()));
 
         let mut index = 0;
         let state;
         if file.script_kind() != ScriptKind::JSON {
             self.emit_shebang_if_needed(file);
-            index = self.emit_prologue_directives(file.statements);
+            index = self.emit_prologue_directives(file.statements());
             if !self.writer().is_at_start_of_line() {
                 self.write_line();
             }
-            state = self.emit_detached_comments_before_statement_list(node, file.statements.loc());
+            state = self.emit_detached_comments_before_statement_list(node, file.statements().loc());
             self.emit_helpers(node);
             if file.is_declaration_file() {
                 self.emit_triple_slash_directives(file);
             }
         } else {
-            state = self.emit_detached_comments_before_statement_list(node, file.statements.loc());
+            state = self.emit_detached_comments_before_statement_list(node, file.statements().loc());
         }
 
         // !!! Emit triple-slash directives
-        self.emit_list_range(Printer::emit_statement, Some(node), Some(file.statements), ListFormat::MultiLine, index as i32, -1 /*count*/);
+        self.emit_list_range(Printer::emit_statement, Some(node), Some(file.statements()), ListFormat::MultiLine, index as i32, -1 /*count*/);
         self.pop_name_generation_scope(Some(node));
-        self.emit_detached_comments_after_statement_list(node, file.statements.loc(), state);
+        self.emit_detached_comments_after_statement_list(node, file.statements().loc(), state);
         self.set_current_source_file(saved_current_source_file);
         self.comments_disabled = saved_comments_disabled;
     }

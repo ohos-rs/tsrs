@@ -41,11 +41,12 @@ pub struct SessionOptions {
     /// Go `RunExternalCode` (false by default). Forwarded to the project session, but API projects get no content
     /// mapper project yet (see `Session::new`), so content-mapped files are not transformed.
     pub run_external_code: bool,
+    pub sdk_plugin_callbacks: bool,
 }
 
 impl SessionOptions {
     pub fn new(cwd: String, default_library_path: String, fs: Arc<dyn FS>, binary_responses: bool) -> SessionOptions {
-        SessionOptions { cwd, default_library_path, fs, binary_responses, run_external_code: false }
+        SessionOptions { cwd, default_library_path, fs, binary_responses, run_external_code: false, sdk_plugin_callbacks: false }
     }
 }
 
@@ -103,6 +104,8 @@ pub struct Session {
     /// Leaked once per session: tsoptions requires a `&'static dyn ParseConfigHost`.
     pub(crate) parse_config_host: &'static crate::config::ApiParseConfigHost,
     binary_responses: bool,
+    sdk_plugin_callbacks: bool,
+    pub(crate) oh_sdk_plugin_executor: std::sync::OnceLock<Arc<dyn tsrs_core::OhSdkPluginExecutor>>,
     /// Registered snapshots with their API reference count (Go `snapshotData.refCount`).
     snapshots: RwLock<FxHashMap<SnapshotID, (Arc<SnapshotData>, usize)>>,
     conn: Mutex<Option<Arc<dyn ClientConn>>>,
@@ -155,6 +158,8 @@ impl Session {
             snapshot_host: tsrs_project::new_snapshot_host(&init),
             parse_config_host,
             binary_responses: options.binary_responses,
+            sdk_plugin_callbacks: options.sdk_plugin_callbacks,
+            oh_sdk_plugin_executor: Default::default(),
             snapshots: RwLock::new(FxHashMap::default()),
             conn: Mutex::new(None),
             closed: Mutex::new(false),
@@ -199,6 +204,9 @@ impl Session {
     }
 
     pub fn set_connection(&self, conn: Arc<dyn ClientConn>) {
+        if self.sdk_plugin_callbacks {
+            let _ = self.oh_sdk_plugin_executor.set(Arc::new(crate::ohsdkplugin::ClientOhSdkPluginExecutor::new(Arc::clone(&conn))));
+        }
         *self.conn.lock().unwrap() = Some(conn);
     }
 
@@ -389,6 +397,7 @@ impl Session {
             "updateSnapshot" => self.handle_update_snapshot(p)?,
             "release" => self.handle_release(p)?,
             "getDefaultProjectForFile" => self.handle_get_default_project_for_file(p)?,
+            "getProgramSourceGraph" => self.handle_get_program_source_graph(p)?,
             "getSourceFileNames" => self.handle_get_source_file_names(p)?,
             "getModeForUsageLocation" => self.handle_get_mode_for_usage_location(p)?,
             "getModeForResolutionAtIndex" => self.handle_get_mode_for_resolution_at_index(p)?,
@@ -400,6 +409,8 @@ impl Session {
             "getSourceFileMetadata" => self.handle_get_source_file_metadata(p)?,
             "getSyntacticDiagnostics" => self.handle_get_diagnostics(p, DiagnosticKind::Syntactic)?,
             "getBindDiagnostics" => self.handle_get_diagnostics(p, DiagnosticKind::Bind)?,
+            "getArkTSLinterDiagnostics" => self.handle_get_diagnostics(p, DiagnosticKind::ArkTsLinter)?,
+            "getArkTSBuildDiagnostics" => self.handle_get_arkts_build_diagnostics(p)?,
             "getSemanticDiagnostics" => self.handle_get_diagnostics(p, DiagnosticKind::Semantic)?,
             "getSuggestionDiagnostics" => self.handle_get_diagnostics(p, DiagnosticKind::Suggestion)?,
             "getDeclarationDiagnostics" => self.handle_get_diagnostics(p, DiagnosticKind::Declaration)?,

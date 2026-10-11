@@ -1500,6 +1500,7 @@ impl Checker {
     pub(crate) fn get_inferred_type(&mut self, n: P<InferenceContext>, index: i32) -> P<Type> {
         let inference = n.inferences.get()[index as usize];
         if inference.inferred_type.get().is_none() {
+            if !self.compiler_options.ets_loader_path.is_empty() { return self.get_open_harmony_inferred_type(n, index); }
             if inference.type_parameter.get() == Some(self.error_type) {
                 return inference.type_parameter.get().unwrap();
             }
@@ -1793,6 +1794,8 @@ impl Checker {
         // right is a supertype.
         let supertype = if self.literal_types_with_same_base_type(&primary_types) {
             Some(self.get_union_type(&primary_types))
+        } else if !self.compiler_options.ets_loader_path.is_empty() {
+            self.find_leftmost_type(&primary_types, |c, s, t| c.is_type_subtype_of(s, t))
         } else {
             self.get_single_common_supertype(&primary_types)
         };

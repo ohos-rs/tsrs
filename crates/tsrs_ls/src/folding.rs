@@ -133,7 +133,7 @@ impl LanguageService {
         let depth_remaining = 40;
         let mut current = 0;
 
-        let statements = source_file.statements.nodes();
+        let statements = source_file.statements().nodes();
         let n = statements.len();
         let mut folding_range = Vec::with_capacity(40);
         while current < n {

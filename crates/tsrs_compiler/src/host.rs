@@ -37,6 +37,7 @@ pub trait CompilerHost: Send + Sync {
 
 // host.go:35
 pub struct compilerHost {
+    kit_imports: crate::KitImportProcessor,
     current_directory: String,
     fs: Arc<dyn FS>,
     default_library_path: String,
@@ -75,6 +76,7 @@ pub fn new_compiler_host(
 ) -> Arc<dyn CompilerHost> {
     let trace = trace.unwrap_or_else(|| Box::new(|_: &'static Message, _: &[&dyn Display]| {}));
     Arc::new(compilerHost {
+        kit_imports: crate::KitImportProcessor::default(),
         current_directory: current_directory.to_string(),
         fs,
         default_library_path: default_library_path.to_string(),
@@ -133,10 +135,14 @@ impl CompilerHost for compilerHost {
         let text = tsrs_core::festats::timed(tsrs_core::festats::Cat::Read, || self.fs().read_file(&opts.file_name))?;
         // tsrs-only: the CLI's `--noEmit` check parses each file that may be a leaf into a region of its own, freed
         // once the file is checked if it is one (fileregions.rs).
-        if crate::fileregions::wants_region(&opts.file_name, script_kind) {
+        if opts.ets_loader_path.is_empty() && crate::fileregions::wants_region(&opts.file_name, script_kind) {
             return Some(tsrs_core::festats::timed(tsrs_core::festats::Cat::Parse, || crate::fileregions::parse(opts, text, script_kind)));
         }
-        Some(tsrs_core::festats::timed(tsrs_core::festats::Cat::Parse, || tsrs_parser::parse_source_file_owned(opts, text, script_kind)))
+        Some(tsrs_core::festats::timed(tsrs_core::festats::Cat::Parse, || {
+            let file = tsrs_parser::parse_source_file_owned(opts, text, script_kind);
+            self.kit_imports.process(file, self.fs());
+            file
+        }))
     }
 
     // host.go:101
@@ -145,7 +151,9 @@ impl CompilerHost for compilerHost {
         parse_options: SourceFileParseOptions,
         mapper: &Mapper,
     ) -> Result<contentmapper::SourceFiles, contentmapper::Error> {
-        get_content_mapped_source_files_with(self.fs(), self.content_mapper_project.as_deref(), parse_options, mapper)
+        let files = get_content_mapped_source_files_with(self.fs(), self.content_mapper_project.as_deref(), parse_options, mapper)?;
+        for file in files.canonical.iter().chain(files.supplemental.iter()) { self.kit_imports.process(*file, self.fs()); }
+        Ok(files)
     }
 
     // host.go:115

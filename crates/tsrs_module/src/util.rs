@@ -152,7 +152,7 @@ pub fn get_resolution_diagnostic(options: &CompilerOptions, resolved_module: &Re
     }
 
     match resolved_module.extension {
-        tspath::EXTENSION_TS | tspath::EXTENSION_DTS | tspath::EXTENSION_MTS | tspath::EXTENSION_DMTS | tspath::EXTENSION_CTS | tspath::EXTENSION_DCTS => {
+        tspath::EXTENSION_ETS | tspath::EXTENSION_DETS | tspath::EXTENSION_TS | tspath::EXTENSION_DTS | tspath::EXTENSION_MTS | tspath::EXTENSION_DMTS | tspath::EXTENSION_CTS | tspath::EXTENSION_DCTS => {
             // These are always allowed.
             None
         }
@@ -174,7 +174,7 @@ pub fn get_resolution_diagnostic(options: &CompilerOptions, resolved_module: &Re
 pub fn try_get_js_extension_for_file(file_name: &str, options: &CompilerOptions) -> &'static str {
     let ext = tspath::try_get_extension_from_path(file_name);
     match ext {
-        tspath::EXTENSION_TS | tspath::EXTENSION_DTS => tspath::EXTENSION_JS,
+        tspath::EXTENSION_ETS | tspath::EXTENSION_DETS | tspath::EXTENSION_TS | tspath::EXTENSION_DTS => tspath::EXTENSION_JS,
         tspath::EXTENSION_TSX => {
             if options.jsx == JsxEmit::Preserve {
                 return tspath::EXTENSION_JSX;

@@ -184,6 +184,7 @@ pub struct errorState {
 }
 
 pub struct ErrorChain {
+    pub filter_flag: bool,
     pub next: Option<P<ErrorChain>>,
     pub message: &'static Message,
     pub args: Vec<String>,

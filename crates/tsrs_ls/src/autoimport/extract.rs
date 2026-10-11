@@ -129,13 +129,13 @@ impl exportExtractor<'_> {
         }
         if !file.ambient_module_names().is_empty() {
             let mut export_count = 0;
-            for &statement in file.statements.nodes() {
+            for &statement in file.statements().nodes() {
                 if ast::is_module_with_string_literal_name(statement) && is_non_pattern_ambient_module_declaration(file, statement) {
                     export_count += statement.symbol().unwrap().exports().map_or(0, |e| e.len());
                 }
             }
             let mut exports = Vec::with_capacity(export_count);
-            for &statement in file.statements.nodes() {
+            for &statement in file.statements().nodes() {
                 if ast::is_module_with_string_literal_name(statement) && is_non_pattern_ambient_module_declaration(file, statement) {
                     self.extract_from_module_declaration(statement, file, &ModuleID(statement.name().unwrap().text().to_string()), "", &mut exports);
                 }

@@ -413,7 +413,7 @@ impl classFieldsTransformer {
                     Some(self.factory().new_block(self.factory().new_node_list(vec![statement]), false /*multiline*/)),
                 );
                 prologue = Some(self.factory().new_assignment_expression(temp, arrow));
-                statement = self.factory().new_expression_statement(self.factory().new_call_expression(temp, None /*questionDotToken*/, None /*typeArguments*/, self.factory().new_node_list(vec![]), NodeFlags::None));
+                statement = self.factory().new_expression_statement(self.factory().new_call_expression(temp, None /*questionDotToken*/, None /*typeArguments*/, self.factory().new_node_list(vec![]), None, NodeFlags::None));
             }
 
             let block = self.factory().new_block(self.factory().new_node_list(vec![statement]), false /*multiline*/);
@@ -701,7 +701,7 @@ impl classFieldsTransformer {
                     self.factory().new_keyword_expression(Kind::SuperKeyword),
                     None, /*typeArguments*/
                     None, /*questionDotToken*/
-                    self.factory().new_node_list(vec![self.factory().new_spread_element(self.factory().new_identifier("arguments"))]),
+                    self.factory().new_node_list(vec![self.factory().new_spread_element(self.factory().new_identifier("arguments"))]), None,
                     NodeFlags::None,
                 ));
                 statements.push(super_call);

@@ -682,7 +682,7 @@ impl esDecoratorTransformer {
                 let mut constructor_statements: Vec<P<Node>> = Vec::new();
                 if is_derived_class {
                     let spread_arguments = f.new_spread_element(f.new_identifier("arguments"));
-                    let super_call = f.new_call_expression(f.new_keyword_expression(Kind::SuperKeyword), None, None, f.new_node_list(vec![spread_arguments]), NodeFlags::None);
+                    let super_call = f.new_call_expression(f.new_keyword_expression(Kind::SuperKeyword), None, None, f.new_node_list(vec![spread_arguments]), None, NodeFlags::None);
                     constructor_statements.push(f.new_expression_statement(super_call));
                 }
                 constructor_statements.extend(initializer_statements);

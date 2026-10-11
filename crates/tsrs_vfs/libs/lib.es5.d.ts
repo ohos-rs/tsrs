@@ -920,6 +920,8 @@ interface Date {
     toJSON(key?: any): string;
 }
 
+type ESObject = any;
+
 interface DateConstructor {
     new (): Date;
     new (value: number | string): Date;

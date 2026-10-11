@@ -353,6 +353,7 @@ export function cloneSourceFileData(sourceFile: SourceFile): Record<string, unkn
         path: sourceFile.path,
         languageVariant: sourceFile.languageVariant,
         scriptKind: sourceFile.scriptKind,
+        arktsParseOptions: sourceFile.arktsParseOptions,
         isDeclarationFile: sourceFile.isDeclarationFile,
         referencedFiles: sourceFile.referencedFiles,
         typeReferenceDirectives: sourceFile.typeReferenceDirectives,

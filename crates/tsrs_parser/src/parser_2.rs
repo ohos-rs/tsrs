@@ -995,7 +995,7 @@ impl Parser {
         }
         let pos = self.node_pos();
         let jsdoc = self.jsdoc_scanner_info();
-        let modifiers = self.parse_modifiers();
+        let mut modifiers = self.parse_modifiers_ex(self.script_kind == tsrs_core::ScriptKind::ETS, false, false);
         if self.parse_contextual_modifier(Kind::GetKeyword) {
             return self.parse_accessor_declaration(pos, jsdoc, modifiers, Kind::GetAccessor, ParseFlags::Type);
         }
@@ -1003,6 +1003,12 @@ impl Parser {
             return self.parse_accessor_declaration(pos, jsdoc, modifiers, Kind::SetAccessor, ParseFlags::Type);
         }
         if self.is_index_signature() {
+            if self.script_kind == tsrs_core::ScriptKind::ETS {
+                if let Some(list) = modifiers {
+                    let nodes: Vec<_> = list.nodes().iter().copied().filter(|n| !ast::is_decorator(*n)).collect();
+                    modifiers = if nodes.is_empty() { None } else { Some(self.new_modifier_list(list.loc(), &nodes)) };
+                }
+            }
             return self.parse_index_signature_declaration(pos, jsdoc, modifiers);
         }
         self.parse_property_or_method_signature(pos, jsdoc, modifiers)
@@ -1047,13 +1053,19 @@ impl Parser {
     }
 
     pub(crate) fn parse_type_parameter(&mut self) -> P<Node> {
+        self.parse_type_parameter_worker(false)
+    }
+    pub(crate) fn parse_type_parameter_worker(&mut self, virtual_: bool) -> P<Node> {
         let pos = self.node_pos();
         let modifiers = self.parse_modifiers_ex(
             false, /*allowDecorators*/
             true,  /*permitConstAsModifier*/
             false, /*stopOnStartOfClassStaticBlock*/
         );
-        let name = self.parse_identifier();
+        let name = if virtual_ {
+            let declaration = self.arkui.style_declaration.unwrap();
+            self.ets_virtual_identifier(&declaration.r#type, pos)
+        } else { self.parse_identifier() };
         let mut constraint: Option<P<Node>> = None;
         let mut expression: Option<P<Node>> = None;
         if self.parse_optional(Kind::ExtendsKeyword) {
@@ -1827,7 +1839,7 @@ impl Parser {
         let pos = self.node_pos();
         let start = self.node_stack.len();
         loop {
-            if allow_decorators && self.token == Kind::AtToken && !has_trailing_modifier {
+            if allow_decorators && self.token == Kind::AtToken && !has_trailing_modifier && !self.is_annotation_declaration() {
                 let decorator = self.parse_decorator();
                 self.node_stack.push(decorator);
                 if has_leading_modifier {
@@ -1962,7 +1974,9 @@ impl Parser {
     }
 
     pub(crate) fn next_token_can_follow_default_keyword(&mut self) -> bool {
-        match self.next_token() {
+        self.next_token();
+        if self.is_struct_declaration() { return true; }
+        match self.token {
             Kind::ClassKeyword | Kind::FunctionKeyword | Kind::InterfaceKeyword | Kind::AtToken => true,
             Kind::AbstractKeyword => self.look_ahead(Parser::next_token_is_class_keyword_on_same_line),
             Kind::AsyncKeyword => self.look_ahead(Parser::next_token_is_function_keyword_on_same_line),
@@ -2012,6 +2026,7 @@ impl Parser {
     }
 
     pub(crate) fn can_follow_modifier(&mut self) -> bool {
+        if self.is_annotation_declaration() { return true; }
         self.token == Kind::OpenBracketToken
             || self.token == Kind::OpenBraceToken
             || self.token == Kind::AsteriskToken

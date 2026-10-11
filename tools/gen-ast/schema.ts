@@ -1261,7 +1261,10 @@ export class SchemaAPI {
     }
 }
 
-export const api = new SchemaAPI(JSON.parse(
-    fs.readFileSync(path.join(ROOT, "tools/scripts/tsc/ast.json"), "utf-8"),
-) as Schema);
+// ArkTS 1.1 additions from Arkdown's pinned OH TypeScript fork. Keep the
+// upstream schema read-only and share this overlay with both Rust generators.
+const schema = JSON.parse(fs.readFileSync(path.join(ROOT, "tools/scripts/tsc/ast.json"), "utf-8")) as Schema;
+schema.nodes.definitions.CallExpression.members!.splice(4, 0, { name: "EtsBody", type: "Block", optional: true });
+schema.nodes.definitions.ImportClause.members!.splice(1, 0, { name: "IsLazy", type: "bool" });
+export const api = new SchemaAPI(schema);
 api.validate();

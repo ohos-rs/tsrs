@@ -327,7 +327,7 @@ impl Checker {
                 && (t.intersects(TypeFlags::Enum)
                     || t.intersects(TypeFlags::NumberLiteral)
                         && t.intersects(TypeFlags::EnumLiteral)
-                        && source.as_literal_type().value() == target.as_literal_type().value())
+                        && (!self.compiler_options.ets_loader_path.is_empty() || source.as_literal_type().value() == target.as_literal_type().value()))
             {
                 return true;
             }
@@ -532,10 +532,12 @@ pub(crate) fn create_diagnostic_chain_from_error_chain(chain: Option<P<ErrorChai
     let chain = chain?;
     let next = create_diagnostic_chain_from_error_chain(chain.next, error_node, related_info);
     let args = string_args(&chain.args);
-    match next {
-        None => Some(new_diagnostic_for_node(Some(error_node), Some(chain.message), &args).set_related_info(related_info)),
-        Some(next) => Some(ast::new_diagnostic_chain(next, chain.message, &args)),
-    }
+    let diagnostic = match next {
+        None => new_diagnostic_for_node(Some(error_node), Some(chain.message), &args).set_related_info(related_info),
+        Some(next) => ast::new_diagnostic_chain(next, chain.message, &args),
+    };
+    if chain.filter_flag { diagnostic.set_filter_flag(); }
+    Some(diagnostic)
 }
 
 impl Checker {

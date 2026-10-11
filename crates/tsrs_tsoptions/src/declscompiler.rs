@@ -9,7 +9,7 @@ use crate::tsconfigparsing::COMMAND_LINE_COMPILER_OPTIONS_MAP;
 use tsrs_core::CompilerOptions;
 
 pub static OPTIONS_DECLARATIONS: LazyLock<Vec<&'static CommandLineOption>> =
-    LazyLock::new(|| COMMON_OPTIONS_WITH_BUILD.iter().chain(OPTIONS_FOR_COMPILER.iter()).copied().collect());
+    LazyLock::new(|| COMMON_OPTIONS_WITH_BUILD.iter().chain(OPTIONS_FOR_COMPILER.iter()).copied().chain(crate::arkts::OPTIONS.iter()).collect());
 
 // BEGIN GENERATED
 static COMMON_OPTIONS_WITH_BUILD_ITEMS: [CommandLineOption; 29] = [

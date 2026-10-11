@@ -67,9 +67,13 @@ impl Checker {
 
     // checker.go:2217
     pub(crate) fn get_symbol(&mut self, symbols: Option<P<SymbolTable>>, name: &str, meaning: SymbolFlags) -> Option<P<Symbol>> {
+        self.get_symbol_with_location(symbols, name, meaning, None)
+    }
+    pub(crate) fn get_symbol_with_location(&mut self, symbols: Option<P<SymbolTable>>, name: &str, meaning: SymbolFlags, location: Option<P<Node>>) -> Option<P<Symbol>> {
         if meaning.intersects(SymbolFlags::All) {
             let symbol = symbols.and_then(|symbols| symbols.lookup(name)).map(|s| self.get_merged_symbol(s));
             if let Some(symbol) = symbol {
+                if location.is_some_and(|node| !self.is_valid_from_ets_libs(symbol, node)) { return None; }
                 if symbol.flags().intersects(meaning) {
                     return Some(symbol);
                 }
@@ -114,7 +118,7 @@ impl Checker {
             self.check_grammar_source_file(source_file);
             self.renamed_binding_elements_in_types = Vec::new();
             if self.statements_checked_in_pieces.take() != Some(source_file) {
-                self.check_source_elements(source_file.statements.nodes());
+                self.check_source_elements(source_file.statements().nodes());
             }
             self.check_deferred_nodes(source_file);
             if ast::is_external_or_common_js_module(source_file) {
@@ -166,7 +170,7 @@ impl Checker {
             if crate::uniontrace::enabled() {
                 crate::uniontrace::report_check_file(self, source_file, Some(&statements));
             }
-            self.check_source_elements(&source_file.statements.nodes()[statements]);
+            self.check_source_elements(&source_file.statements().nodes()[statements]);
             self.check_deferred_nodes(source_file);
             self.produce_deferred_diagnostics();
             self.reported_unreachable_nodes.clear();
@@ -660,6 +664,7 @@ impl Checker {
 
     // checker.go:2744
     pub(crate) fn check_property_declaration(&mut self, node: P<Node>) {
+        if ast::is_annotation_property_declaration(node) { self.check_annotation_property_declaration(node); return; }
         // Grammar checking
         if !self.check_grammar_modifiers(node) && !self.check_grammar_property(node) {
             self.check_grammar_computed_property_name(node.name().unwrap());
@@ -816,6 +821,7 @@ impl Checker {
 
     // checker.go:2870
     pub(crate) fn check_constructor_declaration(&mut self, node: P<Node>) {
+        if node.is_virtual() { return; }
         // Grammar check on signature of constructor and modifier of the constructor is done in checkSignatureDeclaration function.
         self.check_signature_declaration(node);
         // Grammar check for checking only related to constructorDeclaration
@@ -824,7 +830,9 @@ impl Checker {
         }
         self.check_source_element(node.body());
         let symbol = self.get_symbol_of_declaration(node).unwrap();
-        self.check_function_or_constructor_symbol(symbol);
+        if ast::get_declaration_of_kind(symbol, node.kind()) == Some(node) {
+            self.check_function_or_constructor_symbol(symbol);
+        }
         // exit early in the case of signature - super checks are not relevant to them
         if ast::node_is_missing(node.body()) {
             return;
@@ -1017,6 +1025,7 @@ impl Checker {
     // checker.go:3046
     pub(crate) fn check_type_reference_or_import(&mut self, node: P<Node>) {
         let t = self.get_type_from_type_node(node);
+        if is_annotation_symbol(t.symbol()) { self.error(Some(node), &diagnostics::Annotation_cannot_be_used_as_a_type, &[]); }
         if !self.is_error_type(t) {
             if !node.type_arguments().is_empty() && !self.defer_type_argument_constraints(node) {
                 let type_parameters = self.get_type_parameters_for_type_reference_or_import(node);
@@ -1895,10 +1904,12 @@ impl Checker {
         // Functions with an explicitly specified return type that includes `void` or is exactly `any` or `undefined` don't
         // need any return statements.
         if let Some(t) = t {
-            if self.maybe_type_of_kind(t, TypeFlags::Void) || t.flags().intersects(TypeFlags::Any | TypeFlags::Undefined) {
+            if self.maybe_type_of_kind(t, TypeFlags::Void) || t.flags().intersects(TypeFlags::Any) {
                 return;
             }
         }
+        if self.check_ets_style_return_type(fn_, return_type) { return; }
+        if t.is_some_and(|t| t.flags().intersects(TypeFlags::Undefined)) { return; }
         // If all we have is a function signature, or an arrow function with an expression body, then there is nothing to check.
         // also if HasImplicitReturn flag is not set this means that all codepaths in function body end with return or throw
         if ast::is_method_signature_declaration(fn_) || ast::node_is_missing(fn_.body()) || !ast::is_block(fn_.body().unwrap()) || !self.function_has_implicit_return(fn_) {
@@ -2533,6 +2544,11 @@ impl Checker {
 
     // checker.go:4306
     pub(crate) fn check_class_declaration(&mut self, node: P<Node>) {
+        if ast::is_annotation_declaration(node) { self.check_annotation_declaration(node); return; }
+        if ast::is_struct_declaration(node) {
+            self.check_struct_declaration(node);
+            return;
+        }
         let first_decorator = node.modifier_nodes().iter().copied().find(|&m| ast::is_decorator(m));
         if self.legacy_decorators
             && first_decorator.is_some()

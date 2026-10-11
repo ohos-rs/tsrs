@@ -479,6 +479,13 @@ impl Checker {
         }
         let local_or_export_symbol = self.get_export_symbol_of_value_symbol_if_exported(Some(symbol)).unwrap();
         let target_symbol = self.resolve_alias_with_deprecation_check(local_or_export_symbol, node);
+        self.check_oh_sdk_identifier_use(node, target_symbol);
+        if is_annotation_symbol(Some(local_or_export_symbol)) && ast::find_ancestor(Some(node), |n| {
+            ast::is_annotation_declaration(n) || ast::is_decorator(n) || ast::is_import_declaration(n) || ast::is_export_declaration(n) || ast::is_export_assignment(n)
+        }).is_none() {
+            self.error(Some(node), &diagnostics::Annotation_cannot_be_used_as_type_or_variable_or_function_or_method, &[]);
+            return self.error_type;
+        }
         let has_declarations = !target_symbol.declarations().is_empty();
         if has_declarations && self.is_deprecated_symbol(target_symbol) && self.is_uncalled_function_reference(node, target_symbol) {
             let declarations = target_symbol.declarations();
@@ -797,6 +804,7 @@ impl Checker {
                 return apparent_type;
             }
             prop = self.get_property_of_type_ex(apparent_type, right.text(), is_const_enum_object_type(apparent_type) /*skipObjectFunctionPropertyAugment*/, node.kind() == Kind::QualifiedName /*includeTypeOnlyMembers*/);
+            if prop.is_none() { prop = self.get_arkui_style_property(node, left, right); }
         }
         self.mark_linked_references(node, ReferenceHint::Property, prop, Some(left_type));
         let prop_type: P<Type>;
@@ -851,6 +859,7 @@ impl Checker {
             }
             Some(prop) => {
                 let target_prop_symbol = self.resolve_alias_with_deprecation_check(prop, right);
+                self.check_oh_sdk_property_use(right, target_prop_symbol);
                 if self.is_deprecated_symbol(target_prop_symbol) && self.is_uncalled_function_reference(node, target_prop_symbol) && !target_prop_symbol.declarations().is_empty() {
                     let declarations = target_prop_symbol.declarations();
                     self.add_deprecated_suggestion(right, &declarations, right.text());
@@ -1295,7 +1304,13 @@ impl Checker {
             && !(ast::is_method_declaration(value_declaration) && self.get_combined_modifier_flags_cached(value_declaration).intersects(ModifierFlags::Static))
             && (self.compiler_options.get_use_define_for_class_fields() || !self.is_property_declared_in_ancestor_class(prop))
         {
-            diagnostic = Some(self.error(Some(right), &diagnostics::Property_0_is_used_before_its_initialization, &[&declaration_name]));
+            let allow_uninitialized = self.compiler_options.ets.property_decorators.as_deref().unwrap_or_default().iter()
+                .any(|property| !property.need_initialization && ast::has_arkui_bare_decorator(value_declaration.modifiers(), &[&property.name]));
+            let required_before_use = ast::has_arkui_bare_decorator(value_declaration.modifiers(), &["Require"])
+                && value_declaration.pos() < node.pos() && value_declaration.parent().is_some_and(|parent| ast::is_struct_declaration(parent) && parent.end() > node.end());
+            if !allow_uninitialized && !required_before_use {
+                diagnostic = Some(self.error(Some(right), &diagnostics::Property_0_is_used_before_its_initialization, &[&declaration_name]));
+            }
         } else if ast::is_class_declaration(value_declaration)
             && !ast::is_type_reference_node(node.parent().unwrap())
             && !value_declaration.flags().intersects(NodeFlags::Ambient)
@@ -2207,10 +2222,13 @@ impl Checker {
             Kind::LessThanToken | Kind::GreaterThanToken | Kind::LessThanEqualsToken | Kind::GreaterThanEqualsToken => {
                 if self.check_for_disallowed_es_symbol_operand(left, right, left_type, right_type, operator) {
                     let non_null_left = self.check_non_null_type(left_type, left);
-                    left_type = self.get_base_type_of_literal_type_for_comparison(non_null_left);
+                    left_type = if self.compiler_options.ets_loader_path.is_empty() { self.get_base_type_of_literal_type_for_comparison(non_null_left) } else { self.get_base_type_of_literal_type(non_null_left) };
                     let non_null_right = self.check_non_null_type(right_type, right);
-                    right_type = self.get_base_type_of_literal_type_for_comparison(non_null_right);
+                    right_type = if self.compiler_options.ets_loader_path.is_empty() { self.get_base_type_of_literal_type_for_comparison(non_null_right) } else { self.get_base_type_of_literal_type(non_null_right) };
                     self.report_operator_error_unless(left_type, operator, right_type, error_node, |c, left, right| {
+                        if !c.compiler_options.ets_loader_path.is_empty() {
+                            return c.are_types_comparable(left, right) || c.is_type_assignable_to(left, c.number_or_big_int_type) && c.is_type_assignable_to(right, c.number_or_big_int_type);
+                        }
                         if is_type_any(Some(left)) || is_type_any(Some(right)) {
                             return true;
                         }

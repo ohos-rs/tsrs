@@ -250,6 +250,7 @@ impl NodeFactory {
 pub(crate) fn update_node(updated: P<Node>, original: P<Node>, hooks: &NodeFactoryHooks) -> P<Node> {
     if updated != original {
         updated.flags.set(original.flags.get());
+        updated.set_virtual(original.is_virtual());
         updated.loc.set(original.loc.get());
         if let Some(on_update) = &hooks.on_update {
             on_update(updated, original);
@@ -351,7 +352,7 @@ impl NodeList {
         let Some(last) = self.nodes().last() else {
             return false;
         };
-        last.end() < self.end()
+        !last.is_virtual() && last.end() < self.end()
     }
 
     pub fn clone_list(&self, f: &NodeFactory) -> P<NodeList> {
@@ -473,6 +474,7 @@ impl NodeHeaderWord {
     const KIND_BITS: u32 = 9;
     const TAG_SHIFT: u32 = Self::KIND_SHIFT + Self::KIND_BITS;
     const RARE_BIT: u64 = 1 << (Self::TAG_SHIFT + 8);
+    const VIRTUAL_BIT: u64 = 1 << (Self::TAG_SHIFT + 9);
 
     #[inline]
     fn new(kind: Kind, data_tag: NodeDataTag) -> NodeHeaderWord {
@@ -515,7 +517,7 @@ impl NodeHeaderWord {
 }
 
 const _: () = assert!((Kind::Count as u64) < 1 << NodeHeaderWord::KIND_BITS);
-const _: () = assert!(NodeHeaderWord::TAG_SHIFT + 8 < 64);
+const _: () = assert!(NodeHeaderWord::TAG_SHIFT + 9 < 64);
 
 /// One arena allocation per node: the header, then the data struct. `repr(C)` puts the header at offset 0 and
 /// the data at `offset_of!(NodeAlloc<T>, data)` (24 for every data struct: none is aligned to more than 8).
@@ -553,6 +555,16 @@ pub(crate) trait NodeRareTail: NodePayload {
 // for_each_child(), ...) are generated in generated.rs.
 
 impl Node {
+    pub fn is_virtual(&self) -> bool {
+        self.header.get().0 & NodeHeaderWord::VIRTUAL_BIT != 0
+    }
+
+    pub fn set_virtual(&self, value: bool) {
+        let mut header = self.header.get();
+        header.0 = (header.0 & !NodeHeaderWord::VIRTUAL_BIT) | if value { NodeHeaderWord::VIRTUAL_BIT } else { 0 };
+        self.header.set(header);
+    }
+
     #[inline]
     pub fn kind(&self) -> Kind {
         self.header.get().kind()
@@ -897,7 +909,7 @@ impl Node {
 
     pub fn statement_list(&self) -> Option<P<NodeList>> {
         match self.kind() {
-            Kind::SourceFile => Some(self.as_source_file().statements),
+            Kind::SourceFile => Some(self.as_source_file().statements()),
             Kind::Block => Some(self.as_block().statements),
             Kind::ModuleBlock => Some(self.as_module_block().statements),
             Kind::CaseClause | Kind::DefaultClause => Some(self.as_case_or_default_clause().statements),
@@ -1704,7 +1716,7 @@ pub struct SourceFile {
     text: &'static str,
     // Written once by the file loader (SetContentMapperInfo) before the file is published.
     content_mapper_info: OwnedCell<Option<P<ContentMapperSourceFileInfo>>>,
-    pub statements: P<NodeList>,       // NodeList[*Statement]
+    pub statements: OwnedCell<P<NodeList>>, // Replaced by OH Kit expansion before binding.
     pub end_of_file_token: P<Node>, // TokenNode[*EndOfFileToken]
 
     // Fields set by parser
@@ -1720,6 +1732,7 @@ pub struct SourceFile {
     pub imports: OwnedCell<&'static [P<Node>]>,              // []LiteralLikeNode
     pub module_augmentations: OwnedCell<&'static [P<Node>]>, // []ModuleName
     pub ambient_module_names: OwnedCell<&'static [&'static str]>,
+    pub marked_kit_import_ranges: OwnedCell<&'static [TextRange]>,
     pub comment_directives: OwnedCell<&'static [CommentDirective]>,
     // Written by the parser; with lazy JSDoc, also by any checker thread under `jsdoc_mu` (Go `jsdocMu`).
     pub(crate) jsdoc_cache: FrozenCell<FxHashMap<P<Node>, &'static [P<Node>]>>,
@@ -1790,7 +1803,7 @@ impl NodeFactory {
             parse_options: opts,
             text,
             content_mapper_info: OwnedCell::new(None),
-            statements,
+            statements: OwnedCell::new(statements),
             end_of_file_token,
             diagnostics: OwnedCell::new(&[]),
             js_diagnostics: OwnedCell::new(&[]),
@@ -1804,6 +1817,7 @@ impl NodeFactory {
             imports: OwnedCell::new(&[]),
             module_augmentations: OwnedCell::new(&[]),
             ambient_module_names: OwnedCell::new(&[]),
+            marked_kit_import_ranges: OwnedCell::new(&[]),
             comment_directives: OwnedCell::new(&[]),
             jsdoc_cache: FrozenCell::new(FxHashMap::default()),
             jsdoc_mu: RwLock::new(()),
@@ -2137,11 +2151,11 @@ impl SourceFile {
     }
 
     pub fn for_each_child<V: FnMut(P<Node>) -> bool + ?Sized>(&self, v: &mut V) -> bool {
-        visit_node_list(v, Some(self.statements)) || visit(v, Some(self.end_of_file_token))
+        visit_node_list(v, Some(self.statements.get())) || visit(v, Some(self.end_of_file_token))
     }
 
     pub fn visit_each_child(&self, node: P<Node>, v: &mut NodeVisitor) -> P<Node> {
-        let statements = v.visit_top_level_statements_hooked(Some(self.statements)).unwrap();
+        let statements = v.visit_top_level_statements_hooked(Some(self.statements.get())).unwrap();
         let end_of_file_token = v.visit_token_hooked(Some(self.end_of_file_token)).unwrap();
         v.factory.update_source_file(node, statements, end_of_file_token)
     }
@@ -2163,6 +2177,7 @@ impl SourceFile {
         self.module_augmentations.set(other.module_augmentations.get());
         self.ambient_module_names.set(other.ambient_module_names.get());
         self.comment_directives.set(other.comment_directives.get());
+        self.marked_kit_import_ranges.set(other.marked_kit_import_ranges.get());
         self.pragmas.set(other.pragmas.get());
         self.referenced_files.set(other.referenced_files.get());
         self.type_reference_directives.set(other.type_reference_directives.get());
@@ -2174,7 +2189,7 @@ impl SourceFile {
     }
 
     pub fn clone_node(&self, node: P<Node>, f: &NodeFactory) -> P<Node> {
-        let updated = f.new_source_file(self.parse_options.clone(), self.text, self.statements, self.end_of_file_token);
+        let updated = f.new_source_file(self.parse_options.clone(), self.text, self.statements.get(), self.end_of_file_token);
         let new_file = updated.as_source_file();
         new_file.copy_from(self);
         clone_node(updated, node, &f.hooks)
@@ -2302,7 +2317,7 @@ impl SourceFile {
         self.locals_container_base.locals.get()
     }
     pub fn statements(&self) -> P<NodeList> {
-        self.statements
+        self.statements.get()
     }
     pub fn end_of_file_token(&self) -> P<Node> {
         self.end_of_file_token
@@ -2358,7 +2373,7 @@ fn collect_identifiers_for_source_file(source_file: &SourceFile) -> Set<&'static
 impl NodeFactory {
     pub fn update_source_file(&self, node: P<Node>, statements: P<NodeList>, end_of_file_token: P<Node>) -> P<Node> {
         let file = node.as_source_file();
-        if statements != file.statements || end_of_file_token != file.end_of_file_token {
+        if statements != file.statements() || end_of_file_token != file.end_of_file_token {
             let updated = self.new_source_file(file.parse_options.clone(), file.text, statements, end_of_file_token);
             updated.as_source_file().copy_from(file);
             return update_node(updated, node, &self.hooks);

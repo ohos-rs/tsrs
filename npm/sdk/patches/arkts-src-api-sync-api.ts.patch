@@ -1,0 +1,128 @@
+# tsrs dynamic ArkTS API and binary AST protocol 10.
+--- a/src/api/sync/api.ts
++++ b/src/api/sync/api.ts
+@@ -1,3 +1,11 @@
++import type { ArkTSBuildDiagnosticsResponse } from "../proto.ts";
++import type {
++    AnnotationInfoResponse,
++    AnnotationTransformInfoResponse,
++    ArkTSTransformTypeFactsFileQuery,
++    ArkTSTransformTypeFactsResponse,
++    ProgramSourceGraphResponse,
++} from "../proto.ts";
+ //
+ // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+ // !!! THIS FILE IS AUTO-GENERATED - DO NOT EDIT !!!
+@@ -3409,6 +3417,112 @@
+      * Get semantic (type-check) diagnostics for specific files or all files.
+      * @param file - Optional file(s) to get diagnostics for. If omitted, returns diagnostics for all files.
+      */
++    get getArkTSLinterDiagnostics(): {
++        (file?: DocumentIdentifier | readonly DocumentIdentifier[]): readonly Diagnostic[];
++        gen(file?: DocumentIdentifier | readonly DocumentIdentifier[]): Generator<ProtocolRequest, readonly Diagnostic[], ProtocolResponse["result"]>;
++    } {
++        const owner = this;
++        return cacheGeneratorMethod(
++            owner,
++            "getArkTSLinterDiagnostics",
++            function (file?: DocumentIdentifier | readonly DocumentIdentifier[]): readonly Diagnostic[] {
++                const files = file === undefined ? undefined
++                    : Array.isArray(file) ? file
++                    : [file];
++                const data = owner.client.apiRequest("getArkTSLinterDiagnostics", {
++                    snapshot: owner.snapshotId,
++                    project: owner.project.id,
++                    files,
++                });
++                return data ?? [];
++            },
++            function* (file?: DocumentIdentifier | readonly DocumentIdentifier[]): Generator<ProtocolRequest, readonly Diagnostic[], ProtocolResponse["result"]> {
++                const files = file === undefined ? undefined
++                    : Array.isArray(file) ? file
++                    : [file];
++                const data = yield* apiRequest("getArkTSLinterDiagnostics", {
++                    snapshot: owner.snapshotId,
++                    project: owner.project.id,
++                    files,
++                });
++                return data ?? [];
++            },
++        );
++    }
++
++    get getArkTSBuildDiagnostics(): {
++        (): ArkTSBuildDiagnosticsResponse;
++        gen(): Generator<ProtocolRequest, ArkTSBuildDiagnosticsResponse, ProtocolResponse["result"]>;
++    } {
++        const owner = this;
++        return cacheGeneratorMethod(
++            owner,
++            "getArkTSBuildDiagnostics",
++            function (): ArkTSBuildDiagnosticsResponse {
++                const data = owner.client.apiRequest("getArkTSBuildDiagnostics", {
++                    snapshot: owner.snapshotId,
++                    project: owner.project.id,
++                });
++                return data;
++            },
++            function* (): Generator<ProtocolRequest, ArkTSBuildDiagnosticsResponse, ProtocolResponse["result"]> {
++                const data = yield* apiRequest("getArkTSBuildDiagnostics", {
++                    snapshot: owner.snapshotId,
++                    project: owner.project.id,
++                });
++                return data;
++            },
++        );
++    }
++
++    get getProgramSourceGraph(): {
++        (): ProgramSourceGraphResponse;
++        gen(): Generator<ProtocolRequest, ProgramSourceGraphResponse, ProtocolResponse["result"]>;
++    } {
++        const owner = this;
++        return cacheGeneratorMethod(owner, "getProgramSourceGraph", function (): ProgramSourceGraphResponse {
++            return owner.client.apiRequest("getProgramSourceGraph", { snapshot: owner.snapshotId, project: owner.project.id });
++        }, function* (): Generator<ProtocolRequest, ProgramSourceGraphResponse, ProtocolResponse["result"]> {
++            return yield* apiRequest("getProgramSourceGraph", { snapshot: owner.snapshotId, project: owner.project.id });
++        });
++    }
++
++    get getAnnotationInfo(): {
++        (location: string): AnnotationInfoResponse | null;
++        gen(location: string): Generator<ProtocolRequest, AnnotationInfoResponse | null, ProtocolResponse["result"]>;
++    } {
++        const owner = this;
++        return cacheGeneratorMethod(owner, "getAnnotationInfo", function (location: string): AnnotationInfoResponse | null {
++            return owner.client.apiRequest("getAnnotationInfo", { snapshot: owner.snapshotId, project: owner.project.id, location });
++        }, function* (location: string): Generator<ProtocolRequest, AnnotationInfoResponse | null, ProtocolResponse["result"]> {
++            return yield* apiRequest("getAnnotationInfo", { snapshot: owner.snapshotId, project: owner.project.id, location });
++        });
++    }
++
++    get getAnnotationTransformInfos(): {
++        (files: readonly DocumentIdentifier[]): AnnotationTransformInfoResponse[];
++        gen(files: readonly DocumentIdentifier[]): Generator<ProtocolRequest, AnnotationTransformInfoResponse[], ProtocolResponse["result"]>;
++    } {
++        const owner = this;
++        return cacheGeneratorMethod(owner, "getAnnotationTransformInfos", function (files: readonly DocumentIdentifier[]): AnnotationTransformInfoResponse[] {
++            return owner.client.apiRequest("getAnnotationTransformInfos", { snapshot: owner.snapshotId, project: owner.project.id, files });
++        }, function* (files: readonly DocumentIdentifier[]): Generator<ProtocolRequest, AnnotationTransformInfoResponse[], ProtocolResponse["result"]> {
++            return yield* apiRequest("getAnnotationTransformInfos", { snapshot: owner.snapshotId, project: owner.project.id, files });
++        });
++    }
++
++    get getArkTSTransformTypeFacts(): {
++        (queries?: readonly ArkTSTransformTypeFactsFileQuery[], sdkApiUseFiles?: readonly DocumentIdentifier[]): ArkTSTransformTypeFactsResponse[];
++        gen(queries?: readonly ArkTSTransformTypeFactsFileQuery[], sdkApiUseFiles?: readonly DocumentIdentifier[]): Generator<ProtocolRequest, ArkTSTransformTypeFactsResponse[], ProtocolResponse["result"]>;
++    } {
++        const owner = this;
++        return cacheGeneratorMethod(owner, "getArkTSTransformTypeFacts", function (queries: readonly ArkTSTransformTypeFactsFileQuery[] = [], sdkApiUseFiles: readonly DocumentIdentifier[] = []): ArkTSTransformTypeFactsResponse[] {
++            return owner.client.apiRequest("getArkTSTransformTypeFacts", { snapshot: owner.snapshotId, project: owner.project.id, queries, sdkApiUseFiles });
++        }, function* (queries: readonly ArkTSTransformTypeFactsFileQuery[] = [], sdkApiUseFiles: readonly DocumentIdentifier[] = []): Generator<ProtocolRequest, ArkTSTransformTypeFactsResponse[], ProtocolResponse["result"]> {
++            return yield* apiRequest("getArkTSTransformTypeFacts", { snapshot: owner.snapshotId, project: owner.project.id, queries, sdkApiUseFiles });
++        });
++    }
++
+     get getSemanticDiagnostics(): {
+         (file?: DocumentIdentifier | readonly DocumentIdentifier[]): readonly Diagnostic[];
+         gen(file?: DocumentIdentifier | readonly DocumentIdentifier[]): Generator<ProtocolRequest, readonly Diagnostic[], ProtocolResponse["result"]>;

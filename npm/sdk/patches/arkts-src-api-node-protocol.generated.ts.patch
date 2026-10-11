@@ -1,0 +1,12 @@
+# tsrs dynamic ArkTS API and binary AST protocol 10.
+--- a/src/api/node/protocol.generated.ts
++++ b/src/api/node/protocol.generated.ts
+@@ -76,7 +76,7 @@
+     [SyntaxKind.ConditionalExpression]: ["condition", "questionToken", "whenTrue", "colonToken", "whenFalse"],
+     [SyntaxKind.PropertyAccessExpression]: ["expression", "questionDotToken", "name"],
+     [SyntaxKind.ElementAccessExpression]: ["expression", "questionDotToken", "argumentExpression"],
+-    [SyntaxKind.CallExpression]: ["expression", "questionDotToken", "typeArguments", "arguments"],
++    [SyntaxKind.CallExpression]: ["expression", "questionDotToken", "typeArguments", "arguments", "etsBody"],
+     [SyntaxKind.NewExpression]: ["expression", "typeArguments", "arguments"],
+     [SyntaxKind.MetaProperty]: ["name"],
+     [SyntaxKind.NonNullExpression]: ["expression"],

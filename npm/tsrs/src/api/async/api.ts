@@ -58,6 +58,14 @@ import {
     createGetCanonicalFileName,
     toPath,
 } from "../path.ts";
+import type { ArkTSBuildDiagnosticsResponse } from "../proto.ts";
+import type {
+    AnnotationInfoResponse,
+    AnnotationTransformInfoResponse,
+    ArkTSTransformTypeFactsFileQuery,
+    ArkTSTransformTypeFactsResponse,
+    ProgramSourceGraphResponse,
+} from "../proto.ts";
 import type {
     BuildResponse,
     CleanBuildResponse,
@@ -1905,6 +1913,42 @@ export class Program<Id extends ProjectId = ProjectId> implements FormatDiagnost
      * Get semantic (type-check) diagnostics for specific files or all files.
      * @param file - Optional file(s) to get diagnostics for. If omitted, returns diagnostics for all files.
      */
+    async getArkTSLinterDiagnostics(file?: DocumentIdentifier | readonly DocumentIdentifier[]): Promise<readonly Diagnostic[]> {
+        const files = file === undefined ? undefined
+            : Array.isArray(file) ? file
+            : [file];
+        const data = await this.client.apiRequest("getArkTSLinterDiagnostics", {
+            snapshot: this.snapshotId,
+            project: this.project.id,
+            files,
+        });
+        return data ?? [];
+    }
+
+    async getArkTSBuildDiagnostics(): Promise<ArkTSBuildDiagnosticsResponse> {
+        const data = await this.client.apiRequest("getArkTSBuildDiagnostics", {
+            snapshot: this.snapshotId,
+            project: this.project.id,
+        });
+        return data;
+    }
+
+    async getProgramSourceGraph(): Promise<ProgramSourceGraphResponse> {
+        return this.client.apiRequest("getProgramSourceGraph", { snapshot: this.snapshotId, project: this.project.id });
+    }
+
+    async getAnnotationInfo(location: string): Promise<AnnotationInfoResponse | null> {
+        return this.client.apiRequest("getAnnotationInfo", { snapshot: this.snapshotId, project: this.project.id, location });
+    }
+
+    async getAnnotationTransformInfos(files: readonly DocumentIdentifier[]): Promise<AnnotationTransformInfoResponse[]> {
+        return this.client.apiRequest("getAnnotationTransformInfos", { snapshot: this.snapshotId, project: this.project.id, files });
+    }
+
+    async getArkTSTransformTypeFacts(queries: readonly ArkTSTransformTypeFactsFileQuery[] = [], sdkApiUseFiles: readonly DocumentIdentifier[] = []): Promise<ArkTSTransformTypeFactsResponse[]> {
+        return this.client.apiRequest("getArkTSTransformTypeFacts", { snapshot: this.snapshotId, project: this.project.id, queries, sdkApiUseFiles });
+    }
+
     async getSemanticDiagnostics(file?: DocumentIdentifier | readonly DocumentIdentifier[]): Promise<readonly Diagnostic[]> {
         const files = file === undefined ? undefined
             : Array.isArray(file) ? file

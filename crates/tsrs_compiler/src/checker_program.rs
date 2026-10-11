@@ -27,6 +27,10 @@ impl tsrs_checker::Program for Program {
         Program::file_exists(self, file_name)
     }
 
+    fn read_file(&self, file_name: &str) -> Option<String> {
+        self.host().fs().read_file(file_name)
+    }
+
     fn get_source_file(&self, file_name: &str) -> Option<P<SourceFile>> {
         Program::get_source_file(self, file_name)
     }

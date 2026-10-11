@@ -1639,6 +1639,9 @@ impl Checker {
     // checker.go:5716
     pub(crate) fn check_export_specifier(&mut self, node: P<Node>) {
         self.check_alias_symbol(node);
+        let symbol = self.get_symbol_of_declaration(node).unwrap();
+        let target = self.resolve_alias(symbol);
+        if is_annotation_symbol(Some(target)) { self.error(Some(node), &diagnostics::Annotation_can_only_be_exported_in_declaration_statement, &[]); }
         let has_module_specifier = node.parent().unwrap().parent().unwrap().module_specifier().is_some();
         self.check_module_export_name(node.property_name(), has_module_specifier);
         self.check_module_export_name(node.name(), true /*allowStringLiteral*/);
@@ -1682,6 +1685,8 @@ impl Checker {
         // export assignment is misplaced (grammar error), keeping diagnostics stable
         // regardless of traversal order.
         let expr_type = self.check_expression_cached(node.expression().unwrap());
+        let symbol = self.get_symbol_of_name_or_property_access_expression(node.expression().unwrap());
+        if !is_export_equals && is_annotation_symbol(symbol) { self.error(Some(node), &diagnostics::Annotation_cannot_be_exported_as_default, &[]); }
         let illegal_context_message = if is_export_equals {
             &diagnostics::An_export_assignment_must_be_at_the_top_level_of_a_file_or_module_declaration
         } else {
@@ -2183,6 +2188,13 @@ impl Checker {
 
     // checker.go:6192
     pub(crate) fn check_decorators(&mut self, node: P<Node>) {
+        if ast::get_source_file_of_node(node).unwrap().script_kind() == tsrs_core::ScriptKind::ETS {
+            for &modifier in node.modifier_nodes() {
+                if ast::is_decorator(modifier) && ast::is_identifier(modifier.expression().unwrap()) && self.annotation_for_decorator(modifier).is_none() {
+                    self.get_resolved_symbol(modifier.expression().unwrap());
+                }
+            }
+        }
         // skip this check for nodes that cannot have decorators. These should have already had an error reported by
         // checkGrammarModifiers.
         if !can_have_decorators(node) || !has_decorators(node) || !node_can_be_decorated(self.legacy_decorators, node, node.parent(), node.parent().unwrap().parent()) {
@@ -2222,6 +2234,7 @@ impl Checker {
 
     // checker.go:6231
     pub(crate) fn check_decorator(&mut self, node: P<Node>) {
+        if let Some(declaration) = self.annotation_for_decorator(node) { self.check_annotation_use(node, declaration); return; }
         self.check_grammar_decorator(node);
         let signature = self.get_resolved_signature(node, None, CheckMode::Normal);
         self.check_deprecated_signature(signature, node);
@@ -2266,9 +2279,14 @@ impl Checker {
             return None;
         }
         let iterable_exists = self.get_global_iterable_type() != self.empty_generic_type;
+        let uplevel_iteration = self.language_version >= ScriptTarget::ES2015;
+        let downlevel_iteration = !uplevel_iteration && self.compiler_options.downlevel_iteration == Tristate::True;
+        let oh = !self.compiler_options.ets_loader_path.is_empty();
+        let check_iterable = if oh { uplevel_iteration || downlevel_iteration || allow_async_iterables } else { iterable_exists || allow_async_iterables };
+        let return_missing_iteration = if oh { uplevel_iteration } else { iterable_exists };
         let possible_out_of_bounds = self.compiler_options.no_unchecked_indexed_access == Tristate::True && use_.intersects(IterationUse::PossiblyOutOfBounds);
-        if iterable_exists || allow_async_iterables {
-            let iteration_types = self.get_iteration_types_of_iterable(input_type, use_, if iterable_exists { error_node } else { None });
+        if check_iterable {
+            let iteration_types = self.get_iteration_types_of_iterable(input_type, use_, if return_missing_iteration { error_node } else { None });
             if check_assignability {
                 if let Some(next_type) = iteration_types.next_type {
                     let mut diagnostic: Option<&'static Message> = None;
@@ -2286,7 +2304,7 @@ impl Checker {
                     }
                 }
             }
-            if iteration_types.yield_type.is_some() || iterable_exists {
+            if iteration_types.yield_type.is_some() || return_missing_iteration {
                 let yield_type = iteration_types.yield_type?;
                 if possible_out_of_bounds {
                     return Some(self.include_undefined_in_index_signature(yield_type));
@@ -2332,7 +2350,7 @@ impl Checker {
                 // number and string input is allowed, we want to say that number is not an
                 // array type or a string type.
                 let allows_strings = use_.intersects(IterationUse::AllowsStringInputFlag) && !has_string_constituent;
-                let (default_diagnostic, maybe_missing_await) = self.get_iteration_diagnostic_details(use_, input_type, allows_strings);
+                let (default_diagnostic, maybe_missing_await) = self.get_iteration_diagnostic_details(use_, input_type, allows_strings, downlevel_iteration);
                 let maybe_missing_await = maybe_missing_await && self.get_awaited_type_of_promise(array_type).is_some();
                 let a0 = self.type_to_string(array_type, None);
                 self.error_and_maybe_suggest_await(error_node, maybe_missing_await, default_diagnostic, &[&a0]);

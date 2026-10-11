@@ -15,3 +15,6 @@ pub use validated::*;
 
 #[cfg(test)]
 mod tests;
+
+mod json5;
+pub use json5::parse_json5;

@@ -54,7 +54,15 @@ def copy_libs(libs):
         shutil.rmtree(DST_LIBS)
     os.makedirs(DST_LIBS)
     for name in libs:
-        shutil.copyfile(os.path.join(SRC_LIBS, name), os.path.join(DST_LIBS, name))
+        destination = os.path.join(DST_LIBS, name)
+        shutil.copyfile(os.path.join(SRC_LIBS, name), destination)
+        if name == "lib.es5.d.ts":
+            # OH TypeScript's dynamic-language interop alias, before DateConstructor.
+            with open(destination, "r", encoding="utf-8") as source:
+                text = source.read()
+            assert text.count("interface DateConstructor {") == 1
+            with open(destination, "w", encoding="utf-8") as output:
+                output.write(text.replace("interface DateConstructor {", "type ESObject = any;\n\ninterface DateConstructor {"))
 
 
 def generate_lib_list(libs):

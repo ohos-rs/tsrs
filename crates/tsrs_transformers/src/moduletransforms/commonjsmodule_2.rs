@@ -64,7 +64,7 @@ impl CommonJSModuleTransformer {
                         ]),
                         false, /*multiLine*/
                     ),
-                ]),
+                ]), None,
                 NodeFlags::None,
             )
         } else {
@@ -95,7 +95,7 @@ impl CommonJSModuleTransformer {
         if let Some(module_name) = module_name {
             args.push(rewrite_module_specifier(self.emit_context(), Some(module_name), &self.compiler_options).unwrap());
         }
-        f.new_call_expression(f.new_identifier("require"), None /*questionDotToken*/, None /*typeArguments*/, f.new_node_list(args), NodeFlags::None)
+        f.new_call_expression(f.new_identifier("require"), None /*questionDotToken*/, None /*typeArguments*/, f.new_node_list(args), None, NodeFlags::None)
     }
 
     // commonjsmodule.go:695

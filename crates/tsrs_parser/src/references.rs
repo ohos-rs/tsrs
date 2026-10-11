@@ -94,3 +94,12 @@ fn collect_module_references(file: P<SourceFile>, refs: &mut References, node: P
 fn set_imports_of_source_file(file: P<SourceFile>, imports: Vec<P<Node>>) {
     file.imports.set(alloc_vec(imports));
 }
+
+// OH references.go:27: Kit expansion changes the semantic import inventory.
+pub fn recollect_external_module_references(file: P<SourceFile>) {
+    file.imports.set(&[]);
+    file.module_augmentations.set(&[]);
+    file.ambient_module_names.set(&[]);
+    file.uses_uri_style_node_core_modules.set(Tristate::Unknown);
+    collect_external_module_references(file);
+}

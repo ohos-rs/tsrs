@@ -54,10 +54,10 @@ impl taggedTemplateTransformer {
         if !declarations.is_empty() {
             let f = self.factory();
             let visited_source_file = visited.as_source_file_p();
-            let mut statements: Vec<P<Node>> = visited_source_file.statements.nodes().to_vec();
+            let mut statements: Vec<P<Node>> = visited_source_file.statements().nodes().to_vec();
             statements.push(f.new_variable_statement(None /*modifiers*/, f.new_variable_declaration_list(f.new_node_list(declarations), NodeFlags::None)));
             let stmt_list = f.new_node_list(statements);
-            stmt_list.loc.set(node.statements.loc.get());
+            stmt_list.loc.set(node.statements().loc.get());
             visited = f.update_source_file(visited, stmt_list, visited_source_file.end_of_file_token);
         }
 
@@ -115,7 +115,7 @@ impl taggedTemplateTransformer {
             template_arguments[0] = Some(helper_call);
         }
 
-        let call = f.new_call_expression(tag, None /*questionDotToken*/, None /*typeArguments*/, f.new_node_list(template_arguments.into_iter().flatten().collect()), NodeFlags::None);
+        let call = f.new_call_expression(tag, None /*questionDotToken*/, None /*typeArguments*/, f.new_node_list(template_arguments.into_iter().flatten().collect()), None, NodeFlags::None);
         call.set_loc(node.loc());
         call
     }

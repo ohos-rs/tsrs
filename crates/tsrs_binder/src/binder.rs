@@ -894,7 +894,8 @@ impl Binder {
 
     pub(crate) fn bind_property_worker(&mut self, node: P<Node>) {
         let is_auto_accessor = ast::is_auto_accessor_property_declaration(node);
-        let includes = if is_auto_accessor { SymbolFlags::Accessor } else { SymbolFlags::Property };
+        let mut includes = if is_auto_accessor { SymbolFlags::Accessor } else { SymbolFlags::Property };
+        if ast::is_annotation_property_declaration(node) && node.initializer().is_some() { includes |= SymbolFlags::Optional; }
         let excludes = if is_auto_accessor { SymbolFlags::AccessorExcludes } else { SymbolFlags::PropertyExcludes };
         self.bind_property_or_method_or_accessor(node, includes | get_optional_symbol_flag_for_node(node), excludes);
     }
@@ -1137,7 +1138,8 @@ impl Binder {
         let name = node.name();
         match node.kind() {
             Kind::ClassDeclaration => {
-                self.bind_block_scoped_declaration(node, SymbolFlags::Class, SymbolFlags::ClassExcludes);
+                let flags = if ast::is_annotation_declaration(node) { SymbolFlags::Class | SymbolFlags::Annotation } else { SymbolFlags::Class };
+                self.bind_block_scoped_declaration(node, flags, SymbolFlags::ClassExcludes);
             }
             Kind::ClassExpression => {
                 let name_text = match name {
@@ -1971,7 +1973,7 @@ impl Binder {
             Kind::NonNullExpression => self.bind_non_null_expression_flow(node),
             Kind::SourceFile => {
                 let source_file = node.as_source_file();
-                self.bind_each_statement_functions_first(source_file.statements);
+                self.bind_each_statement_functions_first(source_file.statements());
                 self.bind(source_file.end_of_file_token);
             }
             Kind::Block | Kind::ModuleBlock => {

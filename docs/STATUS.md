@@ -1,5 +1,15 @@
 # Status
 
+## 2026-10-11: dynamic ArkTS overlay
+
+Added `.ets` / `.d.ets`, ArkUI, annotations, OHPM/JSON5 and SDK resolution, the dynamic restrictions linter,
+Sendable/SDK policies and callbacks, OH TypeScript 4.9 compatibility, pre-bind Kit expansion, native snapshot
+queries and protocol-10 AST transport. Arkdown migrates to the tsrs service and removes its old Go submodule.
+The OH reference is `583e9e8b5450c6de49bbe985bd836d7941c7a961`; the base TypeScript pin is unchanged.
+All 1,003 linter and 243 compiler fixture diagnostic responses match; the ordinary conformance run has zero
+failures. Static ArkTS is excluded. SDK runtime lowering belongs to Arkdown's Rust/OXC/Rolldown pipeline.
+[ARKTS.md](ARKTS.md) documents configuration; [notes/arkts-port.md](../notes/arkts-port.md) records measurements.
+
 ## 2026-10-09: 0.11.0 release
 
 An opt-in memory target for native CLI type checks (#265), plus an explicit warning for unsupported tracing

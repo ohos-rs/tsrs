@@ -7,4 +7,5 @@ export var ScriptKind: any;
     ScriptKind[ScriptKind["TS"] = 3] = "TS";
     ScriptKind[ScriptKind["TSX"] = 4] = "TSX";
     ScriptKind[ScriptKind["JSON"] = 6] = "JSON";
+    ScriptKind[ScriptKind["ETS"] = 8] = "ETS";
 })(ScriptKind || (ScriptKind = {}));

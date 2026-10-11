@@ -13,6 +13,8 @@ pub trait Program: Send + Sync {
     fn source_files(&self) -> &'static [P<SourceFile>];
     fn bind_source_files(&self);
     fn file_exists(&self, file_name: &str) -> bool;
+    /// Optional OH kit-config reader; alias-only programs need not provide it.
+    fn read_file(&self, _file_name: &str) -> Option<String> { None }
     fn get_source_file(&self, file_name: &str) -> Option<P<SourceFile>>;
     fn get_source_file_for_resolved_module(&self, file_name: &str) -> Option<P<SourceFile>>;
     fn get_emit_module_format_of_file(&self, source_file: P<SourceFile>) -> ModuleKind;

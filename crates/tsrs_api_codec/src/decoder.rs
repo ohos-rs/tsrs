@@ -265,6 +265,7 @@ impl<'a> Decoder<'a> {
             })?;
             node.set_loc(loc);
             node.set_flags(NodeFlags::from_bits_retain(self.node_field(i, NODE_OFFSET_FLAGS)));
+            node.set_virtual(self.node_field(i, NODE_OFFSET_VIRTUAL) != 0);
             if k == Kind::SourceFile {
                 node.as_source_file().is_declaration_file.set(node.flags().intersects(NodeFlags::Ambient));
             }
@@ -329,17 +330,25 @@ impl<'a> Decoder<'a> {
             3 => ScriptKind::TS,
             4 => ScriptKind::TSX,
             6 => ScriptKind::JSON,
+            8 => ScriptKind::ETS,
             v => return Err(DecodeError::InvalidExtendedData(format!("scriptKind {v}"))),
         };
         if tspath::get_encoded_root_length(file_name) == 0 || file_name != tspath::normalize_path(file_name) {
             return Err(DecodeError::InvalidSourceFileName(file_name.to_string()));
         }
         let parse_opts = read_le32(self.raw, HEADER_OFFSET_PARSE_OPTIONS).unwrap();
-        let opts = SourceFileParseOptions {
+        let mut opts = SourceFileParseOptions {
             file_name: file_name.to_string(),
             path: tspath::Path(path.into()),
             external_module_indicator_options: ExternalModuleIndicatorOptions { jsx: parse_opts & 1 != 0, force: parse_opts & 2 != 0 },
+            ..Default::default()
         };
+        let ets_index = read_le32(self.raw, HEADER_OFFSET_ETS_OPTIONS).unwrap();
+        let mut kit_ranges = Vec::new();
+        if ets_index != NO_STRUCTURED_DATA {
+            kit_ranges = apply_arkts_parse_options(&mut opts, self.get_string(ets_index)?)
+                .map_err(DecodeError::InvalidExtendedData)?;
+        }
         let mut stmts = None;
         let mut end_of_file = None;
         for &ci in child_indices {
@@ -356,6 +365,7 @@ impl<'a> Decoder<'a> {
         let sf = node.as_source_file();
         sf.language_variant.set(language_variant);
         sf.script_kind.set(script_kind);
+        sf.marked_kit_import_ranges.set(tsrs_core::alloc_slice(&kit_ranges));
         Ok(node)
     }
 
@@ -495,4 +505,28 @@ pub(crate) fn absent<T: Absent>() -> Result<T, DecodeError> {
 /// Go `decodeNodeCommonData_SyntheticExpression` panics: the node is checker-internal and never decoded.
 pub(crate) fn decode_node_common_data_synthetic_expression(_: u32) -> Result<(&'static dyn std::any::Any, bool), DecodeError> {
     Err(DecodeError::Unsupported(Kind::SyntheticExpression))
+}
+
+/// Decode parser identity without allocating any AST nodes. Used by descriptor
+/// cache lookup and createSourceFile as well as the binary decoder.
+pub fn apply_arkts_parse_options(opts: &mut SourceFileParseOptions, json: &str) -> Result<Vec<TextRange>, String> {
+    #[derive(serde::Deserialize, Default)]
+    #[serde(default, rename_all = "camelCase")]
+    struct Options {
+        ets: std::sync::Arc<tsrs_core::EtsOptions>,
+        ets_annotations_enable: bool,
+        open_harmony49: bool,
+        ets_loader_path: String,
+        no_transformed_kit_in_parser: bool,
+        kit_config_key: String,
+        marked_kit_import_ranges: Vec<[i32; 2]>,
+    }
+    let data: Options = serde_json::from_str(json).map_err(|error| error.to_string())?;
+    opts.ets = data.ets;
+    opts.ets_annotations_enable = data.ets_annotations_enable;
+    opts.open_harmony49 = data.open_harmony49 || !data.ets_loader_path.is_empty();
+    opts.ets_loader_path = data.ets_loader_path;
+    opts.no_transformed_kit_in_parser = data.no_transformed_kit_in_parser;
+    opts.kit_config_key = data.kit_config_key;
+    Ok(data.marked_kit_import_ranges.into_iter().map(|[pos, end]| TextRange::new(pos, end)).collect())
 }

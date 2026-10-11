@@ -42,7 +42,7 @@ fn print_file(mode: &str, path: &str, flags: &str) -> Result<String, &'static st
     let Some(text) = read(path) else {
         return Err("UNREADABLE");
     };
-    let opts = SourceFileParseOptions { file_name: path.to_string(), path: Path::new(path.to_string()), external_module_indicator_options: parse_flags(flags) };
+    let opts = SourceFileParseOptions { file_name: path.to_string(), path: Path::new(path.to_string()), external_module_indicator_options: parse_flags(flags), ..Default::default() };
     let file = tsrs_parser::parse_source_file(opts, &text, tsrs_core::ensure_script_kind_from_file_name(path));
     if !file.diagnostics().is_empty() {
         return Err("SKIP");
@@ -70,7 +70,7 @@ fn print_synthesized(mode: &str, file: P<SourceFile>) -> String {
     let ec = new_emit_context();
     let mut p = new_printer(PrinterOptions { remove_comments: true, ..Default::default() }, PrintHandlers::default(), Some(ec));
     let mut sb = String::new();
-    for &stmt in file.statements.nodes() {
+    for &stmt in file.statements().nodes() {
         let clone = ec.factory.deep_clone_node(Some(stmt)).unwrap();
         let mut w: Box<dyn EmitTextWriter> = match mode {
             "synth" => new_text_writer("\n", 0),

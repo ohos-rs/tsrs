@@ -208,7 +208,7 @@ fn read(path: &str) -> Option<String> {
 }
 
 fn parse_options(path: &str, flags: &str) -> SourceFileParseOptions {
-    SourceFileParseOptions { file_name: path.to_string(), path: Path::new(path.to_string()), external_module_indicator_options: parse_flags(flags) }
+    SourceFileParseOptions { file_name: path.to_string(), path: Path::new(path.to_string()), external_module_indicator_options: parse_flags(flags), ..Default::default() }
 }
 
 fn dump(path: &str, flags: &str) -> Result<String, String> {

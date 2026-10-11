@@ -99,7 +99,7 @@ interface Field {
 // of 344K, ImportSpecifier property name 3.2% of 184K, BindingElement `...` / property name / initializer
 // 1.3 / 5.9 / 2.2% of 76K, ImportDeclaration attributes 0.02% of 148K, NewExpression type arguments 5.3% of 60K.
 const RARE_FIELDS = new Map<string, string[]>([
-    ["CallExpression", ["QuestionDotToken", "TypeArguments"]],
+    ["CallExpression", ["QuestionDotToken", "TypeArguments", "EtsBody"]],
     ["PropertyAccessExpression", ["QuestionDotToken"]],
     ["ElementAccessExpression", ["QuestionDotToken"]],
     ["ParameterDeclaration", ["DotDotDotToken", "Initializer"]],

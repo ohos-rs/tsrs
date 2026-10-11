@@ -29,6 +29,26 @@ const VERBATIM_DIRS = ["src", "vendor"];
 const VERBATIM_FILES = ["tsconfig.base.json", "tsconfig.json", "tsconfig.dev.json", "lib/getExePath.d.ts"];
 // Deliberate tsrs changes to upstream sources, documented in each patch header and in npm/README.md.
 const PATCHES = {
+    "src/api/async/api.ts": "arkts-src-api-async-api.ts.patch",
+    "src/api/node/encoder.generated.ts": "arkts-src-api-node-encoder.generated.ts.patch",
+    "src/api/node/encoder.ts": "arkts-src-api-node-encoder.ts.patch",
+    "src/api/node/node.generated.ts": "arkts-src-api-node-node.generated.ts.patch",
+    "src/api/node/node.infrastructure.ts": "arkts-src-api-node-node.infrastructure.ts.patch",
+    "src/api/node/node.ts": "arkts-src-api-node-node.ts.patch",
+    "src/api/node/protocol.generated.ts": "arkts-src-api-node-protocol.generated.ts.patch",
+    "src/api/node/protocol.ts": "arkts-src-api-node-protocol.ts.patch",
+    "src/api/proto.generated.ts": "arkts-src-api-proto.generated.ts.patch",
+    "src/api/sync/api.ts": "arkts-src-api-sync-api.ts.patch",
+    "src/ast/ast.generated.ts": "arkts-src-ast-ast.generated.ts.patch",
+    "src/ast/ast.ts": "arkts-src-ast-ast.ts.patch",
+    "src/ast/factory.generated.ts": "arkts-src-ast-factory.generated.ts.patch",
+    "src/ast/is.ts": "arkts-src-ast-is.ts.patch",
+    "src/ast/utils.ts": "arkts-src-ast-utils.ts.patch",
+    "src/ast/visitor.generated.ts": "arkts-src-ast-visitor.generated.ts.patch",
+    "src/enums/nodeFlags.enum.ts": "arkts-src-enums-nodeFlags.enum.ts.patch",
+    "src/enums/nodeFlags.ts": "arkts-src-enums-nodeFlags.ts.patch",
+    "src/enums/scriptKind.enum.ts": "arkts-src-enums-scriptKind.enum.ts.patch",
+    "src/enums/scriptKind.ts": "arkts-src-enums-scriptKind.ts.patch",
     "src/api/async/client.ts": "async-client-connection-loss.patch",
     "vendor/vscode-jsonrpc/lib/common/connection.js": "vscode-jsonrpc-send-request-write-error.patch",
 };

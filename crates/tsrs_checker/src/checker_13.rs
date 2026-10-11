@@ -75,9 +75,15 @@ impl Checker {
                 type_set = self.remove_constrained_type_variables(&type_set);
             }
             if union_reduction == UnionReduction::Subtype {
+                if !self.compiler_options.ets_loader_path.is_empty() {
+                    type_set.sort_by_key(|t| t.id());
+                }
                 match self.remove_subtypes(&type_set, includes.intersects(TypeFlags::Object)) {
                     Some(reduced) => type_set = reduced,
                     None => return self.error_type,
+                }
+                if !self.compiler_options.ets_loader_path.is_empty() {
+                    tsrs_core::goslices::sort_stable_func(&mut type_set, |&a, &b| compare_types(self, Some(a), Some(b)));
                 }
             }
             if type_set.is_empty() {

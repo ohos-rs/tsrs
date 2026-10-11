@@ -1,4 +1,5 @@
 import {
+    type ArkTSParseOptions,
     computeLineStarts,
     type FileReference,
     type LineAndCharacter,
@@ -20,6 +21,7 @@ import {
 } from "./node.generated.ts";
 import {
     NODE_EXTENDED_DATA_MASK,
+    readEtsOptionsJSON,
     readParseOptionsKey,
     readSourceFileHash,
     readSourceFileNodeId,
@@ -125,6 +127,11 @@ export class RemoteSourceFile extends RemoteNode implements SourceFileInfo {
     }
 
     /** @internal */
+    get arktsParseOptions(): ArkTSParseOptions | undefined {
+        const json = readEtsOptionsJSON(this.view);
+        return json ? JSON.parse(json) : undefined;
+    }
+
     get parseOptionsKey(): string {
         return readParseOptionsKey(this.view);
     }

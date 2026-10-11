@@ -419,6 +419,7 @@ pub fn get_script_kind_from_file_name(file_name: &str) -> ScriptKind {
             tspath::EXTENSION_JSX => return ScriptKind::JSX,
             tspath::EXTENSION_TS | tspath::EXTENSION_CTS | tspath::EXTENSION_MTS => return ScriptKind::TS,
             tspath::EXTENSION_TSX => return ScriptKind::TSX,
+            tspath::EXTENSION_ETS => return ScriptKind::ETS,
             tspath::EXTENSION_JSON => return ScriptKind::JSON,
             _ => {}
         }
@@ -431,6 +432,7 @@ pub fn get_default_extension_for_script_kind(script_kind: ScriptKind) -> &'stati
         ScriptKind::JS => tspath::EXTENSION_JS,
         ScriptKind::JSX => tspath::EXTENSION_JSX,
         ScriptKind::TSX => tspath::EXTENSION_TSX,
+        ScriptKind::ETS => tspath::EXTENSION_ETS,
         ScriptKind::JSON => tspath::EXTENSION_JSON,
         _ => tspath::EXTENSION_TS,
     }

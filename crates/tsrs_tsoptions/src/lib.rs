@@ -1,3 +1,4 @@
+mod arkts;
 mod commandlineoption;
 mod commandlineparser;
 mod contentmappers;

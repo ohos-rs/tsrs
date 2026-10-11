@@ -16,5 +16,6 @@ rustc-hash.workspace = true
 bitflags.workspace = true
 
 [dev-dependencies]
+serde_json = "1"
 tsrs_vfs.workspace = true
 mimalloc-safe.workspace = true

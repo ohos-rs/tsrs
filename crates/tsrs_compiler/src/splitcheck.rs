@@ -112,7 +112,7 @@ pub(crate) fn split_config() -> &'static SplitConfig {
 // the same diagnostics whichever checker runs them, such as identical type parameters of merged interfaces; the
 // collection's deduplication absorbs the latter.)
 fn all_declarations(file: P<SourceFile>) -> bool {
-    file.statements.nodes().iter().all(|s| {
+    file.statements().nodes().iter().all(|s| {
         matches!(
             s.kind(),
             Kind::InterfaceDeclaration
@@ -134,7 +134,7 @@ fn all_declarations(file: P<SourceFile>) -> bool {
 // Contiguous statement ranges of about equal text length, at most `count` of them; none (no split) when there would be
 // fewer than two or a top-level statement is not a declaration (`all_declarations`).
 pub(crate) fn statement_pieces(file: P<SourceFile>, count: usize) -> Vec<Range<usize>> {
-    let statements = file.statements.nodes();
+    let statements = file.statements().nodes();
     let count = count.min(statements.len());
     if count < 2 || !all_declarations(file) {
         return Vec::new();

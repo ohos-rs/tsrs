@@ -727,7 +727,7 @@ pub fn get_named_import_specifier_comparer_with_detection(
                     detect_from_decl.named_import_comparer,
                 );
             } else if let Some(source_file) = source_file {
-                let all_imports = filter_import_declarations(source_file.statements.nodes());
+                let all_imports = filter_import_declarations(source_file.statements().nodes());
                 let detect_from_file = detect_named_import_organization_by_sort_worker(&all_imports, &comparers_to_test, &type_orders_to_test);
                 if let Some(detect_from_file) = detect_from_file {
                     is_sorted = bool_to_tristate(detect_from_file.is_sorted);

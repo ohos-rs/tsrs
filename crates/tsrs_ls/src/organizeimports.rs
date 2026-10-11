@@ -34,7 +34,7 @@ impl LanguageService {
         let should_sort = kind == lsproto::CodeActionKind::SourceSortImportsTs || kind == lsproto::CodeActionKind::SourceOrganizeImportsTs;
         let should_combine = should_sort;
         let should_remove = kind == lsproto::CodeActionKind::SourceRemoveUnusedImportsTs || kind == lsproto::CodeActionKind::SourceOrganizeImportsTs;
-        let top_level_import_decls = lsutil::filter_import_declarations(source_file.statements.nodes());
+        let top_level_import_decls = lsutil::filter_import_declarations(source_file.statements().nodes());
         let top_level_import_group_decls = group_by_newline_contiguous(source_file, &top_level_import_decls);
 
         let preferences = self.user_preferences();
@@ -81,7 +81,7 @@ impl LanguageService {
             }
         }
 
-        for &stmt in source_file.statements.nodes() {
+        for &stmt in source_file.statements().nodes() {
             if !ast::is_ambient_module(stmt) {
                 continue;
             }
@@ -303,7 +303,7 @@ fn remove_unused_imports(
 
         if name.is_some() || named_bindings.is_some() {
             let import_decl_node = import_decl.as_import_declaration();
-            let new_clause = factory.update_import_clause(import_clause, clause.phase_modifier(), name, named_bindings);
+            let new_clause = factory.update_import_clause(import_clause, clause.phase_modifier(), import_clause.as_import_clause().is_lazy, name, named_bindings);
             let new_import_decl = factory.update_import_declaration(
                 import_decl,
                 import_decl.modifiers(),
@@ -518,7 +518,7 @@ fn coalesce_imports_worker(
                 let default_clause = default_clause_node.as_import_clause();
                 let namespace_bindings = namespace_import.as_import_declaration().import_clause.unwrap().as_import_clause().named_bindings;
 
-                let new_clause = factory.update_import_clause(default_clause_node, default_clause.phase_modifier(), default_clause.name(), namespace_bindings);
+                let new_clause = factory.update_import_clause(default_clause_node, default_clause.phase_modifier(), default_clause_node.as_import_clause().is_lazy, default_clause.name(), namespace_bindings);
                 let default_decl_node = default_import.as_import_declaration();
                 let new_import_decl = factory.update_import_declaration(
                     default_import,
@@ -541,7 +541,7 @@ fn coalesce_imports_worker(
                 let ns_import_decl = ns_import.as_import_declaration();
                 let clause_node = ns_import_decl.import_clause.unwrap();
                 let clause = clause_node.as_import_clause();
-                let new_clause = factory.update_import_clause(clause_node, clause.phase_modifier(), None, clause.named_bindings);
+                let new_clause = factory.update_import_clause(clause_node, clause.phase_modifier(), clause_node.as_import_clause().is_lazy, None, clause.named_bindings);
                 let new_import_decl = factory.update_import_declaration(
                     ns_import,
                     ns_import.modifiers(),
@@ -608,7 +608,7 @@ fn coalesce_imports_worker(
                 let import_decl_node = import_decl.as_import_declaration();
 
                 let default_clause =
-                    factory.new_import_clause(import_decl_node.import_clause.unwrap().as_import_clause().phase_modifier(), new_default_import, None);
+                    factory.new_import_clause(import_decl_node.import_clause.unwrap().as_import_clause().phase_modifier(), false, new_default_import, None);
                 let default_import_decl = factory.update_import_declaration(
                     import_decl,
                     import_decl.modifiers(),
@@ -621,7 +621,7 @@ fn coalesce_imports_worker(
                 let named_decl_node = first_named_import.unwrap_or(import_decl);
                 let named_import_decl_node = named_decl_node.as_import_declaration();
                 let named_clause =
-                    factory.new_import_clause(named_import_decl_node.import_clause.unwrap().as_import_clause().phase_modifier(), None, new_named_imports);
+                    factory.new_import_clause(named_import_decl_node.import_clause.unwrap().as_import_clause().phase_modifier(), false, None, new_named_imports);
                 let named_import_decl = factory.update_import_declaration(
                     named_decl_node,
                     named_decl_node.modifiers(),
@@ -633,7 +633,7 @@ fn coalesce_imports_worker(
             } else {
                 let import_decl_node = import_decl.as_import_declaration();
                 let clause_node = import_decl_node.import_clause.unwrap();
-                let new_clause = factory.update_import_clause(clause_node, clause_node.as_import_clause().phase_modifier(), new_default_import, new_named_imports);
+                let new_clause = factory.update_import_clause(clause_node, clause_node.as_import_clause().phase_modifier(), clause_node.as_import_clause().is_lazy, new_default_import, new_named_imports);
                 let new_import_decl = factory.update_import_declaration(
                     import_decl,
                     import_decl.modifiers(),
@@ -761,7 +761,7 @@ fn try_get_named_binding_elements(named_import: P<Node>) -> Option<&'static [P<N
 // organizeimports.go:751
 fn get_top_level_export_groups(source_file: P<SourceFile>) -> Vec<Vec<P<Node>>> {
     let mut top_level_export_groups: Vec<Vec<P<Node>>> = Vec::new();
-    let statements = source_file.statements.nodes();
+    let statements = source_file.statements().nodes();
     let statements_len = statements.len();
 
     let mut i = 0;

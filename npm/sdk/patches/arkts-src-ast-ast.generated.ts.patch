@@ -1,0 +1,19 @@
+# tsrs dynamic ArkTS API and binary AST protocol 10.
+--- a/src/ast/ast.generated.ts
++++ b/src/ast/ast.generated.ts
+@@ -857,6 +857,7 @@
+     readonly questionDotToken?: QuestionDotToken;
+     readonly typeArguments?: NodeArray<TypeNode>;
+     readonly arguments: NodeArray<Expression>;
++    readonly etsBody?: Block;
+ }
+ export interface NewExpression extends PrimaryExpressionBase {
+     readonly kind: SyntaxKind.NewExpression;
+@@ -1294,6 +1295,7 @@
+ export interface ImportClause extends NodeBase, DeclarationBase {
+     readonly kind: SyntaxKind.ImportClause;
+     readonly phaseModifier?: ImportPhaseModifierSyntaxKind;
++    readonly isLazy: boolean;
+     readonly name?: Identifier;
+     readonly namedBindings?: NamedImportBindings;
+ }

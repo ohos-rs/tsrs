@@ -93,6 +93,7 @@ impl PackageId {
 
 #[derive(Clone, Debug, Default)]
 pub struct ResolvedModule {
+    pub is_not_oh_export: bool,
     pub resolution_diagnostics: &'static [P<Diagnostic>],
     pub resolved_file_name: &'static str,
     pub original_path: &'static str,

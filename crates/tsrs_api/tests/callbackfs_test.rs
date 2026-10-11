@@ -71,7 +71,7 @@ fn program_reads_through_client_callbacks() {
     let cbfs = Arc::new(CallbackFs::new(Arc::new(bundled::wrap_fs(osvfs::fs())), &CallbackConfig::parse(&callbacks).unwrap(), Some(true)));
     cbfs.set_connection(client.clone());
     let fs: Arc<dyn FS> = cbfs;
-    let s = Session::new(SessionOptions { cwd: dir.dir(), default_library_path: bundled::lib_path(), fs, binary_responses: false, run_external_code: false });
+    let s = Session::new(SessionOptions { cwd: dir.dir(), default_library_path: bundled::lib_path(), fs, binary_responses: false, run_external_code: false, sdk_plugin_callbacks: false });
     let r = call(&s, "createSnapshot", &format!("{{\"createPrograms\":[{{\"rootFiles\":[{}],\"compilerOptions\":{{\"strict\":true}}}}]}}", quote(&a)));
     let snap = json::marshal(get(&r, "snapshot")).unwrap();
     let project = str_of(get(&r, "operation.createdPrograms.0")).to_string();

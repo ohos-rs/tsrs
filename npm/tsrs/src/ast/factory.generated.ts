@@ -393,6 +393,9 @@ export class NodeObject {
     get equalsToken(): any {
         return this._data?.equalsToken;
     }
+    get etsBody(): any {
+        return this._data?.etsBody;
+    }
     get exclamationToken(): any {
         return this._data?.exclamationToken;
     }
@@ -452,6 +455,9 @@ export class NodeObject {
     }
     get isExportEquals(): any {
         return this._data?.isExportEquals;
+    }
+    get isLazy(): any {
+        return this._data?.isLazy;
     }
     get isNameFirst(): any {
         return this._data?.isNameFirst;
@@ -587,6 +593,9 @@ export class NodeObject {
     }
     get right(): any {
         return this._data?.right;
+    }
+    get arktsParseOptions(): any {
+        return this._data?.arktsParseOptions;
     }
     get scriptKind(): any {
         return this._data?.scriptKind;
@@ -774,6 +783,7 @@ export function cloneNode<T extends Node>(node: T): T {
     const data = cloneNodeData(node);
     const clone = new NodeObject(node.kind, data);
     (clone as any).flags = node.flags;
+    (clone as any).isVirtual = node.isVirtual;
     (clone as any).pos = node.pos;
     (clone as any).end = node.end;
     return clone as unknown as T;
@@ -929,7 +939,7 @@ function cloneNodeData(node: Node): any {
         case SyntaxKind.ElementAccessExpression:
             return { expression: n.expression, questionDotToken: n.questionDotToken, argumentExpression: n.argumentExpression };
         case SyntaxKind.CallExpression:
-            return { expression: n.expression, questionDotToken: n.questionDotToken, typeArguments: n.typeArguments, arguments: n.arguments };
+            return { expression: n.expression, questionDotToken: n.questionDotToken, typeArguments: n.typeArguments, arguments: n.arguments, etsBody: n.etsBody };
         case SyntaxKind.NewExpression:
             return { expression: n.expression, typeArguments: n.typeArguments, arguments: n.arguments };
         case SyntaxKind.MetaProperty:
@@ -1115,7 +1125,7 @@ function cloneNodeData(node: Node): any {
         case SyntaxKind.ImportType:
             return { isTypeOf: n.isTypeOf, argument: n.argument, attributes: n.attributes, qualifier: n.qualifier, typeArguments: n.typeArguments };
         case SyntaxKind.ImportClause:
-            return { phaseModifier: n.phaseModifier, name: n.name, namedBindings: n.namedBindings };
+            return { phaseModifier: n.phaseModifier, isLazy: n.isLazy, name: n.name, namedBindings: n.namedBindings };
         case SyntaxKind.ImportSpecifier:
             return { isTypeOnly: n.isTypeOnly, propertyName: n.propertyName, name: n.name };
         case SyntaxKind.JSDocText:
@@ -1406,7 +1416,8 @@ const forEachChildTable: Record<number, ForEachChildFunction> = {
         visitNode(cbNode, data.expression) ||
         visitNode(cbNode, data.questionDotToken) ||
         visitNodes(cbNode, cbNodes, data.typeArguments) ||
-        visitNodes(cbNode, cbNodes, data.arguments),
+        visitNodes(cbNode, cbNodes, data.arguments) ||
+        visitNode(cbNode, data.etsBody),
     [SyntaxKind.NewExpression]: (data, cbNode, cbNodes) =>
         visitNode(cbNode, data.expression) ||
         visitNodes(cbNode, cbNodes, data.typeArguments) ||
@@ -2731,6 +2742,10 @@ const yieldEachChildTable: Record<number, YieldEachChildFunction> = {
         }
         for (const n of data.arguments) {
             const res = yield n;
+            if (res) return res;
+        }
+        if (data.etsBody) {
+            const res = yield data.etsBody;
             if (res) return res;
         }
     },
@@ -4541,12 +4556,13 @@ export function createElementAccessExpression(expression: Expression, questionDo
     return node;
 }
 
-export function createCallExpression(expression: Expression, questionDotToken: QuestionDotToken | undefined, typeArguments: readonly TypeNode[] | undefined, arguments_: readonly Expression[], flags: NodeFlags): CallExpression {
+export function createCallExpression(expression: Expression, questionDotToken: QuestionDotToken | undefined, typeArguments: readonly TypeNode[] | undefined, arguments_: readonly Expression[], etsBody: Block | undefined, flags: NodeFlags): CallExpression {
     const node = new NodeObject(SyntaxKind.CallExpression, {
         expression,
         questionDotToken,
         typeArguments: typeArguments ? createNodeArray(typeArguments) : undefined,
         arguments: createNodeArray(arguments_),
+        etsBody,
     }) as unknown as CallExpression;
     (node as any).flags = flags;
     return node;
@@ -5252,9 +5268,10 @@ export function createImportTypeNode(isTypeOf: boolean = false, argument: TypeNo
     }) as unknown as ImportTypeNode;
 }
 
-export function createImportClause(phaseModifier?: ImportPhaseModifierSyntaxKind, name?: Identifier, namedBindings?: NamedImportBindings): ImportClause {
+export function createImportClause(phaseModifier?: ImportPhaseModifierSyntaxKind, isLazy?: boolean, name?: Identifier, namedBindings?: NamedImportBindings): ImportClause {
     return new NodeObject(SyntaxKind.ImportClause, {
         phaseModifier,
+        isLazy,
         name,
         namedBindings,
     }) as unknown as ImportClause;
@@ -5645,8 +5662,8 @@ export function updateElementAccessExpression(node: ElementAccessExpression, exp
     return node.expression !== expression || node.questionDotToken !== questionDotToken || node.argumentExpression !== argumentExpression ? createElementAccessExpression(expression, questionDotToken, argumentExpression, node.flags) : node;
 }
 
-export function updateCallExpression(node: CallExpression, expression: Expression, questionDotToken: QuestionDotToken | undefined, typeArguments: readonly TypeNode[] | undefined, arguments_: readonly Expression[]): CallExpression {
-    return node.expression !== expression || node.questionDotToken !== questionDotToken || node.typeArguments !== typeArguments || node.arguments !== arguments_ ? createCallExpression(expression, questionDotToken, typeArguments, arguments_, node.flags) : node;
+export function updateCallExpression(node: CallExpression, expression: Expression, questionDotToken: QuestionDotToken | undefined, typeArguments: readonly TypeNode[] | undefined, arguments_: readonly Expression[], etsBody?: Block): CallExpression {
+    return node.expression !== expression || node.questionDotToken !== questionDotToken || node.typeArguments !== typeArguments || node.arguments !== arguments_ || node.etsBody !== etsBody ? createCallExpression(expression, questionDotToken, typeArguments, arguments_, etsBody, node.flags) : node;
 }
 
 export function updateNewExpression(node: NewExpression, expression: Expression, typeArguments?: readonly TypeNode[], arguments_?: readonly Expression[]): NewExpression {
@@ -6002,7 +6019,7 @@ export function updateImportTypeNode(node: ImportTypeNode, argument: TypeNode, a
 }
 
 export function updateImportClause(node: ImportClause, name?: Identifier, namedBindings?: NamedImportBindings): ImportClause {
-    return node.name !== name || node.namedBindings !== namedBindings ? createImportClause(node.phaseModifier, name, namedBindings) : node;
+    return node.name !== name || node.namedBindings !== namedBindings ? createImportClause(node.phaseModifier, node.isLazy, name, namedBindings) : node;
 }
 
 export function updateImportSpecifier(node: ImportSpecifier, propertyName: ModuleExportName | undefined, name: Identifier): ImportSpecifier {

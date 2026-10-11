@@ -206,11 +206,16 @@ pub(crate) fn process_all_program_files(opts: &ProgramOptions, single_threaded: 
         Some(create) => create(resolver_options),
         None => Box::new(module::new_resolver(resolver_options)),
     };
+    let mut default_library_path = tspath::get_normalized_absolute_path(host.default_library_path(), host.get_current_directory());
+    if !compiler_options.ets_loader_path.is_empty() {
+        let sdk_lib = tspath::get_normalized_absolute_path(&tspath::combine_paths(&compiler_options.ets_loader_path, &["node_modules/typescript/lib"]), host.get_current_directory());
+        if host.fs().file_exists(&tspath::combine_paths(&sdk_lib, &["lib.d.ts"])) { default_library_path = sdk_lib; }
+    }
     let mut loader = fileLoader {
         opts: opts.program_config(),
         host: Arc::clone(&host),
         resolver,
-        default_library_path: tspath::get_normalized_absolute_path(host.default_library_path(), host.get_current_directory()),
+        default_library_path,
         compare_paths_options: ComparePathsOptions {
             use_case_sensitive_file_names: host.fs().use_case_sensitive_file_names(),
             current_directory: host.get_current_directory().to_string(),
@@ -283,6 +288,10 @@ pub(crate) fn process_all_program_files(opts: &ProgramOptions, single_threaded: 
                     loader.add_root_task(&lib_file.path.clone(), Some(lib_file), P::new(reason));
                 }
                 // !!! error on unknown name
+            }
+            for name in compiler_options.ets.libs.as_deref().unwrap_or_default() {
+                let lib_file = P::new(LibFile { name: name.clone(), path: name.clone(), replaced: false });
+                loader.add_root_task(name, Some(lib_file), P::new(FileIncludeReason::new(fileIncludeKind::LibFile)));
             }
         }
     }
@@ -900,10 +909,16 @@ pub(crate) fn parse_options_for(
     };
     let options = project_references.get_compiler_options_for_file(normalized_file_path, &path);
     SourceFileParseOptions {
+        kit_config_key: String::new(),
+        ets: std::sync::Arc::clone(&options.ets),
+        ets_annotations_enable: options.ets_annotations_enable.is_true(),
+        open_harmony49: !options.ets_loader_path.is_empty(),
+        ets_loader_path: options.ets_loader_path.clone(),
+        no_transformed_kit_in_parser: options.no_transformed_kit_in_parser.is_true(),
         file_name: normalized_file_path.to_string(),
         path,
         external_module_indicator_options: ast::get_external_module_indicator_options(normalized_file_path, &options, metadata),
-    }
+      }
 }
 
 // The module and type reference resolutions of one file, computed on a worker thread ahead of the sequential
@@ -1310,7 +1325,7 @@ impl fileLoader {
                 resolutions_in_file.insert(ModeAwareCacheKey { name: alloc_str(module_name), mode }, resolved_module);
                 resolutions_trace.extend(trace);
 
-                if !resolved_module.is_resolved() {
+                if !resolved_module.is_resolved() || (resolved_module.is_not_oh_export && !tspath::normalize_path(file.file_name()).contains("/oh_modules/")) {
                     continue;
                 }
 
@@ -1471,6 +1486,9 @@ pub(crate) fn resolved_import_sub_task(
     import_index: i32,
     resolved_module: &ResolvedModule,
 ) -> (bool, bool) {
+    if resolved_module.is_not_oh_export && !tspath::normalize_path(file.file_name()).contains("/oh_modules/") {
+        return (false, false);
+    }
     let imports = file.imports();
     let resolved_file_name = resolved_module.resolved_file_name;
     let is_from_node_modules_search = resolved_module.is_external_library_import;
@@ -1483,7 +1501,7 @@ pub(crate) fn resolved_import_sub_task(
                 &tspath::to_path(resolved_file_name, host.get_current_directory(), host.fs().use_case_sensitive_file_names()),
             )
             .is_none();
-    let is_js_file_from_node_modules = is_from_node_modules_search && is_js_file && resolved_file_name.contains("/node_modules/");
+    let is_js_file_from_node_modules = is_from_node_modules_search && is_js_file && (resolved_file_name.contains("/node_modules/") || resolved_file_name.contains("/oh_modules/"));
 
     // add file to program only if:
     // - resolution was successful
@@ -1530,7 +1548,7 @@ pub(crate) fn source_file_from_reference(
                 String::new(),
                 Some(sourceFileFromReferenceDiagnostic {
                     message: &diagnostics::File_0_has_an_unsupported_extension_The_only_supported_extensions_are_1,
-                    args: vec![diagnostic_file_name, supported_extensions_display(supported_extensions)],
+                    args: vec![diagnostic_file_name, supported_extensions_display(supported_extensions, options.uses_oh_module_resolution() || containing_file.ends_with(tspath::EXTENSION_ETS))],
                 }),
             );
         }
@@ -1575,7 +1593,7 @@ pub(crate) fn source_file_from_reference(
         String::new(),
         Some(sourceFileFromReferenceDiagnostic {
             message: &diagnostics::Could_not_resolve_the_path_0_with_the_extensions_Colon_1,
-            args: vec![diagnostic_file_name, supported_extensions_display(supported_extensions)],
+            args: vec![diagnostic_file_name, supported_extensions_display(supported_extensions, options.uses_oh_module_resolution() || containing_file.ends_with(tspath::EXTENSION_ETS))],
         }),
     )
 }
@@ -1584,8 +1602,9 @@ pub(crate) fn is_supported_extension(supported_extensions_with_json: &[Vec<Strin
     supported_extensions_with_json.iter().any(|group| tspath::file_extension_is_one_of(canonical_file_name, &str_slice(group)))
 }
 
-fn supported_extensions_display(supported_extensions: &[Vec<String>]) -> String {
-    let flat: Vec<&str> = supported_extensions.iter().flatten().map(|s| s.as_str()).collect();
+fn supported_extensions_display(supported_extensions: &[Vec<String>], arkts: bool) -> String {
+    let flat: Vec<&str> = supported_extensions.iter().flatten().map(|s| s.as_str())
+        .filter(|s| arkts || !matches!(*s, tspath::EXTENSION_ETS | tspath::EXTENSION_DETS)).collect();
     format!("'{}'", flat.join("', '"))
 }
 

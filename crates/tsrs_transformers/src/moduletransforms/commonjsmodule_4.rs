@@ -476,7 +476,7 @@ impl CommonJSModuleTransformer {
             // note:
             //   the indirect call is applied by the printer by way of the `EFIndirectCall` emit flag.
             let expression = self.visit_expression_identifier(callee);
-            let updated = self.factory().update_call_expression(node, expression, n.question_dot_token(), None /*typeArguments*/, self.visitor().visit_nodes(Some(n.arguments)).unwrap(), node.flags());
+            let updated = self.factory().update_call_expression(node, expression, n.question_dot_token(), None /*typeArguments*/, self.visitor().visit_nodes(Some(n.arguments)).unwrap(), node.as_call_expression().ets_body(), node.flags());
             if !ast::is_identifier(expression) && !is_helper_name(self.emit_context(), callee) {
                 self.emit_context().add_emit_flags(updated, EmitFlags::IndirectCall);
             }
@@ -541,7 +541,7 @@ impl CommonJSModuleTransformer {
             f.new_property_access_expression(f.new_identifier("Promise"), None /*questionDotToken*/, f.new_identifier("resolve"), NodeFlags::None),
             None, /*questionDotToken*/
             None, /*typeArguments*/
-            f.new_node_list(promise_resolve_arguments),
+            f.new_node_list(promise_resolve_arguments), None,
             NodeFlags::None,
         );
 
@@ -552,7 +552,7 @@ impl CommonJSModuleTransformer {
             require_arguments = vec![arg];
         }
 
-        let require_call = f.new_import_star_helper(f.new_call_expression(f.new_identifier("require"), None /*questionDotToken*/, None /*typeArguments*/, f.new_node_list(require_arguments), NodeFlags::None));
+        let require_call = f.new_import_star_helper(f.new_call_expression(f.new_identifier("require"), None /*questionDotToken*/, None /*typeArguments*/, f.new_node_list(require_arguments), None, NodeFlags::None));
 
         let mut parameters: Vec<P<Node>> = Vec::new();
         if need_sync_eval {
@@ -573,7 +573,7 @@ impl CommonJSModuleTransformer {
             f.new_property_access_expression(promise_resolve_call, None /*questionDotToken*/, f.new_identifier("then"), NodeFlags::None),
             None, /*questionDotToken*/
             None, /*typeArguments*/
-            f.new_node_list(vec![function]),
+            f.new_node_list(vec![function]), None,
             NodeFlags::None,
         )
     }
@@ -606,7 +606,7 @@ impl CommonJSModuleTransformer {
             }
         }
 
-        f.update_call_expression(node, expression, n.question_dot_token(), None /*typeArguments*/, arguments_list, node.flags())
+        f.update_call_expression(node, expression, n.question_dot_token(), None /*typeArguments*/, arguments_list, node.as_call_expression().ets_body(), node.flags())
     }
 
     // Visits a tagged template expression that might reference an imported symbol and thus require an indirect call.

@@ -75,3 +75,8 @@ pub use typeacquisition::*;
 pub use version::*;
 pub use watchoptions::*;
 pub use workgroup::*;
+
+mod etsoptions;
+pub use etsoptions::*;
+mod ohsdkplugin;
+pub use ohsdkplugin::*;

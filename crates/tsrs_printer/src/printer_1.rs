@@ -857,7 +857,7 @@ impl Printer {
 
         // Emit detached comment if there are no prologue directives or if the first node is synthesized.
         // The synthesized node will have no leading comment so some comments may be missed.
-        file.statements.nodes().is_empty() || !is_prologue_directive(file.statements.nodes()[0]) || node_is_synthesized(file.statements.nodes()[0])
+        file.statements().nodes().is_empty() || !is_prologue_directive(file.statements().nodes()[0]) || node_is_synthesized(file.statements().nodes()[0])
     }
 
     pub(crate) fn has_comments_at_position(&self, pos: i32) -> bool {
@@ -1349,10 +1349,16 @@ enum Mode {
 }
 
 impl Printer {
-    pub(crate) fn emit_modifier_list(&mut self, parent_node: P<Node>, modifiers: Option<P<ModifierList>>, allow_decorators: bool) -> i32 {
+    pub(crate) fn emit_modifier_list(&mut self, parent_node: P<Node>, modifiers: Option<P<ModifierList>>, mut allow_decorators: bool) -> i32 {
         let Some(modifiers) = modifiers.filter(|m| !m.nodes().is_empty()) else {
             return parent_node.pos();
         };
+        // OH printer::emitModifierList preserves source annotations on these ETS declarations.
+        if !allow_decorators && self.current_source_file().is_some_and(|file| file.script_kind() == ScriptKind::ETS)
+            && matches!(parent_node.kind(), Kind::InterfaceDeclaration | Kind::TypeAliasDeclaration | Kind::PropertySignature | Kind::MethodSignature | Kind::VariableStatement | Kind::EnumDeclaration | Kind::ModuleDeclaration)
+        {
+            allow_decorators = true;
+        }
         let modifier_nodes = modifiers.nodes();
         let modifier_list = P::from_static(&modifiers.get().list);
 

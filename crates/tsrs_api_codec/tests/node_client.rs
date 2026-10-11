@@ -1,6 +1,5 @@
-//! Rust-encoded bytes decoded by the real pinned JavaScript client. Needs Node.js and an installed
-//! typescript@7.1.0-dev.20260930.4 package: `TSRS_CODEC_ORACLE=<dir>/node_modules/typescript cargo test -p
-//! tsrs_api_codec --test node_client`. Without TSRS_CODEC_ORACLE the test reports that it was skipped.
+//! Protocol 10 decoded by the owned Node SDK against the pinned Go AST goldens.
+//! Build the SDK first with `node npm/build.mjs --sdk-only`.
 
 mod common;
 
@@ -61,11 +60,9 @@ fn synthesized(f: &NodeFactory) -> P<Node> {
 }
 
 #[test]
-fn rust_encodings_decode_in_the_pinned_js_client() {
-    let Ok(oracle) = std::env::var("TSRS_CODEC_ORACLE") else {
-        eprintln!("SKIPPED: set TSRS_CODEC_ORACLE to an installed typescript@7.1.0-dev.20260930.4 package directory");
-        return;
-    };
+fn rust_encodings_decode_in_the_owned_js_client() {
+    let oracle = crate_dir().join("../../npm/tsrs");
+    assert!(oracle.join("dist/api/node/node.js").is_file(), "build the owned SDK: node npm/build.mjs --sdk-only");
     let out_dir = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("codec_node_client");
     let _ = std::fs::remove_dir_all(&out_dir);
     std::fs::create_dir_all(&out_dir).unwrap();
@@ -73,6 +70,7 @@ fn rust_encodings_decode_in_the_pinned_js_client() {
         let (_region, file) = parse_like_server(&name, &text);
         let (bytes, _) = encode_source_file(file.get()).unwrap();
         std::fs::write(out_dir.join(format!("{name}.rust.bin")), bytes).unwrap();
+        std::fs::write(out_dir.join(format!("{name}.orig.bin")), upgrade_reference(&std::fs::read(crate_dir().join(format!("tests/golden/{name}.bin"))).unwrap())).unwrap();
     }
     let region = tsrs_core::arena::Region::new(1 << 14);
     {
@@ -100,20 +98,20 @@ fn rust_encodings_decode_in_the_pinned_js_client() {
         let f = e.unwrap().file_name().into_string().unwrap();
         let Some(case) = f.strip_suffix(".client.bin") else { continue };
         let go = crate_dir().join(format!("tests/golden/reencode/{case}.client.goreencoded.bin"));
-        let bytes = std::fs::read(print_dir.join(&f)).unwrap();
+        let bytes = upgrade_reference(&std::fs::read(print_dir.join(&f)).unwrap());
         let decoded = decode_nodes(&bytes).unwrap();
         let (re, _) = {
             let _scope = decoded.region().enter();
             let root = decoded.root();
             if root.kind() == Kind::SourceFile { encode_source_file(root.as_source_file()) } else { encode_node(root, None) }.unwrap()
         };
-        std::fs::copy(&go, out_dir.join(format!("print_{case}.orig.bin"))).unwrap();
+        std::fs::write(out_dir.join(format!("print_{case}.orig.bin")), upgrade_reference(&std::fs::read(&go).unwrap())).unwrap();
         std::fs::write(out_dir.join(format!("print_{case}.rust.bin")), &re).unwrap();
         reencoded += 1;
     }
     assert!(reencoded >= 6);
     let script = crate_dir().join("tests/node_client.mjs");
-    let output = Command::new("node").arg(script).arg(&oracle).arg(&out_dir).arg(crate_dir().join("tests/golden")).output().expect("run node");
+    let output = Command::new("node").arg(script).arg(&oracle).arg(&out_dir).output().expect("run node");
     let stdout = String::from_utf8_lossy(&output.stdout);
     eprintln!("{stdout}{}", String::from_utf8_lossy(&output.stderr));
     assert!(output.status.success(), "node client comparison failed");

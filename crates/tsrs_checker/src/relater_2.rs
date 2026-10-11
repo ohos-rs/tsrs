@@ -2407,7 +2407,9 @@ impl Relater {
     // relater.go:4575
     pub(crate) fn signature_related_to(&self, c: &mut Checker, source: P<Signature>, target: P<Signature>, erase: bool, report_errors: bool, intersection_state: IntersectionState) -> Ternary {
         let mut check_mode = SignatureCheckMode::None;
-        if self.rel() == c.subtype_relation {
+        if !c.compiler_options.ets_loader_path.is_empty() {
+            if self.rel() == c.strict_subtype_relation { check_mode = SignatureCheckMode::StrictArity; }
+        } else if self.rel() == c.subtype_relation {
             check_mode = SignatureCheckMode::StrictTopSignature;
         } else if self.rel() == c.strict_subtype_relation {
             check_mode = SignatureCheckMode::StrictTopSignature | SignatureCheckMode::StrictArity;
@@ -2803,7 +2805,8 @@ impl Relater {
                 return;
             }
         }
-        self.error_chain.set(Some(P::new(ErrorChain { next: self.error_chain.get(), message, args })));
+        let filter_flag = c.compiler_options.strict_checker_only == Tristate::True && std::ptr::eq(message, &raw const diagnostics::Type_0_is_not_assignable_to_type_1) && args.first().is_some_and(|arg| arg == "unknown");
+        self.error_chain.set(Some(P::new(ErrorChain { next: self.error_chain.get(), message, args, filter_flag })));
     }
 }
 

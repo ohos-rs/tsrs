@@ -1,3 +1,8 @@
+import type {
+    CallExpression,
+    ClassDeclaration,
+    PropertyDeclaration,
+} from "./ast.ts";
 // is.ts — Hand-written type guard functions
 // Generated guards are in is.generated.ts
 
@@ -579,4 +584,17 @@ export function isJsxTagNameExpression(node: Node): node is JsxTagNameExpression
         || kind === SyntaxKind.Identifier
         || kind === SyntaxKind.PropertyAccessExpression
         || kind === SyntaxKind.JsxNamespacedName;
+}
+
+export function isStructDeclaration(node: Node): node is ClassDeclaration {
+    return node.kind === SyntaxKind.ClassDeclaration && (node.flags & NodeFlags.Struct) !== 0;
+}
+export function isAnnotationDeclaration(node: Node): node is ClassDeclaration {
+    return node.kind === SyntaxKind.ClassDeclaration && (node.flags & NodeFlags.Annotation) !== 0;
+}
+export function isAnnotationPropertyDeclaration(node: Node): node is PropertyDeclaration {
+    return node.kind === SyntaxKind.PropertyDeclaration && (node.flags & NodeFlags.Annotation) !== 0;
+}
+export function isEtsComponentExpression(node: Node): node is CallExpression {
+    return node.kind === SyntaxKind.CallExpression && (node.flags & NodeFlags.EtsComponent) !== 0;
 }

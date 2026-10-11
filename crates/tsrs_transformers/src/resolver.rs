@@ -17,6 +17,8 @@ pub struct Resolver {
 }
 
 impl Resolver {
+    pub fn is_ets_annotation(self, node: P<Node>) -> bool { self.lock(|c| self.r.is_ets_annotation(c, node)) }
+
     pub fn new(r: P<EmitResolver>, slot: P<CheckerSlot>) -> Resolver {
         Resolver { r, slot }
     }

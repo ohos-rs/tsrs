@@ -91,7 +91,7 @@ arms are generated from exactly this table.
 | ConditionalExpression | ConditionalExpression | children | Condition:node, QuestionToken:node, WhenTrue:node, ColonToken:node, WhenFalse:node |  |
 | PropertyAccessExpression | PropertyAccessExpression | children | Expression:node, QuestionDotToken:node, name:node |  |
 | ElementAccessExpression | ElementAccessExpression | children | Expression:node, QuestionDotToken:node, ArgumentExpression:node |  |
-| CallExpression | CallExpression | children | Expression:node, QuestionDotToken:node, TypeArguments:nodeList, Arguments:nodeList |  |
+| CallExpression | CallExpression | children | Expression:node, QuestionDotToken:node, TypeArguments:nodeList, Arguments:nodeList, EtsBody:node |  |
 | NewExpression | NewExpression | children | Expression:node, TypeArguments:nodeList, Arguments:nodeList |  |
 | MetaProperty | MetaProperty | children | name:node | KeywordToken@0/1 |
 | NonNullExpression | NonNullExpression | children | Expression:node |  |
@@ -190,7 +190,7 @@ arms are generated from exactly this table.
 | ImportEqualsDeclaration | ImportEqualsDeclaration | children | modifiers:modifierList, name:node, ModuleReference:node | IsTypeOnly@0/1 |
 | ExportDeclaration | ExportDeclaration | children | modifiers:modifierList, ExportClause:node, ModuleSpecifier:node, Attributes:node | IsTypeOnly@0/1 |
 | ImportTypeNode | ImportType | children | Argument:node, Attributes:node, Qualifier:node, TypeArguments:nodeList | IsTypeOf@0/1 |
-| ImportClause | ImportClause | children | name:node, NamedBindings:node | PhaseModifier@0/2 |
+| ImportClause | ImportClause | children | name:node, NamedBindings:node | PhaseModifier@0/2, IsLazy@2/1 |
 | ImportSpecifier | ImportSpecifier | children | PropertyName:node, name:node | IsTypeOnly@0/1 |
 | JSDocText | JSDocText | string |  |  |
 | JSDocLink | JSDocLink | string | name:node |  |

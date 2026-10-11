@@ -13,7 +13,7 @@
 //         globals: c.globals,
 //         arguments_symbol: Cell::new(Some(c.arguments_symbol)),
 //         require_symbol: Some(c.require_symbol),
-//         lookup: Some(|c, symbols, name, meaning| c.get_symbol(symbols, name, meaning)),
+//         lookup: Some(|c, symbols, name, meaning, location| c.get_symbol_with_location(symbols, name, meaning, location)),
 //         ..NameResolver::new(c.compiler_options, c.globals)
 //     }
 //
@@ -39,7 +39,7 @@ pub struct NameResolver<H: 'static> {
     pub globals: Option<P<SymbolTable>>,
     pub arguments_symbol: Cell<Option<P<Symbol>>>,
     pub require_symbol: Option<P<Symbol>>,
-    pub lookup: Option<fn(&mut H, Option<P<SymbolTable>>, &str, SymbolFlags) -> Option<P<Symbol>>>,
+    pub lookup: Option<fn(&mut H, Option<P<SymbolTable>>, &str, SymbolFlags, Option<P<Node>>) -> Option<P<Symbol>>>,
     pub symbol_referenced: Option<fn(&mut H, P<Symbol>, SymbolFlags)>,
     pub set_requires_scope_change_cache: Option<fn(&mut H, P<Node>, Tristate)>,
     pub get_requires_scope_change_cache: Option<fn(&mut H, P<Node>) -> Tristate>,
@@ -106,7 +106,7 @@ impl<H: 'static> NameResolver<H> {
             let locals = loc.locals();
             // Locals of a source file are not in scope (because they get merged into the global symbol table)
             if locals.is_some() && !ast::is_global_source_file(loc) {
-                result = self.lookup(host, locals, name, meaning);
+                result = self.lookup(host, locals, name, meaning, None);
                 if let Some(res) = result {
                     let mut use_result = true;
                     if is_module_attributes {
@@ -207,7 +207,7 @@ impl<H: 'static> NameResolver<H> {
                             }
                         }
                         if name != ast::InternalSymbolNameDefault {
-                            result = self.lookup(host, module_exports, name, meaning & SymbolFlags::ModuleMember);
+                            result = self.lookup(host, module_exports, name, meaning & SymbolFlags::ModuleMember, None);
                             if let Some(res) = result {
                                 if ast::is_source_file(loc)
                                     && loc.as_source_file().common_js_module_indicator.get().is_some()
@@ -224,7 +224,7 @@ impl<H: 'static> NameResolver<H> {
                         let Some(enum_symbol) = self.get_symbol_of_declaration(host, loc) else {
                             break 'switch;
                         };
-                        result = self.lookup(host, enum_symbol.exports(), name, meaning & SymbolFlags::EnumMember);
+                        result = self.lookup(host, enum_symbol.exports(), name, meaning & SymbolFlags::EnumMember, None);
                         if let Some(res) = result {
                             if name_not_found_message.is_some()
                                 && self.compiler_options.get_isolated_modules()
@@ -252,7 +252,7 @@ impl<H: 'static> NameResolver<H> {
                             let ctor = ast::find_constructor_declaration(loc.parent().unwrap());
                             if let Some(ctor) = ctor {
                                 if ctor.locals().is_some() {
-                                    if self.lookup(host, ctor.locals(), name, meaning & SymbolFlags::Value).is_some() {
+                                    if self.lookup(host, ctor.locals(), name, meaning & SymbolFlags::Value, None).is_some() {
                                         // Remember the property node, it will be used later to report appropriate error
                                         property_with_invalid_initializer = Some(loc);
                                     }
@@ -262,7 +262,7 @@ impl<H: 'static> NameResolver<H> {
                     }
                     Kind::ClassDeclaration | Kind::ClassExpression | Kind::InterfaceDeclaration => {
                         let members = self.get_symbol_of_declaration(host, loc).unwrap().members();
-                        result = self.lookup(host, members, name, meaning & SymbolFlags::Type);
+                        result = self.lookup(host, members, name, meaning & SymbolFlags::Type, None);
                         if let Some(res) = result {
                             if !is_type_parameter_symbol_declared_in_container(res, loc) {
                                 // ignore type parameters not declared in this container
@@ -300,7 +300,7 @@ impl<H: 'static> NameResolver<H> {
                             let container = parent.parent().unwrap();
                             if ast::is_class_like(container) {
                                 let members = self.get_symbol_of_declaration(host, container).unwrap().members();
-                                result = self.lookup(host, members, name, meaning & SymbolFlags::Type);
+                                result = self.lookup(host, members, name, meaning & SymbolFlags::Type, None);
                                 if result.is_some() {
                                     if name_not_found_message.is_some() {
                                         self.error(host, original_location, &diagnostics::Base_class_expressions_cannot_reference_class_type_parameters, &[]);
@@ -323,7 +323,7 @@ impl<H: 'static> NameResolver<H> {
                         if ast::is_class_like(gp) || ast::is_interface_declaration(gp) {
                             // A reference to this grandparent's type parameters would be an error
                             let members = self.get_symbol_of_declaration(host, gp).unwrap().members();
-                            result = self.lookup(host, members, name, meaning & SymbolFlags::Type);
+                            result = self.lookup(host, members, name, meaning & SymbolFlags::Type, None);
                             if result.is_some() {
                                 if name_not_found_message.is_some() {
                                     self.error(
@@ -456,7 +456,7 @@ impl<H: 'static> NameResolver<H> {
             }
         }
         if result.is_none() && !exclude_globals {
-            result = self.lookup(host, self.globals, name, meaning | SymbolFlags::GlobalLookup);
+            result = self.lookup(host, self.globals, name, meaning | SymbolFlags::GlobalLookup, original_location);
         }
         if result.is_none() {
             if let Some(original) = original_location {
@@ -583,9 +583,9 @@ impl<H: 'static> NameResolver<H> {
         node.symbol()
     }
 
-    pub(crate) fn lookup(&self, host: &mut H, symbols: Option<P<SymbolTable>>, name: &str, meaning: SymbolFlags) -> Option<P<Symbol>> {
+    pub(crate) fn lookup(&self, host: &mut H, symbols: Option<P<SymbolTable>>, name: &str, meaning: SymbolFlags, location: Option<P<Node>>) -> Option<P<Symbol>> {
         if let Some(lookup) = self.lookup {
-            return lookup(host, symbols, name, meaning);
+            return lookup(host, symbols, name, meaning, location);
         }
         // Default implementation does not support following aliases or merged symbols
         if !meaning.is_empty() {

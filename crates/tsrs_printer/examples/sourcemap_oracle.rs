@@ -13,7 +13,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let (path, out_dir) = (&args[1], &args[2]);
     let text = tsrs_vfs::internal::decode_bytes(std::fs::read(path).unwrap());
-    let opts = SourceFileParseOptions { file_name: path.to_string(), path: Path::new(path.to_string()), external_module_indicator_options: ExternalModuleIndicatorOptions { jsx: false, force: false } };
+    let opts = SourceFileParseOptions { file_name: path.to_string(), path: Path::new(path.to_string()), external_module_indicator_options: ExternalModuleIndicatorOptions { jsx: false, force: false }, ..Default::default() };
     let file = tsrs_parser::parse_source_file(opts, &text, tsrs_core::ensure_script_kind_from_file_name(path));
     let base = tspath::get_base_file_name(path).to_string();
     let js_file_path = tspath::combine_paths(out_dir, &[&base]);

@@ -1140,7 +1140,7 @@ impl isolatedDeclarationsFixer<'_> {
         let symbol_name = sym.name();
 
         // Walk the source file's import declarations to find the one importing from the same module
-        for &stmt in self.source_file.statements.nodes() {
+        for &stmt in self.source_file.statements().nodes() {
             if !ast::is_import_declaration(stmt) {
                 continue;
             }
@@ -1169,7 +1169,7 @@ impl isolatedDeclarationsFixer<'_> {
                 let mut new_elements = existing_elements.to_vec();
                 new_elements.push(new_specifier);
                 let new_named_imports = factory.new_named_imports(factory.new_node_list(new_elements));
-                let new_import_clause = factory.update_import_clause(import_clause_node, import_clause.phase_modifier(), import_clause.name(), Some(new_named_imports));
+                let new_import_clause = factory.update_import_clause(import_clause_node, import_clause.phase_modifier(), import_clause_node.as_import_clause().is_lazy, import_clause.name(), Some(new_named_imports));
                 let new_import_decl =
                     factory.update_import_declaration(stmt, stmt.modifiers(), Some(new_import_clause), import_decl.module_specifier, import_decl.attributes());
                 self.change_tracker.replace_node(self.source_file, stmt, new_import_decl, None);

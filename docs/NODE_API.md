@@ -6,6 +6,14 @@ side `packages/typescript/src/{api,ast}` exported as `unstable/sync` and `unstab
 format, method names, params and response schemas are the pinned Go ones; tsrs does not define its own
 protocol or a one-shot CLI wrapper, and it is not compatible with TS5 `createProgram` objects.
 
+This branch uses **protocol 10** and the owned Node SDK for TS and dynamic ArkTS. The wire format adds a virtual
+node word and ETS parse metadata; the old protocol-9 client is incompatible. The SDK's checked-in patches are
+reapplied by `npm/sdk/sync-upstream.mjs`. Native `createSnapshot` / `updateSnapshot` programs expose
+`getArkTSBuildDiagnostics`, `getArkTSLinterDiagnostics`, `getProgramSourceGraph`, `getAnnotationInfo`,
+`getAnnotationTransformInfos` and `getArkTSTransformTypeFacts`. SDK checkers use the opt-in
+`--sdkPluginCallbacks` host protocol. Arkdown owns this callback host and keeps compiler programs in `noEmit`.
+See [ARKTS.md](ARKTS.md) for configuration and validation.
+
 Status: shipped (in the npm package since 0.3.0, docs/STATUS.md), with the gaps below. The matrix at the end is
 the source of truth: `supported`
 means a core Rust test against a real compiler session exercises it; `partial` means it is implemented

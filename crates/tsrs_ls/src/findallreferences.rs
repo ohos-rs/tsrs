@@ -2047,7 +2047,7 @@ impl LanguageService {
                         let range_node = match range_node {
                             Some(n) => n,
                             None => {
-                                if let Some(&first) = referencing_file.statements.nodes().first() {
+                                if let Some(&first) = referencing_file.statements().nodes().first() {
                                     first
                                 } else {
                                     referencing_file.as_node()

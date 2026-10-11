@@ -129,6 +129,7 @@ pub fn get_text_of_jsdoc_comment(comment: Option<P<NodeList>>) -> String {
 
 pub fn declaration_name_to_string(name: Option<P<Node>>) -> String {
     match name {
+        Some(name) if name.is_virtual() && ast::is_identifier(name) => name.text().to_string(),
         Some(name) if name.pos() != name.end() => get_text_of_node(name),
         _ => "(Missing)".to_string(),
     }

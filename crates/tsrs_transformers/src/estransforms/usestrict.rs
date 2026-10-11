@@ -43,9 +43,9 @@ impl useStrictTransformer {
         }
 
         let f = self.base.factory();
-        let statements = f.ensure_use_strict(node.statements.nodes());
+        let statements = f.ensure_use_strict(node.statements().nodes());
         let statement_list = f.new_node_list(statements);
-        statement_list.loc.set(node.statements.loc.get());
+        statement_list.loc.set(node.statements().loc.get());
         f.update_source_file(node.as_node(), statement_list, node.end_of_file_token)
     }
 }
