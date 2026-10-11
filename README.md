@@ -106,7 +106,7 @@ failures, crashes or timeouts. The ArkTS port loses no previously passing cases
 
 | feature | status | evidence and notes |
 | --- | --- | --- |
-| Dynamic ArkTS frontend and component checking | SDK `ets` options | `struct`, UI bodies, builders/styles, lazy imports and annotation checks; reference fixtures and validation in [notes/arkts-port.md](notes/arkts-port.md) |
+| Dynamic ArkTS frontend and component checking | SDK `ets` options | `struct`, UI bodies, builders/styles, lazy imports and annotation checks; 12/12 OXC positive/negative grammar fixtures and validation in [notes/arkts-port.md](notes/arkts-port.md) |
 | OHPM and SDK module resolution | `packageManagerType: "ohpm"` / SDK host options | `.ets` / `.d.ets`, `oh_modules`, JSON5 manifests, SDK/fallback roots and package export restrictions ([configuration](docs/ARKTS.md)) |
 | ArkTS declarations | `--emitDeclarationOnly` | `.d.ets`, annotation defaults and supported retained decorators; reference declaration test |
 | Dynamic ArkTS restrictions linter / Sendable | `needDoArkTsLinter` | 1,003/1,003 complete diagnostic responses match the pinned OH compiler |

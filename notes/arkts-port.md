@@ -61,6 +61,10 @@ The earlier timeouts were `crossProductUnionIntersectionRepeatedPropDeclarations
 - API codec: pinned Go golden AST content, decoder/re-encoder, printer parity and owned Node client pass.
   Test-only protocol-9 to protocol-10 fixture conversion adds empty fields without changing golden contents.
 - API session tests, ArkTS parser/CLI/module/options checks and Kit compiler tests pass.
+- OXC dynamic grammar corpus: **5/5 positive and 7/7 negative** fixtures pass through Arkdown's native
+  service. This found one missing `scanClassMemberStart` annotation guard: `@interface` in a class member
+  position panicked instead of recovering. The guard now follows the OH source; a dedicated parser
+  regression asserts all four reference diagnostic codes and ranges. All five parser integration tests pass.
 - Fourslash: **4,066/4,546** pass, 63 existing content-mapper/`@tsc` harness failures, 417 skips.
 - Pinned tsctests: **tsc 191/223**, **tsbuild 189/192**, zero crashes; unsupported CLI commands remain.
 - All 28 CLI regressions pass. The emit oracle's fail-closed regression reports zero failures. The earlier

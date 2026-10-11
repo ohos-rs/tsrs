@@ -101,3 +101,12 @@ fn annotation_diagnostics_and_typescript_isolation() {
         assert!(!parse(source, ScriptKind::ETS).diagnostics().is_empty(), "{source}");
     }
 }
+
+#[test]
+fn annotation_keyword_in_member_recovers_without_panicking() {
+    let file = parse(include_str!("fixtures/annotation-member-error.ets"), ScriptKind::ETS);
+    // OH parser scanClassMemberStart rejects @interface before parseClassElement.
+    // Exact diagnostics from the pinned OH Go parser for the OXC negative fixture.
+    let diagnostics: Vec<_> = file.diagnostics().iter().map(|d| (d.code(), d.pos(), d.pos() + d.len())).collect();
+    assert_eq!(diagnostics, [(1068, 96, 97), (1003, 109, 110), (1146, 115, 115), (1128, 136, 137)]);
+}

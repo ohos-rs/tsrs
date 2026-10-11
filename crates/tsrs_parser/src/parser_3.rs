@@ -2013,7 +2013,7 @@ impl Parser {
     pub(crate) fn scan_class_member_start(&mut self) -> bool {
         let mut id_token = Kind::Unknown;
         if self.token == Kind::AtToken {
-            return true;
+            return !self.is_annotation_declaration();
         }
         // Eat up all modifiers, but hold on to the last one in case it is actually an identifier.
         while ast::is_modifier_kind(self.token) {
