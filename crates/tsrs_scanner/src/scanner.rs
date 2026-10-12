@@ -1351,6 +1351,9 @@ impl Scanner {
 
     /// Go `ReScanSlashToken(reportErrors ...bool)`; pass `false` for the no-argument form.
     pub fn re_scan_slash_token(&mut self, report_errors: bool) -> Kind {
+        if self.open_harmony49 {
+            return self.re_scan_open_harmony_slash_token();
+        }
         let should_report_errors = report_errors;
         if self.state.token == Kind::SlashToken || self.state.token == Kind::SlashEqualsToken {
             let text = self.text.as_bytes();
@@ -1517,6 +1520,53 @@ impl Scanner {
             self.state.token_value = self.slice(self.state.token_start, self.state.pos);
             self.state.token = Kind::RegularExpressionLiteral;
         }
+        self.state.token
+    }
+
+    /// OH 4.9 scanner.ts::reScanSlashToken scans delimiters and identifier
+    /// flags only; it does not run the newer TypeScript RegExp syntax checker.
+    fn re_scan_open_harmony_slash_token(&mut self) -> Kind {
+        if self.state.token != Kind::SlashToken && self.state.token != Kind::SlashEqualsToken {
+            return self.state.token;
+        }
+        let text = self.text.as_bytes();
+        let mut pos = self.state.token_start + 1;
+        let mut in_escape = false;
+        let mut in_character_class = false;
+        loop {
+            if pos >= self.end {
+                self.state.token_flags |= TokenFlags::Unterminated;
+                self.error(&diagnostics::Unterminated_regular_expression_literal);
+                break;
+            }
+            let (ch, size) = decode_rune(&text[pos as usize..]);
+            if stringutil::is_line_break(ch) {
+                self.state.token_flags |= TokenFlags::Unterminated;
+                self.error(&diagnostics::Unterminated_regular_expression_literal);
+                break;
+            }
+            if in_escape {
+                in_escape = false;
+            } else if ch == '/' as i32 && !in_character_class {
+                pos += 1;
+                break;
+            } else if ch == '[' as i32 {
+                in_character_class = true;
+            } else if ch == '\\' as i32 {
+                in_escape = true;
+            } else if ch == ']' as i32 {
+                in_character_class = false;
+            }
+            pos += size as i32;
+        }
+        while pos < self.end {
+            let (ch, size) = decode_rune(&text[pos as usize..]);
+            if !is_identifier_part(ch) { break; }
+            pos += size as i32;
+        }
+        self.state.pos = pos;
+        self.state.token_value = self.slice(self.state.token_start, pos);
+        self.state.token = Kind::RegularExpressionLiteral;
         self.state.token
     }
 

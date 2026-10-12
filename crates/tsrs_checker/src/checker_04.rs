@@ -2041,7 +2041,12 @@ impl Checker {
         let node_links = self.node_links.get(node);
         if !node_links.flags.get().intersects(NodeCheckFlags::TypeChecked) {
             node_links.flags.set(node_links.flags.get() | NodeCheckFlags::TypeChecked);
-            self.check_grammar_regular_expression_literal(node);
+            // OH 4.9 checker.ts::checkExpressionWorker returns RegExp's type
+            // directly. Its scanner owns delimiter errors; the newer grammar
+            // pass (including octal/flag validation) is ordinary TS behavior.
+            if self.compiler_options.ets_loader_path.is_empty() {
+                self.check_grammar_regular_expression_literal(node);
+            }
         }
         self.global_reg_exp_type
     }

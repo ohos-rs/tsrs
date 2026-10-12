@@ -1028,7 +1028,15 @@ impl Checker {
             let filtered_type = self.filter_type(t, move |c, t| c.are_types_comparable(t, value_type) || double_equals && is_coercible_under_double_equals(t, value_type));
             return self.replace_primitives_with_literals(filtered_type, value_type);
         }
-        if is_unit_type(value_type) {
+        // OH 4.9 checker.ts::narrowTypeByEquality uses a Unit mask that
+        // excludes numeric Enum types. Their members share the whole enum
+        // type, so treating them as singleton values erases the false branch.
+        let unit_flags = if self.compiler_options.ets_loader_path.is_empty() {
+            TypeFlags::Unit
+        } else {
+            TypeFlags::Unit & !TypeFlags::Enum
+        };
+        if value_type.flags().intersects(unit_flags) {
             if self.is_uniform_union_type(t) {
                 let regular_type = self.get_regular_type_of_literal_type(value_type);
                 let filtered_type = self.remove_type(t, regular_type);

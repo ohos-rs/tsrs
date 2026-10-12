@@ -1,5 +1,35 @@
 # Dynamic ArkTS and Arkdown service port (2026-10-11)
 
+## Real-build regressions (2026-10-12)
+
+The local working tree based on `7308ab7f` exposed three issues during a real Arkdown debug HAP build:
+
+- `SdkPluginExecutor::check_syscap` published interned source/config IDs before the registering host call
+  completed. Another checker could dispatch an ID-only reference first. Keep interning and synchronous dispatch
+  ordered under the existing executor lock; every SDK check still executes. `sdk_plugin_test.rs` deliberately
+  blocks registration while a second checker attempts the same IDs.
+- OH 4.9 `checker.ts::isUnitType/narrowTypeByEquality` excludes numeric Enum from the Unit mask. The newer
+  TypeScript mask includes Enum and incorrectly removes the entire shared numeric enum type in a false branch.
+  The OH equality path now uses the source mask; ordinary TypeScript keeps its original mask.
+- OH 4.9 `scanner.ts::reScanSlashToken` scans delimiters/identifier flags without the newer RegExp parser, and
+  `checker.ts::checkExpressionWorker` returns `RegExp` directly. The OH scanner follows that algorithm, still
+  reports unterminated literals at the SDK's position, and its checker does not run the newer grammar pass.
+  Ordinary TypeScript still reports TS1487 for legacy octal escapes. `oh49_build_test.rs` protects both modes.
+
+The actual SDK TypeScript 4.9.5 returned no syntactic or semantic diagnostics for the enum/RegExp reproduction.
+Twelve API integration tests (ArkTS, embedding and the three new regressions), seven scanner tests, targeted
+clippy `-D warnings`, the lint ratchet and source inventory checks passed. The older fixture/conformance totals
+below were not remeasured in this round. No lint baseline was raised and no compiler emit was used by Arkdown.
+
+On Apple M2 Pro / 16 GiB with HarmonyOS API 26, Arkdown plus these local fixes built the real application with
+full checking in 187.47 s after public clean and 137.16 s unchanged-source hot; facts-only builds were
+103.76 / 58.90 s. Hvigor 6.26.4 was 420.18 / 6.60 s. These are single build pairs, not a compiler performance
+optimization claim: packaging and stage caching differ, and the generated HAPs still have artifact differences.
+The full compiler check cost 86.157 / 86.008 s; physical footprint peaks for full cold/hot were 5.33 / 4.79 GiB.
+Arkdown records the input/binding/source hashes and package comparison in its 2026-10-12 benchmark report.
+
+## Previous port validation
+
 Base: tsrs `968e5a12`, TypeScript `b85298b6a81f772d080b0455de0ca9d744cd6fd6`.
 ArkTS reference: Arkdown's `third_party/typescript` pin,
 `ohos-rs/TypeScript@583e9e8b5450c6de49bbe985bd836d7941c7a961`.

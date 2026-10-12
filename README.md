@@ -111,7 +111,7 @@ failures, crashes or timeouts. The ArkTS port loses no previously passing cases
 | OHPM and SDK module resolution | `packageManagerType: "ohpm"` / SDK host options | `.ets` / `.d.ets`, `oh_modules`, JSON5 manifests, SDK/fallback roots and package export restrictions ([configuration](docs/ARKTS.md)) |
 | ArkTS declarations | `--emitDeclarationOnly` | `.d.ets`, annotation defaults and supported retained decorators; reference declaration test |
 | Dynamic ArkTS restrictions linter / Sendable | `needDoArkTsLinter` | 1,003/1,003 complete diagnostic responses match the pinned OH compiler |
-| OH TypeScript 4.9 compatibility, Kit imports and SDK policy checks | SDK host options | 243/243 OH compiler fixture programs match; SDK plugin callbacks and Arkdown service tests pass |
+| OH TypeScript 4.9 compatibility, Kit imports and SDK policy checks | SDK host options | Historical 243/243 OH fixture comparison; numeric-enum equality, legacy RegExp and concurrent SDK-registration regressions verified on 2026-10-12 ([validation](notes/arkts-port.md#real-build-regressions-2026-10-12)) |
 | In-process Rust compiler API | yes | Typed snapshots, diagnostics, annotation/type facts, SDK hosts and RAII leases; 7 embedding regressions, including SDK-host release and small-stack calls, in `crates/tsrs_api/tests/embedded_test.rs`; [contract](docs/NODE_API.md#in-process-rust-embedding) |
 | ArkTS binary AST and Node SDK | yes | protocol 10; virtual nodes, parse identity, lazy imports, UI bodies, sync/async snapshots and annotation/type facts ([API](docs/NODE_API.md)) |
 | ArkUI/annotation JavaScript lowering | no | TS100069 in direct tsrs emit; Arkdown's Rust/OXC/Rolldown pipeline owns lowering |
