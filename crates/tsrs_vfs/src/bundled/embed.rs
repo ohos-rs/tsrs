@@ -129,6 +129,13 @@ impl<T: FS> FS for WrappedFS<T> {
         self.fs.realpath(path)
     }
 
+    fn read_file_shared(&self, path: &str) -> Option<std::sync::Arc<str>> {
+        if let Some(rest) = split_path(path) {
+            return embedded_contents(rest).map(std::sync::Arc::from);
+        }
+        self.fs.read_file_shared(path)
+    }
+
     fn write_file(&self, path: &str, data: &str) -> Result<(), String> {
         if split_path(path).is_some() {
             panic!("cannot write to embedded file system");

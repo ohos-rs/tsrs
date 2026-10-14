@@ -132,6 +132,9 @@ impl<T: VFS> VFS for FS<T> {
     fn read_file(&self, path: &str) -> Option<String> {
         self.fs.read_file(path)
     }
+    fn read_file_shared(&self, path: &str) -> Option<std::sync::Arc<str>> {
+        self.fs.read_file_shared(path)
+    }
 
     fn realpath(&self, path: &str) -> String {
         if self.enabled() {

@@ -1,4 +1,5 @@
 use std::fmt;
+use std::sync::Arc;
 use std::time::SystemTime;
 
 use bitflags::bitflags;
@@ -15,6 +16,12 @@ pub trait FS: Send + Sync {
     // ReadFile reads the file specified by path and returns the content.
     // If the file fails to be read, the result is None.
     fn read_file(&self, path: &str) -> Option<String>;
+
+    /// Immutable text for snapshot owners. Overlay hosts can share their existing allocation;
+    /// ordinary filesystems retain their read semantics through the owned-text default.
+    fn read_file_shared(&self, path: &str) -> Option<Arc<str>> {
+        self.read_file(path).map(Arc::from)
+    }
 
     fn write_file(&self, path: &str, data: &str) -> Result<(), String>;
 
@@ -51,6 +58,9 @@ macro_rules! forward_fs {
         }
         fn read_file(&self, path: &str) -> Option<String> {
             (**self).read_file(path)
+        }
+        fn read_file_shared(&self, path: &str) -> Option<Arc<str>> {
+            (**self).read_file_shared(path)
         }
         fn write_file(&self, path: &str, data: &str) -> Result<(), String> {
             (**self).write_file(path, data)
