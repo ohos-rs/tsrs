@@ -1061,7 +1061,7 @@ impl Program {
         if let Some(pool) = self.compiler_checker_pool() {
             pool.for_each_checker_group_do_ex(source_files, self.single_threaded(), allow_steal, allow_steal.then_some(ctx), |c, file_index, file| {
                 *diagnostics[file_index].lock().unwrap() = collect(ctx, c, file);
-            });
+            }, None);
         } else {
             let run = |i: usize, file: P<SourceFile>| {
                 if self.skip_type_checking(file, false) {
@@ -3162,4 +3162,4 @@ impl tsoptions::outputpaths::OutputPathsHost for Program {
 #[path = "arkts_diagnostics.rs"]
 mod arkts_diagnostics;
 #[cfg(feature = "checker")]
-pub use arkts_diagnostics::ArkTsBuildDiagnostics;
+pub use arkts_diagnostics::{ArkTsBuildDiagnostics, ArkTsDiagnosticKeys, ArkTsNormalDiagnostics};

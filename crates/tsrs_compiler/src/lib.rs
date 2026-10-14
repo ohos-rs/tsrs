@@ -53,7 +53,7 @@ pub use program::{
 };
 
 #[cfg(feature = "checker")]
-pub use program::ArkTsBuildDiagnostics;
+pub use program::{ArkTsBuildDiagnostics, ArkTsDiagnosticKeys, ArkTsNormalDiagnostics};
 
 #[cfg(all(test, feature = "checker"))]
 mod kitimports_test;

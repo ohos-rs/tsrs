@@ -221,7 +221,7 @@ fn overlay_fs_file_system() {
     let mut overlays: FxHashMap<Path, Arc<Overlay>> = FxHashMap::default();
     overlays.insert(
         Path::from("/virtual/nested/file.ts"),
-        Arc::new(new_overlay("/virtual/nested/file.ts".to_string(), "overlay".to_string(), 1, ScriptKind::TS)),
+        Arc::new(new_overlay("/virtual/nested/file.ts".to_string(), Arc::from("overlay"), 1, ScriptKind::TS)),
     );
     let file_system = new_overlay_fs(FsRef::Host(Arc::new(host)), Arc::new(overlays), lsproto::PositionEncodingKind::UTF16, to_path);
 
@@ -234,4 +234,29 @@ fn overlay_fs_file_system() {
     let root_entries = file_system.get_accessible_entries("/");
     assert!(root_entries.directories.contains(&"virtual".to_string()));
     assert!(!root_entries.files.contains(&"virtual".to_string()));
+}
+
+#[test]
+fn snapshot_cache_shares_text_and_preserves_previous_file_versions() {
+    use crate::snapshotfs::new_snapshot_fs_builder_from_source;
+    let to_path: ToPath = Arc::new(|name: &str| Path::from(name));
+    let fs = create_overlay_fs();
+    fs.process_changes(&[open(test_uri1(), 1, "export const value: number = 1;", lsproto::LanguageKind::TypeScript)]);
+    let text = fs.get_file("/test1.ts").unwrap().shared_content();
+    let handle = new_cached_file_handle("/test1.ts", Arc::clone(&text));
+    assert!(Arc::ptr_eq(&handle.shared_content(), &text));
+    let builder = new_snapshot_fs_builder_from_source(Arc::new(fs), Arc::default(), Arc::default(), Arc::default(), Arc::clone(&to_path));
+    let cached = builder.get_file("/test1.ts").unwrap();
+    assert!(Arc::ptr_eq(&cached.shared_content(), &text));
+    let (old, _) = builder.finalize();
+    assert!(Arc::ptr_eq(&old.get_file("/test1.ts").unwrap().shared_content(), &text));
+    let replacement: Arc<str> = Arc::from("export const value: number = 2;");
+    let next_fs = create_overlay_fs();
+    next_fs.process_changes(&[open(test_uri1(), 2, &replacement, lsproto::LanguageKind::TypeScript)]);
+    let next = new_snapshot_fs_builder_from_source(Arc::new(next_fs), Arc::clone(&old.cache_files), Arc::default(), Arc::default(), to_path);
+    next.invalidate_cache();
+    let new = next.get_file("/test1.ts").unwrap();
+    assert_ne!(new.hash(), cached.hash());
+    assert_eq!(new.content(), replacement.as_ref());
+    assert_eq!(old.get_file("/test1.ts").unwrap().content(), text.as_ref());
 }

@@ -730,6 +730,19 @@ impl FS for RequestFileSystem {
             _ => None,
         }
     }
+    fn read_file_shared(&self, path: &str) -> Option<Arc<str>> {
+        let l = self.lookup_path(path)?;
+        if l.info.as_ref().is_some_and(|i| i.mode.is_dir()) {
+            return None;
+        }
+        if l.use_base {
+            return self.base.read_file_shared(&l.path);
+        }
+        match l.entry.as_deref() {
+            Some(Entry::File { content, .. }) => Some(Arc::clone(content)),
+            _ => None,
+        }
+    }
     fn write_file(&self, path: &str, data: &str) -> Result<(), String> {
         let p = self.mutation_path(path).ok_or_else(|| "invalid argument".to_string())?;
         self.base.write_file(&p, data)
@@ -882,10 +895,10 @@ impl FileHandleSource for RequestFileSystem {
             if let FsRef::Layered(layered) = &self.base_ref {
                 return layered.get_file(&l.path);
             }
-            return self.base.read_file(&l.path).map(|c| tsrs_project::new_cached_file_handle(file_name, &c));
+            return self.base.read_file_shared(&l.path).map(|c| tsrs_project::new_cached_file_handle(file_name, c));
         }
         match l.entry.as_deref() {
-            Some(Entry::File { content, .. }) => Some(tsrs_project::new_cached_file_handle(file_name, content)),
+            Some(Entry::File { content, .. }) => Some(tsrs_project::new_cached_file_handle(file_name, Arc::clone(content))),
             _ => None,
         }
     }

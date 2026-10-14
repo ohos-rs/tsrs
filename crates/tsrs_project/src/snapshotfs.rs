@@ -78,6 +78,9 @@ impl FS for cachedLayeredFileSystem {
     fn read_file(&self, path: &str) -> Option<String> {
         self.fs.read_file(path)
     }
+    fn read_file_shared(&self, path: &str) -> Option<std::sync::Arc<str>> {
+        self.fs.read_file_shared(path)
+    }
     fn write_file(&self, path: &str, data: &str) -> Result<(), String> {
         self.fs.write_file(path, data)
     }
@@ -403,7 +406,7 @@ impl snapshotFSBuilder {
 
     // snapshotfs.go:348
     fn cache_source_file(&self, file_name: &str, path: &Path, source: &dyn FileHandle) -> Option<Arc<dyn FileHandle>> {
-        let mut file = new_cached_file(file_name.to_string(), source.content().to_string());
+        let mut file = new_cached_file(file_name.to_string(), source.shared_content());
         file.base.hash = source.hash();
         let (entry, loaded) = self.cache_files.load_or_store(path.clone(), Shared::new(file));
         let entry = entry?;
@@ -415,7 +418,7 @@ impl snapshotFSBuilder {
 
     // snapshotfs.go:361
     fn get_cached_file(&self, file_name: &str, path: &Path, force_reload: bool) -> Option<Arc<dyn FileHandle>> {
-        let placeholder = cachedFile { base: crate::overlayfs::fileBase::new(file_name.to_string(), String::new(), 0), needs_reload: true, realpath_path: Path::default() };
+        let placeholder = cachedFile { base: crate::overlayfs::fileBase::new(file_name.to_string(), Arc::default(), 0), needs_reload: true, realpath_path: Path::default() };
         let (entry, loaded) = self.cache_files.load_or_store(path.clone(), Shared::new(placeholder));
         if let Some(entry) = entry {
             if !loaded && path.contains("/node_modules/") {
@@ -463,14 +466,14 @@ impl snapshotFSBuilder {
             return None;
         }
         // Read file outside the lock to avoid blocking other goroutines.
-        let content = self.fs.read_file(&file_name);
+        let content = self.fs.read_file_shared(&file_name);
         entry.locked(&mut |e: &dyn Value<cachedFile>| {
             if e.value().is_none() {
                 return;
             }
             if let Some(content) = &content {
                 e.change(&mut |file: &mut cachedFile| {
-                    file.base = crate::overlayfs::fileBase::new(file.base.file_name.clone(), content.clone(), hash_string_128(content));
+                    file.base = crate::overlayfs::fileBase::new(file.base.file_name.clone(), Arc::clone(content), hash_string_128(content));
                     file.needs_reload = false;
                 });
             } else {
@@ -492,7 +495,7 @@ impl snapshotFSBuilder {
         });
         if !file_name.is_empty() {
             // Read file outside the lock to avoid blocking other goroutines.
-            let content = self.fs.read_file(&file_name);
+            let content = self.fs.read_file_shared(&file_name);
             entry.locked(&mut |e: &dyn Value<cachedFile>| {
                 match e.value() {
                     None => return,
@@ -501,7 +504,7 @@ impl snapshotFSBuilder {
                 }
                 if let Some(content) = &content {
                     e.change(&mut |file: &mut cachedFile| {
-                        file.base = crate::overlayfs::fileBase::new(file.base.file_name.clone(), content.clone(), hash_string_128(content));
+                        file.base = crate::overlayfs::fileBase::new(file.base.file_name.clone(), Arc::clone(content), hash_string_128(content));
                         file.needs_reload = false;
                     });
                 } else {
@@ -619,7 +622,7 @@ impl snapshotFSBuilder {
         let Some(file) = entry.value() else {
             return true;
         };
-        let content = self.fs.read_file(&file.base.file_name);
+        let content = self.fs.read_file_shared(&file.base.file_name);
         let mut changed = true;
         entry.locked(&mut |e: &dyn Value<cachedFile>| {
             let Some(cur) = e.value() else {
@@ -639,7 +642,7 @@ impl snapshotFSBuilder {
                 return;
             }
             e.change(&mut |file: &mut cachedFile| {
-                file.base = crate::overlayfs::fileBase::new(file.base.file_name.clone(), content.clone(), hash_string_128(content));
+                file.base = crate::overlayfs::fileBase::new(file.base.file_name.clone(), Arc::clone(content), hash_string_128(content));
                 file.needs_reload = false;
             });
         });
@@ -1062,6 +1065,10 @@ impl FS for sourceFS {
     // snapshotfs.go:861
     fn read_file(&self, path: &str) -> Option<String> {
         self.get_file(path).map(|fh| fh.content().to_string())
+    }
+
+    fn read_file_shared(&self, path: &str) -> Option<Arc<str>> {
+        self.get_file(path).map(|file| file.shared_content())
     }
 
     // snapshotfs.go:884

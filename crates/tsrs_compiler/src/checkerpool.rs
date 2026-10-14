@@ -106,7 +106,7 @@ impl std::ops::Deref for CheckerHandle {
     type Target = Checker;
     fn deref(&self) -> &Checker {
         match &self.kind {
-            checkerHandleKind::Locked { guard, .. } => &guard.checker,
+            checkerHandleKind::Locked { guard, .. } => guard,
             // SAFETY: `from_raw`'s contract: the checker is alive and exclusively ours until release.
             checkerHandleKind::External { checker, .. } => unsafe { checker.as_ref() },
         }
@@ -116,7 +116,7 @@ impl std::ops::Deref for CheckerHandle {
 impl std::ops::DerefMut for CheckerHandle {
     fn deref_mut(&mut self) -> &mut Checker {
         match &mut self.kind {
-            checkerHandleKind::Locked { guard, .. } => &mut guard.checker,
+            checkerHandleKind::Locked { guard, .. } => guard,
             // SAFETY: `from_raw`'s contract: the checker is alive and exclusively ours until release.
             checkerHandleKind::External { checker, .. } => unsafe { checker.as_mut() },
         }
@@ -220,7 +220,7 @@ struct CheckerSlot(Mutex<SlotChecker>);
 // checkers (`max_memory`), the region that holds everything it allocates. The region is the allocation target
 // whenever the checker runs (`enter`), so dropping the checker and then the region gives back all of its memory.
 pub(crate) struct SlotChecker {
-    checker: Box<Checker>,
+    checker: Option<Box<Checker>>,
     region: Option<tsrs_core::arena::Region>,
     snapshot_owned: bool,
 }
@@ -237,7 +237,7 @@ impl SlotChecker {
         // too: strict options retain SDK hosts, which can keep Node's event loop alive.
         let snapshot_owned = program.compiler_checker_pool().is_none();
         if !in_region && !snapshot_owned {
-            return SlotChecker { checker: factory(program), region: None, snapshot_owned };
+            return SlotChecker { checker: Some(factory(program)), region: None, snapshot_owned };
         }
         let region = if snapshot_owned { tsrs_core::arena::Region::new(1 << 20) }
             else { tsrs_core::arena::Region::new_scratch(1 << 20) };
@@ -245,7 +245,7 @@ impl SlotChecker {
             let _scope = Self::enter_region(&region, snapshot_owned);
             factory(program)
         };
-        SlotChecker { checker, region: Some(region), snapshot_owned }
+        SlotChecker { checker: Some(checker), region: Some(region), snapshot_owned }
     }
 
     // Snapshot checkers use the same registered-region ownership as the project
@@ -259,22 +259,36 @@ impl SlotChecker {
         else { CheckerScope::Scratch { _scope: region.enter_scratch() } }
     }
 
+    // Drop heap state while its allocation scope is active, then the arena. Both
+    // CLI retirement and embedded phase retirement use this order.
+    fn retire(&mut self) {
+        {
+            let _scope = self.enter();
+            drop(self.checker.take());
+        }
+        drop(self.region.take());
+    }
+
     // Bytes of arena the checker holds (its region's chunks), 0 without a region.
     fn region_bytes(&self) -> usize {
         self.region.as_ref().map_or(0, tsrs_core::arena::Region::allocated_bytes)
     }
 }
 
+impl Drop for SlotChecker {
+    fn drop(&mut self) { self.retire(); }
+}
+
 impl std::ops::Deref for SlotChecker {
     type Target = Checker;
     fn deref(&self) -> &Checker {
-        &self.checker
+        self.checker.as_ref().expect("checker acquired before use")
     }
 }
 
 impl std::ops::DerefMut for SlotChecker {
     fn deref_mut(&mut self) -> &mut Checker {
-        &mut self.checker
+        self.checker.as_mut().expect("checker acquired before use")
     }
 }
 
@@ -684,7 +698,7 @@ impl checkerPool {
             return self.get_checker_for_file_exclusive(file);
         }
         let state = self.create_checkers();
-        CheckerHandle::locked(state.checkers[0].0.lock().unwrap())
+        CheckerHandle::locked(self.lock_checker(state, 0))
     }
 
     // checkerpool.go:346
@@ -700,14 +714,35 @@ impl checkerPool {
     pub(crate) fn get_checker_for_file_exclusive(&self, file: P<SourceFile>) -> CheckerHandle {
         let state = self.create_checkers();
         let idx = state.owner_of(file).expect("a file of the program");
-        CheckerHandle::locked(state.checkers[idx].0.lock().unwrap())
+        CheckerHandle::locked(self.lock_checker(state, idx))
     }
 
     // checkerpool.go:362
     // getCheckerNonExclusive returns the first checker without locking (locks in Rust, see above).
     pub(crate) fn get_checker_non_exclusive(&self) -> CheckerHandle {
         let state = self.create_checkers();
-        CheckerHandle::locked(state.checkers[0].0.lock().unwrap())
+        CheckerHandle::locked(self.lock_checker(state, 0))
+    }
+
+    fn lock_checker(&self, state: &poolState, index: usize) -> MutexGuard<'static, SlotChecker> {
+        let mut slot = state.checkers[index].0.lock().unwrap();
+        if slot.checker.is_none() {
+            *slot = SlotChecker::new(self.program, state.recycle, self.factory);
+        }
+        slot
+    }
+
+    /// # Safety
+    /// No checker or arena value from this pool may be used after retirement.
+    /// The caller must also exclude concurrent pool queries for the whole phase.
+    pub(crate) unsafe fn retire_snapshot_checkers(&self) {
+        if let Some(state) = self.state.get() {
+            for slot in state.checkers {
+                let mut slot = slot.0.lock().unwrap();
+                assert!(slot.snapshot_owned, "phase retirement requires snapshot regions");
+                slot.retire();
+            }
+        }
     }
 
     // checkerpool.go:367
@@ -794,7 +829,7 @@ impl checkerPool {
     pub(crate) fn for_each_checker_parallel(&self, cb: impl Fn(usize, &mut Checker) + Sync) {
         let state = self.create_checkers();
         let run = |idx: usize| {
-            let mut guard = state.checkers[idx].0.lock().unwrap();
+            let mut guard = self.lock_checker(state, idx);
             let _scope = guard.enter();
             cb(idx, &mut guard);
         };
@@ -825,7 +860,22 @@ impl checkerPool {
         single_threaded: bool,
         cb: impl Fn(&mut Checker, usize, P<SourceFile>) + Sync,
     ) {
-        self.for_each_checker_group_do_ex(files, single_threaded, false, None, cb);
+        self.for_each_checker_group_do_ex(files, single_threaded, false, None, cb, None);
+    }
+
+    /// Keep submission and final diagnostic collection within the same locked
+    /// checker and region. No stealing/retirement occurs in this build pass.
+    pub(crate) fn for_each_checker_group_do_syscap(
+        &self, files: &[P<SourceFile>], single_threaded: bool,
+        check: impl Fn(&mut Checker, P<SourceFile>) + Sync,
+        collect: impl Fn(&mut Checker, usize, P<SourceFile>) + Sync,
+    ) {
+        self.for_each_checker_group_do_ex(files, single_threaded, false, None,
+            |checker, _, file| { checker.begin_oh_syscap_pipeline(); check(checker, file); },
+            Some(&|checker, visited| {
+                checker.finish_oh_syscap_pipeline();
+                for &index in visited { collect(checker, index, files[index]); }
+            }));
     }
 
     // `allow_steal`: the pass may move files between checkers (stealing_enabled). Only the type-check pass does: later
@@ -840,6 +890,7 @@ impl checkerPool {
         allow_steal: bool,
         split_ctx: Option<&Context>,
         cb: impl Fn(&mut Checker, usize, P<SourceFile>) + Sync,
+        finish: Option<&(dyn Fn(&mut Checker, &[usize]) + Sync)>,
     ) {
         let state = self.create_checkers();
         let stats = assignment_stats_enabled();
@@ -904,8 +955,9 @@ impl checkerPool {
             let start = stats.then(std::time::Instant::now);
             let cpu_start = if stats { thread_cpu_seconds() } else { 0.0 };
             let mut count = 0;
+            let mut visited = Vec::new();
             let mut file_cpu: Vec<(P<SourceFile>, f64)> = Vec::new();
-            let mut guard = state.checkers[checker_idx].0.lock().unwrap();
+            let mut guard = self.lock_checker(state, checker_idx);
             let mut scope = guard.enter();
             let recycle = allow_steal && state.recycle;
             let mut last_victim = usize::MAX;
@@ -938,6 +990,7 @@ impl checkerPool {
                     split_file.run_owner(&mut guard, split_ctx.unwrap());
                 }
                 cb(&mut guard, i, file);
+                if finish.is_some() { visited.push(i); }
                 if let Some(split_file) = split_file.filter(|f| f.is_shadow()) {
                     let whole = guard.file_diagnostics_so_far(file);
                     split_file.shadow_compare(&whole);
@@ -969,6 +1022,7 @@ impl checkerPool {
                     scope = guard.enter();
                 }
             }
+            if let Some(finish) = finish { finish(&mut guard, &visited); }
             drop(scope);
             if cost_cache {
                 state.file_cpu.lock().unwrap().extend(file_cpu);
@@ -1017,18 +1071,17 @@ impl checkerPool {
         let mut old = std::mem::replace(slot, SlotChecker::new(self.program, true, self.factory));
         {
             let _scope = old.enter();
-            let globals = old.checker.get_global_diagnostics();
+            let globals = old.get_global_diagnostics();
             let mut retired = state.retired.lock().unwrap();
             retired.count += 1;
             retired.global_diagnostics.extend(globals);
-            retired.symbol_count += u64::from(old.checker.symbol_count);
-            retired.type_count += u64::from(old.checker.type_count);
-            retired.instantiation_count += u64::from(old.checker.total_instantiation_count);
-            retired.lazy_member_stats.add(&old.checker.lazy_member_stats);
+            retired.symbol_count += u64::from(old.symbol_count);
+            retired.type_count += u64::from(old.type_count);
+            retired.instantiation_count += u64::from(old.total_instantiation_count);
+            retired.lazy_member_stats.add(&old.lazy_member_stats);
             drop(retired);
-            drop(old.checker);
         }
-        drop(old.region);
+        old.retire();
     }
 }
 

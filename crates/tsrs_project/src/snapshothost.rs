@@ -67,7 +67,7 @@ impl SnapshotHost {
 
     // snapshothost.go:55
     pub fn acquire_source_file(&self, options: SourceFileParseOptions, text: &str, script_kind: ScriptKind) -> SourceFileLease {
-        let file_handle = new_cached_file_handle(&options.file_name, text);
+        let file_handle = new_cached_file_handle(&options.file_name, Arc::from(text));
         let key = new_parse_cache_key(options, file_handle.hash(), script_kind);
         SourceFileLease { cache: Arc::clone(&self.parse_cache), key: key.clone(), source_file: self.parse_cache.acquire(&key, file_handle.into()), released: Mutex::new(false) }
     }

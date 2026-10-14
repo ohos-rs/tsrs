@@ -1076,8 +1076,25 @@ impl Checker {
 
     // checker.go:16236
     pub(crate) fn get_fully_qualified_name(&mut self, symbol: P<Symbol>, containing_location: Option<P<Node>>) -> String {
+        // ets-loader typescript.js getFullyQualifiedName / getFullyQualifiedNameNoCache:
+        // symbol identity is stable for this checker; a containing location bypasses the cache.
+        if containing_location.is_none() {
+            if let Some(name) = self.qualified_name_cache.as_ref().and_then(|cache| cache.get(&symbol)).filter(|name| !name.is_empty()) {
+                return name.clone();
+            }
+        }
+        let name = self.get_fully_qualified_name_no_cache(symbol, containing_location);
+        if containing_location.is_none() {
+            if let Some(cache) = &mut self.qualified_name_cache {
+                cache.insert(symbol, name.clone());
+            }
+        }
+        name
+    }
+
+    fn get_fully_qualified_name_no_cache(&mut self, symbol: P<Symbol>, containing_location: Option<P<Node>>) -> String {
         if let Some(parent) = symbol.parent() {
-            let parent_name = self.get_fully_qualified_name(parent, containing_location);
+            let parent_name = self.get_fully_qualified_name_no_cache(parent, containing_location);
             return parent_name + "." + &self.symbol_to_string(symbol);
         }
         self.symbol_to_string_ex(symbol, containing_location, SymbolFlags::All, SymbolFormatFlags::DoNotIncludeSymbolChain | SymbolFormatFlags::AllowAnyNodeKind)

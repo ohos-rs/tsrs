@@ -147,3 +147,6 @@ pub use utilities::{
 };
 
 mod oh_compat;
+
+#[cfg(test)]
+mod oh_sdk_plugin_test;

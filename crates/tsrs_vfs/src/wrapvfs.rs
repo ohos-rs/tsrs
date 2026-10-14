@@ -1,6 +1,7 @@
 // Go internal/vfs/wrapvfs.
 
 use std::time::SystemTime;
+use std::sync::Arc;
 
 use crate::{Entries, FileInfo, FS};
 
@@ -58,6 +59,13 @@ impl FS for wrappedFS {
     }
 
     // wrapvfs.go:60
+    fn read_file_shared(&self, path: &str) -> Option<Arc<str>> {
+        if let Some(f) = &self.replacements.read_file {
+            return f(path).map(Arc::from);
+        }
+        self.fs.read_file_shared(path)
+    }
+
     fn write_file(&self, path: &str, data: &str) -> Result<(), String> {
         if let Some(f) = &self.replacements.write_file {
             return f(path, data);

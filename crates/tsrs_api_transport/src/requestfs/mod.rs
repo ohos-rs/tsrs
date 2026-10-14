@@ -533,6 +533,17 @@ impl FS for RequestFs {
         self.local_file(&lookup.path).map(|f| f.content.clone())
     }
 
+    fn read_file_shared(&self, path: &str) -> Option<Arc<str>> {
+        let lookup = self.lookup_path(path);
+        if !lookup.ok || lookup.info.as_ref().is_some_and(|i| i.is_dir()) {
+            return None;
+        }
+        if lookup.base {
+            return self.base_fs().read_file_shared(&lookup.path);
+        }
+        self.local_file(&lookup.path).map(|f| Arc::from(f.content.as_str()))
+    }
+
     fn write_file(&self, path: &str, data: &str) -> Result<(), String> {
         match self.mutation_path(path) {
             Some(p) => self.base_fs().write_file(&p, data),
@@ -643,9 +654,9 @@ impl FileHandleSource for RequestFs {
             if let FsRef::Layered(source) = &self.base {
                 return source.get_file(&lookup.path);
             }
-            return self.base_fs().read_file(&lookup.path).map(|content| new_cached_file_handle(file_name, &content));
+            return self.base_fs().read_file_shared(&lookup.path).map(|content| new_cached_file_handle(file_name, content));
         }
-        self.local_file(&lookup.path).map(|f| new_cached_file_handle(file_name, &f.content))
+        self.local_file(&lookup.path).map(|f| new_cached_file_handle(file_name, Arc::from(f.content.as_str())))
     }
 }
 

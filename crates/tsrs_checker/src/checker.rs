@@ -944,6 +944,8 @@ pub struct Checker {
     pub compiler_options: P<CompilerOptions>,
     pub files: &'static [P<SourceFile>],
     pub file_index_map: FxHashMap<P<SourceFile>, i32>,
+    /// ets-loader getFullyQualifiedName: outer results only, on the ArkTS linter checker.
+    pub(crate) qualified_name_cache: Option<FxHashMap<P<Symbol>, String>>,
     pub type_count: u32,
     pub symbol_count: u32,
     pub signature_count: u32,
@@ -1393,6 +1395,7 @@ fn new_checker_with_options(program: &'static dyn Program, compiler_options: P<C
         compiler_options,
         files,
         file_index_map: create_file_index_map(files),
+        qualified_name_cache: for_arkts_linter.then(FxHashMap::default),
         type_count: 0,
         symbol_count: 0,
         signature_count: 0,

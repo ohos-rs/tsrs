@@ -1,7 +1,7 @@
 //! OH checker-owned SDK callback selection and error policies.
 use crate::*;
 use tsrs_core::{OhSdkCheckPlugin, OhSdkPluginNodeSnapshot, OhSdkPluginResponse};
-use serde_json::{json, Value};
+use serde_json::json;
 
 impl Checker {
     fn oh_sdk_plugins(&self, tag: &str, kind: &str) -> Vec<&OhSdkCheckPlugin> {
@@ -45,43 +45,19 @@ impl Checker {
         }
         None
     }
-    pub(crate) fn oh_sdk_check_syscap(&self, node: P<Node>, declaration: P<Node>) -> Option<OhSdkPluginResponse> {
-        let executor = self.compiler_options.oh_sdk_plugin_executor.as_ref()?;
-        let mut result = None;
-        for plugin in self.compiler_options.oh_sdk_class_check_plugins.as_deref().unwrap_or_default() {
-            if plugin.tag_name != "syscap" { continue; }
-            let current = executor.check_syscap(plugin, node_snapshot(node), node_snapshot(declaration), self.oh_sdk_plugin_project_config())
-                .unwrap_or_else(|e| panic!("OH SDK syscap checker: {e}"));
-            if !current.found { continue; }
-            if !current.check_result { return Some(current); }
-            result = Some(current);
-        }
-        result
+    pub(crate) fn oh_sdk_node_snapshot(node: P<Node>) -> OhSdkPluginNodeSnapshot {
+        let file = ast::get_source_file_of_node(node).unwrap();
+        let positions = file.get_position_map();
+        // scanner/utilities::get_text_of_node also handles missing nodes,
+        // virtual substring bounds, JSDoc normalization and reparsed literals.
+        let missing = ast::node_is_missing(Some(node));
+        let start = if missing { node.pos() } else { tsrs_scanner::skip_trivia(file.text(), node.pos()) };
+        let text = (missing || node.is_virtual() && start > node.end()
+            || tsrs_scanner::is_jsdoc_type_expression_or_child(node)
+            || node.flags().intersects(NodeFlags::ReparserTransformedLiteral))
+            .then(|| tsrs_scanner::get_text_of_node(node));
+        OhSdkPluginNodeSnapshot { file_name: file.file_name().to_string(), file_id: ast::get_node_id(file.as_node()).0,
+            source: file.text(), pos: positions.utf8_to_utf16(node.pos()), end: positions.utf8_to_utf16(node.end()),
+            start: positions.utf8_to_utf16(start), text }
     }
-    fn oh_sdk_plugin_project_config(&self) -> serde_json::Map<String, Value> {
-        let o = self.compiler_options;
-        if let Some(source) = &o.oh_sdk_plugin_project_config { return source.clone(); }
-        let Value::Object(value) = json!({
-            "runtimeOS": self.oh_runtime_os(), "originCompatibleSdkVersion": o.oh_origin_compatible_sdk_version,
-            "compatibleSdkVersion": o.compatible_sdk_version, "compileSdkVersion": o.compile_sdk_version,
-            "projectRootPath": o.oh_project_root_path, "projectPath": o.oh_project_path,
-            "modulePath": o.oh_module_path, "etsLoaderPath": o.ets_loader_path,
-            "externalApiPaths": o.oh_external_api_paths.as_deref().unwrap_or_default(),
-            "requestPermissions": o.oh_request_permissions.as_deref().unwrap_or_default(),
-            "syscapIntersectionSet": o.oh_syscap_intersection.as_deref().unwrap_or_default(),
-            "syscapUnionSet": o.oh_syscap_union.as_deref().unwrap_or_default(),
-            "deviceTypes": o.oh_device_types.as_deref().unwrap_or_default(),
-            "isCrossplatform": o.oh_crossplatform == Tristate::True,
-            "ignoreCrossplatformCheck": o.oh_ignore_crossplatform_check == Tristate::True,
-            "compileMode": o.oh_compile_mode, "bundleType": o.oh_bundle_type,
-            "strictMode": { "apiCompatibilityCheck": o.oh_api_compatibility_check }
-        }) else { unreachable!() };
-        value
-    }
-}
-fn node_snapshot(node: P<Node>) -> OhSdkPluginNodeSnapshot {
-    let file = ast::get_source_file_of_node(node).unwrap();
-    let positions = file.get_position_map();
-    OhSdkPluginNodeSnapshot { file_name: file.file_name().to_string(), source: file.text().to_string(),
-        pos: positions.utf8_to_utf16(node.pos()), end: positions.utf8_to_utf16(node.end()), text: tsrs_scanner::get_text_of_node(node) }
 }
