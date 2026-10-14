@@ -205,3 +205,61 @@ fn single_file_diagnostics_of_a_freed_leaf_panic() {
     assert!(file.is_check_leaf());
     let _ = program.get_semantic_diagnostics(&ctx, Some(file));
 }
+
+#[test]
+fn arkts_linter_qualified_names_cache_only_outer_results_and_preserve_normal_checker() {
+    // ets-loader typescript.js getFullyQualifiedName caches only the linter's outer result.
+    let text = "namespace Outer { export class Merged {} }\nnamespace Outer { export namespace Merged { export class Nested {} } }\nnamespace Other { export class Nested {} }";
+    let files = [
+        ("/src/tsconfig.json", r#"{"compilerOptions":{"noLib":true},"files":["index.ts"]}"#),
+        ("/src/index.ts", text),
+    ];
+    let program = new_program(ProgramOptions::new(config_for(&files), host_for(&files)));
+    let file = program.get_source_file("/src/index.ts").unwrap();
+    fn identifiers(node: P<tsrs_ast::Node>, result: &mut Vec<P<tsrs_ast::Node>>) -> bool {
+        if node.kind() == tsrs_ast::Kind::Identifier { result.push(node); }
+        node.for_each_child(&mut |child| identifiers(child, result));
+        false
+    }
+    let mut names = Vec::new();
+    identifiers(file.as_node(), &mut names);
+    let normal_region = tsrs_core::arena::Region::new(64 << 10);
+    let normal_scope = normal_region.enter();
+    let mut normal = tsrs_checker::new_checker(program);
+    let expected: Vec<_> = names.iter().map(|&node| {
+        let symbol = normal.get_symbol_at_location_exported(node).unwrap();
+        normal.get_fully_qualified_name_exported(symbol)
+    }).collect();
+    assert_eq!(expected, ["Outer", "Outer.Merged", "Outer", "Outer.Merged", "Outer.Merged.Nested", "Other", "Other.Nested"]);
+    let before = normal_region.used_bytes();
+    for (&node, expected) in names.iter().zip(&expected) {
+        let symbol = normal.get_symbol_at_location_exported(node).unwrap();
+        assert_eq!(&normal.get_fully_qualified_name_exported(symbol), expected);
+    }
+    assert!(normal_region.used_bytes() > before, "normal checker must still run the uncached node builder");
+    drop(normal_scope);
+
+    let linter_region = tsrs_core::arena::Region::new(64 << 10);
+    let linter_scope = linter_region.enter();
+    let mut linter = tsrs_checker::new_arkts_linter_checker(program);
+    // Ask for a child first: upstream recursion must not populate its parents' cache entries.
+    let nested = linter.get_symbol_at_location_exported(names[4]).unwrap();
+    assert_eq!(linter.get_fully_qualified_name_exported(nested), expected[4]);
+    let parent = linter.get_symbol_at_location_exported(names[3]).unwrap();
+    let before = linter_region.used_bytes();
+    assert_eq!(linter.get_fully_qualified_name_exported(parent), expected[3]);
+    assert!(linter_region.used_bytes() > before, "recursive parents must not be cached");
+    for (&node, expected) in names.iter().zip(&expected) {
+        let symbol = linter.get_symbol_at_location_exported(node).unwrap();
+        assert_eq!(&linter.get_fully_qualified_name_exported(symbol), expected);
+    }
+    let before = linter_region.used_bytes();
+    for (&node, expected) in names.iter().zip(&expected) {
+        let symbol = linter.get_symbol_at_location_exported(node).unwrap();
+        assert_eq!(&linter.get_fully_qualified_name_exported(symbol), expected);
+    }
+    assert_eq!(linter_region.used_bytes(), before, "cache hits must not allocate node-builder contexts");
+    drop(linter);
+    drop(linter_scope);
+    drop(normal);
+}

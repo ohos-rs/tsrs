@@ -16,7 +16,7 @@ pub fn get_source_text_of_node_from_source_file(source_file: P<SourceFile>, node
     get_text_of_node_from_source_text(source_file.text(), node, include_trivia)
 }
 
-pub(crate) fn is_jsdoc_type_expression_or_child(node: P<Node>) -> bool {
+pub fn is_jsdoc_type_expression_or_child(node: P<Node>) -> bool {
     if ast::is_jsdoc_type_expression(node) {
         return true;
     }

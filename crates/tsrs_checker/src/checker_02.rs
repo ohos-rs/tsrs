@@ -140,6 +140,7 @@ impl Checker {
             }
             links.unused_checked.set(true);
         }
+        self.flush_oh_syscap_checks();
         if self.is_canceled() {
             self.was_canceled = true;
         }
@@ -175,6 +176,7 @@ impl Checker {
             self.produce_deferred_diagnostics();
             self.reported_unreachable_nodes.clear();
         }
+        self.flush_oh_syscap_checks();
         if self.is_canceled() {
             self.was_canceled = true;
         }

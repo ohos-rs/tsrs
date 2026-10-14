@@ -1452,6 +1452,13 @@ impl Checker {
         self.get_diagnostics(ctx, source_file, false)
     }
 
+    /// Check a file without extracting diagnostics before pending SDK replies.
+    pub fn check_source_file_for_diagnostics(&mut self, ctx: &Context, source_file: P<SourceFile>) {
+        self.check_not_canceled();
+        let check_unused = self.compiler_options.no_unused_locals.is_true() || self.compiler_options.no_unused_parameters.is_true();
+        self.check_source_file(ctx, source_file, check_unused);
+    }
+
     // checker.go:14190
     pub fn get_suggestion_diagnostics(&mut self, ctx: &Context, source_file: P<SourceFile>) -> Vec<P<Diagnostic>> {
         self.get_diagnostics(ctx, source_file, true)

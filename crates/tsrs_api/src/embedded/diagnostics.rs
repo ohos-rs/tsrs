@@ -1,6 +1,6 @@
 use super::ProgramSnapshot;
 use crate::{ApiError, ApiResult};
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 use tsrs_ast::Diagnostic as CompilerDiagnostic;
 use tsrs_core::{
     P,
@@ -13,7 +13,7 @@ pub struct DiagnosticPosition {
     pub character: u32,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Diagnostic {
     pub file_name: Option<PathBuf>,
     pub pos: i64,
@@ -80,14 +80,76 @@ impl Diagnostic {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ArktsBuildDiagnostics {
     pub linter_diagnostics: Vec<Diagnostic>,
     pub syntactic_diagnostics: Vec<Diagnostic>,
     pub semantic_diagnostics: Vec<Diagnostic>,
 }
 
+/// Owned normal diagnostics and comparison keys, tied to their immutable program.
+/// Consume this after obtaining transform facts to retire normal checkers before
+/// running the strict linter. No checker-region pointer crosses this API boundary.
+pub struct ArktsNormalDiagnostics {
+    snapshot: ProgramSnapshot,
+    keys: tsrs_compiler::ArkTsDiagnosticKeys,
+    syntactic: Vec<Diagnostic>,
+    semantic: Vec<Diagnostic>,
+}
+
 impl ProgramSnapshot {
+    pub fn arkts_normal_diagnostics(&self) -> ApiResult<ArktsNormalDiagnostics> {
+        self.run(|this| {
+            let diagnostics = this
+                .program()?
+                .get_arkts_normal_diagnostics(&Context::background());
+            Ok(ArktsNormalDiagnostics {
+                snapshot: this.clone(),
+                keys: diagnostics.keys,
+                syntactic: owned(&diagnostics.syntactic),
+                semantic: owned(&diagnostics.semantic),
+            })
+        })
+    }
+
+    pub fn arkts_strict_diagnostics(
+        &self,
+        normal: ArktsNormalDiagnostics,
+    ) -> ApiResult<ArktsBuildDiagnostics> {
+        if !Arc::ptr_eq(&self.data, &normal.snapshot.data) {
+            return Err(ApiError::client(
+                "normal diagnostics belong to another program snapshot",
+            ));
+        }
+        self.run(move |this| {
+            let program = this.program()?;
+            // SAFETY: executor calls are serialized. Embedded build diagnostics and
+            // transform queries return deep-owned values; persistent TypeHandles use
+            // the separate external API pool. `normal` holds only owned keys and text.
+            unsafe {
+                program.retire_arkts_build_checkers();
+            }
+            let linter = program.get_arkts_strict_diagnostics(&Context::background(), &normal.keys);
+            Ok(ArktsBuildDiagnostics {
+                linter_diagnostics: owned(&linter),
+                syntactic_diagnostics: normal.syntactic,
+                semantic_diagnostics: normal.semantic,
+            })
+        })
+    }
+
+    /// Finish a transform-only build without creating a diagnostics or strict pool.
+    pub fn release_arkts_build_checkers(&self) -> ApiResult<()> {
+        self.run(|this| {
+            // SAFETY: the serialized embedded API never returns build-pool arena
+            // pointers. Owned transform facts and normal-phase tokens remain valid.
+            unsafe {
+                this.program()?.retire_arkts_build_checkers();
+            }
+            Ok(())
+        })
+    }
+
     pub fn arkts_build_diagnostics(&self) -> ApiResult<ArktsBuildDiagnostics> {
         self.run(|this| {
             let diagnostics = this

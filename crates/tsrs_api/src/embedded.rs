@@ -5,8 +5,10 @@ mod executor;
 mod facts;
 pub(crate) mod queries;
 
-pub use crate::ohsdkplugin::{SdkPluginExecutor, SdkPluginHost, SdkPluginRequest};
-pub use diagnostics::{ArktsBuildDiagnostics, Diagnostic, DiagnosticPosition};
+pub use crate::ohsdkplugin::{SdkPluginCompletion, SdkPluginExecutor, SdkPluginHost, SdkPluginRequest};
+pub use diagnostics::{
+    ArktsBuildDiagnostics, ArktsNormalDiagnostics, Diagnostic, DiagnosticPosition,
+};
 pub use facts::{
     AnnotationConstant, AnnotationInfo, AnnotationProperty, AnnotationTransformImport,
     AnnotationTransformInfo, AnnotationTransformNode, ArktsBuilderReceiverTypeFacts,

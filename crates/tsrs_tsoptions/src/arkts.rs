@@ -284,5 +284,5 @@ serde_host_option!(
     f64, Option<f64>,
     Option<Vec<tsrs_core::OhSdkCheckPlugin>>,
     Option<Vec<tsrs_core::OhSdkClassCheckPlugin>>,
-    Option<serde_json::Map<String, serde_json::Value>>,
+    Option<std::sync::Arc<serde_json::Map<String, serde_json::Value>>>,
 );

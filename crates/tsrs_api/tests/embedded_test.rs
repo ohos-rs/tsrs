@@ -359,3 +359,113 @@ fn failed_host_request_releases_inputs_and_keeps_the_compiler_usable() {
             .any(|d| d.code == 2322)
     );
 }
+
+// R4a: the strict linter consumes owned normal keys after its regions are retired.
+// Run this target with TSRS_ARENA_POISON=1 to catch checker-pointer escapes.
+#[test]
+fn phased_arkts_build_preserves_owned_diagnostics_facts_and_api_types() {
+    use tsrs_api::embedded::{ArktsTransformTypeQuery, TypeQueryRange};
+    let dir = TempDir::new("embedded-arkts-phases");
+    let source = r#"
+@interface Marker { value: number = 1; }
+@Marker class Value { property: number = 1; }
+let maybe: Value | undefined;
+const emoji = '😀'; const wrong: number = '中文';
+function implicit(value) { return value; }
+interface Shape { name: string }
+const shape: Shape = { name: 123 };
+"#;
+    let a = dir.write("a.ets", source);
+    let b = dir.write("b.ts", "export const wrong: string = 1;");
+    let roots = [a.clone(), b];
+    let property = source.find("property").unwrap();
+    let query = ArktsTransformTypeQuery {
+        file: a.clone().into(),
+        properties: vec![TypeQueryRange {
+            pos: property,
+            end: property + "property".len(),
+        }],
+        builder_accesses: Vec::new(),
+        member_accesses: Vec::new(),
+    };
+    let fs: Arc<dyn FS> = Arc::new(bundled::wrap_fs(osvfs::fs()));
+    let service = compiler(&dir.dir(), Arc::clone(&fs));
+    for (linter, strict_only) in [(true, false), (true, true), (false, false)] {
+        let opts = CompilerOptions {
+            need_do_ark_ts_linter: if linter {
+                Tristate::True
+            } else {
+                Tristate::False
+            },
+            strict_checker_only: if strict_only {
+                Tristate::True
+            } else {
+                Tristate::False
+            },
+            checkers: Some(2),
+            ets_annotations_enable: Tristate::True,
+            ..options()
+        };
+        let reference = service
+            .create_program(&roots, opts.clone(), Arc::clone(&fs))
+            .unwrap();
+        let expected = reference.arkts_build_diagnostics().unwrap();
+        assert!(!expected.semantic_diagnostics.is_empty());
+        if linter {
+            assert!(!expected.linter_diagnostics.is_empty());
+        }
+        let annotations = reference.annotation_transform_infos(&roots).unwrap();
+        assert!(!annotations[0].declarations.is_empty());
+        let facts = reference
+            .arkts_transform_type_facts(std::slice::from_ref(&query), &[])
+            .unwrap();
+        assert_eq!(facts[0].properties.len(), 1);
+        let program = service
+            .create_program(&roots, opts, Arc::clone(&fs))
+            .unwrap();
+        let types = program
+            .types_at_positions(&a, &[source.find("maybe").unwrap() as u32])
+            .unwrap();
+        // Reacquisition after retirement must create a live checker, not reuse freed links.
+        for _ in 0..2 {
+            let normal = program.arkts_normal_diagnostics().unwrap();
+            let actual_annotations = program.annotation_transform_infos(&roots).unwrap();
+            let actual_facts = program
+                .arkts_transform_type_facts(std::slice::from_ref(&query), &[])
+                .unwrap();
+            let actual = program.arkts_strict_diagnostics(normal).unwrap();
+            assert_eq!(
+                actual, expected,
+                "all fields and original list order must survive retirement"
+            );
+            assert_eq!(
+                serde_json::to_value(actual_annotations).unwrap(),
+                serde_json::to_value(&annotations).unwrap()
+            );
+            assert_eq!(
+                serde_json::to_value(actual_facts).unwrap(),
+                serde_json::to_value(&facts).unwrap()
+            );
+            let non_null = program.non_nullable_type(&types[0]).unwrap();
+            assert_eq!(
+                program.type_symbol(&non_null).unwrap().unwrap().name,
+                "Value"
+            );
+        }
+        let foreign = reference.arkts_normal_diagnostics().unwrap();
+        assert!(
+            program
+                .arkts_strict_diagnostics(foreign)
+                .unwrap_err()
+                .message
+                .contains("another program")
+        );
+        // Transform-only callers can also release the build pool and keep owned facts.
+        let facts = program.annotation_transform_infos(&roots).unwrap();
+        program.release_arkts_build_checkers().unwrap();
+        assert_eq!(
+            serde_json::to_value(facts).unwrap(),
+            serde_json::to_value(&annotations).unwrap()
+        );
+    }
+}

@@ -132,15 +132,15 @@ impl ProgramSnapshot {
     ) -> ApiResult<Vec<AnnotationTransformInfo>> {
         let files = files.to_vec();
         self.run(move |this| {
-            this.with_checker(|checker| {
-                let mut result = Vec::new();
-                for name in &files {
-                    if let Some(file) = this.program()?.get_source_file(name) {
-                        result.push(annotation_transform_info(checker, file));
-                    }
+            let program = this.program()?;
+            let mut result = Vec::new();
+            for name in &files {
+                if let Some(file) = program.get_source_file(name) {
+                    let mut checker = program.get_arkts_build_checker_for_file(file);
+                    result.push(annotation_transform_info(&mut checker, file));
                 }
-                Ok(result)
-            })
+            }
+            Ok(result)
         })
     }
 

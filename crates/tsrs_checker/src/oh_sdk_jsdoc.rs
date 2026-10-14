@@ -4,6 +4,8 @@ use crate::oh_sdk_api::*;
 use tsrs_core::tspath;
 use tsrs_diagnostics::Category;
 use std::sync::LazyLock;
+use std::collections::VecDeque;
+use tsrs_core::OhSdkPendingSyscap;
 use regex::Regex;
 const OH_SINCE_WARNING: &str = "The '{0}' API is supported since SDK version $SINCE1. However, the current compatible SDK version is $SINCE2.\n It is recommended to use apiAvailable to safeguard API compatibility.";
 const OH_AVAILABLE_WARNING: &str = "The '{0}' API is available since SDK version $SINCE1. However, the current compatible SDK version is $SINCE2.\n It is recommended to use apiAvailable to safeguard API compatibility.";
@@ -34,9 +36,79 @@ pub struct OhSdkUseFact {
 pub(crate) struct OhSdkState {
     pub enabled: bool,
     uses: FxHashMap<String, std::collections::BTreeMap<String, OhSdkUseFact>>,
-    project_files: FxHashMap<String, bool>,
-    sdk_files: FxHashMap<String, bool>,
+    files: FxHashMap<ast::NodeId, OhSdkFileFacts>,
     available_checks: FxHashSet<String>,
+    pending_syscap: Vec<PendingSyscapUse>,
+    pipeline_syscap: bool,
+    in_flight_syscap: VecDeque<PendingSyscapBatch>,
+}
+struct PendingSyscapUse { node: P<Node>, declaration: P<Node>, comment: String, suppressed: Option<bool> }
+struct PendingSyscapBatch { uses: Vec<PendingSyscapUse>, reply: OhSdkPendingSyscap }
+// One batch can execute in JS while this checker prepares the next file. Two
+// batches per checker bound serialized transport and retained per-use state;
+// enlarging the program does not enlarge this window.
+const MAX_IN_FLIGHT_SYSCAP_BATCHES: usize = 2;
+impl OhSdkState {
+    fn file_facts(&mut self, file: P<SourceFile>, options: &CompilerOptions) -> &OhSdkFileFacts {
+        self.files.entry(ast::get_node_id(file.as_node()))
+            .or_insert_with(|| OhSdkFileFacts::new(file, options))
+    }
+}
+// These are the original OH declaration-use predicates, evaluated once for
+// each immutable SourceFile ID, never for a path that can acquire new contents.
+struct OhSdkFileFacts {
+    normalized: String,
+    base: String,
+    api_module: String,
+    system: bool,
+    project: bool,
+    project_available: bool,
+    sdk: bool,
+    card: bool,
+    ohos_test: bool,
+    ts_implementation: bool,
+    arkui: bool,
+    device_info: bool,
+    whitelist: &'static [&'static str],
+}
+impl OhSdkFileFacts {
+    fn new(file: P<SourceFile>, o: &CompilerOptions) -> Self {
+        let normalized = tspath::normalize_path(file.file_name());
+        let base = tspath::get_base_file_name(file.file_name());
+        let normalized_base = tspath::get_base_file_name(&normalized);
+        let api_module = normalized_base.strip_suffix(".d.ets").unwrap_or(&normalized_base);
+        let api_module = api_module.strip_suffix(".d.ts").unwrap_or(api_module).to_string();
+        let root = if o.oh_project_root_path.is_empty() { &o.oh_project_path } else { &o.oh_project_root_path };
+        let project = !root.is_empty() && normalized.starts_with(&tspath::normalize_path(root));
+        let under = |root: &String| !root.is_empty() && normalized.starts_with(&(tspath::normalize_path(root) + "/"));
+        let sdk = o.oh_all_module_paths.as_deref().unwrap_or_default().iter().any(|p| tspath::normalize_path(p) == normalized)
+            || o.oh_sdk_configs.as_deref().unwrap_or_default().iter().any(|c| c.api_paths.iter().any(under))
+            || o.oh_external_api_paths.as_deref().unwrap_or_default().iter().any(under)
+            || o.oh_ark_ui_declaration_dirs.as_deref().unwrap_or_default().iter().any(under)
+            || !o.ets_loader_path.is_empty() && under(&tspath::resolve_path(&o.ets_loader_path, &["declarations"]));
+        let directory = tspath::normalize_path(&tspath::get_directory_path(&normalized));
+        let arkui = !matches!(normalized_base.as_str(), "common_ts_ets_api.d.ts" | "global.d.ts")
+            && (o.oh_ark_ui_declaration_dirs.as_deref().unwrap_or_default().iter().any(|d| directory == tspath::normalize_path(d))
+                || !o.ets_loader_path.is_empty() && directory == tspath::normalize_path(&tspath::resolve_path(&o.ets_loader_path, &["declarations"])));
+        let mut whitelist: &'static [&'static str] = &[];
+        for root in o.oh_global_module_paths.as_deref().unwrap_or_default() {
+            let root = tspath::normalize_path(root);
+            match normalized.strip_prefix(&(root.trim_end_matches('/').to_string() + "/")) {
+                Some("@arkts.lang.d.ets") => { whitelist = &["RetentionPolicy", "Retention", "SOURCE", "BYTECODE"]; break; }
+                Some("@ohos.deviceInfo.d.ts") => { whitelist = &["apiAvailable"]; break; }
+                _ => {}
+            }
+        }
+        Self {
+            system: o.oh_system_modules.as_deref().unwrap_or_default().contains(&base),
+            project, project_available: project && file.text().contains("@Available"), sdk,
+            card: o.oh_card_entry_files.as_deref().unwrap_or_default().iter().any(|p| tspath::normalize_path(p) == normalized),
+            ohos_test: !o.oh_module_path.is_empty() && normalized.starts_with(&tspath::resolve_path(&o.oh_module_path, &["src", "ohosTest"])),
+            ts_implementation: normalized.ends_with(".ts") && !normalized.ends_with(".d.ts"),
+            arkui, device_info: file.text().contains("deviceInfo"), whitelist,
+            normalized, base, api_module,
+        }
+    }
 }
 struct Tag { name: String, comment: String }
 struct Contract { tags: Vec<Tag> }
@@ -73,14 +145,14 @@ impl Checker {
     fn check_oh_sdk_declaration_use(&mut self, node: P<Node>, declaration: P<Node>) {
         let use_file = ast::get_source_file_of_node(node).unwrap();
         let decl_file = ast::get_source_file_of_node(declaration).unwrap();
-        if self.compiler_options.oh_system_modules.as_deref().unwrap_or_default().iter().any(|s| *s == tspath::get_base_file_name(use_file.file_name())) { return; }
-        let project_available = self.is_oh_project_file(decl_file.file_name()) && decl_file.text().contains("@Available");
-        let sdk = self.is_oh_sdk_declaration_file(decl_file.file_name());
+        if self.oh_sdk_file_facts(use_file).system { return; }
+        let project_available = self.oh_sdk_file_facts(decl_file).project_available;
+        let sdk = self.oh_sdk_file_facts(decl_file).sdk;
         if !project_available && !sdk { return; }
-        if !project_available && !(sdk && (self.is_oh_card_file(use_file.file_name()) || self.compiler_options.oh_crossplatform == Tristate::True
+        if !project_available && !(sdk && (self.oh_sdk_file_facts(use_file).card || self.compiler_options.oh_crossplatform == Tristate::True
             || !self.compiler_options.oh_compile_mode.is_empty() || self.compiler_options.oh_bundle_type == "atomicService" && self.oh_compile_sdk_version() >= 11)) { return; }
         if sdk && self.compiler_options.oh_crossplatform == Tristate::True { self.record_oh_sdk_use(node, declaration); }
-        if self.oh_needs_arkui_find_module_warning(use_file.file_name(), decl_file.file_name()) {
+        if self.oh_sdk_file_facts(use_file).ts_implementation && self.oh_sdk_file_facts(decl_file).arkui {
             self.add_oh_sdk_use_diagnostic(node, OH_FIND_MODULE_WARNING, Category::Warning);
         }
         let contract = Contract::new(declaration);
@@ -93,43 +165,14 @@ impl Checker {
     fn record_oh_sdk_use(&mut self, node: P<Node>, declaration: P<Node>) {
         let function = sdk_api_path(declaration);
         if function.is_empty() { return; }
-        let file_name = tspath::normalize_path(ast::get_source_file_of_node(node).unwrap().file_name());
-        let decl_file = tspath::normalize_path(ast::get_source_file_of_node(declaration).unwrap().file_name());
-        let base = tspath::get_base_file_name(&decl_file);
-        let api_module = base.strip_suffix(".d.ets").unwrap_or(&base).strip_suffix(".d.ts").unwrap_or(base.strip_suffix(".d.ets").unwrap_or(&base)).to_string();
+        let file_name = self.oh_sdk_file_facts(ast::get_source_file_of_node(node).unwrap()).normalized.clone();
+        let api_module = self.oh_sdk_file_facts(ast::get_source_file_of_node(declaration).unwrap()).api_module.clone();
         let key = format!("{api_module}\0{function}");
         let fact = OhSdkUseFact { file_name: file_name.clone(), api_module, function };
         self.oh_sdk.uses.entry(file_name).or_default().insert(key, fact);
     }
-    fn oh_needs_arkui_find_module_warning(&self, use_file: &str, declaration_file: &str) -> bool {
-        let use_file = tspath::normalize_path(use_file);
-        if !use_file.ends_with(".ts") || use_file.ends_with(".d.ts") { return false; }
-        let file = tspath::normalize_path(declaration_file);
-        if matches!(tspath::get_base_file_name(&file).as_str(), "common_ts_ets_api.d.ts" | "global.d.ts") { return false; }
-        let directory = tspath::normalize_path(&tspath::get_directory_path(&file));
-        if self.compiler_options.oh_ark_ui_declaration_dirs.as_deref().unwrap_or_default().iter().any(|d| directory == tspath::normalize_path(d)) { return true; }
-        !self.compiler_options.ets_loader_path.is_empty() && directory == tspath::normalize_path(&tspath::resolve_path(&self.compiler_options.ets_loader_path, &["declarations"]))
-    }
-    fn is_oh_project_file(&mut self, file: &str) -> bool {
-        if let Some(&value) = self.oh_sdk.project_files.get(file) { return value; }
-        let o = self.compiler_options;
-        let root = if o.oh_project_root_path.is_empty() { &o.oh_project_path } else { &o.oh_project_root_path };
-        let value = !root.is_empty() && tspath::normalize_path(file).starts_with(&tspath::normalize_path(root));
-        self.oh_sdk.project_files.insert(file.to_string(), value);
-        value
-    }
-    fn is_oh_sdk_declaration_file(&mut self, file: &str) -> bool {
-        if let Some(&value) = self.oh_sdk.sdk_files.get(file) { return value; }
-        let normalized = tspath::normalize_path(file);
-        let o = self.compiler_options;
-        let under = |root: &String| !root.is_empty() && normalized.starts_with(&(tspath::normalize_path(root) + "/"));
-        let value = o.oh_all_module_paths.as_deref().unwrap_or_default().iter().any(|p| tspath::normalize_path(p) == normalized)
-            || o.oh_sdk_configs.as_deref().unwrap_or_default().iter().any(|c| c.api_paths.iter().any(under))
-            || o.oh_external_api_paths.as_deref().unwrap_or_default().iter().any(under)
-            || o.oh_ark_ui_declaration_dirs.as_deref().unwrap_or_default().iter().any(under)
-            || !o.ets_loader_path.is_empty() && under(&tspath::resolve_path(&o.ets_loader_path, &["declarations"]));
-        self.oh_sdk.sdk_files.insert(file.to_string(), value);
-        value
+    fn oh_sdk_file_facts(&mut self, file: P<SourceFile>) -> &OhSdkFileFacts {
+        self.oh_sdk.file_facts(file, &self.compiler_options)
     }
     fn add_oh_sdk_use_diagnostic(&mut self, node: P<Node>, message: &str, category: Category) {
         self.add_oh_sdk_diagnostic(node, &OhSdkCheckResult { valid: false, message: message.replace("{0}", &tsrs_scanner::get_text_of_node(node)), category });
@@ -160,7 +203,7 @@ impl Checker {
         let Some(tag) = contract.first(&["since"]) else { return; };
         let compatible = self.oh_compatible_sdk_version(); let version = tag.comment.trim();
         if !self.oh_has_configured_compatible_sdk() || compatible.is_empty() || version.is_empty() || !OH_SINCE_FORMAT_PATTERN.is_match(version)
-            || !self.is_oh_project_file(ast::get_source_file_of_node(node).unwrap().file_name()) { return; }
+            || !self.oh_sdk_file_facts(ast::get_source_file_of_node(node).unwrap()).project { return; }
         let compatible_result = self.oh_sdk_check_value("since", version, &compatible, 0)
             .map_or_else(|| compare_oh_point_versions(&compatible, version) >= 0, |r| r.result);
         if compatible_result || self.oh_suppresses_sdk_warning(node, Some(declaration), "since", version, None) { return; }
@@ -175,10 +218,51 @@ impl Checker {
             if !self.oh_suppresses_sdk_warning(node, None, "syscap", comment, None) { self.add_oh_sdk_use_diagnostic(node, OH_SYSCAP_WARNING, Category::Warning); }
             return;
         }
-        let Some(result) = self.oh_sdk_check_syscap(node, declaration) else { return; };
-        if !result.check_result || self.oh_suppresses_sdk_warning(node, None, "syscap", comment, None) { return; }
-        let message = if result.check_message.is_empty() { OH_DEFAULT_SDK_MARKING } else { &result.check_message };
-        self.add_oh_sdk_use_diagnostic(node, message, Category::Warning);
+        if self.compiler_options.oh_sdk_plugin_executor.is_none() { return; }
+        self.oh_sdk.pending_syscap.push(PendingSyscapUse { node, declaration, comment: comment.into(), suppressed: None });
+        // Language-service queries outside a file check still need their result
+        // before returning; normal checks flush in the existing file lifecycle.
+        if self.checking_file.is_none() { self.flush_oh_syscap_checks(); }
+    }
+    pub(crate) fn flush_oh_syscap_checks(&mut self) {
+        let mut pending = std::mem::take(&mut self.oh_sdk.pending_syscap);
+        if pending.is_empty() { return; }
+        let options = self.compiler_options;
+        let plugins: Vec<_> = options.oh_sdk_class_check_plugins.as_deref().unwrap_or_default().iter()
+            .filter(|plugin| plugin.tag_name == "syscap").cloned().collect();
+        let nodes = pending.iter().map(|use_| (Self::oh_sdk_node_snapshot(use_.node), Self::oh_sdk_node_snapshot(use_.declaration))).collect();
+        if self.oh_sdk.pipeline_syscap {
+            // Freeze suppression while still in the originating file's checking
+            // context, before any later file can affect checker query state.
+            for use_ in &mut pending {
+                use_.suppressed = Some(self.oh_suppresses_sdk_warning(use_.node, None, "syscap", &use_.comment, None));
+            }
+            if self.oh_sdk.in_flight_syscap.len() == MAX_IN_FLIGHT_SYSCAP_BATCHES { self.drain_oh_syscap_batch(); }
+        }
+        let reply = options.oh_sdk_plugin_executor.as_ref().unwrap().submit_syscap_batch(
+            &plugins, nodes, options.oh_sdk_plugin_config_cache.get(&options));
+        self.oh_sdk.in_flight_syscap.push_back(PendingSyscapBatch { uses: pending, reply });
+        if !self.oh_sdk.pipeline_syscap { self.drain_oh_syscap_batch(); }
+    }
+    /// Used only inside an owned checker-group iteration. Call finish before
+    /// reading per-file diagnostics, returning the checker, or retiring its region.
+    pub fn begin_oh_syscap_pipeline(&mut self) { self.oh_sdk.pipeline_syscap = true; }
+    pub fn finish_oh_syscap_pipeline(&mut self) {
+        while !self.oh_sdk.in_flight_syscap.is_empty() { self.drain_oh_syscap_batch(); }
+        self.oh_sdk.pipeline_syscap = false;
+    }
+    fn drain_oh_syscap_batch(&mut self) {
+        let PendingSyscapBatch { uses: pending, reply } = self.oh_sdk.in_flight_syscap.pop_front().unwrap();
+        let results = reply.wait();
+        assert_eq!(results.len(), pending.len(), "SDK syscap batch response count");
+        // api_check_utils::checkSyscapAbility only contributes warnings. Preserve
+        // discovery order here; the existing DiagnosticsCollection sorts/dedups.
+        for (use_, result) in pending.into_iter().zip(results) {
+            let Some(result) = result.unwrap_or_else(|e| panic!("OH SDK syscap checker: {e}")) else { continue; };
+            if !result.check_result || use_.suppressed.unwrap_or_else(|| self.oh_suppresses_sdk_warning(use_.node, None, "syscap", &use_.comment, None)) { continue; }
+            let message = if result.check_message.is_empty() { OH_DEFAULT_SDK_MARKING } else { &result.check_message };
+            self.add_oh_sdk_use_diagnostic(use_.node, message, Category::Warning);
+        }
     }
     fn check_oh_permission_use(&mut self, node: P<Node>, contract: &Contract) {
         let mut missing = Vec::new();
@@ -200,8 +284,9 @@ impl Checker {
         let system = contract.first(&["systemapi"]).is_some_and(applicable);
         let test = contract.first(&["test"]).is_some_and(applicable);
         if system { self.add_oh_sdk_use_diagnostic(node, OH_SYSTEM_API_WARNING, Category::Warning); }
-        if test && !self.is_oh_ohos_test_file(ast::get_source_file_of_node(node).unwrap().file_name()) { self.add_oh_sdk_use_diagnostic(node, OH_TEST_WARNING, Category::Warning); }
-        self.check_oh_required_tag(node, contract, "form", self.is_oh_card_file(ast::get_source_file_of_node(node).unwrap().file_name()), OH_FORM_ERROR, Category::Error);
+        if test && !self.oh_sdk_file_facts(ast::get_source_file_of_node(node).unwrap()).ohos_test { self.add_oh_sdk_use_diagnostic(node, OH_TEST_WARNING, Category::Warning); }
+        let card = self.oh_sdk_file_facts(ast::get_source_file_of_node(node).unwrap()).card;
+        self.check_oh_required_tag(node, contract, "form", card, OH_FORM_ERROR, Category::Error);
         self.check_oh_required_tag(node, contract, "crossplatform", self.compiler_options.oh_crossplatform == Tristate::True, OH_CROSSPLATFORM_ERROR,
             if self.compiler_options.oh_ignore_crossplatform_check == Tristate::True { Category::Warning } else { Category::Error });
         self.check_oh_required_tag(node, contract, "atomicservice", self.compiler_options.oh_bundle_type == "atomicService" && self.oh_compile_sdk_version() >= 11, OH_ATOMIC_SERVICE_ERROR, Category::Error);
@@ -216,17 +301,11 @@ impl Checker {
             self.add_oh_sdk_use_diagnostic(node, message, category);
         }
     }
-    fn is_oh_card_file(&self, file: &str) -> bool {
-        self.compiler_options.oh_card_entry_files.as_deref().unwrap_or_default().iter().any(|p| tspath::normalize_path(p) == tspath::normalize_path(file))
-    }
-    fn is_oh_ohos_test_file(&self, file: &str) -> bool {
-        !self.compiler_options.oh_module_path.is_empty() && tspath::normalize_path(file).starts_with(&tspath::resolve_path(&self.compiler_options.oh_module_path, &["src", "ohosTest"]))
-    }
     fn check_oh_available_use(&mut self, node: P<Node>, declaration: P<Node>, contract: &Contract) {
         let compatible = self.oh_compatible_sdk_version();
-        if !self.oh_has_configured_compatible_sdk() || !self.is_oh_project_file(ast::get_source_file_of_node(node).unwrap().file_name())
-            || !self.is_oh_project_file(ast::get_source_file_of_node(declaration).unwrap().file_name()) { return; }
-        let key = format!("{}::{}::{}", tspath::get_base_file_name(ast::get_source_file_of_node(node).unwrap().file_name()), node.pos(), node.end());
+        if !self.oh_has_configured_compatible_sdk() || !self.oh_sdk_file_facts(ast::get_source_file_of_node(node).unwrap()).project
+            || !self.oh_sdk_file_facts(ast::get_source_file_of_node(declaration).unwrap()).project { return; }
+        let key = format!("{}::{}::{}", self.oh_sdk_file_facts(ast::get_source_file_of_node(node).unwrap()).base, node.pos(), node.end());
         if !self.oh_sdk.available_checks.insert(key) { return; }
         let Some(version) = self.oh_available_decorator_version(declaration) else { return; };
         if compatible.is_empty() { return; }
@@ -373,31 +452,20 @@ impl Checker {
         }
         false
     }
-    fn oh_sdk_whitelist(&self, declaration: P<Node>) -> bool {
+    fn oh_sdk_whitelist(&mut self, declaration: P<Node>) -> bool {
         let Some(name) = declaration.name() else { return false; };
-        let file = tspath::normalize_path(ast::get_source_file_of_node(declaration).unwrap().file_name());
-        for root in self.compiler_options.oh_global_module_paths.as_deref().unwrap_or_default() {
-            // The whitelist contains only direct children of each SDK root.
-            let root = tspath::normalize_path(root);
-            let relative = file.strip_prefix(&(root.trim_end_matches('/').to_string() + "/"));
-            let names: &[&str] = match relative {
-                Some("@arkts.lang.d.ets") => &["RetentionPolicy", "Retention", "SOURCE", "BYTECODE"],
-                Some("@ohos.deviceInfo.d.ts") => &["apiAvailable"], _ => &[],
-            };
-            if names.contains(&name.text()) { return true; }
-        }
-        false
+        self.oh_sdk_file_facts(ast::get_source_file_of_node(declaration).unwrap()).whitelist.contains(&name.text())
     }
     fn oh_use_under_available(&mut self, node: P<Node>, required: &str, available: Option<&OhParsedVersion>) -> bool {
         let file = ast::get_source_file_of_node(node).unwrap();
-        if !self.is_oh_project_file(file.file_name()) || !file.text().contains("@Available") { return false; }
+        if !self.oh_sdk_file_facts(file).project_available { return false; }
         let Some(version) = self.oh_available_decorator_version(node) else { return false; };
         let scene = if version.os == "OpenHarmony" { 1 } else { 2 };
         self.oh_sdk_check_value("available", available.map_or(required, |a| &a.format_version), &version.format_version, scene)
             .map_or_else(|| compare_oh_point_versions(&version.version, required) >= 0, |r| r.result)
     }
     fn oh_use_under_sdk_guard(&mut self, node: P<Node>, required: &str, available: Option<&OhParsedVersion>) -> bool {
-        if !ast::get_source_file_of_node(node).unwrap().text().contains("deviceInfo") { return false; }
+        if !self.oh_sdk_file_facts(ast::get_source_file_of_node(node).unwrap()).device_info { return false; }
         for current in ancestors_including(node).skip(1) {
             if !ast::is_if_statement(current) { continue; }
             let then = current.as_if_statement().then_statement;
@@ -572,3 +640,7 @@ impl PermissionExpression<'_> {
         result.valid = result.matches; result.finish = true;
     }
 }
+
+#[cfg(test)]
+#[path = "oh_sdk_jsdoc_test.rs"]
+mod tests;
