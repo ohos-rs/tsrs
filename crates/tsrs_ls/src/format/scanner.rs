@@ -1,5 +1,5 @@
 use tsrs_ast::{self as ast, FindAncestorResult, Kind, Node};
-use tsrs_core::{LanguageVariant, TextChange, TextRange, P};
+use tsrs_core::{LanguageVariant, P, TextChange, TextRange};
 use tsrs_scanner::Scanner;
 
 use super::*;
@@ -12,7 +12,7 @@ pub struct TextRangeWithKind {
 }
 
 // scanner.go:17
-pub fn new_text_range_with_kind(pos: i32, end: i32, kind: Kind) -> TextRangeWithKind {
+pub fn new_text_range_with_kind(pos: u32, end: u32, kind: Kind) -> TextRangeWithKind {
     TextRangeWithKind { loc: TextRange::new(pos, end), kind }
 }
 
@@ -27,9 +27,9 @@ pub(crate) struct TokenInfo {
 // scanner.go:30
 pub(crate) struct FormattingScanner {
     s: Scanner,
-    start_pos: i32,
-    end_pos: i32,
-    saved_pos: i32,
+    start_pos: u32,
+    end_pos: u32,
+    saved_pos: u32,
     has_last_token_info: bool,
     last_token_info: TokenInfo,
     last_scan_action: ScanAction,
@@ -42,8 +42,8 @@ pub(crate) struct FormattingScanner {
 pub(crate) fn new_formatting_scanner(
     text: &'static str,
     language_variant: LanguageVariant,
-    start_pos: i32,
-    end_pos: i32,
+    start_pos: u32,
+    end_pos: u32,
     worker: &mut FormatSpanWorker,
 ) -> Vec<TextChange> {
     let mut scan = Scanner::new();
@@ -82,7 +82,8 @@ impl FormattingScanner {
         let is_started = self.s.token_full_start() != self.start_pos;
 
         if is_started {
-            self.was_new_line = self.trailing_trivia.last().is_some_and(|t| t.kind == Kind::NewLineTrivia);
+            self.was_new_line =
+                self.trailing_trivia.last().is_some_and(|t| t.kind == Kind::NewLineTrivia);
         } else {
             self.s.scan();
         }
@@ -128,13 +129,18 @@ fn should_rescan_greater_than_token(node: P<Node>) -> bool {
 fn should_rescan_jsx_identifier(node: P<Node>) -> bool {
     if let Some(parent) = node.parent() {
         match parent.kind() {
-            Kind::JsxAttribute | Kind::JsxOpeningElement | Kind::JsxClosingElement | Kind::JsxSelfClosingElement | Kind::JsxNamespacedName => {
+            Kind::JsxAttribute
+            | Kind::JsxOpeningElement
+            | Kind::JsxClosingElement
+            | Kind::JsxSelfClosingElement
+            | Kind::JsxNamespacedName => {
                 // May parse an identifier like `module-layout`; that will be scanned as a keyword at first, but we should parse the whole thing to get an identifier.
                 return ast::is_keyword_kind(node.kind()) || node.kind() == Kind::Identifier;
             }
             Kind::PropertyAccessExpression => {
                 // The leftmost name of a dotted JSX tag name (e.g. `a-b` in `<a-b.c>`) may contain hyphens, so rescan it as a JSX identifier.
-                return (ast::is_keyword_kind(node.kind()) || node.kind() == Kind::Identifier) && is_leftmost_jsx_tag_name(node);
+                return (ast::is_keyword_kind(node.kind()) || node.kind() == Kind::Identifier)
+                    && is_leftmost_jsx_tag_name(node);
             }
             _ => {}
         }
@@ -149,7 +155,9 @@ fn is_leftmost_jsx_tag_name(node: P<Node>) -> bool {
             FindAncestorResult::Quit
         } else if ast::is_jsx_tag_name(n) {
             FindAncestorResult::True
-        } else if ast::is_property_access_expression(n.parent().unwrap()) && n.parent().unwrap().expression() == Some(n) {
+        } else if ast::is_property_access_expression(n.parent().unwrap())
+            && n.parent().unwrap().expression() == Some(n)
+        {
             FindAncestorResult::False
         } else {
             FindAncestorResult::Quit
@@ -255,7 +263,8 @@ impl FormattingScanner {
 
         let mut current_token = self.get_next_token(n, expected_scan_action);
 
-        let token = new_text_range_with_kind(self.s.token_full_start(), self.s.token_end(), current_token);
+        let token =
+            new_text_range_with_kind(self.s.token_full_start(), self.s.token_end(), current_token);
 
         // consume trailing trivia
         self.trailing_trivia = Vec::new();
@@ -264,7 +273,11 @@ impl FormattingScanner {
             if !ast::is_trivia(current_token) {
                 break;
             }
-            let trivia = new_text_range_with_kind(self.s.token_full_start(), self.s.token_end(), current_token);
+            let trivia = new_text_range_with_kind(
+                self.s.token_full_start(),
+                self.s.token_end(),
+                current_token,
+            );
 
             self.trailing_trivia.push(trivia);
 
@@ -276,8 +289,11 @@ impl FormattingScanner {
         }
 
         self.has_last_token_info = true;
-        self.last_token_info =
-            TokenInfo { leading_trivia: self.leading_trivia.clone(), token, trailing_trivia: self.trailing_trivia.clone() };
+        self.last_token_info = TokenInfo {
+            leading_trivia: self.leading_trivia.clone(),
+            token,
+            trailing_trivia: self.trailing_trivia.clone(),
+        };
         self.last_token_info = fix_token_kind(std::mem::take(&mut self.last_token_info), n);
 
         self.last_token_info.clone()
@@ -292,7 +308,7 @@ impl FormattingScanner {
                 if token == Kind::GreaterThanToken {
                     self.last_scan_action = ScanAction::RescanGreaterThanToken;
                     let new_token = self.s.re_scan_greater_than_token();
-                    assert!(n.kind() == new_token);
+                    assert_eq!(n.kind(), new_token);
                     return new_token;
                 }
             }
@@ -300,7 +316,7 @@ impl FormattingScanner {
                 if starts_with_slash_token(token) {
                     self.last_scan_action = ScanAction::RescanSlashToken;
                     let new_token = self.s.re_scan_slash_token(false);
-                    assert!(n.kind() == new_token);
+                    assert_eq!(n.kind(), new_token);
                     return new_token;
                 }
             }
@@ -355,7 +371,7 @@ impl FormattingScanner {
 
     // scanner.go:337
     pub(crate) fn skip_to_end_of(&mut self, r: TextRange) {
-        self.s.reset_token_state(r.end());
+        self.s.reset_token_state(r.end().expect_source("formatting ranges have source positions"));
         self.saved_pos = self.s.token_full_start();
         self.last_scan_action = ScanAction::Scan;
         self.has_last_token_info = false;
@@ -366,7 +382,7 @@ impl FormattingScanner {
 
     // scanner.go:347
     pub(crate) fn skip_to_start_of(&mut self, r: TextRange) {
-        self.s.reset_token_state(r.pos());
+        self.s.reset_token_state(r.pos().expect_source("formatting ranges have source positions"));
         self.saved_pos = self.s.token_full_start();
         self.last_scan_action = ScanAction::Scan;
         self.has_last_token_info = false;
@@ -386,9 +402,14 @@ impl FormattingScanner {
     }
 
     // scanner.go:365
-    pub(crate) fn get_token_full_start(&self) -> i32 {
+    pub(crate) fn get_token_full_start(&self) -> u32 {
         if self.has_last_token_info {
-            return self.last_token_info.token.loc.pos();
+            return self
+                .last_token_info
+                .token
+                .loc
+                .pos()
+                .expect_source("formatting tokens have source positions");
         }
         self.s.token_full_start()
     }

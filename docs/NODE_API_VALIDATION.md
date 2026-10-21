@@ -11,7 +11,8 @@ contract itself is `docs/NODE_API.md`; this file covers the independent evidence
 - The client is the pinned upstream client (`ts-ref/packages/typescript/src/api`), unmodified. The harness
   never ships a second client; the shipped SDK (`npm/tsrs`) is a copy of the pinned client, byte for byte
   except two documented patches (`npm/sdk/patches`: async client connection loss, vscode-jsonrpc write
-  error), checked by `node npm/sdk/sync-upstream.mjs --check`; CI separately exercises the packed SDK.
+  error), checked by `node npm/sdk/sync-upstream.mjs --check`; the saved package-validation jobs separately exercise
+  the packed SDK when restored.
 - Tests are the upstream suites (`packages/typescript/test/{sync,async}`) plus harness tests in
   `tools/node-api/tests`, all run by `node --test` against real server processes. Every harness test
   must pass on the Go oracle before it can be used against tsrs.
@@ -22,7 +23,7 @@ contract itself is `docs/NODE_API.md`; this file covers the independent evidence
 ## Running
 
 ```sh
-tools/node-api/setup.sh                       # ts-ref at the pin, npm ci, Go oracle -> tools/node-api/.work/oracle/tsc
+tools/node-api/setup.sh                       # ts-ref at the pin, pnpm install, Go oracle -> tools/node-api/.work/oracle/tsc
 node tools/node-api/run-upstream.mjs --binary tools/node-api/.work/oracle/tsc --label go-oracle
 cargo build --release -p tsrs_cli
 node tools/node-api/run-upstream.mjs --binary target/release/tsrs --label tsrs
@@ -127,18 +128,21 @@ temp project outside the repo. It then runs the installed binary through CLI pas
 and async API programs on the OS filesystem (diagnostics plus emit with `TSRS_EMIT` unset), and a nodenext
 typecheck of the published declarations that must report exactly one deliberate error.
 
-`.depot/workflows/node-api.yml` (Depot CI) runs on main pushes, manual dispatch, and `pull_request` into
-main for API paths. It never uses `pull_request_target`, has read-only permissions and no secrets, and
-never publishes. Pull requests are how the API branches get validated before a merge; Depot CI does not run
-pull requests from forks. The `parity` job runs the Go oracle (must pass), then tsrs against the same
-suites, then the inventory, uploads the results, and fails on any tsrs failure. The `package` job builds,
-packs and runs `consumer.mjs` on linux-x64 and linux-arm64; `.github/workflows/node-api.yml` runs it on
-darwin-arm64, because Depot CI has no macOS sandboxes.
+CI runs the pinned upstream sync and async client suites against the Go oracle and tsrs with
+`--suite upstream --no-trace`. Full Node API validation, including the local parity tests,
+per-method inventory and platform package checks, is still disabled. Those jobs are preserved in
+`.github/workflows/node-api.yml.bak`; the local tools above remain available.
+The saved `parity` job runs the Go oracle (must pass), then tsrs against the same suites, generates the inventory,
+uploads the results, and fails on any tsrs failure. The saved `package` job builds, packs and runs `consumer.mjs` on
+linux-x64 and linux-arm64; `package-macos` does the same on darwin-arm64. Restore that workflow before using these jobs.
 
 ## Current evidence
 
-Go oracle at the pin, Linux x64, Node 24.21: upstream sync+async suites 842/842 tests passed (7 files,
-787 server processes, 0 unparseable frames). 165 of 172 methods are sent by at least one upstream test.
+In [CI run 39439143649](https://github.com/oxc-project/tsrs/actions/runs/39439143649), the pinned upstream
+sync and async suites passed 850/850 tests on both the Go oracle and tsrs (7 files each, no skips, timeouts or leaked
+processes; tracing disabled). An earlier traced Go oracle run on Linux x64 with Node 24.21 passed 842/842 tests
+(7 files, 787 server processes, 0 unparseable frames). In that run, 165 of 172 methods were sent by at least one
+upstream test.
 Not sent by any upstream test: `getCurrentLanguageServerSnapshot`, `getExportSymbolOfSymbol`,
 `getOuterTypeParametersOfType`, `getConstraintOfType`, `startCPUProfile`, `stopCPUProfile`,
 `saveHeapProfile`. These need harness tests before any claim (the profiling methods are Go-runtime
@@ -326,8 +330,9 @@ Total: 159 + 2 + 1 + 3 + 7 = 172.
 All 9 real-capture controls are still detected. The 8 value drifts give `differs`. The handle drift gives
 `inconclusive` for `getNonMissingTypeOfSymbol`, because the generator test's oracle runs disagree on ids.
 
-VS Code URI roots (`probe-uri-filenames.ts`): 80 runs covering both binaries × sync/async × 4 input orders × 5
-repetitions.
+Historical VS Code URI roots probe: 80 runs covering both binaries × sync/async × 4 input orders × 5 repetitions.
+The standalone `tools/node-api/tests/probe-uri-filenames.ts` script was removed after the investigation; its last
+version is available at commit `b620e8e5`. The upstream URI coverage remains part of `run-upstream.mjs`.
 
 - Both servers report 5 `rootFiles`/`fileNames` for the 4 open documents, sorted by path, with one entry
   duplicated.

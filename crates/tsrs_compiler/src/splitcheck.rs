@@ -40,7 +40,7 @@ use std::ops::Range;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Condvar, Mutex, OnceLock};
 
-use tsrs_ast::{compare_diagnostics, equal_diagnostics, Diagnostic, Kind, SourceFile};
+use tsrs_ast::{Diagnostic, Kind, SourceFile, compare_diagnostics, equal_diagnostics};
 use tsrs_core::P;
 
 use crate::checkerpool::{Checker, Context};
@@ -69,6 +69,10 @@ pub(crate) struct SplitConfig {
     pub(crate) divisor: u64,
     pub(crate) min_share_percent: u64,
     // `stats`: Some(None) prints to stderr, Some(Some(path)) appends to the file.
+    #[expect(
+        clippy::option_option,
+        reason = "Distinguishes disabled statistics, stderr output, and output to a file."
+    )]
     pub(crate) stats: Option<Option<String>>,
 }
 
@@ -139,7 +143,8 @@ pub(crate) fn statement_pieces(file: P<SourceFile>, count: usize) -> Vec<Range<u
     if count < 2 || !all_declarations(file) {
         return Vec::new();
     }
-    let lengths: Vec<u64> = statements.iter().map(|s| (s.end() - s.pos()).max(1) as u64).collect();
+    let lengths: Vec<u64> =
+        statements.iter().map(|s| u64::from(s.loc().len().unwrap_or(0).max(1))).collect();
     let total: u64 = lengths.iter().sum();
     let mut pieces = Vec::with_capacity(count);
     let (mut start, mut sum) = (0, 0u64);
@@ -147,7 +152,10 @@ pub(crate) fn statement_pieces(file: P<SourceFile>, count: usize) -> Vec<Range<u
         sum += len;
         // Close piece k once the running length reaches k/count of the total, leaving a statement for each piece left.
         let k = pieces.len() as u64 + 1;
-        if sum * count as u64 >= total * k && statements.len() - (i + 1) >= count - pieces.len() - 1 && pieces.len() + 1 < count {
+        if sum * count as u64 >= total * k
+            && statements.len() - (i + 1) >= count - pieces.len() - 1
+            && pieces.len() + 1 < count
+        {
             pieces.push(start..i + 1);
             start = i + 1;
         }
@@ -187,7 +195,15 @@ struct PieceResult {
 impl SplitFile {
     pub(crate) fn new(file: P<SourceFile>, pieces: Vec<Range<usize>>, shadow: bool) -> SplitFile {
         let states = pieces.iter().map(|_| AtomicU8::new(NOT_STARTED)).collect();
-        SplitFile { file, pieces, states, results: Mutex::new(Vec::new()), finished: Condvar::new(), shadow, owner_found: Mutex::new(Vec::new()) }
+        SplitFile {
+            file,
+            pieces,
+            states,
+            results: Mutex::new(Vec::new()),
+            finished: Condvar::new(),
+            shadow,
+            owner_found: Mutex::new(Vec::new()),
+        }
     }
 
     pub(crate) fn is_shadow(&self) -> bool {
@@ -201,7 +217,9 @@ impl SplitFile {
 
     fn claim(&self, k: usize) -> bool {
         // The exchange only decides who runs the piece; its results are published under `results`' mutex.
-        self.states[k].compare_exchange(NOT_STARTED, RUNNING, Ordering::Relaxed, Ordering::Relaxed).is_ok()
+        self.states[k]
+            .compare_exchange(NOT_STARTED, RUNNING, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
     }
 
     fn finish(&self, result: PieceResult) {
@@ -216,7 +234,8 @@ impl SplitFile {
     // A piece's queue item: runs the piece unless the owner already took it.
     pub(crate) fn run_queued_piece(&self, checker: &mut Checker, ctx: &Context, k: usize) {
         if self.claim(k) {
-            let (diagnostics, suggestions) = checker.check_source_file_piece(ctx, self.file, self.pieces[k].clone());
+            let (diagnostics, suggestions) =
+                checker.check_source_file_piece(ctx, self.file, self.pieces[k].clone());
             self.finish(PieceResult { piece: k, by_other: true, diagnostics, suggestions });
         }
     }
@@ -230,25 +249,34 @@ impl SplitFile {
             if self.claim(k) {
                 // On the owner's own checker: its diagnostics are in the collection already.
                 checker.check_source_file_piece(ctx, self.file, self.pieces[k].clone());
-                self.finish(PieceResult { piece: k, by_other: false, diagnostics: Vec::new(), suggestions: Vec::new() });
+                self.finish(PieceResult {
+                    piece: k,
+                    by_other: false,
+                    diagnostics: Vec::new(),
+                    suggestions: Vec::new(),
+                });
             }
         }
         let results = self.wait_for_pieces();
         if self.shadow {
-            let mut by_other: Vec<usize> = results.iter().filter(|r| r.by_other).map(|r| r.piece).collect();
+            let mut by_other: Vec<usize> =
+                results.iter().filter(|r| r.by_other).map(|r| r.piece).collect();
             drop(results);
             by_other.sort_unstable();
             let mut found = Vec::new();
-            for k in by_other {
-                let (added, _) = checker.check_source_file_piece(ctx, self.file, self.pieces[k].clone());
-                found.extend(added);
-            }
+            found.extend(by_other.into_iter().flat_map(|k| {
+                let (added, _) =
+                    checker.check_source_file_piece(ctx, self.file, self.pieces[k].clone());
+                added
+            }));
             *self.owner_found.lock().unwrap() = found;
             checker.add_piece_diagnostics(self.file, &[], &[]);
             return;
         }
-        let diagnostics: Vec<P<Diagnostic>> = results.iter().flat_map(|r| r.diagnostics.iter().copied()).collect();
-        let suggestions: Vec<P<Diagnostic>> = results.iter().flat_map(|r| r.suggestions.iter().copied()).collect();
+        let diagnostics: Vec<P<Diagnostic>> =
+            results.iter().flat_map(|r| r.diagnostics.iter().copied()).collect();
+        let suggestions: Vec<P<Diagnostic>> =
+            results.iter().flat_map(|r| r.suggestions.iter().copied()).collect();
         drop(results);
         checker.add_piece_diagnostics(self.file, &diagnostics, &suggestions);
     }
@@ -259,10 +287,25 @@ impl SplitFile {
     // (b) every diagnostic the owner found in another checker's piece was found by some other checker too.
     pub(crate) fn shadow_compare(&self, whole: &[P<Diagnostic>]) {
         let results = self.wait_for_pieces();
-        let others: Vec<P<Diagnostic>> = results.iter().filter(|r| r.by_other).flat_map(|r| r.diagnostics.iter().copied()).collect();
+        let others: Vec<P<Diagnostic>> = results
+            .iter()
+            .filter(|r| r.by_other)
+            .flat_map(|r| r.diagnostics.iter().copied())
+            .collect();
         drop(results);
-        let contains = |list: &[P<Diagnostic>], d: P<Diagnostic>| list.iter().any(|&e| compare_diagnostics(e, d) == 0 && equal_diagnostics(e, d));
-        let describe = |d: P<Diagnostic>| format!("TS{} at {}: {:?}", d.code(), d.pos(), d.message().map(|m| m.text()));
+        let contains = |list: &[P<Diagnostic>], d: P<Diagnostic>| {
+            list.iter().any(|&e| {
+                compare_diagnostics(e, d) == std::cmp::Ordering::Equal && equal_diagnostics(e, d)
+            })
+        };
+        let describe = |d: P<Diagnostic>| {
+            format!(
+                "TS{} at {:?}: {:?}",
+                d.code(),
+                d.pos(),
+                d.message().map(tsrs_diagnostics::Message::text)
+            )
+        };
         if let Some(&d) = others.iter().find(|&&d| !contains(whole, d)) {
             panic!(
                 "TSRS_SPLIT_FILES=shadow: {} in {} pieces: another checker reports {}, which the unsplit check does not",
@@ -271,7 +314,8 @@ impl SplitFile {
                 describe(d)
             );
         }
-        if let Some(&d) = self.owner_found.lock().unwrap().iter().find(|&&d| !contains(&others, d)) {
+        if let Some(&d) = self.owner_found.lock().unwrap().iter().find(|&&d| !contains(&others, d))
+        {
             panic!(
                 "TSRS_SPLIT_FILES=shadow: {} in {} pieces: the unsplit check reports {}, which the checker of its piece does not",
                 self.file.file_name(),
@@ -288,13 +332,21 @@ impl SplitFile {
         if files.is_empty() {
             return;
         }
-        let (pieces, by_other) = files.iter().map(SplitFile::piece_counts).fold((0, 0), |a, b| (a.0 + b.0, a.1 + b.1));
-        let line = format!("split check: {} files, {pieces} pieces, {by_other} run by another checker\n", files.len());
+        let (pieces, by_other) =
+            files.iter().map(SplitFile::piece_counts).fold((0, 0), |a, b| (a.0 + b.0, a.1 + b.1));
+        let line = format!(
+            "split check: {} files, {pieces} pieces, {by_other} run by another checker\n",
+            files.len()
+        );
         match target {
             None => eprint!("{line}"),
             Some(path) => {
                 use std::io::Write;
-                let mut file = std::fs::OpenOptions::new().create(true).append(true).open(path).expect("TSRS_SPLIT_FILES=stats:<file>");
+                let mut file = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(path)
+                    .expect("TSRS_SPLIT_FILES=stats:<file>");
                 file.write_all(line.as_bytes()).expect("TSRS_SPLIT_FILES=stats:<file>");
             }
         }

@@ -33,7 +33,7 @@ impl Parser {
             return saved;
         }
         self.arkui.build = self.has_ets_builder(modifiers, false)
-            || method && method_name == "build" && ets_contains(&self.opts.ets.render.method, "build");
+            || method && method_name == "build" && ets_contains(self.opts.ets.render.method.as_deref(), "build");
         self.arkui.ui = self.has_ets_builder(modifiers, true);
         if method {
             self.arkui.ui = self.arkui.struct_ && (method_name == "build" || method_name == "pageTransition" || self.arkui.ui);
@@ -51,7 +51,7 @@ impl Parser {
                         continue;
                     }
                     let callee = expression.expression().unwrap();
-                    if ast::is_identifier(callee) && ets_contains(&self.opts.ets.extend.decorator, callee.text()) {
+                    if ast::is_identifier(callee) && ets_contains(self.opts.ets.extend.decorator.as_deref(), callee.text()) {
                         has_extend = true;
                         if let Some(&argument) = expression.arguments().first() {
                             if ast::is_identifier(argument) {
@@ -101,18 +101,18 @@ impl Parser {
             .any(|name| ast::has_arkui_bare_decorator(modifiers, &[name]))
     }
 
-    pub(crate) fn finish_ets_virtual_node(&mut self, node: P<Node>, pos: i32) -> P<Node> {
+    pub(crate) fn finish_ets_virtual_node(&mut self, node: P<Node>, pos: u32) -> P<Node> {
         self.finish_node_with_end(node, pos, pos);
         node.set_virtual(true);
         node
     }
 
-    pub(crate) fn ets_virtual_identifier(&mut self, name: &str, pos: i32) -> P<Node> {
+    pub(crate) fn ets_virtual_identifier(&mut self, name: &str, pos: u32) -> P<Node> {
         let node = self.factory.new_identifier(tsrs_core::alloc_str(name));
         self.finish_ets_virtual_node(node, pos)
     }
 
-    pub(crate) fn add_ets_struct_constructor(&mut self, members: P<NodeList>, pos: i32) -> P<NodeList> {
+    pub(crate) fn add_ets_struct_constructor(&mut self, members: P<NodeList>, pos: u32) -> P<NodeList> {
         let mut properties = Vec::new();
         for &member in members.nodes() {
             if !ast::is_property_declaration(member) {
@@ -221,7 +221,7 @@ impl Parser {
 
     pub(crate) fn is_arkui_iteration(&self, node: P<Node>) -> bool {
         if ast::is_identifier(node) {
-            return ets_contains(&self.opts.ets.syntax_components.params_ui_callback, node.text());
+            return ets_contains(self.opts.ets.syntax_components.params_ui_callback.as_deref(), node.text());
         }
         if ast::is_property_access_expression(node) {
             let mut root = node.expression().unwrap();
@@ -231,7 +231,7 @@ impl Parser {
             if ast::is_identifier(root) {
                 for component in self.opts.ets.syntax_components.attr_ui_callback.as_deref().unwrap_or_default() {
                     if component.name == root.text() {
-                        return ets_contains(&component.attributes, node.name().unwrap().text());
+                        return ets_contains(component.attributes.as_deref(), node.name().unwrap().text());
                     }
                 }
             }
@@ -301,7 +301,7 @@ impl Parser {
     pub(crate) fn ets_attribute_arguments(
         &mut self,
         expression: P<Node>,
-        pos: i32,
+        pos: u32,
         original: Option<P<NodeList>>,
     ) -> (Option<P<NodeList>>, bool) {
         if (!self.arkui.build && !self.arkui.styles) || !ast::is_property_access_expression(expression) {
@@ -346,7 +346,7 @@ impl Parser {
                     .unwrap_or_default()
                     .iter()
                     .find(|entry| entry.name == root_name)
-                    .is_some_and(|entry| ets_contains(&entry.attributes, attribute));
+                    .is_some_and(|entry| ets_contains(entry.attributes.as_deref(), attribute));
             if callback {
                 self.arkui.callback = true;
             } else if root_name == "WithEnv" && matches!(attribute, "env" | "customEnv") {

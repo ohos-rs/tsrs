@@ -1,23 +1,60 @@
 # Benchmarks: tsrs vs tsgo
 
 `bench/run.py` type-checks the projects the TypeScript team benchmarks the Go compiler on
-([microsoft/typescript-benchmarking](https://github.com/microsoft/typescript-benchmarking), `cases/`) and eleven
-open-source applications and libraries (see "Application projects") with tsrs, with tsgo 7.0.2 (npm `typescript@7.0.2`) and, where a
+([microsoft/typescript-benchmarking](https://github.com/microsoft/typescript-benchmarking), `cases/`) and thirteen
+open-source applications and libraries (see "Application projects") with tsrs, with tsgo from the TypeScript nightly (npm `typescript@7.1.0-dev.*`, the `tsgo` version in
+`projects.json`) and, where a
 Bun binary is given, with `bun check`, and reports wall time, peak memory and the error count of each.
-The Depot CI workflow `.depot/workflows/bench.yml` runs it on every push to `main`. It measures every project on the
-fixed-spec 8-vCPU machine in three modes and on a 16-vCPU machine in two (with bun check); `bench/results/<date>-<commit>.md`
-has every table, and the table at the top of `README.md` is the 16-vCPU machine's default-mode one: each compiler at
-its own thread count, tsgo, tsrs and bun check side by side (`run.py --readme-modes wide`).
+Wall-time reports are published by [`.github/workflows/update-benchmarks.yml`](../.github/workflows/update-benchmarks.yml)
+on changes to the project list or workflow, and on manual dispatch. The local commands below remain available.
+The outdated `bench/results/` archive has been removed from the working tree; historical runs remain in
+[Git history](https://github.com/oxc-project/tsrs/tree/94e7305f0f067e9f68570798c0498e03c7e423eb/bench/results).
+The former benchmark workflow measured every project on GitHub-hosted `ubuntu-24.04` runners in four modes and in four more
+with bun check; `bench/results/<date>-<commit>.md` has every table. [The latest recorded results](RESULTS.md) show the
+Bun comparison tables, with tsgo, tsrs and bun check side by side: the default mode (each compiler at its own
+thread count) and both compilers at `--checkers` 1, 2, 4 (tsgo's default) and 8.
+
+The [README chart](large-projects.svg) plots, for seven projects (vscode, mui-docs, t3code-server, supabase,
+playwright, typeorm and date-fns), how many times faster tsrs is than tsgo (x) against how many times less peak memory
+it uses (y), both linear, from the equal-thread measurements of the PGO-optimized `dist` build. Each project is a line
+through one point per checker count, both compilers at `--checkers` 1, 2, 4 and 8 (`checkers1`, `checkers2`,
+`checkers4`, `checkers8`) on the same 8-vCPU runner, so no point runs more checkers than there are cores; a line
+joins only points measured on one machine; a result without a mode
+leaves its point out. Ratios rather than totals keep each project's point independent of which other projects are in
+the suite, and equal checker counts keep the comparison from crediting either compiler with more cores. The title
+names the timed tsgo (`TypeScript 7.1 nightly` for a `7.1.0-dev` build) and the footer gives its exact version. The results commit step runs `bench/publish.py`
+to generate the tables and a light and a dark SVG together ([`large-projects-dark.svg`](large-projects-dark.svg));
+README.md shows the one matching the reader's GitHub theme, links to stable paths and is not rewritten by CI. Each
+project's times and memory are in the SVG's description and the report, with the error comparisons, all modes and raw
+measurements.
+
+[The latest results](RESULTS.md) open with two per-project charts, also drawn by `bench/publish.py` in both themes
+(`bench/per-project-time.svg`, `bench/per-project-memory.svg` and their `-dark` twins; `python3 bench/chart.py
+<result.json> --per-project wall_s|peak_rss_bytes --output <file>` draws one). They cover the README chart's projects
+plus nuxt, xstate, formbricks and cal-diy, at the most checkers all of them were measured at (`--checkers 8` on the
+8-vCPU runner). All three charts share one theme, after the oxc.rs palette: Oxc teal (aqua in the dark theme) for tsrs,
+the TypeScript blue for tsgo and the pink of Bun's logo for bun check. An arrow under each per-project chart's axis
+points back toward zero: lower is better on both. Each row is a project, sorted by tsgo's check time, with a dot per compiler and how many times faster (or less memory) tsrs is than tsgo;
+bun check's multiple is shown on the rows where it beats tsrs. Check time is on a linear axis, so the long checks read
+as long; peak memory is on a log axis, where bun check and tsrs, which trade wins, stay apart.
 
 ```sh
 cargo build --release -p tsrs_cli
-python3 bench/run.py --local                                   # all projects, 3 reps, default/single/checkers8 modes
+python3 bench/run.py --local                                   # all projects, 3 reps, default/single/checkers4/checkers8 modes
 python3 bench/run.py --local --projects webpack,Compiler --reps 1
 python3 bench/run.py --local --work-dir ~/bench-cache          # reuse clones across worktrees
-python3 bench/run.py --local --readme README.md                # also rewrite the README block
 ```
 
-Results go to `bench/results/<date>-<tsrs commit>[-local].{json,md}`; per-run compiler output to
+To regenerate the tables and chart from a recorded run without benchmarking:
+
+```sh
+python3 bench/publish.py bench/results/<date>-<commit>.json
+python3 bench/chart.py bench/results/<date>-<commit>.json --output /tmp/benchmark.svg # chart only; add --theme dark for the dark chart
+```
+
+Publishing preserves a newer commit's tables and chart when an older backfill finishes later.
+
+Local results are ignored by Git and go to `bench/results/<date>-<tsrs commit>[-local].{json,md}`; per-run compiler output to
 `<work-dir>/logs/<timestamp>/`. The first run clones and installs the projects into `<work-dir>/solutions`
 (default `bench/.work`, ~5 GB); later runs reuse them as long as `bench/projects.json` is unchanged.
 
@@ -30,16 +67,16 @@ commands without the sandbox, and check the same `-p` path.
 | suite case | repository | commit | `-p` | install (from the case's `setup.sh`) |
 | --- | --- | --- | --- | --- |
 | `vscode` | microsoft/vscode | `9cf0128b9822` | `src` | `npm ci --ignore-scripts` |
-| `xstate-main` | statelyai/xstate | `fbee62e7c158` | `.` | `npx <packageManager> install` (pnpm 10; runs its postinstall `preconstruct dev`, like the suite) |
+| `xstate-main` | statelyai/xstate | `fbee62e7c158` | `.` | `pnpm dlx <packageManager> install` (pnpm 10; runs its postinstall `preconstruct dev`, like the suite) |
 | `webpack` | webpack/webpack | `b54c5e2aa26d` | `.` | `yarn install --ignore-scripts --ignore-engines`, then `yarn link` webpack into itself |
-| `mui-docs` | mui/material-ui | `6780195595c1` | `docs` | `npx <packageManager> install --ignore-scripts` (pnpm 12) |
+| `mui-docs` | mui/material-ui | `6780195595c1` | `docs` | `pnpm dlx <packageManager> install --ignore-scripts` (pnpm 12) |
 | `Compiler` | (in the suite repo) | suite commit | `cases/solutions/Compiler` | none |
 | `Compiler-Unions` | (in the suite repo) | suite commit | `cases/solutions/Compiler-Unions/tsconfig.json` | none |
 
 Commits: the suite pins only `mui-docs` (`6780195595c1`, "last MUI ref known to install in the sandbox"); the other
 three clone the repository's HEAD at run time. We pin those to the commits used for the typescript-benchmarking
 numbers in microsoft/TypeScript#64475 (gist `c83d9185c6961b6fb43d7d071ef39cf6`, `refs.txt`, late September 2026).
-The suite runs yarn 1 from its Docker image; we run `npx yarn@1.22.22` (webpack's `packageManager`).
+The suite runs yarn 1 from its Docker image; we run `pnpm dlx yarn@1.22.22` (webpack's `packageManager`).
 
 `Compiler` is defined in `cases/` but not scheduled in the suite's pipeline (`scripts/src/setupPipeline.ts` lists only
 `Compiler-Unions`); it is kept because the #64475 measurements include it.
@@ -54,7 +91,7 @@ builds); the tsserver/LSP/startup scenarios (not `tsc` runs). All six included p
 The suite has one application-shaped workload (`mui-docs`), and none of its projects leans on schema-validation
 types. Application projects include four large applications (three Next.js/React apps built on Zod and tested with Vitest, and an
 Effect server), plus Bun's published benchmark set (mikro-orm, next.js root and packages/next, storybook, nuxt, playwright)
-and one more popular library (drizzle-orm). Each is pinned to one commit.
+and three more popular libraries (drizzle-orm, typeorm, date-fns). Each is pinned to one commit.
 
 | project | repository @ commit | `-p` | files | workload |
 | --- | --- | --- | ---: | --- |
@@ -71,6 +108,8 @@ and one more popular library (drizzle-orm). Each is pinned to one commit.
 | `playwright` | microsoft/playwright @ `d469960` | `.` | ~1,515 | Playwright testing framework (broader tsconfig than Bun's 706; same commit) |
 | **Other popular libraries** | | | | |
 | `drizzle-orm` | drizzle-team/drizzle-orm @ `15454db` | `.` | ~943 | Drizzle ORM (large popular project) |
+| `typeorm` | typeorm/typeorm @ `fe9239428751` | `packages/typeorm` | 3,575 | TypeORM sources and tests, decorators |
+| `date-fns` | date-fns/date-fns @ `717ce0a807ea` | `pkgs/core` | 2,277 | date-fns core, already on TypeScript 7 |
 
 **Original application projects:** Each install command does what the app's own `typecheck` needs before `tsc` runs, with package scripts off:
 
@@ -80,7 +119,7 @@ and one more popular library (drizzle-orm). Each is pinned to one commit.
   it is not part of the project's CI cache.
 - `formbricks-web`: pnpm install, then `turbo run build --filter='@formbricks/web^...'`, which generates the Prisma
   client and builds the workspace packages whose `dist/*.d.ts` the app imports. The build scripts call `pnpm`, so the
-  command puts a `.bench-bin/pnpm` shim (`npx pnpm@<packageManager version>`) on `PATH`. `DATABASE_URL` is a dummy
+  command uses pnpm's automatic version selection from the upstream `packageManager` pin. `DATABASE_URL` is a dummy
   (Prisma's config requires one to generate; nothing connects).
 - `supabase-studio`: pnpm install of `studio` and its workspace dependencies, then `next typegen` (the app's
   `pretypecheck`).
@@ -96,11 +135,15 @@ and one more popular library (drizzle-orm). Each is pinned to one commit.
 - `nuxt`: pnpm install.
 - `playwright`: npm ci.
 - `drizzle-orm`: pnpm install.
+- `typeorm`: pnpm install of `typeorm` and its workspace dependencies.
+- `date-fns`: pnpm install, then `tsc --build` of the projects `pkgs/core` references (`pkgs/tz`, `pkgs/utc`,
+  `pkgs/docs`), with date-fns's own TypeScript 7, so their declarations exist.
 
-**Overlays.** cal.diy and Formbricks still compile with TypeScript 5.9, whose tsconfig options TypeScript 7 removed
+**Overlays.** cal.diy, Formbricks and TypeORM still compile with TypeScript 5.9, whose tsconfig options TypeScript 7 removed
 (`baseUrl`, `moduleResolution: node`, `target: es5`); unmodified, both stop at config errors before checking a
 file. `bench/overlays/<name>/` holds the minimal TypeScript 7 replacements, copied over the checkout before the
-install: `baseUrl` becomes a `"*": ["./*"]` path, `node` resolution becomes `bundler`, ES5 becomes ES2017.
+install: `baseUrl` becomes a `"*": ["./*"]` path, `node` resolution becomes `bundler` (with `module: esnext` for
+TypeORM, whose `commonjs` does not allow it), ES5 becomes ES2017.
 cal.diy's generated tRPC declarations import `@trpc/server/dist/...`, which `bundler` resolution blocks through the
 package's `exports`, so a `paths` entry maps it to the package directory as `node` resolution did (without it,
 tsgo reports 727 errors instead of 136). Formbricks also gets the `next-env.d.ts` Next.js writes on `next dev`
@@ -110,29 +153,33 @@ tsgo reports 727 errors instead of 136). Formbricks also gets the `next-env.d.ts
 matchers and untyped resolver modules). As with vscode and webpack, the count is a correctness signal between the two
 compilers. On 2026-10-06 (local, macOS arm64), tsgo 7.0.2 and tsrs reported identical errors on cal.diy (136) and
 Formbricks (0); on Supabase Studio (0 vs 9) and t3code (5 vs 6), `typescript@7.1.0-dev.20260930.4` reported exactly
-tsrs's errors (`(ref N)` in the table).
+tsrs's errors (the table's errors paragraph names such projects).
 
 ## What is measured
 
-- Invocation, identical for both: `-p <project> --noEmit --incremental false --extendedDiagnostics --pretty false`,
-  in the default mode (no thread flag: tsgo uses 4 checker threads; tsrs every core up to 8, then half the cores,
-  from 4 to 32, lowered toward 4 for programs with fewer than 32 type-checked files per checker, so 8 on the 8-vCPU
-  machine, but fewer on small or mid-size projects (Compiler and Compiler-Unions get 4, xstate-main fewer than 8); tsrs additionally resolves members lazily, its default), with `--singleThreaded`, with
-  `--checkers 8` (the `checkers8` mode: both compilers at 8 checker threads, twice tsgo's default), and on a 16-vCPU machine (see "CI") in the default mode again (the `wide` mode: the same flags as
-  `default`, kept apart so that one result can hold both machines) and with `--checkers 16` (the `checkers16` mode: how
-  each scales on a wide machine). Select modes with `--modes` (default `default,single,checkers8`; flags in `MODE_FLAGS`
-  in `run.py`).
+- Invocation, identical for both: `-p <project> --noEmit --incremental false --pretty false` (`TIMED_FLAGS` in
+  `run.py`), in the default mode (no thread flag: tsgo uses 4 checker threads; tsrs every core up to 16, then half the cores,
+  from 4 to 32, lowered toward 4 for programs with fewer than 32 type-checked files per checker; the 8-vCPU
+  benchmark runner uses 8). Other modes set `--singleThreaded`, `--checkers 4` or `--checkers 8`.
+  The published jobs run default mode again (`wide`) and `--checkers` 1, 2, 4 and 8 (`checkers1`, `checkers2`,
+  `checkers4` and `checkers8`), at most one checker per core on the 8-vCPU runner. Historical 16-vCPU results use the
+  `wide-checkers4`, `wide-checkers8` and `checkers16` modes, which still render. The
+  reports record the actual machine for every cell. Select modes with `--modes` (default
+  `default,single,checkers4,checkers8`; flags in `MODE_FLAGS` in `run.py`). `--checkers` sets only checker threads;
+  parsing and binding still use every core. Counts above the runner's CPU count oversubscribe it.
 - `bun check` (`--bun <binary>`, Bun 1.4.3 canary or later) is a third column in every mode it is measured in: `bun check
   -p <project> --no-pretty --all`, with `--threads N` where tsgo and tsrs get `--checkers N` (bun's only thread knob,
-  and it caps every thread). CI measures it on the 16-vCPU machine. Its error count is recorded, not compared: bun check
-  follows TypeScript 7.0 (on vscode its errors equal tsgo 7.0.2's line for line), tsrs the 7.1-dev commit it ports.
+  and it caps every thread). CI measures it on the same standard GitHub runner size. Its error count is recorded, not compared: bun check
+  follows TypeScript 7.0 (on 2026-10-06 its vscode errors equaled tsgo 7.0.2's line for line), while tsgo and tsrs
+  follow 7.1-dev.
   `--noEmit` instead of the suite's `--outdir` keeps the measurement to type checking; `--pretty
   false` makes the error lines parseable.
-- tsgo: `npm install typescript@7.0.2`. Its `bin/tsc` is a Node launcher (`lib/tsc.js` -> `getExePath.js`) that
+- tsgo: `pnpm add typescript@<version> @typescript/typescript-<os>-<arch>@<version>`, with the nightly `version` of
+  `tsgo` in `projects.json` (Renovate keeps it current). Its `bin/tsc` is a Node launcher (`lib/tsc.js` -> `getExePath.js`) that
   `execve`s the Go binary `@typescript/typescript-<os>-<arch>/lib/tsc`; the harness runs that binary directly (checked
-  to be a native executable printing `Version 7.0.2`), so Node startup is not part of the measurement.
+  to be a native executable printing that version), so Node startup is not part of the measurement.
 - tsrs: by default the release build of the checked-out commit (`target/release/tsrs`). CI measures what the npm
-  package ships instead: the PGO build of the `dist` profile (fat LTO, one codegen unit), built with the commands of
+  package ships instead: the PGO build of the `release` profile (fat LTO, one codegen unit), built with the commands of
   the release workflow and trained with `.github/scripts/pgo-train.sh` (conformance suite + fourslash suite + xstate-main + webpack),
   then BOLT-optimized like the Linux release binaries (`.github/scripts/bolt.sh`, tsrs trained on xstate-main +
   webpack) on a machine of the bench spec (`--tsrs <binary> --tsrs-build pgo-dist`; notes/perf-pgo.md,
@@ -141,22 +188,54 @@ tsrs's errors (`(ref N)` in the table).
 - Per project: one untimed warm-up run (tsgo), then N reps (default 3); within a rep the two modes and the two
   compilers alternate, and the compiler order flips every rep. Tables report medians.
 - Wall: process wall clock measured by the harness. Peak: max RSS from `wait4` rusage (the number `/usr/bin/time -v`
-  prints). The JSON also has the `--extendedDiagnostics` check/total time, "Memory used", files, symbols, types and
-  instantiations of every run. tsrs's default-mode counters are lower than tsgo's by design (lazy members); compare
-  counters in `--singleThreaded` runs or with `--noLazyMembers`.
-- Rows are sorted by the speedup vs tsgo, biggest first (`speedup_sort_key` in `run.py`); a failed row goes last.
-- Bold in the speedup and memory columns marks a notable tsrs win: at least 5x faster, or at least 4x more memory
-  efficient (tsgo's peak memory / tsrs's; `NOTABLE_SPEEDUP`, `NOTABLE_MEMORY` in `run.py`; compared at the printed two
-  decimals). The memory columns are always `other tool's peak / tsrs's peak`, so above 1x is a tsrs win.
-- Errors: every `error TSxxxx` line is counted, and the (file, line, col, code) lists are compared. A differing count is
-  shown as **MISMATCH** in the table and a differing location set as "(locations differ)" — a correctness signal,
-  not a performance one.
-- tsrs ports a TypeScript 7.1-dev commit (`b85298b6`, `Cargo.toml`), not 7.0.2, so some differences are TypeScript
-  version differences. When the two disagree, the harness also runs `typescript@7.1.0-dev.20260930.4` (the nightly
+  prints). Both come from `bench/measure.py`, a small process that starts the compiler: on Linux a child's peak
+  starts at its parent's size, so peaks below the runner's own size (up to about 566 MiB) used to read as that size.
+  Results before 2026-10-15 have that floor; it shows as bun check and tsrs reading the same peak on small projects.
+- No timed run passes `--extendedDiagnostics` (or `--diagnostics`); see
+  [Never time a run with `--extendedDiagnostics`](#never-time-a-run-with---extendeddiagnostics). A tsgo or tsrs run
+  counts as finished when it exits 0, 1 or 2 and printed no panic.
+- Each mode gets two tables, wall time and peak memory, with the same rows in the same order: sorted by the speedup
+  vs tsgo, biggest first (`speedup_sort_key` in `run.py`); a failed row goes last. The comparison columns read
+  "Nx faster" / "Nx slower" and "Nx less" / "Nx more" (the other tool's value / tsrs's, or its inverse).
+- Bold in the "tsrs vs tsgo" columns marks a notable tsrs win: at least 5x faster, or at least 4x less memory
+  (`NOTABLE_SPEEDUP`, `NOTABLE_MEMORY` in `run.py`; compared at the printed two decimals).
+- Errors: every `error TSxxxx` line is counted, and the (file, line, col, code) lists are compared. Below each mode's
+  tables, an errors paragraph names only the projects where tsgo and tsrs disagree: a differing count is a
+  **Mismatch** and a differing location set "Same count, different locations", both bold. This is a correctness
+  signal, not a performance one.
+- tsrs ports a TypeScript 7.1-dev commit (`b85298b6`, `Cargo.toml`), not the newer nightly that is timed, so some
+  differences are TypeScript version differences. When the two disagree, the harness also runs `typescript@7.1.0-dev.20260930.4` (the nightly
   built from `b85298b6` plus one CI-only commit; `reference` in `projects.json`) once: if it reports exactly tsrs's
-  errors the cell reads `tsgo / tsrs (ref N)` and is not flagged. On 2026-10-01 that explains both differences
-  (vscode 359 vs 371, webpack 848 vs 840: tsrs's lists equal the nightly's line for line). When the port moves to a
+  errors the project is listed as a TypeScript version difference and not flagged. On 2026-10-01 that explains both
+  differences (vscode 359 vs 371, webpack 848 vs 840: tsrs's lists equal the nightly's line for line). When the port moves to a
   newer TypeScript commit, update `reference` to the nightly built from it (the harness warns when they differ).
+
+## Watch mode
+
+`bench/watch.py` measures `--watch` on vscode: tsrs against the nightly tsgo of `projects.json`, both started as
+`--watch -p src --noEmit --preserveWatchOutput --pretty false` with no thread flags. bun check has no watch mode (Bun
+1.4.4 canary: `bun check` has no `--watch` flag, and `bun --watch check` checks once and ignores later edits), so it has
+no column. Each session:
+
+- **initial build**: from the start of the process to the first "Watching for file changes" report;
+- **first comment edit**: a comment appended to `src/vs/base/test/common/strings.test.ts`, a test file nothing imports;
+- **repeat comment edit**: five more comment edits to that file, the median of them;
+- **type error in a leaf file**: an exported assignment error appended to it (the cycle must report exactly one error
+  more than the initial build, or the session fails);
+- then the file is restored (the cycle must report the initial build's errors again; not in the table).
+
+An edit is timed from just before the write to the last "Watching for file changes" report of the cycles it started:
+after a report the harness waits two quiet seconds for another, so a watch that rebuilds twice for one save is timed
+to the second. Memory is the process's peak RSS over the whole session (`wait4`) and its RSS after the last edit. CI
+runs 5 tsrs and 3 tsgo sessions (the compiler order alternates) on its own fixed-spec machine, the `measure-watch` job;
+the tables report medians and the result keeps every session under `watch.sessions`. `bench/run.py --merge` attaches
+the result as the merged result's `watch` section, which `bench/results/<...>.md` and `bench/RESULTS.md` render as a
+"Watch mode" table; the chart does not show it.
+
+```sh
+python3 bench/watch.py --local                                   # 3 sessions each, 5 repeat edits
+python3 bench/watch.py --local --reps 1 --edits 2 --out-dir /tmp/w   # smoke test
+```
 
 ## Regression flag
 
@@ -186,37 +265,155 @@ the small projects move by a few hundred KiB), so peak memory is flagged when it
 
 ## CI
 
-The benchmark is a [Depot CI](https://depot.dev/docs/ci/overview) workflow, `.depot/workflows/bench.yml` (this
-repository is connected to Depot CI; Depot's runners for GitHub Actions only serve organization-owned repositories, and
-a probe of `depot-ubuntu-*` / `depot-macos-latest` labels from GitHub Actions stayed queued). It runs on every push to
-`main` except pushes that touch only `README.md` / `bench/results/**`, and on `workflow_dispatch`. Nobody waits on it,
-so it is built for unattended runs: one run per push (the concurrency group is the commit, so a push during a run
+CodSpeed runs on pushes to main, pull requests, and manual dispatch. `update-benchmarks.yml` publishes wall-time reports
+on changes to `bench/projects.json` or the workflow itself, and on manual dispatch. The comparison and probe workflows
+are disabled, including manual dispatch. Their definitions are preserved under `.github/workflows/`
+as `bench-compare.yml.bak`, `pr-verify.yml.bak` and `perf-probe.yml.bak`. The former `bench.yml` is available in Git history.
+On pull requests and merge groups, the active `ci.yml` compares ordered diagnostics and exit codes against the base
+build for the determinism job's four projects and regression cases. It does not run the saved workflow's performance
+measurements or its full project matrix.
+The completed build-layout experiment's workflow and build script were removed; `tools/perf/layout-measure.py`
+still compares supplied binaries. Local measurement tools remain available; recorded runs are archived in Git history.
+
+`wallclock.yml` compares the main and PR release binaries on pull requests that may affect performance. If the
+binaries differ, it runs one job per `bench/projects.json` project on separate 8-vCPU runners. Each job measures
+alternating main/PR timing pairs, peak RSS and instruction counts, then uploads its project result. The report job
+downloads all available results, joins them into the `wallclock-joined` artifact in project order and posts one PR
+table. Missing or invalid project results appear as failed rows, so a failed shard does not hide the others.
+
+For those saved workflows, restore the original `.yml` filename before using their `gh workflow run` commands.
+They produce no automated measurements, regression comments or result/chart updates while disabled.
+
+### CodSpeed
+
+`.github/workflows/codspeed.yml` measures Compiler-Unions, xstate-main, webpack, and drizzle-orm in three ways on
+every push to main, pull request, and manual dispatch:
+
+| Instrument | Work measured | Runner | Benchmark name suffix |
+| --- | --- | --- | --- |
+| CPU simulation | One single-threaded compilation against a captured filesystem | GitHub x64 | `compiler::<project>` |
+| Memory | One disk-backed compilation with the CLI's default checker count | GitHub x64 | `compiler_default::<project>` |
+| Walltime | The same default-parallelism, disk-backed compilation | CodSpeed Graviton arm64 Macro Runner | `compiler_default::<project>` |
+
+The two benchmark families have separate baselines, and memory and walltime use the default checker count of their
+respective runners. The release profile has no PGO or BOLT training; the published CLI and Hyperfine workflows answer
+different questions. CodSpeed reports are advisory. The broader PR comparison remains in `wallclock.yml`.
+
+#### CPU simulation
+
+`tsrs_bench` uses Criterion2's built-in CodSpeed support. It first runs an unmeasured
+compilation that records filesystem responses: source and config text, package metadata, directory listings,
+negative probes, realpaths, and case sensitivity. Subsequent compilations read only that immutable snapshot;
+an unrecorded request or a filesystem mutation fails the benchmark rather than falling back to disk.
+
+Only `runner.run(...)` inside `iter_with_setup_wrapper` is measured. It parses configuration, resolves modules,
+parses, binds, checks, and formats diagnostics into memory using fresh compiler state. Setup and comparison of
+the output and exit status with the capture are outside measurement. Compiler diagnostics are valid outcomes;
+crashes, missing project configs, and mismatched results fail. Statistics are disabled because they read process
+memory information from the OS and contain nondeterministic timings.
+Compiler environment overrides (`TSRS_*`, except `TSRS_BENCH_PROJECT`) are rejected, including profiling switches
+that could bypass the filesystem interface.
+
+Criterion2 3.0.4 runs five unmeasured warmups and one measured compilation. CI builds the benchmark suite once
+and shares the compiled artifact with a four-job matrix. Each shard runs one project in parallel, setting up
+and caching only that project's inputs. Each process uses `RAYON_NUM_THREADS=1`
+and the CLI's large stack. CodSpeed also sets `MIMALLOC_ARENA_PURGE_MULT=-1` to disable arena purge scheduling:
+the short-lived benchmark process reclaims its seven compilations' arenas at exit, while avoiding allocator clock
+reads and purge system calls in the simulated profile. This CodSpeed-only setting deliberately differs from the
+production allocator configuration.
+`TSRS_BENCH_PROJECT` is required because Criterion2's CodSpeed adapter does not implement benchmark filters.
+The target requires the `codspeed` feature: ordinary Criterion calibration would accumulate arena allocations.
+Benchmarks are named `compiler::<project>` and start a new baseline, distinct from the former disk-backed CLI measurements.
+
+#### Memory and walltime
+
+The `compiler_default` target uses CodSpeed's Rust hooks around exactly one compilation in a fresh process. It does
+not capture the filesystem or warm up the compiler first: earlier compilations would leave arenas resident and
+inflate peak memory. Project existence checks, benchmark setup, and outcome checks are outside the measured section.
+Walltime mode also records one elapsed-time sample for `cargo-codspeed` to aggregate; the hooks alone provide a
+profile but no walltime result.
+Diagnostics are valid outcomes; missing projects, crashes, and invalid statuses fail. Output is formatted into memory
+to avoid putting thousands of diagnostics in CI logs. Walltime includes filesystem calls and checker parallelism.
+
+CodSpeed's memory instrument reports peak physical memory, heap allocation metrics, and allocation flamegraphs.
+Peak physical memory includes tsrs's arena pages; heap allocation flamegraphs chiefly describe mimalloc calls and
+do not attribute the arena's direct `mmap` calls as heap allocations. Memory profiling tracks every allocation, so
+large projects can cost more to profile. The walltime job uses the arm64 Graviton Macro Runner for stable elapsed-time
+measurements; it builds on GitHub's Ubuntu 22.04 arm64 runner first, so compiler time is not charged to the Macro
+Runner. Changing the Macro Runner's machine family starts a new walltime baseline.
+The walltime artifact enables mimalloc's `no_opt_arch` feature because the Macro Runner lacks the ARMv8.1 LSE
+atomics that mimalloc v3 otherwise emits on arm64. The x64 instruments and release binaries keep their normal
+allocator build.
+
+The workflow builds each instrument separately and runs one project per job in the same workflow so CodSpeed can
+aggregate the shards. The memory and walltime builds use `cargo-codspeed` mode-specific instrumentation. GitHub OIDC
+authenticates uploads without a long-lived CodSpeed secret.
+
+From the repository root:
+
+```sh
+cargo install cargo-codspeed --version 5.0.3 --locked
+python3 bench/run.py --setup-only --projects Compiler-Unions,xstate-main,webpack,drizzle-orm
+cargo codspeed build -p tsrs_bench --bench compiler --features codspeed --profile release --locked -m simulation
+MIMALLOC_ARENA_PURGE_MULT=-1 RAYON_NUM_THREADS=1 TSRS_BENCH_PROJECT=Compiler-Unions cargo codspeed run -p tsrs_bench --bench compiler -m simulation
+cargo codspeed build -p tsrs_bench --bench compiler_default --features codspeed --profile release --locked -m memory
+TSRS_BENCH_PROJECT=Compiler-Unions cargo codspeed run -p tsrs_bench --bench compiler_default -m memory
+cargo codspeed build -p tsrs_bench --bench compiler_default --features codspeed,mimalloc-safe/no_opt_arch --profile release --locked -m walltime
+TSRS_BENCH_PROJECT=Compiler-Unions cargo codspeed run -p tsrs_bench --bench compiler_default -m walltime
+```
+
+The simulation command exercises capture, warmups, replay, and output verification outside CodSpeed's Linux
+instrumentation without reporting performance measurements. The other targets still execute one compilation there.
+Use `--profile dev` when building for local correctness checks. CI uses the release profile with debug symbols
+retained by cargo-codspeed.
+
+#### Other CodSpeed capabilities
+
+The current [CodSpeed instruments](https://codspeed.io/docs/instruments) are CPU simulation, memory, and walltime.
+Simulation uses cycle estimation and breaks down flamegraph time into instruction, cache, and memory costs. We leave
+[allocation exclusion](https://codspeed.io/docs/instruments/cpu/allocation-exclusion) off: a new allocation on a hot
+compiler path should remain visible. The benchmark does not spawn child processes, so subprocess tracking adds nothing.
+CodSpeed's [comparison view](https://codspeed.io/changelog) includes environment differences and differential,
+process/thread-aware flamegraphs; these need no extra workflow setting.
+
+[Sharding](https://codspeed.io/docs/features/sharded-benchmarks) is already used. We run all four projects on every
+workflow run because most compiler changes can affect each of them; [partial runs](https://codspeed.io/docs/features/partial-runs)
+would reduce that coverage. Benchmark archival is for a future removal or rename. This workflow does not configure
+CodSpeed's regression thresholds or a [required performance check](https://codspeed.io/docs/features/performance-checks);
+the repository's landing criteria still use instruction counts, two walltime publishes, and peak RSS
+(`AGENTS.md`). For investigation, use the CodSpeed [CLI](https://codspeed.io/docs/cli),
+[MCP server](https://codspeed.io/docs/ai/mcp), or [Wizard](https://codspeed.io/docs/ai/wizard)
+against the uploaded profiles. Those account integrations are optional and do not change CI.
+
+### Historical benchmark workflow
+
+This section describes the removed `bench.yml` workflow; its dispatch commands require restoring it from Git history.
+The workflow was built for unattended runs: one run per measured commit (the concurrency group is the commit, so a dispatch for another commit
 starts its own run on its own machines and only a re-dispatch of the same commit replaces a queued twin; until
 2026-10-07 one shared group let a later push replace the queued bench, and bursts of merges left most commits without
 a results file), never cancelled, network steps retried, and the results commit re-created on top of the latest
-`main` before pushing. Runs overlap and finish in any order, so `README.md` keeps the newest commit's table: a run
-whose commit is an ancestor of the one the table came from (its last line names it) adds its results file and leaves
-the table alone, and the regression flag compares a run with the nearest earlier benchmarked ancestor of its commit,
-not with the newest file by date. A pull request that changes code must not carry a CI-skip marker in its title, body or commit subjects (CI's
-`skip-marker` job, `tools/ci/skip_marker.py`): `gh pr merge --squash` copies them into the commit message, and such a
+`main` before pushing. Runs overlap and finish in any order, so `bench/RESULTS.md` and `bench/large-projects.svg` keep
+the newest commit's results: a run whose commit is an ancestor of the one the table came from (its last line names
+it) adds its results file and leaves the tables and chart alone. The regression flag compares a run with the nearest
+earlier benchmarked ancestor of its commit, not with the newest file by date. A pull request that changes code must
+not carry a CI-skip marker in its title, body or commit subjects (the local check is
+`tools/ci/skip_marker.py`): `gh pr merge --squash` copies them into the commit message, and such a
 commit lands without CI and without a results file; notes-only pull requests carry the marker on purpose. A commit
-whose bench was skipped or cancelled (before 2026-10-07, most commits of a burst of merges) is backfilled with `depot ci dispatch --repo maschwenk/tsrs --workflow bench.yml --ref main --input
-commit=<sha>`: the build and measuring jobs check out that commit, the merge job runs the current scripts, the results
-file is committed, and the README table is applied only when no newer commit's table is there.
+whose bench was skipped or cancelled (before 2026-10-07, most commits of a burst of merges) is backfilled with `gh workflow run bench.yml --ref main -f commit=<sha>`: the build and measuring jobs check out that commit, the merge job runs the current scripts, the results
+file is committed, and the tables and chart update only when no newer commit's report is there.
 
 **Noise**: the benchmark machines are shared cloud VMs. Historically, between publishes of the same code vscode's
 64-vCPU wall moved by a median 2% and up to 10% on 2026-10-07 (median of 3). The single-threaded instruction count is
 the deterministic measure (repeats to 0.001%). The `measure` jobs run 5 reps and `measure-wide` 10 for tsrs and
-`bun check`, both with 3 for tsgo (`--reps N --tsgo-reps M`: tsgo takes 10-20x longer per run), and the README's
-headline is the 20-run mean of `bench-compare.yml`, not one publish's median.
+`bun check`, both with 3 for tsgo (`--reps N --tsgo-reps M`: tsgo takes 10-20x longer per run).
+[The historical 64-vCPU comparison](RESULTS.md#historical-comparison-on-64-vcpus) uses the 20-run mean of
+`bench-compare.yml`. The README chart updates with the latest tables.
 
-The Bun comparison uses 16 vCPU by default; 32 and 64 vCPU remain explicit choices in `bench-compare.yml`.
-Runner vCPUs and checker threads are separate: `cpus=16` with `threads=64` runs 64 software workers on
-16 vCPUs. This oversubscription is supported for experiments, including PR verification (`cpus=16`,
-`checkers=1,16,32,64`), but does not provide 64 cores of compute.
-The 8-vCPU instruction regression jobs retain their existing hardware. Historical 64-vCPU results keep their original
-labels; history starts a new baseline when a cell's hardware or build setup changes. Backfills of commits whose
-`run.py` predates `checkers16` measure only `wide` on the 16-vCPU runner.
+All benchmark jobs use standard GitHub-hosted `ubuntu-24.04` runners. Manual comparison, verification and general
+probe workflows accept a `runner` label (default `ubuntu-24.04`) for a larger GitHub-hosted Linux x64 runner if one
+is configured. Runner vCPUs and checker threads are separate: 16 checker threads on a 4-vCPU runner oversubscribe it.
+Historical Depot results retain their original hardware labels. History starts a new baseline when hardware or
+build setup changes; the migration does not rewrite measured results. Backfills measure on the current runners.
 
 **History**: `bench/history.py` prints one table per metric over `bench/results/*.json` in `main`'s first-parent
 order, a column per project, each cell with its change against the previous benchmarked commit (with one run per
@@ -225,8 +422,8 @@ push, the previous merge): `--metrics instructions,peak,wall,wide_wall,wide_peak
 doing; the wall columns are the noisy ones and say whether the cost bought anything, and a `~` marks a wall or
 wide-peak change next to an instruction change under 0.3%: the code did not change, that is the runner.
 
-Four jobs (since 2026-10-07; until then one job did everything in sequence, and the measurement alone took 18-20 min
-once the four application projects were in):
+Five jobs (since 2026-10-07; until then one job did everything in sequence, and the measurement alone took 18-20 min
+once the four application projects were in; `measure-watch` since 2026-10-13):
 
 1. `build`, on one machine of the fixed spec: the PGO + BOLT `dist` build of the commit (below). The binary and the
    `rustc -V` that built it go up as the `tsrs-pgo-dist` artifact.
@@ -234,45 +431,49 @@ once the four application projects were in):
    project gets a job without a workflow change), each on its own machine of the fixed spec: it restores the project's
    cache, downloads the binary and runs `bench/run.py --projects <name> --out-dir <dir>`. The result is the
    `bench-partial-<name>` artifact, the compiler output `bench-logs-<name>`. The jobs run at the same time but never
-   share a machine, so a measurement is what it was in the sequential run: one project on an idle 8-vCPU machine.
-3. `measure-wide`, one job on `depot-ubuntu-24.04-16` (16 vCPU): every project in the default mode (`wide`: each
-   compiler at its own thread count, tsrs 8 checkers there) and in `--checkers 16` mode (`bench/run.py --modes
-   wide,checkers16`), each with `bun check` from Bun canary as a third column (`--bun`). 16 checker threads would
-   oversubscribe the fixed-spec machine. The job runs while the `measure` jobs do; it is the run's only 16-vCPU job. It
-   restores the caches the `measure` jobs save (a project added to `projects.json` needs a restore step in it too). If
-   it fails, the results file is published without the 16-vCPU sections and the README table is left as it was.
-4. `merge`: `bench/run.py --merge <results...>` joins them into one result, projects in `bench/projects.json` order
+   share a machine, so a measurement is what it was in the sequential run: one project on an idle runner.
+3. `measure-wide`, two jobs on `ubuntu-24.04`, each with every other project of `bench/projects.json`, so each
+   project's Bun comparison modes come from one machine: default mode (`wide`) and `--checkers` 4, 8 and 16
+   (`wide-checkers4`, `wide-checkers8`, `checkers16`), with `bun check` from Bun canary as a third column (`--bun`).
+   The jobs restore the caches the `measure` jobs save. If either fails, the result contains only the other's
+   cells and the tables and chart stay unchanged (`bench/publish.py` requires every project).
+4. `measure-watch`, one job on a machine of the fixed spec: `bench/watch.py` on vscode ("Watch mode" below). It restores
+   the vscode cache the `measure` job saves and raises the inotify watch limit. If it fails, the results have no
+   watch table.
+5. `merge`: `bench/run.py --merge <results...>` joins them into one result, projects in `bench/projects.json` order
    and modes in `MODE_FLAGS` order, after checking that the binary, the compilers and flags agree (the rep counts may differ, as the
    `measure` jobs' 5 and `measure-wide`'s 10 do; the result records every mode's in `mode_reps`) and that no
-   (project, mode) is measured twice; then the regression flag and the results commit, as before. The machine that
-   measured the most cells is the run's; a cell measured on another records its own `machine`. All `--checkers 16`
-   cells do, and the table names their machine. A fixed-spec project measured on a different CPU model or C library
-   (so far every `depot-ubuntu-24.04-8` has been the same model) is noted under the table, and the regression flag
+   (project, mode) is measured twice; then the regression flag and the results commit. The `Commit results` step
+   runs `bench/publish.py` after fetching main on every push retry to keep the tables and chart current together.
+   Of the fixed-spec partials' machines, the one that measured the most cells is the run's; a cell measured on another
+   records its own `machine`. All Bun comparison cells do, and the table names their machine. A fixed-spec project measured on a different CPU model or C library
+   is noted under the table, and the regression flag
    compares that project only with runs on the same model. A run started from a branch
-   (`depot ci run --workflow .depot/workflows/bench.yml`) ends with the `bench-result` artifact: nothing is committed
+   (`gh workflow run bench.yml --ref <branch>`) ends with the `bench-result` artifact: nothing is committed
    or commented.
 
-**Fixed machine spec**: `depot-ubuntu-24.04-8`, 8 vCPU, 32 GB RAM, Linux x86_64, for every run, so numbers are
-comparable over time (the `--checkers 16` section: `depot-ubuntu-24.04-16`, 16 vCPU, checked by its own job). Sizing: the largest peak measured is tsgo's default mode on vscode and mui-docs (7.5 GiB on an
-18-core Mac, 6.9 GiB on Linux); 32 GB leaves 4x headroom, and 8 vCPUs cover tsrs's default 8 checker threads (tsgo's 4)
-plus parallel parsing. The first step fails the job if `nproc`/`MemTotal`/arch differ; there is no fallback runner. (On GitHub's
-standard 2 vCPU / 7 GB runner tsgo swapped on vscode: 146 s wall for a 50 s check.)
+**Fixed machine spec**: the `measure` jobs run on Namespace `nscloud-ubuntu-24.04-amd64-8x16` (8 vCPU, 16 GB RAM,
+Linux x86_64; [runner labels](https://namespace.so/docs/reference/github-actions/runner-configuration)); the build and
+publish jobs stay on GitHub-hosted `ubuntu-latest`. The hardware step checks CPU count, memory and architecture. CPU
+models can differ; results record the actual machine and the regression/history tools compare compatible
+measurements. The 16-checker mode oversubscribes these runners.
 
-Caching (Depot Cache serves the `actions/cache` API on Depot CI, no special configuration): `Swatinem/rust-cache` for
+Caching uses GitHub's `actions/cache` service and the Rust setup action for
 `~/.cargo` and the dependency part of `target/`, which holds the PGO-instrumented build (workspace crates are
 rebuilt: they are what is being measured). The final PGO build is not cached: its RUSTFLAGS contain the profile's
 hash, which changes every run, so cargo rebuilds all of it anyway (as in the release workflow); one
-cache for the suite checkout plus the npm-installed compilers (`typescript@7.0.2` and the reference nightly); one cache
+cache for the suite checkout plus the pnpm-installed compilers (the timed nightly and the reference nightly); one cache
 per cloned project (checkout + `node_modules`) keyed on its pinned commit and install command
 (`bench/run.py --print-cache-keys`), so changing one pin re-installs only that project. Each measuring job restores
 the shared cache and its own project's; the build job restores the two training projects (xstate-main, webpack) and
-saves the shared cache; `ci.yml`'s `check-and-test` job restores the shared cache and four projects (xstate-main, webpack,
-nuxt, drizzle-orm) for the determinism gate, `tools/ci/determinism.sh` (notes/perf-order-independence.md "Gate"). The
-build job, and `ci.yml`'s `check-and-test` and `arena-safety` jobs, restore the TypeScript
+saves the shared cache. The build job restores the TypeScript
 testdata (`ts-ref/tsc/testdata`, 22 MB compressed) from a cache keyed on the TypeScript commit; on a miss they run the
 sparse checkout and save it. That saves about 4 s per job (2026-10-07: checkout 4.9-5.7 s, restore 1.4 s).
 
-Job duration split, 2026-10-01:
+These cache details describe the disabled benchmark workflows. The active CI restores four pinned projects for the
+determinism gate; it also checks out the pinned TypeScript source and fixtures for conformance and Fourslash.
+
+Historical job duration split, 2026-10-01 (before this migration):
 
 | | GitHub-hosted `ubuntu-24.04` (2 vCPU / 7 GB), before | Depot CI `depot-ubuntu-24.04-8`, all caches warm |
 | --- | --- | --- |
@@ -321,21 +522,41 @@ artifact works on Depot CI (a job can download an artifact that a still-running 
 because the 64-vCPU job's 13-minute measurement varies by more than that (762 s vs 779 s). And eleven runners, one of
 them 64 vCPU, sat idle through the 7-minute build.
 
+## Never time a run with `--extendedDiagnostics`
+
+Never pass `--extendedDiagnostics` or `--diagnostics` to a run whose wall time or peak memory you measure: not in
+`bench/`, `tools/perf/`, `upstream/tools/`, a one-off `time tsc ...` or `hyperfine`, nor in numbers quoted in a pull
+request or note. The statistics report runs inside the process, after the check and before it exits, and it costs the
+two compilers different amounts:
+
+- tsgo calls `runtime.GC()` twice to settle the heap, then `runtime.ReadMemStats`, then `Program.LineCount()`, which
+  builds the line map of every source file (`internal/execute/tsc/emit.go` `EmitAndReportStatistics`,
+  `internal/execute/tsc/statistics.go`). Two full collections of a multi-GB heap add wall time and CPU, and the line
+  maps add memory.
+- tsrs reads its resident size from `/proc/self/statm` and counts lines without building or keeping the line maps
+  (notes/mem-frontend.md), then sums the counters across checkers.
+
+A timed run with the flag adds more work to tsgo than to tsrs and tilts the comparison toward tsrs; in a
+tsrs-vs-tsrs comparison it still adds end-of-run work that is not type checking. When you need
+the counters or phase times, take them from a separate untimed run: `bench/compare.py`'s warm-up, the stats runs of
+`tools/perf/clusterprobe.py` and `tools/perf/probe.sh`, or `upstream/tools/measure.py` with `STATS=1`. Instruction
+counts (`bench/count.py`) leave it off too.
+
 ## Verifying a branch
 
-`.depot/workflows/pr-verify.yml` answers the two questions a performance or refactoring branch has to answer before it
+The disabled [`.github/workflows/pr-verify.yml.bak`](../.github/workflows/pr-verify.yml.bak) answers the two questions a performance or refactoring branch has to answer before it
 lands: does it still print exactly what main prints, and what did it do to time and memory? It runs on one
-`depot-ubuntu-24.04-32` machine (32 vCPU; `--input cpus=64` opts into 64) and compares two `cargo build --release` binaries (not the PGO build:
+GitHub-hosted Linux x64 runner (`ubuntu-24.04` by default, configurable with `-f runner=<label>`) and compares two `cargo build --release` binaries (not the PGO build:
 relative comparisons only): the branch, and its merge base with `base` (default `main`), so commits that landed on
 main after the branch was cut are not counted as the branch's.
 
 `tools/perf/verify.py` does the measuring (it also runs locally: `tools/perf/verify.py --base <tsrs> --new <tsrs>`).
 For every project in `bench/projects.json` and every checker count (default 1, 4, 16, 32), both binaries run
-`-p <project> --noEmit --incremental false --extendedDiagnostics --pretty false --checkers N` three times, interleaved.
+`-p <project> --noEmit --incremental false --pretty false --checkers N` three times, interleaved.
 Per project it also counts the instructions of one single-threaded run of each (`bench/count.py`, as in the
 regression flag), and runs the branch once at 16 checkers with `TSRS_ARENA_POISON=1` (freed arena memory is filled
 and never reused, so a use after free crashes or changes the output). The result is a table per project (wall time,
-peak RSS and check time, base vs branch, and the instruction counts), in the job summary and the `pr-verify` artifact
+peak RSS, base vs branch, and the instruction counts), in the job summary and the `pr-verify` artifact
 (`verify-out/verify.{md,json}` plus every run's output).
 
 **What fails it**: any cell where the two binaries' diagnostics differ (every `error TS` line with its continuation
@@ -343,19 +564,17 @@ lines, in order) or their exit codes differ, in any run, including the single-th
 that crashes. Timing and memory never fail it: wall time moves 2-4% between identical runs, and the instruction count
 and single-threaded peak RSS are the numbers to quote in a pull request.
 
-How to run it:
+To run the saved workflow, first restore its original `pr-verify.yml` filename and push that change:
 
 ```sh
-depot ci run --workflow .depot/workflows/pr-verify.yml      # from any branch or dirty worktree, all defaults
-depot ci dispatch --repo maschwenk/tsrs --workflow pr-verify.yml --ref <pushed branch> \
-  --input projects=vscode,webpack --input checkers=4,32 --input reps=5
+gh workflow run pr-verify.yml --ref <pushed-branch> \
+  -f projects=vscode,webpack -f checkers=1,4 -f reps=5
+gh run download <run-id> -n pr-verify
 ```
 
-or open a pull request into main that changes `crates/`: it then runs on every push to that pull request and keeps one
-comment with the table up to date. A pull request that changes nothing under `crates/` (a `Cargo.lock` bump, the bench
-harness) runs it only with the `verify` label. `depot ci run` takes no inputs (edit the defaults in your working copy
-to narrow it), and Depot does not serve `actions/cache` to it (not tied to a ref), so it clones and installs every
-project; a dispatched or pull request run restores the caches `bench.yml` saves.
+Both automatic runs and manual dispatch are disabled while the filename ends in `.bak`. The saved definition is
+manual-only if restored. Dispatches require a pushed ref; uncommitted local changes are not uploaded.
+Runs restore available benchmark caches and install missing inputs; the disabled benchmark workflow no longer warms them.
 
 Historical duration on 64 vCPU (10 projects x 4 checker counts x 3 reps, poison on), Depot run `8fp8bp2jk1`
 (2026-10-07, `depot ci run`, so no caches): 10 min 44 s for the job, of which setup and project clone + install
@@ -369,7 +588,7 @@ with the `verify` label, run `8hc5870p99`): 8 min 42 s, of which cache restores 
 compare on one wide machine, the way Bun's `bun check` announcement measured them (vscode, Linux x64, 64 threads,
 mean of 20 runs). It runs four compilers on the same checkouts:
 
-- `tsgo`: `typescript@7.0.2` (as in `run.py`);
+- `tsgo`: the timed nightly (`tsgo` in `projects.json`, as in `run.py`);
 - `tsgo-dev`: `typescript@7.1.0-dev.20260930.4` (`reference` in `projects.json`), built from the TypeScript commit
   tsrs ports, so it is both the like-for-like Go baseline and the error oracle;
 - `tsrs`: the binary given with `--tsrs`;
@@ -378,11 +597,11 @@ mean of 20 runs). It runs four compilers on the same checkouts:
   counted).
 
 Thread settings (`--threads`, default `default,4,8,16,all`): `default` passes no flag (tsgo uses 4 checker threads,
-tsrs half the cores, at least min(cores, 8), at most 32, bun one thread per core); a number N passes `--checkers N` to tsgo and tsrs and
+tsrs every core up to 16, then half the cores, at most 32, bun one thread per core); a number N passes `--checkers N` to tsgo and tsrs and
 `--threads N` to bun;
 `all` is the machine's thread count. The knobs are not identical: `--checkers` sets only the checker threads (parsing
 and binding still use every core), while bun's `--threads` caps all of its threads. Per project, one untimed warm-up
-per compiler, then `--reps` (default 20) reps in which the compiler order rotates; the table reports mean ± standard
+per compiler (tsgo and tsrs with `--extendedDiagnostics`, for the program's file count), then `--reps` (default 20) reps in which the compiler order rotates; the table reports mean ± standard
 deviation, median and minimum wall time and mean peak RSS, plus whether each compiler's (file, line, column, code)
 error list equals 7.1-dev's. bun's file count is its own "checked N files" summary, which is not the program's file
 count (13 fewer on `Compiler`, 1,028 fewer on vscode).
@@ -392,8 +611,10 @@ python3 bench/compare.py --tsrs target/release/tsrs --bun ~/.bun/bin/bun --proje
 python3 bench/compare.py --tsrs ... --bun ... --projects Compiler --threads default,4 --reps 2   # smoke test
 ```
 
-The Depot CI workflow `.depot/workflows/bench-compare.yml` (manual dispatch only) defaults to `depot-ubuntu-24.04-16`
-(16 vCPU; pass `--input cpus=32` or `--input cpus=64` for explicit scaling experiments) with the PGO `dist` build of the commit (built and trained as in `bench.yml`) and Bun canary, and uploads
+The disabled [`.github/workflows/bench-compare.yml.bak`](../.github/workflows/bench-compare.yml.bak) defaults to `ubuntu-24.04`.
+After restoring its original `bench-compare.yml` filename, run `gh workflow run bench-compare.yml --ref <branch>`;
+use `-f runner=<label>` for a configured larger GitHub-hosted
+Linux x64 runner. It uses the PGO `dist` build of the commit (built and trained as in `bench.yml`) and Bun canary, and uploads
 `bench/results/compare/<date>-<commit>-<threads>t.{json,md}` plus the logs as the `bench-compare` artifact.
 
 First run, 2026-10-06 (Depot run `rnfhvvd79g`, vscode, 20 reps, `bench/results/compare/2026-10-06-2420b7ed410b-64t.md`):

@@ -25,22 +25,21 @@ pub struct ExportsOrImports {
 
 impl ExportsOrImports {
     pub(crate) fn from_json(value: &Json) -> ExportsOrImports {
-        let mut e = ExportsOrImports { data: JSONData::from_json(value, ExportsOrImports::from_json), object_kind: ObjectKind::Unknown };
+        let mut e = ExportsOrImports {
+            data: JSONData::from_json(value, ExportsOrImports::from_json),
+            object_kind: ObjectKind::Unknown,
+        };
         e.init_object_kind();
         e
     }
 
     pub fn as_object(&self) -> &OrderedMap<String, ExportsOrImports> {
-        if self.type_() != JSONValueType::Object {
-            panic!("expected object");
-        }
+        assert!(self.type_() == JSONValueType::Object, "expected object");
         self.data.as_object()
     }
 
     pub fn as_array(&self) -> &[ExportsOrImports] {
-        if self.type_() != JSONValueType::Array {
-            panic!("expected array");
-        }
+        assert!(self.type_() == JSONValueType::Array, "expected array");
         self.data.as_array()
     }
 

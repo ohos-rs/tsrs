@@ -36,6 +36,11 @@ RUST_KEYWORDS = {
 }
 
 
+def rust_code(code):
+    # clippy::unreadable_literal: separate six-digit OH diagnostics (100069 -> 100_069).
+    return "{:,}".format(code).replace(",", "_") if code >= 100_000 else str(code)
+
+
 def go_unquote(s):
     # The Go generator emits %q; only \" and \\ escapes occur, which JSON decodes identically.
     for esc in re.findall(r'\\.', s[1:-1]):
@@ -113,8 +118,8 @@ def main():
     for name, code, category, key, text, flags in messages:
         fields = ", ".join("%s: %s" % (RUST_FLAG[fl], "true" if fl in flags else "false") for fl in FLAGS)
         out.append(
-            "pub static %s: Message = Message { code: %d, category: Category::%s, key: Key(%s), text: %s, %s };"
-            % (name, code, category, rust_quote(key), rust_quote(text), fields)
+            "pub static %s: Message = Message { code: %s, category: Category::%s, key: Key(%s), text: %s, %s };"
+            % (name, rust_code(code), category, rust_quote(key), rust_quote(text), fields)
         )
         out.append("")
     out.append("pub(crate) static ALL_MESSAGES: [&Message; %d] = [" % len(messages))

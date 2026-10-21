@@ -2,7 +2,7 @@ use rustc_hash::FxHashSet;
 
 use crate as diagnostics;
 use crate::generated::ALL_MESSAGES;
-use crate::{format, format_strings, key_to_message, localize, Category, Key};
+use crate::{Category, Key, format, format_strings, key_to_message, localize};
 
 #[test]
 fn message_count_matches_go() {
@@ -25,10 +25,14 @@ fn spot_checks() {
     assert_eq!(diagnostics::X_0_expected.code(), 1005);
     assert_eq!(diagnostics::X_0_expected.key().as_str(), "_0_expected_1005");
 
-    assert!(diagnostics::Call_signature_return_types_0_and_1_are_incompatible.elided_in_compatibility_pyramid());
+    assert!(
+        diagnostics::Call_signature_return_types_0_and_1_are_incompatible
+            .elided_in_compatibility_pyramid()
+    );
     assert!(!diagnostics::Type_0_is_not_assignable_to_type_1.reports_unnecessary());
     assert_eq!(
-        diagnostics::X_k_must_be_followed_by_a_capturing_group_name_enclosed_in_angle_brackets.text(),
+        diagnostics::X_k_must_be_followed_by_a_capturing_group_name_enclosed_in_angle_brackets
+            .text(),
         "'\\k' must be followed by a capturing group name enclosed in angle brackets."
     );
     assert_eq!(
@@ -56,7 +60,7 @@ fn category_names() {
 #[test]
 fn key_lookup() {
     let m = key_to_message("Identifier_expected_1003").unwrap();
-    assert!(std::ptr::eq(m, &diagnostics::Identifier_expected));
+    assert!(std::ptr::eq(m, &raw const diagnostics::Identifier_expected));
     assert!(key_to_message("Removed_diagnostic_99999").is_none());
     assert_eq!(localize(None, Key("_0_expected_1005"), &[")".to_string()]), "')' expected.");
     assert_eq!(localize(None, Key("Identifier_expected_1003"), &[]), "Identifier expected.");
@@ -67,7 +71,8 @@ fn formatting() {
     assert_eq!(diagnostics::Identifier_expected.format(&[]), "Identifier expected.");
     assert_eq!(diagnostics::X_0_expected.format(&[&")"]), "')' expected.");
     assert_eq!(
-        diagnostics::The_parser_expected_to_find_a_1_to_match_the_0_token_here.format(&[&"{", &"}"]),
+        diagnostics::The_parser_expected_to_find_a_1_to_match_the_0_token_here
+            .format(&[&"{", &"}"]),
         "The parser expected to find a '}' to match the '{' token here."
     );
     assert_eq!(

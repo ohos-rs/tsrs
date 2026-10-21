@@ -83,8 +83,8 @@ pub struct EtsAttributeCallback {
     pub attributes: Option<Vec<String>>,
 }
 
-pub fn ets_contains(values: &Option<Vec<String>>, value: &str) -> bool {
-    values.as_ref().is_some_and(|values| values.iter().any(|item| item == value))
+pub fn ets_contains(values: Option<&[String]>, value: &str) -> bool {
+    values.is_some_and(|values| values.iter().any(|item| item == value))
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

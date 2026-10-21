@@ -1,10 +1,14 @@
-use tsrs_ast::{self as ast, DiagnosticExt, Kind, ModifierList, Node, NodeFlags, NodeList, TokenFlags};
-use tsrs_core::{TextRange, P};
+use tsrs_ast::{
+    self as ast, DiagnosticExt, Kind, ModifierList, Node, NodeFlags, NodeList, TokenFlags,
+};
+use tsrs_core::{P, TextRange};
 use tsrs_diagnostics::{self as diagnostics, Message};
 use tsrs_scanner as scanner;
 
 use crate::parser_1::JsdocScannerInfo;
-use crate::utilities::{token_is_identifier_or_keyword, token_is_identifier_or_keyword_or_greater_than};
+use crate::utilities::{
+    token_is_identifier_or_keyword, token_is_identifier_or_keyword_or_greater_than,
+};
 use crate::*;
 
 impl Parser {
@@ -39,7 +43,8 @@ impl Parser {
 
     pub(crate) fn parse_import_specifier(&mut self) -> P<Node> {
         let pos = self.node_pos();
-        let (is_type_only, property_name, name) = self.parse_import_or_export_specifier(Kind::ImportSpecifier);
+        let (is_type_only, property_name, name) =
+            self.parse_import_or_export_specifier(Kind::ImportSpecifier);
         let identifier_name;
         if name.kind() == Kind::Identifier {
             identifier_name = name;
@@ -47,14 +52,20 @@ impl Parser {
             let loc = self.skip_range_trivia(name.loc());
             self.parse_error_at_range(loc, &diagnostics::Identifier_expected, &[]);
             identifier_name = self.new_identifier("");
-            self.finish_node(identifier_name, name.pos());
+            self.finish_node(
+                identifier_name,
+                name.pos().expect_source("parsed nodes have source positions"),
+            );
         }
         let node = self.factory.new_import_specifier(is_type_only, property_name, identifier_name);
         let node = self.finish_node(node, pos);
         self.check_js_syntax(node)
     }
 
-    pub(crate) fn parse_import_or_export_specifier(&mut self, kind: Kind) -> (bool, Option<P<Node>>, P<Node>) {
+    pub(crate) fn parse_import_or_export_specifier(
+        &mut self,
+        kind: Kind,
+    ) -> (bool, Option<P<Node>>, P<Node>) {
         // ImportSpecifier:
         //   BindingIdentifier
         //   ModuleExportName as BindingIdentifier
@@ -128,7 +139,7 @@ impl Parser {
         (is_type_only, property_name, name)
     }
 
-    pub(crate) fn can_parse_module_export_name(&mut self) -> bool {
+    pub(crate) fn can_parse_module_export_name(&self) -> bool {
         token_is_identifier_or_keyword(self.token) || self.token == Kind::StringLiteral
     }
 
@@ -145,7 +156,9 @@ impl Parser {
     }
 
     pub(crate) fn try_parse_import_attributes(&mut self) -> Option<P<Node>> {
-        if self.token == Kind::WithKeyword || (self.token == Kind::AssertKeyword && !self.has_preceding_line_break()) {
+        if self.token == Kind::WithKeyword
+            || (self.token == Kind::AssertKeyword && !self.has_preceding_line_break())
+        {
             if self.token == Kind::AssertKeyword {
                 self.parse_error_at_current_token(
                     &diagnostics::Import_assertions_have_been_replaced_by_import_attributes_Use_with_instead_of_assert,
@@ -159,7 +172,7 @@ impl Parser {
 
     pub(crate) fn parse_export_assignment(
         &mut self,
-        pos: i32,
+        pos: u32,
         jsdoc: JsdocScannerInfo,
         modifiers: Option<P<ModifierList>>,
     ) -> P<Node> {
@@ -176,7 +189,12 @@ impl Parser {
         self.parse_semicolon();
         self.context_flags = save_context_flags;
         self.statement_has_await_identifier = save_has_await_identifier;
-        let node = self.factory.new_export_assignment(modifiers, is_export_equals, None /*typeNode*/, expression);
+        let node = self.factory.new_export_assignment(
+            modifiers,
+            is_export_equals,
+            None, /*typeNode*/
+            expression,
+        );
         let result = self.finish_node(node, pos);
         self.with_jsdoc(result, jsdoc);
         self.check_js_syntax(result);
@@ -185,7 +203,7 @@ impl Parser {
 
     pub(crate) fn parse_namespace_export_declaration(
         &mut self,
-        pos: i32,
+        pos: u32,
         jsdoc: JsdocScannerInfo,
         modifiers: Option<P<ModifierList>>,
     ) -> P<Node> {
@@ -204,7 +222,7 @@ impl Parser {
 
     pub(crate) fn parse_export_declaration(
         &mut self,
-        pos: i32,
+        pos: u32,
         jsdoc: JsdocScannerInfo,
         modifiers: Option<P<ModifierList>>,
     ) -> P<Node> {
@@ -227,7 +245,9 @@ impl Parser {
             // It is not uncommon to accidentally omit the 'from' keyword. Additionally, in editing scenarios,
             // the 'from' keyword can be parsed as a named export when the export clause is unterminated (i.e. `export { from "moduleName";`)
             // If we don't have a 'from' keyword, see if we have a string literal such that ASI won't take effect.
-            if self.token == Kind::FromKeyword || (self.token == Kind::StringLiteral && !self.has_preceding_line_break()) {
+            if self.token == Kind::FromKeyword
+                || (self.token == Kind::StringLiteral && !self.has_preceding_line_break())
+            {
                 self.parse_expected(Kind::FromKeyword);
                 module_specifier = Some(self.parse_module_specifier());
             }
@@ -247,14 +267,20 @@ impl Parser {
         self.parse_semicolon();
         self.context_flags = save_context_flags;
         self.statement_has_await_identifier = save_has_await_identifier;
-        let node = self.factory.new_export_declaration(modifiers, is_type_only, export_clause, module_specifier, attributes);
+        let node = self.factory.new_export_declaration(
+            modifiers,
+            is_type_only,
+            export_clause,
+            module_specifier,
+            attributes,
+        );
         let result = self.finish_node(node, pos);
         self.with_jsdoc(result, jsdoc);
         self.check_js_syntax(result);
         result
     }
 
-    pub(crate) fn parse_namespace_export(&mut self, pos: i32) -> P<Node> {
+    pub(crate) fn parse_namespace_export(&mut self, pos: u32) -> P<Node> {
         let (export_name, _) = self.parse_module_export_name(false /*disallowKeywords*/);
         let node = self.factory.new_namespace_export(export_name);
         self.finish_node(node, pos)
@@ -281,7 +307,8 @@ impl Parser {
     pub(crate) fn parse_export_specifier(&mut self) -> P<Node> {
         let pos = self.node_pos();
         let jsdoc = self.jsdoc_scanner_info();
-        let (is_type_only, property_name, name) = self.parse_import_or_export_specifier(Kind::ExportSpecifier);
+        let (is_type_only, property_name, name) =
+            self.parse_import_or_export_specifier(Kind::ExportSpecifier);
         let node = self.factory.new_export_specifier(is_type_only, property_name, name);
         let result = self.finish_node(node, pos);
         self.with_jsdoc(result, jsdoc);
@@ -305,12 +332,29 @@ impl Parser {
                 && self.parse_optional(Kind::ExtendsKeyword)
             {
                 // The type following 'extends' is not permitted to be another conditional type
-                let extends_type = self.do_in_context(NodeFlags::DisallowConditionalTypesContext, true, Parser::parse_type);
+                let extends_type = self.do_in_context(
+                    NodeFlags::DisallowConditionalTypesContext,
+                    true,
+                    Parser::parse_type,
+                );
                 self.parse_expected(Kind::QuestionToken);
-                let true_type = self.do_in_context(NodeFlags::DisallowConditionalTypesContext, false, Parser::parse_type);
+                let true_type = self.do_in_context(
+                    NodeFlags::DisallowConditionalTypesContext,
+                    false,
+                    Parser::parse_type,
+                );
                 self.parse_expected(Kind::ColonToken);
-                let false_type = self.do_in_context(NodeFlags::DisallowConditionalTypesContext, false, Parser::parse_type);
-                let conditional_type = self.factory.new_conditional_type_node(type_node, extends_type, true_type, false_type);
+                let false_type = self.do_in_context(
+                    NodeFlags::DisallowConditionalTypesContext,
+                    false,
+                    Parser::parse_type,
+                );
+                let conditional_type = self.factory.new_conditional_type_node(
+                    type_node,
+                    extends_type,
+                    true_type,
+                    false_type,
+                );
                 self.finish_node(conditional_type, pos);
                 type_node = conditional_type;
             }
@@ -320,24 +364,32 @@ impl Parser {
     }
 
     pub(crate) fn parse_union_type_or_higher(&mut self) -> P<Node> {
-        self.parse_union_or_intersection_type(Kind::BarToken, Parser::parse_intersection_type_or_higher)
+        self.parse_union_or_intersection_type(
+            Kind::BarToken,
+            Parser::parse_intersection_type_or_higher,
+        )
     }
 
     pub(crate) fn parse_intersection_type_or_higher(&mut self) -> P<Node> {
-        self.parse_union_or_intersection_type(Kind::AmpersandToken, Parser::parse_type_operator_or_higher)
+        self.parse_union_or_intersection_type(
+            Kind::AmpersandToken,
+            Parser::parse_type_operator_or_higher,
+        )
     }
 
+    // Specialize the two constituent parsers so type parsing does not dispatch through a function pointer.
     pub(crate) fn parse_union_or_intersection_type(
         &mut self,
         operator: Kind,
-        parse_constituent_type: fn(&mut Parser) -> P<Node>,
+        parse_constituent_type: impl Fn(&mut Parser) -> P<Node> + Copy,
     ) -> P<Node> {
         let pos = self.node_pos();
         let is_union_type = operator == Kind::BarToken;
         let has_leading_operator = self.parse_optional(operator);
         let mut type_node;
         if has_leading_operator {
-            type_node = self.parse_function_or_constructor_type_to_error(is_union_type, parse_constituent_type);
+            type_node = self
+                .parse_function_or_constructor_type_to_error(is_union_type, parse_constituent_type);
         } else {
             type_node = parse_constituent_type(self);
         }
@@ -345,7 +397,10 @@ impl Parser {
             let start = self.node_stack.len();
             self.node_stack.push(type_node);
             while self.parse_optional(operator) {
-                let t = self.parse_function_or_constructor_type_to_error(is_union_type, parse_constituent_type);
+                let t = self.parse_function_or_constructor_type_to_error(
+                    is_union_type,
+                    parse_constituent_type,
+                );
                 self.node_stack.push(t);
             }
             let end = self.node_pos();
@@ -356,7 +411,11 @@ impl Parser {
         type_node
     }
 
-    pub(crate) fn create_union_or_intersection_type_node(&mut self, operator: Kind, types: P<NodeList>) -> P<Node> {
+    pub(crate) fn create_union_or_intersection_type_node(
+        &self,
+        operator: Kind,
+        types: P<NodeList>,
+    ) -> P<Node> {
         match operator {
             Kind::BarToken => self.factory.new_union_type_node(types),
             Kind::AmpersandToken => self.factory.new_intersection_type_node(types),
@@ -375,7 +434,11 @@ impl Parser {
             }
             _ => {}
         }
-        self.do_in_context(NodeFlags::DisallowConditionalTypesContext, false, Parser::parse_postfix_type_or_higher)
+        self.do_in_context(
+            NodeFlags::DisallowConditionalTypesContext,
+            false,
+            Parser::parse_postfix_type_or_higher,
+        )
     }
 
     pub(crate) fn parse_type_operator(&mut self, operator: Kind) -> P<Node> {
@@ -400,9 +463,7 @@ impl Parser {
         let constraint = self.try_parse_constraint_of_infer_type();
         let node = self.factory.new_type_parameter_declaration(
             None, /*modifiers*/
-            name,
-            constraint,
-            None, /*expression*/
+            name, constraint, None, /*expression*/
             None, /*defaultType*/
         );
         self.finish_node(node, pos)
@@ -411,7 +472,11 @@ impl Parser {
     pub(crate) fn try_parse_constraint_of_infer_type(&mut self) -> Option<P<Node>> {
         let state = self.mark();
         if self.parse_optional(Kind::ExtendsKeyword) {
-            let constraint = self.do_in_context(NodeFlags::DisallowConditionalTypesContext, true, Parser::parse_type);
+            let constraint = self.do_in_context(
+                NodeFlags::DisallowConditionalTypesContext,
+                true,
+                Parser::parse_type,
+            );
             if self.in_disallow_conditional_types_context() || self.token != Kind::QuestionToken {
                 return Some(constraint);
             }
@@ -563,8 +628,9 @@ impl Parser {
     pub(crate) fn parse_this_type_predicate(&mut self, lhs: P<Node>) -> P<Node> {
         self.next_token();
         let type_ = self.parse_type();
-        let node = self.factory.new_type_predicate_node(None /*assertsModifier*/, lhs, Some(type_));
-        self.finish_node(node, lhs.pos())
+        let node =
+            self.factory.new_type_predicate_node(None /*assertsModifier*/, lhs, Some(type_));
+        self.finish_node(node, lhs.pos().expect_source("parsed nodes have source positions"))
     }
 
     pub(crate) fn parse_jsdoc_all_type(&mut self) -> P<Node> {
@@ -616,7 +682,10 @@ impl Parser {
             self.next_token();
         }
         let mut expression;
-        if self.token == Kind::TrueKeyword || self.token == Kind::FalseKeyword || self.token == Kind::NullKeyword {
+        if self.token == Kind::TrueKeyword
+            || self.token == Kind::FalseKeyword
+            || self.token == Kind::NullKeyword
+        {
             expression = self.parse_keyword_expression();
         } else {
             expression = self.parse_literal_expression();
@@ -638,7 +707,11 @@ impl Parser {
     }
 
     pub(crate) fn parse_entity_name_of_type_reference(&mut self) -> P<Node> {
-        self.parse_entity_name(true /*allowReservedWords*/, false /*allowPrivateName*/, Some(&diagnostics::Type_expected))
+        self.parse_entity_name(
+            true,  /*allowReservedWords*/
+            false, /*allowPrivateName*/
+            Some(&diagnostics::Type_expected),
+        )
     }
 
     pub(crate) fn parse_entity_name(
@@ -787,7 +860,8 @@ impl Parser {
     }
 
     pub(crate) fn parse_type_arguments_of_type_reference(&mut self) -> Option<P<NodeList>> {
-        if !self.has_preceding_line_break() && self.re_scan_less_than_token() == Kind::LessThanToken {
+        if !self.has_preceding_line_break() && self.re_scan_less_than_token() == Kind::LessThanToken
+        {
             return self.parse_type_arguments();
         }
         None
@@ -859,7 +933,13 @@ impl Parser {
             qualifier = Some(self.parse_entity_name_of_type_reference());
         }
         let type_arguments = self.parse_type_arguments_of_type_reference();
-        let node = self.factory.new_import_type_node(is_type_of, type_node, attributes, qualifier, type_arguments);
+        let node = self.factory.new_import_type_node(
+            is_type_of,
+            type_node,
+            attributes,
+            qualifier,
+            type_arguments,
+        );
         self.finish_node(node, pos)
     }
 
@@ -874,7 +954,10 @@ impl Parser {
         if name.is_some() {
             self.parse_expected(Kind::ColonToken);
         } else {
-            self.parse_error_at_current_token(&diagnostics::Identifier_or_string_literal_expected, &[]);
+            self.parse_error_at_current_token(
+                &diagnostics::Identifier_or_string_literal_expected,
+                &[],
+            );
         }
         let value = self.parse_assignment_expression_or_higher();
         let node = self.factory.new_import_attribute(name, value);
@@ -891,7 +974,10 @@ impl Parser {
         let open_brace_position = self.scanner.token_start();
         if self.parse_expected(Kind::OpenBraceToken) {
             multi_line = self.has_preceding_line_break();
-            elements = self.parse_delimited_list(ParsingContext::ImportAttributes, Parser::parse_import_attribute);
+            elements = self.parse_delimited_list(
+                ParsingContext::ImportAttributes,
+                Parser::parse_import_attribute,
+            );
             if !self.parse_expected(Kind::CloseBraceToken) {
                 if let Some(&last_diagnostic) = self.diagnostics.last() {
                     if last_diagnostic.code() == diagnostics::X_0_expected.code() {
@@ -915,7 +1001,11 @@ impl Parser {
     pub(crate) fn parse_type_query(&mut self) -> P<Node> {
         let pos = self.node_pos();
         self.parse_expected(Kind::TypeOfKeyword);
-        let entity_name = self.parse_entity_name(true /*allowReservedWords*/, true /*allowPrivateName*/, None);
+        let entity_name = self.parse_entity_name(
+            true, /*allowReservedWords*/
+            true, /*allowPrivateName*/
+            None,
+        );
         // Make sure we perform ASI to prevent parsing the next line's type arguments as part of an instantiation expression
         let mut type_arguments: Option<P<NodeList>> = None;
         if !self.has_preceding_line_break() {
@@ -933,14 +1023,19 @@ impl Parser {
         if self.token == Kind::ReadonlyKeyword {
             self.next_token();
         }
-        self.token == Kind::OpenBracketToken && self.next_token_is_identifier() && self.next_token() == Kind::InKeyword
+        self.token == Kind::OpenBracketToken
+            && self.next_token_is_identifier()
+            && self.next_token() == Kind::InKeyword
     }
 
     pub(crate) fn parse_mapped_type(&mut self) -> P<Node> {
         let pos = self.node_pos();
         self.parse_expected(Kind::OpenBraceToken);
         let mut readonly_token: Option<P<Node>> = None; // ReadonlyKeyword | PlusToken | MinusToken
-        if self.token == Kind::ReadonlyKeyword || self.token == Kind::PlusToken || self.token == Kind::MinusToken {
+        if self.token == Kind::ReadonlyKeyword
+            || self.token == Kind::PlusToken
+            || self.token == Kind::MinusToken
+        {
             let token = self.parse_token_node();
             readonly_token = Some(token);
             if token.kind() != Kind::ReadonlyKeyword {
@@ -955,7 +1050,10 @@ impl Parser {
         }
         self.parse_expected(Kind::CloseBracketToken);
         let mut question_token: Option<P<Node>> = None; // QuestionToken | PlusToken | MinusToken
-        if self.token == Kind::QuestionToken || self.token == Kind::PlusToken || self.token == Kind::MinusToken {
+        if self.token == Kind::QuestionToken
+            || self.token == Kind::PlusToken
+            || self.token == Kind::MinusToken
+        {
             let token = self.parse_token_node();
             question_token = Some(token);
             if token.kind() != Kind::QuestionToken {
@@ -966,8 +1064,14 @@ impl Parser {
         self.parse_semicolon();
         let members = self.parse_list(ParsingContext::TypeMembers, Parser::parse_type_member);
         self.parse_expected(Kind::CloseBraceToken);
-        let node =
-            self.factory.new_mapped_type_node(readonly_token, type_parameter, name_type, question_token, type_node, Some(members));
+        let node = self.factory.new_mapped_type_node(
+            readonly_token,
+            type_parameter,
+            name_type,
+            question_token,
+            type_node,
+            Some(members),
+        );
         self.finish_node(node, pos)
     }
 
@@ -990,17 +1094,31 @@ impl Parser {
         if self.token == Kind::OpenParenToken || self.token == Kind::LessThanToken {
             return self.parse_signature_member(Kind::CallSignature);
         }
-        if self.token == Kind::NewKeyword && self.look_ahead(Parser::next_token_is_open_paren_or_less_than) {
+        if self.token == Kind::NewKeyword
+            && self.look_ahead(Parser::next_token_is_open_paren_or_less_than)
+        {
             return self.parse_signature_member(Kind::ConstructSignature);
         }
         let pos = self.node_pos();
         let jsdoc = self.jsdoc_scanner_info();
         let mut modifiers = self.parse_modifiers_ex(self.script_kind == tsrs_core::ScriptKind::ETS, false, false);
         if self.parse_contextual_modifier(Kind::GetKeyword) {
-            return self.parse_accessor_declaration(pos, jsdoc, modifiers, Kind::GetAccessor, ParseFlags::Type);
+            return self.parse_accessor_declaration(
+                pos,
+                jsdoc,
+                modifiers,
+                Kind::GetAccessor,
+                ParseFlags::Type,
+            );
         }
         if self.parse_contextual_modifier(Kind::SetKeyword) {
-            return self.parse_accessor_declaration(pos, jsdoc, modifiers, Kind::SetAccessor, ParseFlags::Type);
+            return self.parse_accessor_declaration(
+                pos,
+                jsdoc,
+                modifiers,
+                Kind::SetAccessor,
+                ParseFlags::Type,
+            );
         }
         if self.is_index_signature() {
             if self.script_kind == tsrs_core::ScriptKind::ETS {
@@ -1029,12 +1147,20 @@ impl Parser {
         let parameters = self.parse_parameters(ParseFlags::Type);
         let type_node = self.parse_return_type(Kind::ColonToken, true /*isType*/);
         self.parse_type_member_semicolon();
-        let result;
-        if kind == Kind::CallSignature {
-            result = self.factory.new_call_signature_declaration(type_parameters, Some(parameters), type_node);
+
+        let result = if kind == Kind::CallSignature {
+            self.factory.new_call_signature_declaration(
+                type_parameters,
+                Some(parameters),
+                type_node,
+            )
         } else {
-            result = self.factory.new_construct_signature_declaration(type_parameters, Some(parameters), type_node);
-        }
+            self.factory.new_construct_signature_declaration(
+                type_parameters,
+                Some(parameters),
+                type_node,
+            )
+        };
         self.finish_node(result, pos);
         self.with_jsdoc(result, jsdoc);
         result
@@ -1073,7 +1199,8 @@ impl Parser {
             // user writes a constraint that is an expression and not an actual type, then parse
             // it out as an expression (so we can recover well), but report that a type is needed
             // instead.
-            if self.is_start_of_type(false /*inStartOfParameter*/) || !self.is_start_of_expression() {
+            if self.is_start_of_type(false /*inStartOfParameter*/) || !self.is_start_of_expression()
+            {
                 constraint = Some(self.parse_type());
             } else {
                 // It was not a type, and it looked like an expression.  Parse out an expression
@@ -1090,7 +1217,13 @@ impl Parser {
         if self.parse_optional(Kind::EqualsToken) {
             default_type = Some(self.parse_type());
         }
-        let result = self.factory.new_type_parameter_declaration(modifiers, name, constraint, expression, default_type);
+        let result = self.factory.new_type_parameter_declaration(
+            modifiers,
+            name,
+            constraint,
+            expression,
+            default_type,
+        );
         self.finish_node(result, pos)
     }
 
@@ -1117,7 +1250,11 @@ impl Parser {
         self.create_missing_list()
     }
 
-    pub(crate) fn parse_parameters_worker(&mut self, flags: ParseFlags, allow_ambiguity: bool) -> Option<P<NodeList>> {
+    pub(crate) fn parse_parameters_worker(
+        &mut self,
+        flags: ParseFlags,
+        allow_ambiguity: bool,
+    ) -> Option<P<NodeList>> {
         // FormalParameters [Yield,Await]: (modified)
         //      [empty]
         //      FormalParameterList[?Yield,Await]
@@ -1135,15 +1272,16 @@ impl Parser {
         let save_context_flags = self.context_flags;
         self.set_context_flags(NodeFlags::YieldContext, flags.intersects(ParseFlags::Yield));
         self.set_context_flags(NodeFlags::AwaitContext, flags.intersects(ParseFlags::Await));
-        let parameters = self.parse_delimited_list(ParsingContext::Parameters, move |p: &mut Parser| {
-            let parameter = p.parse_parameter_ex(in_await_context, allow_ambiguity);
-            if let Some(parameter) = parameter {
-                if !flags.intersects(ParseFlags::Type) {
-                    p.check_js_syntax(parameter);
+        let parameters =
+            self.parse_delimited_list(ParsingContext::Parameters, move |p: &mut Parser| {
+                let parameter = p.parse_parameter_ex(in_await_context, allow_ambiguity);
+                if let Some(parameter) = parameter {
+                    if !flags.intersects(ParseFlags::Type) {
+                        p.check_js_syntax(parameter);
+                    }
                 }
-            }
-            parameter
-        });
+                parameter
+            });
         self.context_flags = save_context_flags;
         parameters
     }
@@ -1152,7 +1290,11 @@ impl Parser {
         self.parse_parameter_ex(false /*inOuterAwaitContext*/, true /*allowAmbiguity*/).unwrap()
     }
 
-    pub(crate) fn parse_parameter_ex(&mut self, in_outer_await_context: bool, allow_ambiguity: bool) -> Option<P<Node>> {
+    pub(crate) fn parse_parameter_ex(
+        &mut self,
+        in_outer_await_context: bool,
+        allow_ambiguity: bool,
+    ) -> Option<P<Node>> {
         let pos = self.node_pos();
         let jsdoc = self.jsdoc_scanner_info();
         // FormalParameter [Yield,Await]:
@@ -1209,19 +1351,25 @@ impl Parser {
         Some(result)
     }
 
-    pub(crate) fn is_parameter_name_start(&mut self) -> bool {
+    pub(crate) fn is_parameter_name_start(&self) -> bool {
         // Be permissive about await and yield by calling isBindingIdentifier instead of isIdentifier; disallowing
         // them during a speculative parse leads to many more follow-on errors than allowing the function to parse then later
         // complaining about the use of the keywords.
-        self.is_binding_identifier() || self.token == Kind::OpenBracketToken || self.token == Kind::OpenBraceToken
+        self.is_binding_identifier()
+            || self.token == Kind::OpenBracketToken
+            || self.token == Kind::OpenBraceToken
     }
 
-    pub(crate) fn parse_name_of_parameter(&mut self, modifiers: Option<P<ModifierList>>) -> P<Node> {
+    pub(crate) fn parse_name_of_parameter(
+        &mut self,
+        modifiers: Option<P<ModifierList>>,
+    ) -> P<Node> {
         // FormalParameter [Yield,Await]:
         //      BindingElement[?Yield,?Await]
-        let name =
-            self.parse_identifier_or_pattern_with_diagnostic(Some(&diagnostics::Private_identifiers_cannot_be_used_as_parameters));
-        if name.loc().len() == 0 && modifiers.is_none() && ast::is_modifier_kind(self.token) {
+        let name = self.parse_identifier_or_pattern_with_diagnostic(Some(
+            &diagnostics::Private_identifiers_cannot_be_used_as_parameters,
+        ));
+        if name.loc().len() == Some(0) && modifiers.is_none() && ast::is_modifier_kind(self.token) {
             // in cases like
             // 'use strict'
             // function foo(static)
@@ -1235,7 +1383,11 @@ impl Parser {
         name
     }
 
-    pub(crate) fn parse_return_type(&mut self, return_token: Kind, is_type: bool) -> Option<P<Node>> {
+    pub(crate) fn parse_return_type(
+        &mut self,
+        return_token: Kind,
+        is_type: bool,
+    ) -> Option<P<Node>> {
         if self.should_parse_return_type(return_token, is_type) {
             return Some(self.do_in_context(
                 NodeFlags::DisallowConditionalTypesContext,
@@ -1254,7 +1406,10 @@ impl Parser {
             return true;
         } else if is_type && self.token == Kind::EqualsGreaterThanToken {
             // This is easy to get backward, especially in type contexts, so parse the type anyway
-            self.parse_error_at_current_token(&diagnostics::X_0_expected, &[&scanner::token_to_string(Kind::ColonToken)]);
+            self.parse_error_at_current_token(
+                &diagnostics::X_0_expected,
+                &[&scanner::token_to_string(Kind::ColonToken)],
+            );
             self.next_token();
             return true;
         }
@@ -1269,7 +1424,11 @@ impl Parser {
             if self.token == Kind::IsKeyword && !self.has_preceding_line_break() {
                 self.next_token();
                 let type_ = self.parse_type();
-                let node = self.factory.new_type_predicate_node(None /*assertsModifier*/, id, Some(type_));
+                let node = self.factory.new_type_predicate_node(
+                    None, /*assertsModifier*/
+                    id,
+                    Some(type_),
+                );
                 return self.finish_node(node, pos);
             }
             self.rewind(state);
@@ -1289,7 +1448,7 @@ impl Parser {
 
     pub(crate) fn parse_accessor_declaration(
         &mut self,
-        pos: i32,
+        pos: u32,
         jsdoc: JsdocScannerInfo,
         modifiers: Option<P<ModifierList>>,
         kind: Kind,
@@ -1300,10 +1459,10 @@ impl Parser {
         let parameters = self.parse_parameters(ParseFlags::None);
         let return_type = self.parse_return_type(Kind::ColonToken, false /*isType*/);
         let body = self.parse_function_block_or_semicolon(flags, None /*diagnosticMessage*/);
-        let result;
+
         // Keep track of `typeParameters` (for both) and `type` (for setters) if they were parsed those indicate grammar errors
-        if kind == Kind::GetAccessor {
-            result = self.factory.new_get_accessor_declaration(
+        let result = if kind == Kind::GetAccessor {
+            self.factory.new_get_accessor_declaration(
                 modifiers,
                 name,
                 type_parameters,
@@ -1311,9 +1470,9 @@ impl Parser {
                 return_type,
                 None, /*fullSignature*/
                 body,
-            );
+            )
         } else {
-            result = self.factory.new_set_accessor_declaration(
+            self.factory.new_set_accessor_declaration(
                 modifiers,
                 name,
                 type_parameters,
@@ -1321,8 +1480,8 @@ impl Parser {
                 return_type,
                 None, /*fullSignature*/
                 body,
-            );
-        }
+            )
+        };
         let result = self.finish_node(result, pos);
         self.with_jsdoc(result, jsdoc);
         if !flags.intersects(ParseFlags::Type) {
@@ -1338,8 +1497,14 @@ impl Parser {
         prop
     }
 
-    pub(crate) fn parse_property_name_worker(&mut self, allow_computed_property_names: bool) -> P<Node> {
-        if self.token == Kind::StringLiteral || self.token == Kind::NumericLiteral || self.token == Kind::BigIntLiteral {
+    pub(crate) fn parse_property_name_worker(
+        &mut self,
+        allow_computed_property_names: bool,
+    ) -> P<Node> {
+        if self.token == Kind::StringLiteral
+            || self.token == Kind::NumericLiteral
+            || self.token == Kind::BigIntLiteral
+        {
             return self.parse_literal_expression();
         }
         if allow_computed_property_names && self.token == Kind::OpenBracketToken {
@@ -1384,7 +1549,11 @@ impl Parser {
         Some(self.parse_function_block(flags, diagnostic_message))
     }
 
-    pub(crate) fn parse_function_block(&mut self, flags: ParseFlags, diagnostic_message: Option<&'static Message>) -> P<Node> {
+    pub(crate) fn parse_function_block(
+        &mut self,
+        flags: ParseFlags,
+        diagnostic_message: Option<&'static Message>,
+    ) -> P<Node> {
         let save_context_flags = self.context_flags;
         let save_has_await_identifier = self.statement_has_await_identifier;
         self.set_context_flags(NodeFlags::YieldContext, flags.intersects(ParseFlags::Yield));
@@ -1392,14 +1561,16 @@ impl Parser {
         // We may be in a [Decorator] context when parsing a function expression or
         // arrow function. The body of the function is not in [Decorator] context.
         self.set_context_flags(NodeFlags::DecoratorContext, false);
-        let block = self.parse_block(flags.intersects(ParseFlags::IgnoreMissingOpenBrace), diagnostic_message);
+        let block = self
+            .parse_block(flags.intersects(ParseFlags::IgnoreMissingOpenBrace), diagnostic_message);
         self.context_flags = save_context_flags;
         self.statement_has_await_identifier = save_has_await_identifier;
         block
     }
 
     pub(crate) fn is_index_signature(&mut self) -> bool {
-        self.token == Kind::OpenBracketToken && self.look_ahead(Parser::next_is_unambiguously_index_signature)
+        self.token == Kind::OpenBracketToken
+            && self.look_ahead(Parser::next_is_unambiguously_index_signature)
     }
 
     pub(crate) fn next_is_unambiguously_index_signature(&mut self) -> bool {
@@ -1448,12 +1619,14 @@ impl Parser {
         // If any of the following tokens are after the question mark, it cannot
         // be a conditional expression, so treat it as an indexer.
         self.next_token();
-        self.token == Kind::ColonToken || self.token == Kind::CommaToken || self.token == Kind::CloseBracketToken
+        self.token == Kind::ColonToken
+            || self.token == Kind::CommaToken
+            || self.token == Kind::CloseBracketToken
     }
 
     pub(crate) fn parse_index_signature_declaration(
         &mut self,
-        pos: i32,
+        pos: u32,
         jsdoc: JsdocScannerInfo,
         modifiers: Option<P<ModifierList>>,
     ) -> P<Node> {
@@ -1467,7 +1640,8 @@ impl Parser {
             .unwrap();
         let type_node = self.parse_type_annotation();
         self.parse_type_member_semicolon();
-        let node = self.factory.new_index_signature_declaration(modifiers, Some(parameters), type_node);
+        let node =
+            self.factory.new_index_signature_declaration(modifiers, Some(parameters), type_node);
         let result = self.finish_node(node, pos);
         self.with_jsdoc(result, jsdoc);
         result
@@ -1475,27 +1649,27 @@ impl Parser {
 
     pub(crate) fn parse_property_or_method_signature(
         &mut self,
-        pos: i32,
+        pos: u32,
         jsdoc: JsdocScannerInfo,
         modifiers: Option<P<ModifierList>>,
     ) -> P<Node> {
         let name = self.parse_property_name();
         let question_token = self.parse_optional_token(Kind::QuestionToken);
-        let result;
-        if self.token == Kind::OpenParenToken || self.token == Kind::LessThanToken {
+
+        let result = if self.token == Kind::OpenParenToken || self.token == Kind::LessThanToken {
             // Method signatures don't exist in expression contexts.  So they have neither
             // [Yield] nor [Await]
             let type_parameters = self.parse_type_parameters();
             let parameters = self.parse_parameters(ParseFlags::Type);
             let return_type = self.parse_return_type(Kind::ColonToken, true /*isType*/);
-            result = self.factory.new_method_signature_declaration(
+            self.factory.new_method_signature_declaration(
                 modifiers,
                 name,
                 question_token,
                 type_parameters,
                 Some(parameters),
                 return_type,
-            );
+            )
         } else {
             let type_node = self.parse_type_annotation();
             // Although type literal properties cannot not have initializers, we attempt
@@ -1505,8 +1679,14 @@ impl Parser {
             if self.token == Kind::EqualsToken {
                 initializer = self.parse_initializer();
             }
-            result = self.factory.new_property_signature_declaration(modifiers, name, question_token, type_node, initializer);
-        }
+            self.factory.new_property_signature_declaration(
+                modifiers,
+                name,
+                question_token,
+                type_node,
+                initializer,
+            )
+        };
         self.parse_type_member_semicolon();
         let result = self.finish_node(result, pos);
         self.with_jsdoc(result, jsdoc);
@@ -1517,13 +1697,14 @@ impl Parser {
         let pos = self.node_pos();
         let members = self.parse_object_type_members();
         let node = self.factory.new_type_literal_node(members);
-        self.set_lazy_owner(members, node);
+        Self::set_lazy_owner(members, node);
         self.finish_node(node, pos)
     }
 
     pub(crate) fn parse_object_type_members(&mut self) -> P<NodeList> {
         if self.parse_expected(Kind::OpenBraceToken) {
-            let members = self.parse_member_list(ParsingContext::TypeMembers, Parser::parse_type_member);
+            let members =
+                self.parse_member_list(ParsingContext::TypeMembers, Parser::parse_type_member);
             self.parse_expected(Kind::CloseBraceToken);
             return members;
         }
@@ -1553,7 +1734,12 @@ impl Parser {
             let question_token = self.parse_optional_token(Kind::QuestionToken);
             self.parse_expected(Kind::ColonToken);
             let type_node = self.parse_tuple_element_type();
-            let node = self.factory.new_named_tuple_member(dot_dot_dot_token, name, question_token, type_node);
+            let node = self.factory.new_named_tuple_member(
+                dot_dot_dot_token,
+                name,
+                question_token,
+                type_node,
+            );
             let result = self.finish_node(node, pos);
             self.with_jsdoc(result, jsdoc);
             return result;
@@ -1563,13 +1749,15 @@ impl Parser {
 
     pub(crate) fn scan_start_of_named_tuple_element(&mut self) -> bool {
         if self.token == Kind::DotDotDotToken {
-            return token_is_identifier_or_keyword(self.next_token()) && self.next_token_is_colon_or_question_colon();
+            return token_is_identifier_or_keyword(self.next_token())
+                && self.next_token_is_colon_or_question_colon();
         }
         token_is_identifier_or_keyword(self.token) && self.next_token_is_colon_or_question_colon()
     }
 
     pub(crate) fn next_token_is_colon_or_question_colon(&mut self) -> bool {
-        self.next_token() == Kind::ColonToken || self.token == Kind::QuestionToken && self.next_token() == Kind::ColonToken
+        self.next_token() == Kind::ColonToken
+            || self.token == Kind::QuestionToken && self.next_token() == Kind::ColonToken
     }
 
     pub(crate) fn parse_tuple_element_type(&mut self) -> P<Node> {
@@ -1580,7 +1768,9 @@ impl Parser {
             return self.finish_node(node, pos);
         }
         let type_node = self.parse_type();
-        if ast::is_jsdoc_nullable_type(type_node) && type_node.pos() == type_node.type_node().unwrap().pos() {
+        if ast::is_jsdoc_nullable_type(type_node)
+            && type_node.pos() == type_node.type_node().unwrap().pos()
+        {
             let inner = type_node.type_node().unwrap();
             let node = self.factory.new_optional_type_node(inner);
             node.set_flags(type_node.flags());
@@ -1603,17 +1793,18 @@ impl Parser {
     pub(crate) fn parse_asserts_type_predicate(&mut self) -> P<Node> {
         let pos = self.node_pos();
         let asserts_modifier = self.parse_expected_token(Kind::AssertsKeyword);
-        let parameter_name;
-        if self.token == Kind::ThisKeyword {
-            parameter_name = self.parse_this_type_node();
+
+        let parameter_name = if self.token == Kind::ThisKeyword {
+            self.parse_this_type_node()
         } else {
-            parameter_name = self.parse_identifier();
-        }
+            self.parse_identifier()
+        };
         let mut type_node: Option<P<Node>> = None;
         if self.parse_optional(Kind::IsKeyword) {
             type_node = Some(self.parse_type());
         }
-        let node = self.factory.new_type_predicate_node(Some(asserts_modifier), parameter_name, type_node);
+        let node =
+            self.factory.new_type_predicate_node(Some(asserts_modifier), parameter_name, type_node);
         self.finish_node(node, pos)
     }
 
@@ -1637,7 +1828,7 @@ impl Parser {
         self.finish_node(result, pos)
     }
 
-    pub(crate) fn get_template_literal_raw_text(&mut self, end_length: usize) -> &'static str {
+    pub(crate) fn get_template_literal_raw_text(&self, end_length: usize) -> &'static str {
         let mut end_length = end_length;
         let token_text = self.scanner.token_text();
         if self.scanner.token_flags().intersects(TokenFlags::Unterminated) {
@@ -1673,7 +1864,10 @@ impl Parser {
             self.re_scan_template_token(is_tagged_template);
             return self.parse_template_middle_or_tail();
         }
-        self.parse_error_at_current_token(&diagnostics::X_0_expected, &[&scanner::token_to_string(Kind::CloseBraceToken)]);
+        self.parse_error_at_current_token(
+            &diagnostics::X_0_expected,
+            &[&scanner::token_to_string(Kind::CloseBraceToken)],
+        );
         let node = self.factory.new_template_tail("", "", TokenFlags::None);
         let pos = self.node_pos();
         self.finish_node(node, pos)
@@ -1681,16 +1875,16 @@ impl Parser {
 
     pub(crate) fn parse_template_middle_or_tail(&mut self) -> P<Node> {
         let pos = self.node_pos();
-        let result;
-        if self.token == Kind::TemplateMiddle {
+
+        let result = if self.token == Kind::TemplateMiddle {
             let text = self.scanner.token_value();
             let raw_text = self.get_template_literal_raw_text(2 /*endLength*/);
-            result = self.factory.new_template_middle(text, raw_text, self.scanner.token_flags());
+            self.factory.new_template_middle(text, raw_text, self.scanner.token_flags())
         } else {
             let text = self.scanner.token_value();
             let raw_text = self.get_template_literal_raw_text(1 /*endLength*/);
-            result = self.factory.new_template_tail(text, raw_text, self.scanner.token_flags());
-        }
+            self.factory.new_template_tail(text, raw_text, self.scanner.token_flags())
+        };
         self.next_token();
         self.finish_node(result, pos)
     }
@@ -1698,27 +1892,27 @@ impl Parser {
     pub(crate) fn parse_function_or_constructor_type_to_error(
         &mut self,
         is_in_union_type: bool,
-        parse_constituent_type: fn(&mut Parser) -> P<Node>,
+        parse_constituent_type: impl Fn(&mut Parser) -> P<Node> + Copy,
     ) -> P<Node> {
         // the function type and constructor type shorthand notation
         // are not allowed directly in unions and intersections, but we'll
         // try to parse them gracefully and issue a helpful message.
         if self.is_start_of_function_type_or_constructor_type() {
             let type_node = self.parse_function_or_constructor_type();
-            let diagnostic: &'static Message;
-            if type_node.kind() == Kind::FunctionType {
-                diagnostic = if is_in_union_type {
+
+            let diagnostic: &'static Message = if type_node.kind() == Kind::FunctionType {
+                if is_in_union_type {
                     &diagnostics::Function_type_notation_must_be_parenthesized_when_used_in_a_union_type
                 } else {
                     &diagnostics::Function_type_notation_must_be_parenthesized_when_used_in_an_intersection_type
-                };
+                }
             } else {
-                diagnostic = if is_in_union_type {
+                if is_in_union_type {
                     &diagnostics::Constructor_type_notation_must_be_parenthesized_when_used_in_a_union_type
                 } else {
                     &diagnostics::Constructor_type_notation_must_be_parenthesized_when_used_in_an_intersection_type
-                };
-            }
+                }
+            };
             self.parse_error_at_range(type_node.loc(), diagnostic, &[]);
             return type_node;
         }
@@ -1727,9 +1921,11 @@ impl Parser {
 
     pub(crate) fn is_start_of_function_type_or_constructor_type(&mut self) -> bool {
         self.token == Kind::LessThanToken
-            || self.token == Kind::OpenParenToken && self.look_ahead(Parser::next_is_unambiguously_start_of_function_type)
+            || self.token == Kind::OpenParenToken
+                && self.look_ahead(Parser::next_is_unambiguously_start_of_function_type)
             || self.token == Kind::NewKeyword
-            || self.token == Kind::AbstractKeyword && self.look_ahead(Parser::next_token_is_new_keyword)
+            || self.token == Kind::AbstractKeyword
+                && self.look_ahead(Parser::next_token_is_new_keyword)
     }
 
     pub(crate) fn parse_function_or_constructor_type(&mut self) -> P<Node> {
@@ -1743,13 +1939,19 @@ impl Parser {
         );
         let type_parameters = self.parse_type_parameters();
         let parameters = self.parse_parameters(ParseFlags::Type);
-        let return_type = self.parse_return_type(Kind::EqualsGreaterThanToken, false /*isType*/);
-        let result;
-        if is_constructor_type {
-            result = self.factory.new_constructor_type_node(modifiers, type_parameters, Some(parameters), return_type);
+        let return_type =
+            self.parse_return_type(Kind::EqualsGreaterThanToken, false /*isType*/);
+
+        let result = if is_constructor_type {
+            self.factory.new_constructor_type_node(
+                modifiers,
+                type_parameters,
+                Some(parameters),
+                return_type,
+            )
         } else {
-            result = self.factory.new_function_type_node(type_parameters, Some(parameters), return_type);
-        }
+            self.factory.new_function_type_node(type_parameters, Some(parameters), return_type)
+        };
         self.finish_node(result, pos);
         self.with_jsdoc(result, jsdoc);
         result
@@ -1791,7 +1993,9 @@ impl Parser {
                 // ( xxx =
                 return true;
             }
-            if self.token == Kind::CloseParenToken && self.next_token() == Kind::EqualsGreaterThanToken {
+            if self.token == Kind::CloseParenToken
+                && self.next_token() == Kind::EqualsGreaterThanToken
+            {
                 // ( xxx ) =>
                 return true;
             }
@@ -1822,7 +2026,26 @@ impl Parser {
         self.parse_modifiers_ex(false, false, false)
     }
 
+    // Keep speculative modifier parsing and list construction out of the empty-list path.
+    #[inline]
     pub(crate) fn parse_modifiers_ex(
+        &mut self,
+        allow_decorators: bool,
+        permit_const_as_modifier: bool,
+        stop_on_start_of_class_static_block: bool,
+    ) -> Option<P<ModifierList>> {
+        if !(ast::is_modifier_kind(self.token) || allow_decorators && self.token == Kind::AtToken) {
+            return None;
+        }
+        self.parse_modifiers_worker(
+            allow_decorators,
+            permit_const_as_modifier,
+            stop_on_start_of_class_static_block,
+        )
+    }
+
+    #[inline(never)]
+    fn parse_modifiers_worker(
         &mut self,
         allow_decorators: bool,
         permit_const_as_modifier: bool,
@@ -1846,9 +2069,11 @@ impl Parser {
                     has_trailing_decorator = true;
                 }
             } else {
-                let Some(modifier) =
-                    self.try_parse_modifier(has_static_modifier, permit_const_as_modifier, stop_on_start_of_class_static_block)
-                else {
+                let Some(modifier) = self.try_parse_modifier(
+                    has_static_modifier,
+                    permit_const_as_modifier,
+                    stop_on_start_of_class_static_block,
+                ) else {
                     break;
                 };
                 if modifier.kind() == Kind::StaticKeyword {
@@ -1874,7 +2099,11 @@ impl Parser {
     pub(crate) fn parse_decorator(&mut self) -> P<Node> {
         let pos = self.node_pos();
         self.parse_expected(Kind::AtToken);
-        let expression = self.do_in_context(NodeFlags::DecoratorContext, true, Parser::parse_decorator_expression);
+        let expression = self.do_in_context(
+            NodeFlags::DecoratorContext,
+            true,
+            Parser::parse_decorator_expression,
+        );
         let node = self.factory.new_decorator(expression);
         self.finish_node(node, pos)
     }
@@ -1884,9 +2113,14 @@ impl Parser {
             // `@await` is disallowed in an [Await] context, but can cause parsing to go off the rails
             // This simply parses the missing identifier and moves on.
             let pos = self.node_pos();
-            let await_expression = self.parse_identifier_with_diagnostic(Some(&diagnostics::Expression_expected), None);
+            let await_expression = self
+                .parse_identifier_with_diagnostic(Some(&diagnostics::Expression_expected), None);
             self.next_token();
-            let member_expression = self.parse_member_expression_rest(pos, await_expression, true /*allowOptionalChain*/);
+            let member_expression = self.parse_member_expression_rest(
+                pos,
+                await_expression,
+                true, /*allowOptionalChain*/
+            );
             return self.parse_call_expression_rest(pos, member_expression);
         }
         self.parse_left_hand_side_expression_or_higher()
@@ -1905,26 +2139,33 @@ impl Parser {
             // so that when 'const' is a standalone declaration, we don't issue an error.
             if !self.look_ahead(Parser::next_token_is_on_same_line_and_can_follow_modifier) {
                 return None;
-            } else {
-                self.next_token();
             }
-        } else if stop_on_start_of_class_static_block
+            self.next_token();
+        } else if (stop_on_start_of_class_static_block
             && self.token == Kind::StaticKeyword
-            && self.look_ahead(Parser::next_token_is_open_brace)
+            && self.look_ahead(Parser::next_token_is_open_brace))
+            || (has_seen_static_modifier && self.token == Kind::StaticKeyword)
+            || (!self.parse_any_contextual_modifier())
         {
-            return None;
-        } else if has_seen_static_modifier && self.token == Kind::StaticKeyword {
-            return None;
-        } else if !self.parse_any_contextual_modifier() {
             return None;
         }
         let node = self.factory.new_modifier(kind);
         Some(self.finish_node(node, pos))
     }
 
+    #[inline]
     pub(crate) fn parse_contextual_modifier(&mut self, t: Kind) -> bool {
+        // A nonmatching token would only mark and rewind unchanged parser state.
+        if self.token != t {
+            return false;
+        }
+        self.parse_contextual_modifier_worker()
+    }
+
+    #[inline(never)]
+    fn parse_contextual_modifier_worker(&mut self) -> bool {
         let state = self.mark();
-        if self.token == t && self.next_token_can_follow_modifier() {
+        if self.next_token_can_follow_modifier() {
             return true;
         }
         self.rewind(state);
@@ -1975,11 +2216,19 @@ impl Parser {
 
     pub(crate) fn next_token_can_follow_default_keyword(&mut self) -> bool {
         self.next_token();
-        if self.is_struct_declaration() { return true; }
+        if self.is_struct_declaration() {
+            return true;
+        }
         match self.token {
-            Kind::ClassKeyword | Kind::FunctionKeyword | Kind::InterfaceKeyword | Kind::AtToken => true,
-            Kind::AbstractKeyword => self.look_ahead(Parser::next_token_is_class_keyword_on_same_line),
-            Kind::AsyncKeyword => self.look_ahead(Parser::next_token_is_function_keyword_on_same_line),
+            Kind::ClassKeyword | Kind::FunctionKeyword | Kind::InterfaceKeyword | Kind::AtToken => {
+                true
+            }
+            Kind::AbstractKeyword => {
+                self.look_ahead(Parser::next_token_is_class_keyword_on_same_line)
+            }
+            Kind::AsyncKeyword => {
+                self.look_ahead(Parser::next_token_is_function_keyword_on_same_line)
+            }
             _ => false,
         }
     }
@@ -2026,7 +2275,9 @@ impl Parser {
     }
 
     pub(crate) fn can_follow_modifier(&mut self) -> bool {
-        if self.is_annotation_declaration() { return true; }
+        if self.is_annotation_declaration() {
+            return true;
+        }
         self.token == Kind::OpenBracketToken
             || self.token == Kind::OpenBraceToken
             || self.token == Kind::AsteriskToken
@@ -2034,7 +2285,7 @@ impl Parser {
             || self.is_literal_property_name()
     }
 
-    pub(crate) fn can_follow_get_or_set_keyword(&mut self) -> bool {
+    pub(crate) fn can_follow_get_or_set_keyword(&self) -> bool {
         self.token == Kind::OpenBracketToken || self.is_literal_property_name()
     }
 
@@ -2060,10 +2311,7 @@ impl Parser {
         self.context_flags &= !NodeFlags::DecoratorContext;
         let pos = self.node_pos();
         let mut expr = self.parse_assignment_expression_or_higher();
-        loop {
-            let Some(operator_token) = self.parse_optional_token(Kind::CommaToken) else {
-                break;
-            };
+        while let Some(operator_token) = self.parse_optional_token(Kind::CommaToken) {
             let right = self.parse_assignment_expression_or_higher();
             expr = self.make_binary_expression(expr, operator_token, right, pos);
         }

@@ -1,6 +1,6 @@
 // eventlist_test.go: unit tests for eventList coalescing and drain semantics.
 
-use crate::event::{eventList, EventKind};
+use crate::event::{EventKind, eventList};
 use crate::watcher::Error;
 
 // eventlist_test.go:19
@@ -66,7 +66,7 @@ fn event_list_drain_is_atomic() {
 
     let (events2, err2) = el.drain();
     assert!(err2.is_none());
-    assert!(events2.is_empty());
+    assert_eq!(events2, [] as [crate::event::Event; 0]);
 }
 
 // eventlist_test.go:110

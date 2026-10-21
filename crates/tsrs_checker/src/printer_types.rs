@@ -1,9 +1,10 @@
-//! Declarations that printer.rs / symbolaccessibility / symboltracker signatures reference: the node-builder and printer
-//! types from other Go packages (`nodebuilder`, `printer`), the non-function declarations of `symbolaccessibility.go`
-//! and `symboltracker.go`, and the seam to the `tsrs_printer` crate. The node builder's own data model is in
-//! nodebuilder_types.rs.
+//! Shares node-builder and printer declarations without introducing import cycles.
+//!
+//! Declarations that printer.rs / symbolaccessibility / symboltracker signatures reference: the node-builder and printer types from other Go packages (`nodebuilder`, `printer`), the non-function declarations of `symbolaccessibility.go` and `symboltracker.go`, and the seam to the `tsrs_printer` crate.
+//!
+//! The node builder's own data model is in `nodebuilder_types.rs`.
 
-use bitflags::bitflags;
+use crate::direct_bitflags as bitflags;
 
 use crate::*;
 
@@ -11,22 +12,33 @@ use crate::*;
 // names. `printer::NodeFactory` is deliberately not re-exported (it would clash with `tsrs_ast::NodeFactory` in the stub
 // files' glob imports); reach it as `e.factory`.
 pub use tsrs_printer::{
-    escape_string, get_single_line_string_writer, new_emit_context, new_printer, new_text_writer, EmitContext,
-    EmitFlags, EmitTextWriter, PrintHandlers, Printer, PrinterOptions, QuoteChar,
+    EmitContext, EmitFlags, EmitTextWriter, PrintHandlers, Printer, PrinterOptions, QuoteChar,
+    escape_string, get_single_line_string_writer, new_emit_context, new_printer, new_text_writer,
 };
 
 // nodebuilder/types.go
 
 /// Go `nodebuilder.SymbolTracker`.
 pub trait SymbolTracker {
-    fn track_symbol(&self, c: &mut Checker, symbol: P<Symbol>, enclosing_declaration: Option<P<Node>>, meaning: SymbolFlags) -> bool;
+    fn track_symbol(
+        &self,
+        c: &mut Checker,
+        symbol: P<Symbol>,
+        enclosing_declaration: Option<P<Node>>,
+        meaning: SymbolFlags,
+    ) -> bool;
     fn report_inaccessible_this_error(&self);
     fn report_private_in_base_of_class_expression(&self, property_name: &str);
     fn report_inaccessible_unique_symbol_error(&self);
     fn report_cyclic_structure_error(&self);
     fn report_likely_unsafe_import_required_error(&self, specifier: &str, symbol_name: &str);
     fn report_truncation_error(&self);
-    fn report_nonlocal_augmentation(&self, containing_file: P<SourceFile>, parent_symbol: P<Symbol>, augmenting_symbol: P<Symbol>);
+    fn report_nonlocal_augmentation(
+        &self,
+        containing_file: P<SourceFile>,
+        parent_symbol: P<Symbol>,
+        augmenting_symbol: P<Symbol>,
+    );
     fn report_non_serializable_property(&self, property_name: &str);
     fn report_inference_fallback(&self, c: &mut Checker, node: P<Node>);
     fn push_error_fallback_node(&self, node: Option<P<Node>>);
@@ -85,7 +97,7 @@ bitflags! {
 bitflags! {
     /// Go `nodebuilder.InternalFlags`.
     #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Default)]
-    pub struct InternalFlags: i32 {
+    pub struct InternalFlags: u32 {
         const None = 0;
         const WriteComputedProps = 1 << 0;
         const NoSyntacticPrinter = 1 << 1;
@@ -96,7 +108,7 @@ bitflags! {
 
 // printer/emitresolver.go
 
-#[repr(i32)]
+#[repr(u32)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Default)]
 pub enum SymbolAccessibility {
     #[default]
@@ -107,7 +119,7 @@ pub enum SymbolAccessibility {
 }
 
 /// Go `printer.TypeReferenceSerializationKind` (printer/emitresolver.go).
-#[repr(i32)]
+#[repr(u32)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub enum TypeReferenceSerializationKind {
     // The TypeReferenceNode could not be resolved.
@@ -144,8 +156,8 @@ pub enum TypeReferenceSerializationKind {
 pub struct SymbolAccessibilityResult {
     pub accessibility: SymbolAccessibility,
     pub aliases_to_make_visible: Vec<P<Node>>, // aliases that need to have this symbol visible
-    pub error_symbol_name: String, // Optional - symbol name that results in error
-    pub error_node: Option<P<Node>>, // Optional - node that results in error
+    pub error_symbol_name: String,             // Optional - symbol name that results in error
+    pub error_node: Option<P<Node>>,           // Optional - node that results in error
     pub error_module_name: String, // Optional - If the symbol is not visible from module, module's name
 }
 
@@ -154,8 +166,8 @@ pub struct SymbolAccessibilityResult {
 /// Go `VerbosityContext`, passed as `Option<P<VerbosityContext>>`; the node builder writes the output fields.
 #[derive(Debug, Default)]
 pub struct VerbosityContext {
-    pub level: Cell<i32>, // 0 = default (no expansion), 1+ = expansion depth
-    pub max_truncation_length: Cell<i32>, // 0 = use default
+    pub level: Cell<usize>, // 0 = default (no expansion), 1+ = expansion depth
+    pub max_truncation_length: Cell<usize>, // 0 = use default
     pub can_increase_verbosity: Cell<bool>, // output: whether increasing Level would reveal more
     pub truncated: Cell<bool>, // output: whether output was truncated
 }
@@ -170,7 +182,8 @@ pub struct accessibleSymbolChainContext {
     pub enclosing_declaration: Option<P<Node>>,
     pub meaning: SymbolFlags,
     pub use_only_external_aliasing: bool,
-    pub visited_symbol_tables_map: std::rc::Rc<RefCell<FxHashMap<SymbolId, FxHashSet<symbolTableID>>>>,
+    pub visited_symbol_tables_map:
+        std::rc::Rc<RefCell<FxHashMap<SymbolId, FxHashSet<symbolTableID>>>>,
 }
 
 // checker/symboltracker.go
@@ -184,41 +197,57 @@ pub struct SymbolTrackerImpl {
 }
 
 impl SymbolTracker for SymbolTrackerImpl {
-    fn track_symbol(&self, c: &mut Checker, symbol: P<Symbol>, enclosing_declaration: Option<P<Node>>, meaning: SymbolFlags) -> bool {
+    fn track_symbol(
+        &self,
+        c: &mut Checker,
+        symbol: P<Symbol>,
+        enclosing_declaration: Option<P<Node>>,
+        meaning: SymbolFlags,
+    ) -> bool {
         SymbolTrackerImpl::track_symbol(self, c, symbol, enclosing_declaration, meaning)
     }
     fn report_inaccessible_this_error(&self) {
-        SymbolTrackerImpl::report_inaccessible_this_error(self)
+        SymbolTrackerImpl::report_inaccessible_this_error(self);
     }
     fn report_private_in_base_of_class_expression(&self, property_name: &str) {
-        SymbolTrackerImpl::report_private_in_base_of_class_expression(self, property_name)
+        SymbolTrackerImpl::report_private_in_base_of_class_expression(self, property_name);
     }
     fn report_inaccessible_unique_symbol_error(&self) {
-        SymbolTrackerImpl::report_inaccessible_unique_symbol_error(self)
+        SymbolTrackerImpl::report_inaccessible_unique_symbol_error(self);
     }
     fn report_cyclic_structure_error(&self) {
-        SymbolTrackerImpl::report_cyclic_structure_error(self)
+        SymbolTrackerImpl::report_cyclic_structure_error(self);
     }
     fn report_likely_unsafe_import_required_error(&self, specifier: &str, symbol_name: &str) {
-        SymbolTrackerImpl::report_likely_unsafe_import_required_error(self, specifier, symbol_name)
+        SymbolTrackerImpl::report_likely_unsafe_import_required_error(self, specifier, symbol_name);
     }
     fn report_truncation_error(&self) {
-        SymbolTrackerImpl::report_truncation_error(self)
+        SymbolTrackerImpl::report_truncation_error(self);
     }
-    fn report_nonlocal_augmentation(&self, containing_file: P<SourceFile>, parent_symbol: P<Symbol>, augmenting_symbol: P<Symbol>) {
-        SymbolTrackerImpl::report_nonlocal_augmentation(self, containing_file, parent_symbol, augmenting_symbol)
+    fn report_nonlocal_augmentation(
+        &self,
+        containing_file: P<SourceFile>,
+        parent_symbol: P<Symbol>,
+        augmenting_symbol: P<Symbol>,
+    ) {
+        SymbolTrackerImpl::report_nonlocal_augmentation(
+            self,
+            containing_file,
+            parent_symbol,
+            augmenting_symbol,
+        );
     }
     fn report_non_serializable_property(&self, property_name: &str) {
-        SymbolTrackerImpl::report_non_serializable_property(self, property_name)
+        SymbolTrackerImpl::report_non_serializable_property(self, property_name);
     }
     fn report_inference_fallback(&self, c: &mut Checker, node: P<Node>) {
-        SymbolTrackerImpl::report_inference_fallback(self, c, node)
+        SymbolTrackerImpl::report_inference_fallback(self, c, node);
     }
     fn push_error_fallback_node(&self, node: Option<P<Node>>) {
-        SymbolTrackerImpl::push_error_fallback_node(self, node)
+        SymbolTrackerImpl::push_error_fallback_node(self, node);
     }
     fn pop_error_fallback_node(&self) {
-        SymbolTrackerImpl::pop_error_fallback_node(self)
+        SymbolTrackerImpl::pop_error_fallback_node(self);
     }
     fn as_symbol_tracker_impl(&self) -> Option<&SymbolTrackerImpl> {
         Some(self)

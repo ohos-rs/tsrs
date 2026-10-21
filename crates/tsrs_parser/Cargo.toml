@@ -2,7 +2,9 @@
 name = "tsrs_parser"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
+publish.workspace = true
 
 [lints]
 workspace = true
@@ -19,3 +21,7 @@ bitflags.workspace = true
 serde_json = "1"
 tsrs_vfs.workspace = true
 mimalloc-safe.workspace = true
+
+[lib]
+test = false
+doctest = false

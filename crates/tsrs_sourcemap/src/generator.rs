@@ -1,17 +1,64 @@
+use std::collections::hash_map::Entry;
+
 use rustc_hash::FxHashMap;
+use tsrs_core::UTF16Offset;
 use tsrs_core::collections::OrderedMap;
 use tsrs_core::json::{self, Value};
 use tsrs_core::tspath::{self, ComparePathsOptions};
-use tsrs_core::UTF16Offset;
 
 // generator.go:14
-pub type SourceIndex = i32;
-pub type NameIndex = i32;
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum SourceIndex {
+    #[default]
+    Missing,
+    Index(u32),
+}
 
-pub(crate) const SOURCE_INDEX_NOT_SET: SourceIndex = -1;
-pub(crate) const NAME_INDEX_NOT_SET: NameIndex = -1;
-pub(crate) const NOT_SET: i32 = -1;
-pub(crate) const NOT_SET_UTF16: UTF16Offset = -1;
+impl SourceIndex {
+    pub const fn get(self) -> Option<u32> {
+        match self {
+            SourceIndex::Missing => None,
+            SourceIndex::Index(index) => Some(index),
+        }
+    }
+}
+
+impl std::fmt::Display for SourceIndex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SourceIndex::Missing => f.write_str("-1"),
+            SourceIndex::Index(index) => index.fmt(f),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum NameIndex {
+    #[default]
+    Missing,
+    Index(u32),
+}
+
+impl NameIndex {
+    pub const fn get(self) -> Option<u32> {
+        match self {
+            NameIndex::Missing => None,
+            NameIndex::Index(index) => Some(index),
+        }
+    }
+}
+
+impl std::fmt::Display for NameIndex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NameIndex::Missing => f.write_str("-1"),
+            NameIndex::Index(index) => index.fmt(f),
+        }
+    }
+}
+
+pub const MISSING_SOURCE: SourceIndex = SourceIndex::Missing;
+pub const MISSING_NAME: NameIndex = NameIndex::Missing;
 
 // generator.go:26
 #[derive(Clone, Debug, Default)]
@@ -27,19 +74,19 @@ pub struct Generator {
     names: Vec<String>,
     name_to_name_index_map: FxHashMap<String, NameIndex>,
     mappings: String,
-    last_generated_line: i32,
+    last_generated_line: u32,
     last_generated_character: UTF16Offset,
-    last_source_index: SourceIndex,
-    last_source_line: i32,
+    last_source_index: u32,
+    last_source_line: u32,
     last_source_character: UTF16Offset,
-    last_name_index: NameIndex,
+    last_name_index: u32,
     has_last: bool,
-    pending_generated_line: i32,
+    pending_generated_line: u32,
     pending_generated_character: UTF16Offset,
-    pending_source_index: SourceIndex,
-    pending_source_line: i32,
+    pending_source_index: u32,
+    pending_source_line: u32,
     pending_source_character: UTF16Offset,
-    pending_name_index: NameIndex,
+    pending_name_index: u32,
     has_pending: bool,
     has_pending_source: bool,
     has_pending_name: bool,
@@ -47,9 +94,9 @@ pub struct Generator {
 
 // generator.go:56
 // `sources_content` is Go's `[]*string` with `omitzero`: None (nil) is omitted from the JSON, Some(vec![]) is not.
-#[derive(Clone, Debug, PartialEq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct RawSourceMap {
-    pub version: i32,
+    pub version: u32,
     pub file: String,
     pub source_root: String,
     pub sources: Vec<String>,
@@ -66,8 +113,14 @@ impl RawSourceMap {
         m.insert("version".to_string(), Value::Number(self.version as f64));
         m.insert("file".to_string(), Value::String(self.file.clone()));
         m.insert("sourceRoot".to_string(), Value::String(self.source_root.clone()));
-        m.insert("sources".to_string(), Value::Array(self.sources.iter().map(|s| Value::String(s.clone())).collect()));
-        m.insert("names".to_string(), Value::Array(self.names.iter().map(|s| Value::String(s.clone())).collect()));
+        m.insert(
+            "sources".to_string(),
+            Value::Array(self.sources.iter().map(|s| Value::String(s.clone())).collect()),
+        );
+        m.insert(
+            "names".to_string(),
+            Value::Array(self.names.iter().map(|s| Value::String(s.clone())).collect()),
+        );
         m.insert("mappings".to_string(), Value::String(self.mappings.clone()));
         if let Some(sources_content) = &self.sources_content {
             m.insert(
@@ -91,14 +144,18 @@ impl RawSourceMap {
             match v {
                 Value::Null => Ok(String::new()),
                 Value::String(s) => Ok(s.clone()),
-                _ => Err(format!("json: cannot unmarshal into Go RawSourceMap.{name} of type string")),
+                _ => Err(format!(
+                    "json: cannot unmarshal into Go RawSourceMap.{name} of type string"
+                )),
             }
         }
         fn strings(name: &str, v: &Value) -> Result<Vec<String>, String> {
             match v {
                 Value::Null => Ok(Vec::new()),
                 Value::Array(items) => items.iter().map(|item| string(name, item)).collect(),
-                _ => Err(format!("json: cannot unmarshal into Go RawSourceMap.{name} of type []string")),
+                _ => Err(format!(
+                    "json: cannot unmarshal into Go RawSourceMap.{name} of type []string"
+                )),
             }
         }
 
@@ -106,14 +163,17 @@ impl RawSourceMap {
         let members = match value {
             Value::Null => return Ok(sm),
             Value::Object(members) => members,
-            _ => return Err("json: cannot unmarshal into Go value of type sourcemap.RawSourceMap".to_string()),
+            _ => {
+                return Err("json: cannot unmarshal into Go value of type sourcemap.RawSourceMap"
+                    .to_string());
+            }
         };
         for (name, v) in members {
             match name.as_str() {
                 "version" => {
                     sm.version = match v {
                         Value::Null => 0,
-                        Value::Number(n) if n.fract() == 0.0 && *n >= i64::MIN as f64 && *n <= i64::MAX as f64 => *n as i64 as i32,
+                        Value::Number(n) if n.fract() == 0.0 && *n >= 0.0 && *n <= u32::MAX as f64 => *n as u32,
                         _ => return Err("json: cannot unmarshal into Go RawSourceMap.version of type int".to_string()),
                     }
                 }
@@ -146,7 +206,12 @@ impl RawSourceMap {
 }
 
 // generator.go:66
-pub fn new_generator(file: &str, source_root: &str, sources_directory_path: &str, options: ComparePathsOptions) -> Generator {
+pub fn new_generator(
+    file: &str,
+    source_root: &str,
+    sources_directory_path: &str,
+    options: ComparePathsOptions,
+) -> Generator {
     Generator {
         file: file.to_string(),
         source_root: source_root.to_string(),
@@ -173,61 +238,72 @@ impl Generator {
             &self.path_options,
         );
 
-        let source_index = match self.source_to_source_index_map.get(&source) {
-            Some(&source_index) => source_index,
-            None => {
-                let source_index = self.sources.len() as SourceIndex;
-                self.sources.push(source.clone());
+        match self.source_to_source_index_map.entry(source) {
+            Entry::Occupied(entry) => *entry.get(),
+            Entry::Vacant(entry) => {
+                let source_index = SourceIndex::Index(self.sources.len() as u32);
+                self.sources.push(entry.key().clone());
                 self.raw_sources.push(file_name.to_string());
-                self.source_to_source_index_map.insert(source, source_index);
+                entry.insert(source_index);
                 source_index
             }
-        };
-
-        source_index
+        }
     }
 
     // generator.go:101
     // Sets the content for a source
-    pub fn set_source_content(&mut self, source_index: SourceIndex, content: &str) -> Result<(), String> {
-        if source_index < 0 || source_index as usize >= self.sources.len() {
+    pub fn set_source_content(
+        &mut self,
+        source_index: SourceIndex,
+        content: &str,
+    ) -> Result<(), String> {
+        let Some(source_index) = source_index.get().map(|index| index as usize) else {
+            return Err("sourceIndex is out of range".to_string());
+        };
+        if source_index >= self.sources.len() {
             return Err("sourceIndex is out of range".to_string());
         }
         let sources_content = self.sources_content.get_or_insert_with(Vec::new);
-        while sources_content.len() <= source_index as usize {
-            sources_content.push(None);
-        }
-        sources_content[source_index as usize] = Some(content.to_string());
+        sources_content.resize(sources_content.len().max(source_index + 1), None);
+        sources_content[source_index] = Some(content.to_string());
         Ok(())
     }
 
     // generator.go:113
     // Declares a name in the source map, returning the index of the name
     pub fn add_name(&mut self, name: &str) -> NameIndex {
-        match self.name_to_name_index_map.get(name) {
-            Some(&name_index) => name_index,
-            None => {
-                let name_index = self.names.len() as NameIndex;
-                self.names.push(name.to_string());
-                self.name_to_name_index_map.insert(name.to_string(), name_index);
-                name_index
-            }
+        if let Some(&name_index) = self.name_to_name_index_map.get(name) {
+            name_index
+        } else {
+            let name_index = NameIndex::Index(self.names.len() as u32);
+            self.names.push(name.to_string());
+            self.name_to_name_index_map.insert(name.to_string(), name_index);
+            name_index
         }
     }
 
     // generator.go:126
-    fn is_new_generated_position(&self, generated_line: i32, generated_character: UTF16Offset) -> bool {
-        !self.has_pending || self.pending_generated_line != generated_line || self.pending_generated_character != generated_character
+    fn is_new_generated_position(
+        &self,
+        generated_line: u32,
+        generated_character: UTF16Offset,
+    ) -> bool {
+        !self.has_pending
+            || self.pending_generated_line != generated_line
+            || self.pending_generated_character != generated_character
     }
 
     // generator.go:132
-    fn is_backtracking_source_position(&self, source_index: SourceIndex, source_line: i32, source_character: UTF16Offset) -> bool {
-        source_index != SOURCE_INDEX_NOT_SET
-            && source_line != NOT_SET
-            && source_character != NOT_SET_UTF16
-            && self.pending_source_index == source_index
+    fn is_backtracking_source_position(
+        &self,
+        source_index: u32,
+        source_line: u32,
+        source_character: UTF16Offset,
+    ) -> bool {
+        self.pending_source_index == source_index
             && (self.pending_source_line > source_line
-                || self.pending_source_line == source_line && self.pending_source_character > source_character)
+                || self.pending_source_line == source_line
+                    && self.pending_source_character > source_character)
     }
 
     // generator.go:141
@@ -248,9 +324,9 @@ impl Generator {
     }
 
     // generator.go:155
-    fn append_base64_vlq(&mut self, in_value: i32) {
+    fn append_base64_vlq(&mut self, in_value: i64) {
         // Go's int is 64-bit.
-        let mut in_value = in_value as i64;
+        let mut in_value = in_value;
         // Add a new least significant bit that has the sign of the value.
         // if negative number the least significant bit that gets added to the number has value 1
         // else least significant bit value that gets added is 0
@@ -270,7 +346,7 @@ impl Generator {
                 // There are still more digits to decode, set the msb (6th bit)
                 current_digit |= 32;
             }
-            self.append_mapping_char_code(base64_format_encode(current_digit as i32));
+            self.append_mapping_char_code(base64_format_encode(current_digit as u8));
             if in_value <= 0 {
                 break;
             }
@@ -296,10 +372,11 @@ impl Generator {
             // Only need to set this once
             self.last_generated_character = 0;
         } else {
-            if self.last_generated_line != self.pending_generated_line {
-                // panic rather than error as an invariant has been violated
-                panic!("generatedLine cannot backtrack");
-            }
+            // panic rather than error as an invariant has been violated
+            assert!(
+                self.last_generated_line == self.pending_generated_line,
+                "generatedLine cannot backtrack"
+            );
             // Emit comma to separate the entry
             if self.has_last {
                 self.append_mapping_char_code(',');
@@ -307,25 +384,35 @@ impl Generator {
         }
 
         // 1. Relative generated character
-        self.append_base64_vlq(self.pending_generated_character.wrapping_sub(self.last_generated_character));
+        self.append_base64_vlq(
+            i64::from(self.pending_generated_character) - i64::from(self.last_generated_character),
+        );
         self.last_generated_character = self.pending_generated_character;
 
         if self.has_pending_source {
             // 2. Relative sourceIndex
-            self.append_base64_vlq(self.pending_source_index - self.last_source_index);
+            self.append_base64_vlq(
+                i64::from(self.pending_source_index) - i64::from(self.last_source_index),
+            );
             self.last_source_index = self.pending_source_index;
 
             // 3. Relative source line
-            self.append_base64_vlq(self.pending_source_line - self.last_source_line);
+            self.append_base64_vlq(
+                i64::from(self.pending_source_line) - i64::from(self.last_source_line),
+            );
             self.last_source_line = self.pending_source_line;
 
             // 4. Relative source character
-            self.append_base64_vlq(self.pending_source_character.wrapping_sub(self.last_source_character));
+            self.append_base64_vlq(
+                i64::from(self.pending_source_character) - i64::from(self.last_source_character),
+            );
             self.last_source_character = self.pending_source_character;
 
             if self.has_pending_name {
                 // 5. Relative nameIndex
-                self.append_base64_vlq(self.pending_name_index - self.last_name_index);
+                self.append_base64_vlq(
+                    i64::from(self.pending_name_index) - i64::from(self.last_name_index),
+                );
                 self.last_name_index = self.pending_name_index;
             }
         }
@@ -336,15 +423,14 @@ impl Generator {
     // generator.go:237
     fn add_mapping(
         &mut self,
-        generated_line: i32,
+        generated_line: u32,
         generated_character: UTF16Offset,
-        source_index: SourceIndex,
-        source_line: i32,
-        source_character: UTF16Offset,
-        name_index: NameIndex,
+        source: Option<(u32, u32, UTF16Offset, Option<u32>)>,
     ) {
         if self.is_new_generated_position(generated_line, generated_character)
-            || self.is_backtracking_source_position(source_index, source_line, source_character)
+            || source.is_some_and(|(source_index, source_line, source_character, _)| {
+                self.is_backtracking_source_position(source_index, source_line, source_character)
+            })
         {
             self.commit_pending_mapping();
             self.pending_generated_line = generated_line;
@@ -354,12 +440,12 @@ impl Generator {
             self.has_pending = true;
         }
 
-        if source_index != SOURCE_INDEX_NOT_SET && source_line != NOT_SET && source_character != NOT_SET_UTF16 {
+        if let Some((source_index, source_line, source_character, name_index)) = source {
             self.pending_source_index = source_index;
             self.pending_source_line = source_line;
             self.pending_source_character = source_character;
             self.has_pending_source = true;
-            if name_index != NAME_INDEX_NOT_SET {
+            if let Some(name_index) = name_index {
                 self.pending_name_index = name_index;
                 self.has_pending_name = true;
             }
@@ -368,14 +454,15 @@ impl Generator {
 
     // generator.go:261
     // Adds a mapping without source information
-    pub fn add_generated_mapping(&mut self, generated_line: i32, generated_character: UTF16Offset) -> Result<(), String> {
+    pub fn add_generated_mapping(
+        &mut self,
+        generated_line: u32,
+        generated_character: UTF16Offset,
+    ) -> Result<(), String> {
         if generated_line < self.pending_generated_line {
             return Err("generatedLine cannot backtrack".to_string());
         }
-        if generated_character < 0 {
-            return Err("generatedCharacter cannot be negative".to_string());
-        }
-        self.add_mapping(generated_line, generated_character, SOURCE_INDEX_NOT_SET, NOT_SET /*sourceLine*/, NOT_SET_UTF16 /*sourceCharacter*/, NAME_INDEX_NOT_SET);
+        self.add_mapping(generated_line, generated_character, None);
         self.has_pending_source = false;
         self.has_pending_name = false;
         Ok(())
@@ -385,31 +472,32 @@ impl Generator {
     // Adds a mapping with source information
     pub fn add_source_mapping(
         &mut self,
-        generated_line: i32,
+        generated_line: u32,
         generated_character: UTF16Offset,
         source_index: SourceIndex,
-        source_line: i32,
+        source_line: u32,
         source_character: UTF16Offset,
     ) -> Result<(), String> {
         if generated_line < self.pending_generated_line {
             return Err("generatedLine cannot backtrack".to_string());
         }
-        if generated_character < 0 {
-            return Err("generatedCharacter cannot be negative".to_string());
-        }
-        if source_index < 0 || source_index as usize >= self.sources.len() {
+        let Some(source_index) = source_index.get() else {
+            return Err("sourceIndex is out of range".to_string());
+        };
+        if source_index as usize >= self.sources.len() {
             return Err("sourceIndex is out of range".to_string());
         }
-        if source_line < 0 {
-            return Err("sourceLine cannot be negative".to_string());
-        }
-        if source_character < 0 {
-            return Err("sourceCharacter cannot be negative".to_string());
-        }
-        if self.has_pending && !self.is_new_generated_position(generated_line, generated_character) && !self.has_pending_source {
+        if self.has_pending
+            && !self.is_new_generated_position(generated_line, generated_character)
+            && !self.has_pending_source
+        {
             return Ok(());
         }
-        self.add_mapping(generated_line, generated_character, source_index, source_line, source_character, NAME_INDEX_NOT_SET);
+        self.add_mapping(
+            generated_line,
+            generated_character,
+            Some((source_index, source_line, source_character, None)),
+        );
         Ok(())
     }
 
@@ -417,35 +505,39 @@ impl Generator {
     // Adds a mapping with source and name information
     pub fn add_named_source_mapping(
         &mut self,
-        generated_line: i32,
+        generated_line: u32,
         generated_character: UTF16Offset,
         source_index: SourceIndex,
-        source_line: i32,
+        source_line: u32,
         source_character: UTF16Offset,
         name_index: NameIndex,
     ) -> Result<(), String> {
         if generated_line < self.pending_generated_line {
             return Err("generatedLine cannot backtrack".to_string());
         }
-        if generated_character < 0 {
-            return Err("generatedCharacter cannot be negative".to_string());
-        }
-        if source_index < 0 || source_index as usize >= self.sources.len() {
+        let Some(source_index) = source_index.get() else {
+            return Err("sourceIndex is out of range".to_string());
+        };
+        if source_index as usize >= self.sources.len() {
             return Err("sourceIndex is out of range".to_string());
         }
-        if source_line < 0 {
-            return Err("sourceLine cannot be negative".to_string());
-        }
-        if source_character < 0 {
-            return Err("sourceCharacter cannot be negative".to_string());
-        }
-        if name_index < 0 || name_index as usize >= self.names.len() {
+        let Some(name_index) = name_index.get() else {
+            return Err("nameIndex is out of range".to_string());
+        };
+        if name_index as usize >= self.names.len() {
             return Err("nameIndex is out of range".to_string());
         }
-        if self.has_pending && !self.is_new_generated_position(generated_line, generated_character) && !self.has_pending_source {
+        if self.has_pending
+            && !self.is_new_generated_position(generated_line, generated_character)
+            && !self.has_pending_source
+        {
             return Ok(());
         }
-        self.add_mapping(generated_line, generated_character, source_index, source_line, source_character, name_index);
+        self.add_mapping(
+            generated_line,
+            generated_character,
+            Some((source_index, source_line, source_character, Some(name_index))),
+        );
         Ok(())
     }
 
@@ -475,7 +567,7 @@ impl Generator {
     // generator.go:356
     // Gets the string representation of the source map
     pub fn string(&mut self) -> String {
-        String::from_utf8(self.bytes()).unwrap()
+        tsrs_core::utf8::into_string(self.bytes()).unwrap()
     }
 
     // generator.go:360
@@ -492,24 +584,26 @@ impl Generator {
 // Go encoding/base64 StdEncoding (padded) encoder.
 fn base64_std_encode(out: &mut String, data: &[u8]) {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    for chunk in data.chunks(3) {
+    out.extend(data.chunks(3).flat_map(|chunk| {
         let b0 = chunk[0] as u32;
         let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
         let b2 = chunk.get(2).copied().unwrap_or(0) as u32;
         let v = (b0 << 16) | (b1 << 8) | b2;
-        out.push(ALPHABET[(v >> 18 & 0x3f) as usize] as char);
-        out.push(ALPHABET[(v >> 12 & 0x3f) as usize] as char);
-        out.push(if chunk.len() > 1 { ALPHABET[(v >> 6 & 0x3f) as usize] as char } else { '=' });
-        out.push(if chunk.len() > 2 { ALPHABET[(v & 0x3f) as usize] as char } else { '=' });
-    }
+        [
+            ALPHABET[((v >> 18) & 0x3f) as usize] as char,
+            ALPHABET[((v >> 12) & 0x3f) as usize] as char,
+            if chunk.len() > 1 { ALPHABET[((v >> 6) & 0x3f) as usize] as char } else { '=' },
+            if chunk.len() > 2 { ALPHABET[(v & 0x3f) as usize] as char } else { '=' },
+        ]
+    }));
 }
 
 // generator.go:372
-pub(crate) fn base64_format_encode(value: i32) -> char {
+pub(crate) fn base64_format_encode(value: u8) -> char {
     match value {
-        0..=25 => (b'A' + value as u8) as char,
-        26..=51 => (b'a' + value as u8 - 26) as char,
-        52..=61 => (b'0' + value as u8 - 52) as char,
+        0..=25 => (b'A' + value) as char,
+        26..=51 => (b'a' + value - 26) as char,
+        52..=61 => (b'0' + value - 52) as char,
         62 => '+',
         63 => '/',
         _ => panic!("not a base64 value"),

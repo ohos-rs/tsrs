@@ -2,7 +2,7 @@
 
 use std::fmt::Display;
 
-use bitflags::bitflags;
+use crate::direct_bitflags as bitflags;
 
 use crate::*;
 
@@ -123,12 +123,14 @@ pub struct Relation {
 /// `RelationComparisonResult` uses bits 0-5.
 pub(crate) const RELATION_RESULT_BITS: u32 = 6;
 
-/// A relation cache key. Go hashes the key bytes of `getRelationKey` to a 128-bit `CacheHashKey`. Almost every key
-/// (99.7% on the private monorepo) is the simple form `'s', source id, target id, intersection state`, which is a triple of
+/// A relation cache key.
+///
+/// Go hashes the key bytes of `getRelationKey` to a 128-bit `CacheHashKey`. Almost every key (99.7% on the
+/// private monorepo) is the simple form `'s', source id, target id, intersection state`, which is a triple of
 /// small numbers: when the ids are below 2^28 and the state below 2^2 it is packed into 58 bits as `Pair` (an
 /// injective mapping, no hashing). Every other key (the `'g'` form of generic references, larger ids) is
-/// `Hashed`, the same 128-bit hash Go uses. The two forms never denote the same Go key, since the simple form only
-/// ever produces `Pair` keys when it fits and Go's `'s'` and `'g'` byte strings differ.
+/// `Hashed`, the same 128-bit hash Go uses. The two forms never denote the same Go key, since the simple form
+/// only ever produces `Pair` keys when it fits and Go's `'s'` and `'g'` byte strings differ.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum RelationKey {
     Pair(u64),
@@ -140,9 +142,14 @@ impl RelationKey {
 
     /// The `Pair` form of the simple key, if the triple fits.
     #[inline]
-    pub(crate) fn pair(source: TypeId, target: TypeId, intersection_state: IntersectionState) -> Option<RelationKey> {
+    pub(crate) fn pair(
+        source: TypeId,
+        target: TypeId,
+        intersection_state: IntersectionState,
+    ) -> Option<RelationKey> {
         let (s, t, i) = (source.0 as u64, target.0 as u64, intersection_state.bits() as u64);
-        (s >> Self::ID_BITS == 0 && t >> Self::ID_BITS == 0 && i >> 2 == 0).then(|| RelationKey::Pair(s | t << Self::ID_BITS | i << (2 * Self::ID_BITS)))
+        (s >> Self::ID_BITS == 0 && t >> Self::ID_BITS == 0 && i >> 2 == 0)
+            .then_some(RelationKey::Pair(s | (t << Self::ID_BITS) | (i << (2 * Self::ID_BITS))))
     }
 }
 
@@ -172,9 +179,9 @@ pub struct TypeDiscriminator<'a> {
 
 /// Go `Discriminator` interface. Implementations delegate to the inherent (generated) methods.
 pub trait Discriminator {
-    fn len(&mut self, c: &mut Checker) -> i32; // Number of discriminant properties
-    fn name(&mut self, c: &mut Checker, index: i32) -> String; // Property name of index-th discriminator
-    fn matches(&mut self, c: &mut Checker, index: i32, t: P<Type>) -> bool; // True if index-th discriminator matches the given type
+    fn len(&mut self, c: &mut Checker) -> usize; // Number of discriminant properties
+    fn name(&mut self, c: &mut Checker, index: usize) -> &'static str; // Property name of index-th discriminator
+    fn matches(&mut self, c: &mut Checker, index: usize, t: P<Type>) -> bool; // True if index-th discriminator matches the given type
 }
 
 #[derive(Default, Clone)]
@@ -190,6 +197,19 @@ pub struct ErrorChain {
     pub args: Vec<String>,
 }
 
+/// An entry of a relater's source or target stack: the type, and the recursion identity of its recursion identity
+/// target once a deeply-nested test has computed it (`is_deeply_nested_on_stack`; 0 before).
+pub struct RelaterStackEntry {
+    pub t: P<Type>,
+    pub(crate) identity_key: Cell<u64>,
+}
+
+impl RelaterStackEntry {
+    pub(crate) fn new(t: P<Type>) -> RelaterStackEntry {
+        RelaterStackEntry { t, identity_key: Cell::new(0) }
+    }
+}
+
 /// Go `Relater`. An arena handle (`P<Relater>`, pooled through `Checker::free_relater` like Go); the `c` field is
 /// dropped and every method takes `c: &mut Checker`.
 #[derive(Default)]
@@ -200,14 +220,16 @@ pub struct Relater {
     pub related_info: RefCell<Vec<P<Diagnostic>>>,
     pub maybe_keys: RefCell<Vec<RelationKey>>,
     pub maybe_keys_set: RefCell<Set<RelationKey>>,
-    pub source_stack: RefCell<Vec<P<Type>>>,
-    pub target_stack: RefCell<Vec<P<Type>>>,
-    pub maybe_count: Cell<i32>,
-    pub source_depth: Cell<i32>,
-    pub target_depth: Cell<i32>,
+    pub source_stack: RefCell<Vec<RelaterStackEntry>>,
+    pub target_stack: RefCell<Vec<RelaterStackEntry>>,
+    pub maybe_count: Cell<usize>,
+    pub source_depth: Cell<usize>,
+    pub target_depth: Cell<usize>,
     pub expanding_flags: Cell<ExpandingFlags>,
     pub overflow: Cell<bool>,
-    pub relation_count: Cell<i32>,
+    // A remaining budget, not a collection length: Go keeps decrementing it
+    // below zero while unwinding a relation and treats every value <= 0 as exhausted.
+    pub relation_count: Cell<isize>,
     pub next: Cell<Option<P<Relater>>>,
     // The `'static` comparers that wrap this relater's methods (Go passes the method values). They capture only the
     // relater handle (and the intersection state), so they are built once per relater instead of leaking one per call.
@@ -229,7 +251,9 @@ impl Relater {
             return f;
         }
         let r = self.as_p();
-        let f = type_comparer(move |c, s, t, report_errors| r.is_related_to_worker(c, s, t, report_errors));
+        let f = type_comparer(move |c, s, t, report_errors| {
+            r.is_related_to_worker(c, s, t, report_errors)
+        });
         self.worker_comparer.set(Some(f));
         f
     }
@@ -238,25 +262,25 @@ impl Relater {
 // The Go `Discriminator` implementations; the method bodies are the inherent methods in relater_1.rs / checker_15.rs.
 
 impl Discriminator for TypeDiscriminator<'_> {
-    fn len(&mut self, c: &mut Checker) -> i32 {
+    fn len(&mut self, c: &mut Checker) -> usize {
         TypeDiscriminator::len(self, c)
     }
-    fn name(&mut self, c: &mut Checker, index: i32) -> String {
+    fn name(&mut self, c: &mut Checker, index: usize) -> &'static str {
         TypeDiscriminator::name(self, c, index)
     }
-    fn matches(&mut self, c: &mut Checker, index: i32, t: P<Type>) -> bool {
+    fn matches(&mut self, c: &mut Checker, index: usize, t: P<Type>) -> bool {
         TypeDiscriminator::matches(self, c, index, t)
     }
 }
 
 impl Discriminator for ObjectLiteralDiscriminator {
-    fn len(&mut self, c: &mut Checker) -> i32 {
+    fn len(&mut self, c: &mut Checker) -> usize {
         ObjectLiteralDiscriminator::len(self, c)
     }
-    fn name(&mut self, c: &mut Checker, index: i32) -> String {
+    fn name(&mut self, c: &mut Checker, index: usize) -> &'static str {
         ObjectLiteralDiscriminator::name(self, c, index)
     }
-    fn matches(&mut self, c: &mut Checker, index: i32, t: P<Type>) -> bool {
+    fn matches(&mut self, c: &mut Checker, index: usize, t: P<Type>) -> bool {
         ObjectLiteralDiscriminator::matches(self, c, index, t)
     }
 }

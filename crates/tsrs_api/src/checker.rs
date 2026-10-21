@@ -29,16 +29,19 @@ use std::sync::Arc;
 
 use tsrs_ast::{Node, SourceFile};
 use tsrs_compiler::Program;
+use tsrs_core::P;
 use tsrs_core::context::Context;
 use tsrs_core::json::Value;
-use tsrs_core::P;
 use tsrs_project::Snapshot;
 
-pub use host::{CachedFileScope, CheckerError, CheckerErrorKind, CheckerHost, CheckerResponse, CheckerResult, SnapshotScope};
+pub use host::{
+    CachedFileScope, CheckerError, CheckerErrorKind, CheckerHost, CheckerResponse, CheckerResult,
+    SnapshotScope,
+};
 pub use registry::CheckerRegistry;
 
 use crate::handler::{ApiError, ApiResult, ErrorKind, Response};
-use crate::session::{json_response, Session};
+use crate::session::{Session, json_response};
 use crate::wire::Obj;
 
 /// Per-snapshot checker registries (Go `snapshotData.symbolRegistry` + `projectRegistries`). Core
@@ -56,7 +59,11 @@ impl Drop for CheckerSnapshotState {
 }
 
 /// Core entry point. `None` only for methods this lane does not recognize.
-pub(crate) fn handle(session: &Session, method: &str, params: &Value) -> Option<ApiResult<Response>> {
+pub(crate) fn handle(
+    session: &Session,
+    method: &str,
+    params: &Value,
+) -> Option<ApiResult<Response>> {
     let host = SessionHost { session };
     let result = dispatch::handle(&host, method, params)?;
     Some(result.map_err(to_api_error).and_then(|response| match response {
@@ -75,7 +82,9 @@ fn to_api_error(e: CheckerError) -> ApiError {
     match e.kind {
         CheckerErrorKind::InvalidRequest => ApiError::invalid_request(e.message),
         CheckerErrorKind::Client => ApiError::client(e.message),
-        CheckerErrorKind::Unsupported => ApiError { kind: ErrorKind::Unsupported, message: e.message },
+        CheckerErrorKind::Unsupported => {
+            ApiError { kind: ErrorKind::Unsupported, message: e.message }
+        }
         CheckerErrorKind::Internal => ApiError::internal(e.message),
     }
 }
@@ -85,7 +94,9 @@ fn from_api_error(e: ApiError) -> CheckerError {
         ErrorKind::InvalidRequest => CheckerError::invalid(e.message),
         ErrorKind::ClientError => CheckerError::client(e.message),
         ErrorKind::Unsupported => CheckerError::unsupported(e.message),
-        ErrorKind::Internal => CheckerError { kind: CheckerErrorKind::Internal, message: e.message },
+        ErrorKind::Internal => {
+            CheckerError { kind: CheckerErrorKind::Internal, message: e.message }
+        }
     }
 }
 
@@ -109,7 +120,10 @@ impl CheckerHost for SessionHost<'_> {
 
     fn acquire_cached_source_file(&self, descriptor: &Value) -> CheckerResult<CachedFileScope> {
         let lease = self.session.acquire_cached_source_file(descriptor).map_err(from_api_error)?;
-        Ok(CachedFileScope { file: lease.source_file(), release: Some(Box::new(move || lease.release())) })
+        Ok(CachedFileScope {
+            file: lease.source_file(),
+            release: Some(Box::new(move || lease.release())),
+        })
     }
 
     fn source_file_descriptor(&self, file: P<SourceFile>) -> CheckerResult<Value> {
@@ -124,18 +138,34 @@ impl CheckerHost for SessionHost<'_> {
         self.session.node_handle_from(node).map_err(from_api_error)
     }
 
-    fn resolve_node_handle(&self, program: &'static Program, handle: &str) -> CheckerResult<P<Node>> {
+    fn resolve_node_handle(
+        &self,
+        program: &'static Program,
+        handle: &str,
+    ) -> CheckerResult<P<Node>> {
         self.session.resolve_node_handle(program, handle).map_err(from_api_error)
     }
 
     fn encode_node(&self, node: P<Node>) -> CheckerResult<Vec<u8>> {
-        self.session.encode_node(node).map_err(from_api_error)
+        Session::encode_node(node).map_err(from_api_error)
     }
 
-    fn clone_snapshot_with_auto_imports(&self, base: &Snapshot, file_name: &str) -> CheckerResult<Arc<Snapshot>> {
-        let file_name = tsrs_core::tspath::get_normalized_absolute_path(file_name, self.session.current_directory());
+    fn clone_snapshot_with_auto_imports(
+        &self,
+        base: &Snapshot,
+        file_name: &str,
+    ) -> CheckerResult<Arc<Snapshot>> {
+        let file_name = tsrs_core::tspath::get_normalized_absolute_path(
+            file_name,
+            self.session.current_directory(),
+        );
         let uri = tsrs_ls::lsconv::file_name_to_document_uri(&file_name);
-        Ok(self.session.snapshot_host.clone_snapshot_with_auto_imports(&self.context(), base, &uri, None))
+        Ok(self.session.snapshot_host.clone_snapshot_with_auto_imports(
+            &self.context(),
+            base,
+            &uri,
+            None,
+        ))
     }
 }
 
@@ -143,25 +173,24 @@ impl CheckerHost for SessionHost<'_> {
 fn base64_encode(data: &[u8]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
-    for chunk in data.chunks(3) {
+    out.extend(data.chunks(3).flat_map(|chunk| {
         let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
-        let n = (b[0] as u32) << 16 | (b[1] as u32) << 8 | b[2] as u32;
-        for i in 0..4 {
-            if i <= chunk.len() {
-                out.push(ALPHABET[(n >> (18 - 6 * i) & 63) as usize] as char);
-            } else {
-                out.push('=');
-            }
-        }
-    }
+        let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
+        [
+            ALPHABET[((n >> 18) & 63) as usize] as char,
+            ALPHABET[((n >> 12) & 63) as usize] as char,
+            if chunk.len() > 1 { ALPHABET[((n >> 6) & 63) as usize] as char } else { '=' },
+            if chunk.len() > 2 { ALPHABET[(n & 63) as usize] as char } else { '=' },
+        ]
+    }));
     out
 }
 
 #[cfg(test)]
-mod tests;
-#[cfg(test)]
-mod session_tests;
-#[cfg(test)]
 mod lease_tests;
 #[cfg(test)]
 mod lifetime_tests;
+#[cfg(test)]
+mod session_tests;
+#[cfg(test)]
+mod tests;

@@ -31,9 +31,7 @@ pub(crate) fn whitespace_reg_exp_split(text: &str) -> Vec<&str> {
     while i < bytes.len() {
         if is_go_space(bytes[i] as char) {
             result.push(&text[beg..i]);
-            while i < bytes.len() && is_go_space(bytes[i] as char) {
-                i += 1;
-            }
+            i += (i..bytes.len()).take_while(|&index| is_go_space(bytes[index] as char)).count();
             beg = i;
         } else {
             i += 1;
@@ -126,12 +124,16 @@ pub(crate) fn range_reg_exp_find_string_submatch(text: &str) -> Option<[&str; 3]
             return Some([text, &text[..1], operand]);
         }
     }
-    for op in ["<=", ">="] {
+    if let Some(result) = (["<=", ">="]).into_iter().find_map(|op| {
         if let Some(after) = text.strip_prefix(op) {
             if let Some(operand) = rest(after) {
-                return Some([text, &text[..2], operand]);
+                return Some(Some([text, &text[..2], operand]));
             }
         }
+
+        None
+    }) {
+        return result;
     }
     rest(text).map(|operand| [text, "", operand])
 }
@@ -148,6 +150,10 @@ pub(crate) struct VersionComparator {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
+#[expect(
+    clippy::enum_variant_names,
+    reason = "The variant names preserve the upstream Go enum names."
+)]
 pub(crate) enum ComparatorOperator {
     RangeLessThan,
     RangeLessThanEqual,
@@ -223,32 +229,21 @@ pub(crate) fn test_disjunction(alternatives: &[Vec<VersionComparator>], version:
         return true;
     }
 
-    for alternative in alternatives {
-        if test_alternative(alternative, version) {
-            return true;
-        }
-    }
-
-    false
+    alternatives.iter().any(|alternative| test_alternative(alternative, version))
 }
 
 pub(crate) fn test_alternative(alternative: &[VersionComparator], version: &Version) -> bool {
-    for comparator in alternative {
-        if !test_comparator(comparator, version) {
-            return false;
-        }
-    }
-    true
+    !(alternative.iter().any(|comparator| !test_comparator(comparator, version)))
 }
 
 pub(crate) fn test_comparator(comparator: &VersionComparator, version: &Version) -> bool {
     let cmp = version.compare(&comparator.operand);
     match comparator.operator {
-        ComparatorOperator::RangeLessThan => cmp < 0,
-        ComparatorOperator::RangeLessThanEqual => cmp <= 0,
-        ComparatorOperator::RangeEqual => cmp == 0,
-        ComparatorOperator::RangeGreaterThanEqual => cmp >= 0,
-        ComparatorOperator::RangeGreaterThan => cmp > 0,
+        ComparatorOperator::RangeLessThan => cmp == std::cmp::Ordering::Less,
+        ComparatorOperator::RangeLessThanEqual => cmp != std::cmp::Ordering::Greater,
+        ComparatorOperator::RangeEqual => cmp == std::cmp::Ordering::Equal,
+        ComparatorOperator::RangeGreaterThanEqual => cmp != std::cmp::Ordering::Less,
+        ComparatorOperator::RangeGreaterThan => cmp == std::cmp::Ordering::Greater,
     }
 }
 
@@ -271,21 +266,24 @@ pub(crate) fn parse_alternatives(text: &str) -> Option<Vec<Vec<VersionComparator
         let mut comparators = Vec::new();
 
         if let Some(hyphen_match) = hyphen_reg_exp_find_string_submatch(r) {
-            if let Some(parsed_comparators) = parse_hyphen(hyphen_match[1], hyphen_match[2]) {
+            {
+                let parsed_comparators = parse_hyphen(hyphen_match[1], hyphen_match[2])?;
                 comparators.extend(parsed_comparators);
-            } else {
-                return None;
             }
         } else {
-            for simple in whitespace_reg_exp_split(r) {
-                let m = range_reg_exp_find_string_submatch(simple.trim())?;
+            comparators = whitespace_reg_exp_split(r).into_iter().try_fold(
+                comparators,
+                |mut comparators, simple| {
+                    let m = range_reg_exp_find_string_submatch(simple.trim())?;
 
-                if let Some(parsed_comparators) = parse_comparator(m[1], m[2]) {
-                    comparators.extend(parsed_comparators);
-                } else {
-                    return None;
-                }
-            }
+                    {
+                        let parsed_comparators = parse_comparator(m[1], m[2])?;
+                        comparators.extend(parsed_comparators);
+                    }
+
+                    Some(comparators)
+                },
+            )?;
         }
 
         alternatives.push(comparators);
@@ -414,7 +412,10 @@ pub(crate) fn parse_comparator(op: &str, text: &str) -> Option<Vec<VersionCompar
     if !is_wildcard(&result.major_str) {
         match op {
             "~" => {
-                let first = VersionComparator { operator: ComparatorOperator::RangeGreaterThanEqual, operand: result.version.clone() };
+                let first = VersionComparator {
+                    operator: ComparatorOperator::RangeGreaterThanEqual,
+                    operand: result.version.clone(),
+                };
 
                 let second_version = if is_wildcard(&result.minor_str) {
                     result.version.increment_major()
@@ -422,11 +423,17 @@ pub(crate) fn parse_comparator(op: &str, text: &str) -> Option<Vec<VersionCompar
                     result.version.increment_minor()
                 };
 
-                let second = VersionComparator { operator: ComparatorOperator::RangeLessThan, operand: second_version };
+                let second = VersionComparator {
+                    operator: ComparatorOperator::RangeLessThan,
+                    operand: second_version,
+                };
                 comparators_result = vec![first, second];
             }
             "^" => {
-                let first = VersionComparator { operator: ComparatorOperator::RangeGreaterThanEqual, operand: result.version.clone() };
+                let first = VersionComparator {
+                    operator: ComparatorOperator::RangeGreaterThanEqual,
+                    operand: result.version.clone(),
+                };
 
                 let second_version = if result.version.major > 0 || is_wildcard(&result.minor_str) {
                     result.version.increment_major()
@@ -435,11 +442,18 @@ pub(crate) fn parse_comparator(op: &str, text: &str) -> Option<Vec<VersionCompar
                 } else {
                     result.version.increment_patch()
                 };
-                let second = VersionComparator { operator: ComparatorOperator::RangeLessThan, operand: second_version };
+                let second = VersionComparator {
+                    operator: ComparatorOperator::RangeLessThan,
+                    operand: second_version,
+                };
                 comparators_result = vec![first, second];
             }
             "<" | ">=" => {
-                let operator = if op == "<" { ComparatorOperator::RangeLessThan } else { ComparatorOperator::RangeGreaterThanEqual };
+                let operator = if op == "<" {
+                    ComparatorOperator::RangeLessThan
+                } else {
+                    ComparatorOperator::RangeGreaterThanEqual
+                };
                 let mut version = result.version.clone();
                 if is_wildcard(&result.minor_str) || is_wildcard(&result.patch_str) {
                     version.prerelease = vec!["0".to_string()];
@@ -447,7 +461,11 @@ pub(crate) fn parse_comparator(op: &str, text: &str) -> Option<Vec<VersionCompar
                 comparators_result = vec![VersionComparator { operator, operand: version }];
             }
             "<=" | ">" => {
-                let mut operator = if op == "<=" { ComparatorOperator::RangeLessThanEqual } else { ComparatorOperator::RangeGreaterThan };
+                let mut operator = if op == "<=" {
+                    ComparatorOperator::RangeLessThanEqual
+                } else {
+                    ComparatorOperator::RangeGreaterThan
+                };
                 let mut version = result.version.clone();
                 if is_wildcard(&result.minor_str) {
                     if operator == ComparatorOperator::RangeLessThanEqual {
@@ -489,11 +507,18 @@ pub(crate) fn parse_comparator(op: &str, text: &str) -> Option<Vec<VersionCompar
                     second_version.prerelease = vec!["0".to_string()];
 
                     comparators_result = vec![
-                        VersionComparator { operator: ComparatorOperator::RangeGreaterThanEqual, operand: first_version },
-                        VersionComparator { operator: ComparatorOperator::RangeLessThan, operand: second_version },
+                        VersionComparator {
+                            operator: ComparatorOperator::RangeGreaterThanEqual,
+                            operand: first_version,
+                        },
+                        VersionComparator {
+                            operator: ComparatorOperator::RangeLessThan,
+                            operand: second_version,
+                        },
                     ];
                 } else {
-                    comparators_result = vec![VersionComparator { operator, operand: result.version }];
+                    comparators_result =
+                        vec![VersionComparator { operator, operand: result.version }];
                 }
             }
             _ => panic!("Unexpected operator: {op}"),
@@ -501,7 +526,10 @@ pub(crate) fn parse_comparator(op: &str, text: &str) -> Option<Vec<VersionCompar
     } else if op == "<" || op == ">" {
         comparators_result = vec![
             // < 0.0.0-0
-            VersionComparator { operator: ComparatorOperator::RangeLessThan, operand: VERSION_ZERO.clone() },
+            VersionComparator {
+                operator: ComparatorOperator::RangeLessThan,
+                operand: VERSION_ZERO.clone(),
+            },
         ];
     }
 
@@ -518,7 +546,8 @@ mod tests {
 
     #[test]
     fn test_wildcards_have_same_string() {
-        let major_wildcard_strings = ["", "*", "*.*", "*.*.*", "x", "x.x", "x.x.x", "X", "X.X", "X.X.X"];
+        let major_wildcard_strings =
+            ["", "*", "*.*", "*.*.*", "x", "x.x", "x.x.x", "X", "X.X", "X.X.X"];
 
         let minor_wildcard_strings = ["1", "1.*", "1.*.*", "1.x", "1.x.x", "1.X", "1.X.X"];
 
@@ -526,10 +555,22 @@ mod tests {
 
         let mixed_case_wildcard_strings = ["x", "X", "*", "x.X.x", "X.x.*"];
 
-        assert_all_version_ranges_have_identical_strings("majorWildcardStrings", &major_wildcard_strings);
-        assert_all_version_ranges_have_identical_strings("minorWildcardStrings", &minor_wildcard_strings);
-        assert_all_version_ranges_have_identical_strings("patchWildcardStrings", &patch_wildcard_strings);
-        assert_all_version_ranges_have_identical_strings("mixedCaseWildcardStrings", &mixed_case_wildcard_strings);
+        assert_all_version_ranges_have_identical_strings(
+            "majorWildcardStrings",
+            &major_wildcard_strings,
+        );
+        assert_all_version_ranges_have_identical_strings(
+            "minorWildcardStrings",
+            &minor_wildcard_strings,
+        );
+        assert_all_version_ranges_have_identical_strings(
+            "patchWildcardStrings",
+            &patch_wildcard_strings,
+        );
+        assert_all_version_ranges_have_identical_strings(
+            "mixedCaseWildcardStrings",
+            &mixed_case_wildcard_strings,
+        );
     }
 
     fn assert_all_version_ranges_have_identical_strings(name: &str, strs: &[&str]) {
@@ -542,6 +583,7 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Copy)]
     struct TestGoodBad<'a> {
         good: &'a [&'a str],
         bad: &'a [&'a str],
@@ -551,40 +593,79 @@ mod tests {
     fn test_version_ranges() {
         assert_ranges_good_bad(
             "1",
-            TestGoodBad { good: &["1.0.0", "1.9.9", "1.0.0-pre", "1.0.0+build"], bad: &["0.0.0", "2.0.0", "0.0.0-pre", "0.0.0+build"] },
+            TestGoodBad {
+                good: &["1.0.0", "1.9.9", "1.0.0-pre", "1.0.0+build"],
+                bad: &["0.0.0", "2.0.0", "0.0.0-pre", "0.0.0+build"],
+            },
         );
         assert_ranges_good_bad(
             "1.2",
-            TestGoodBad { good: &["1.2.0", "1.2.9", "1.2.0-pre", "1.2.0+build"], bad: &["1.1.0", "1.3.0", "1.1.0-pre", "1.1.0+build"] },
+            TestGoodBad {
+                good: &["1.2.0", "1.2.9", "1.2.0-pre", "1.2.0+build"],
+                bad: &["1.1.0", "1.3.0", "1.1.0-pre", "1.1.0+build"],
+            },
         );
 
         assert_ranges_good_bad(
             "1.2.3",
-            TestGoodBad { good: &["1.2.3", "1.2.3+build"], bad: &["1.2.2", "1.2.4", "1.2.2-pre", "1.2.2+build", "1.2.3-pre"] },
+            TestGoodBad {
+                good: &["1.2.3", "1.2.3+build"],
+                bad: &["1.2.2", "1.2.4", "1.2.2-pre", "1.2.2+build", "1.2.3-pre"],
+            },
         );
 
         assert_ranges_good_bad(
             "1.2.3-pre",
             TestGoodBad {
                 good: &["1.2.3-pre", "1.2.3-pre+build.stuff"],
-                bad: &["1.2.3", "1.2.3-pre.0", "1.2.3-pre.9", "1.2.3-pre.0+build", "1.2.3-pre.9+build", "1.2.3+build", "1.2.4"],
+                bad: &[
+                    "1.2.3",
+                    "1.2.3-pre.0",
+                    "1.2.3-pre.9",
+                    "1.2.3-pre.0+build",
+                    "1.2.3-pre.9+build",
+                    "1.2.3+build",
+                    "1.2.4",
+                ],
             },
         );
 
-        assert_ranges_good_bad("<3.8.0", TestGoodBad { good: &["3.6", "3.7"], bad: &["3.8", "3.9", "4.0"] });
+        assert_ranges_good_bad(
+            "<3.8.0",
+            TestGoodBad { good: &["3.6", "3.7"], bad: &["3.8", "3.9", "4.0"] },
+        );
 
-        assert_ranges_good_bad("<=3.8.0", TestGoodBad { good: &["3.6", "3.7", "3.8"], bad: &["3.9", "4.0"] });
-        assert_ranges_good_bad(">3.8.0", TestGoodBad { good: &["3.9", "4.0"], bad: &["3.6", "3.7", "3.8"] });
-        assert_ranges_good_bad(">=3.8.0", TestGoodBad { good: &["3.8", "3.9", "4.0"], bad: &["3.6", "3.7"] });
+        assert_ranges_good_bad(
+            "<=3.8.0",
+            TestGoodBad { good: &["3.6", "3.7", "3.8"], bad: &["3.9", "4.0"] },
+        );
+        assert_ranges_good_bad(
+            ">3.8.0",
+            TestGoodBad { good: &["3.9", "4.0"], bad: &["3.6", "3.7", "3.8"] },
+        );
+        assert_ranges_good_bad(
+            ">=3.8.0",
+            TestGoodBad { good: &["3.8", "3.9", "4.0"], bad: &["3.6", "3.7"] },
+        );
 
-        assert_ranges_good_bad("<3.8.0-0", TestGoodBad { good: &["3.6", "3.7"], bad: &["3.8", "3.9", "4.0"] });
+        assert_ranges_good_bad(
+            "<3.8.0-0",
+            TestGoodBad { good: &["3.6", "3.7"], bad: &["3.8", "3.9", "4.0"] },
+        );
 
-        assert_ranges_good_bad("<=3.8.0-0", TestGoodBad { good: &["3.6", "3.7"], bad: &["3.8", "3.9", "4.0"] });
+        assert_ranges_good_bad(
+            "<=3.8.0-0",
+            TestGoodBad { good: &["3.6", "3.7"], bad: &["3.8", "3.9", "4.0"] },
+        );
 
         // Big numbers in prerelease strings.
         let lotsa_ones = "1".repeat(320);
         let range = format!(">=1.2.3-1{lotsa_ones}");
-        let good = [format!("1.2.3-1{lotsa_ones}"), format!("1.2.3-11{lotsa_ones}.1"), format!("1.2.3-1{lotsa_ones}.1+build")];
+        let good = [
+            format!("1.2.3-1{lotsa_ones}"),
+            format!("1.2.3-11{lotsa_ones}.1"),
+            format!("1.2.3-1{lotsa_ones}.1+build"),
+        ];
         let bad = [format!("1.2.3-{lotsa_ones}.1+build")];
         let good: Vec<&str> = good.iter().map(String::as_str).collect();
         let bad: Vec<&str> = bad.iter().map(String::as_str).collect();
@@ -593,7 +674,7 @@ mod tests {
 
     #[test]
     fn test_comparators_of_version_ranges() {
-        let comparators_tests: &[(&str, &str, bool)] = &[
+        const COMPARATORS_TESTS: &[(&str, &str, bool)] = &[
             // empty (matches everything)
             ("", "2.0.0", true),
             ("", "2.0.0-0", true),
@@ -605,7 +686,6 @@ mod tests {
             ("", "1.0.0-0", true),
             ("", "0.0.0", true),
             ("", "0.0.0-0", true),
-
             // wildcard major (matches everything)
             ("*", "2.0.0", true),
             ("*", "2.0.0-0", true),
@@ -617,7 +697,6 @@ mod tests {
             ("*", "1.0.0-0", true),
             ("*", "0.0.0", true),
             ("*", "0.0.0-0", true),
-
             // wildcard minor
             ("1", "2.0.0", false),
             ("1", "2.0.0-0", false),
@@ -629,7 +708,6 @@ mod tests {
             ("1", "1.0.0-0", true),
             ("1", "0.0.0", false),
             ("1", "0.0.0-0", false),
-
             // wildcard patch
             ("1.1", "2.0.0", false),
             ("1.1", "2.0.0-0", false),
@@ -651,7 +729,6 @@ mod tests {
             ("1.0", "1.0.0-0", true),
             ("1.0", "0.0.0", false),
             ("1.0", "0.0.0-0", false),
-
             // exact
             ("1.1.0", "2.0.0", false),
             ("1.1.0", "2.0.0-0", false),
@@ -711,7 +788,6 @@ mod tests {
             ("1.0.0-0", "1.0.1-0", false),
             ("1.0.0-0", "1.0.0", false),
             ("1.0.0-0", "1.0.0-0", true),
-
             // = wildcard major (matches everything)
             ("=*", "2.0.0", true),
             ("=*", "2.0.0-0", true),
@@ -723,7 +799,6 @@ mod tests {
             ("=*", "1.0.0-0", true),
             ("=*", "0.0.0", true),
             ("=*", "0.0.0-0", true),
-
             // = wildcard minor
             ("=1", "2.0.0", false),
             ("=1", "2.0.0-0", false),
@@ -735,7 +810,6 @@ mod tests {
             ("=1", "1.0.0-0", true),
             ("=1", "0.0.0", false),
             ("=1", "0.0.0-0", false),
-
             // = wildcard patch
             ("=1.1", "2.0.0", false),
             ("=1.1", "2.0.0-0", false),
@@ -757,7 +831,6 @@ mod tests {
             ("=1.0", "1.0.0-0", true),
             ("=1.0", "0.0.0", false),
             ("=1.0", "0.0.0-0", false),
-
             // = exact
             ("=1.1.0", "2.0.0", false),
             ("=1.1.0", "2.0.0-0", false),
@@ -817,7 +890,6 @@ mod tests {
             ("=1.0.0-0", "1.0.1-0", false),
             ("=1.0.0-0", "1.0.0", false),
             ("=1.0.0-0", "1.0.0-0", true),
-
             // > wildcard major (matches nothing)
             (">*", "2.0.0", false),
             (">*", "2.0.0-0", false),
@@ -829,7 +901,6 @@ mod tests {
             (">*", "1.0.0-0", false),
             (">*", "0.0.0", false),
             (">*", "0.0.0-0", false),
-
             // > wildcard minor
             (">1", "2.0.0", true),
             (">1", "2.0.0-0", true),
@@ -841,7 +912,6 @@ mod tests {
             (">1", "1.0.0-0", false),
             (">1", "0.0.0", false),
             (">1", "0.0.0-0", false),
-
             // > wildcard patch
             (">1.1", "2.0.0", true),
             (">1.1", "2.0.0-0", true),
@@ -863,7 +933,6 @@ mod tests {
             (">1.0", "1.0.0-0", false),
             (">1.0", "0.0.0", false),
             (">1.0", "0.0.0-0", false),
-
             // > exact
             (">1.1.0", "2.0.0", true),
             (">1.1.0", "2.0.0-0", true),
@@ -925,7 +994,6 @@ mod tests {
             (">1.0.0-0", "1.0.0-0", false),
             (">1.0.0-0", "0.0.0", false),
             (">1.0.0-0", "0.0.0-0", false),
-
             // >= wildcard major (matches everything)
             (">=*", "2.0.0", true),
             (">=*", "2.0.0-0", true),
@@ -937,7 +1005,6 @@ mod tests {
             (">=*", "1.0.0-0", true),
             (">=*", "0.0.0", true),
             (">=*", "0.0.0-0", true),
-
             // >= wildcard minor
             (">=1", "2.0.0", true),
             (">=1", "2.0.0-0", true),
@@ -949,7 +1016,6 @@ mod tests {
             (">=1", "1.0.0-0", true),
             (">=1", "0.0.0", false),
             (">=1", "0.0.0-0", false),
-
             // >= wildcard patch
             (">=1.1", "2.0.0", true),
             (">=1.1", "2.0.0-0", true),
@@ -971,7 +1037,6 @@ mod tests {
             (">=1.0", "1.0.0-0", true),
             (">=1.0", "0.0.0", false),
             (">=1.0", "0.0.0-0", false),
-
             // >= exact
             (">=1.1.0", "2.0.0", true),
             (">=1.1.0", "2.0.0-0", true),
@@ -1033,7 +1098,6 @@ mod tests {
             (">=1.0.0-0", "1.0.0-0", true),
             (">=1.0.0-0", "0.0.0", false),
             (">=1.0.0-0", "0.0.0-0", false),
-
             // < wildcard major (matches nothing)
             ("<*", "2.0.0", false),
             ("<*", "2.0.0-0", false),
@@ -1045,7 +1109,6 @@ mod tests {
             ("<*", "1.0.0-0", false),
             ("<*", "0.0.0", false),
             ("<*", "0.0.0-0", false),
-
             // < wildcard minor
             ("<1", "2.0.0", false),
             ("<1", "2.0.0-0", false),
@@ -1057,7 +1120,6 @@ mod tests {
             ("<1", "1.0.0-0", false),
             ("<1", "0.0.0", true),
             ("<1", "0.0.0-0", true),
-
             // < wildcard patch
             ("<1.1", "2.0.0", false),
             ("<1.1", "2.0.0-0", false),
@@ -1079,7 +1141,6 @@ mod tests {
             ("<1.0", "1.0.0-0", false),
             ("<1.0", "0.0.0", true),
             ("<1.0", "0.0.0-0", true),
-
             // < exact
             ("<1.1.0", "2.0.0", false),
             ("<1.1.0", "2.0.0-0", false),
@@ -1141,7 +1202,6 @@ mod tests {
             ("<1.0.0-0", "1.0.0-0", false),
             ("<1.0.0-0", "0.0.0", true),
             ("<1.0.0-0", "0.0.0-0", true),
-
             // <= wildcard major (matches everything)
             ("<=*", "2.0.0", true),
             ("<=*", "2.0.0-0", true),
@@ -1153,7 +1213,6 @@ mod tests {
             ("<=*", "1.0.0-0", true),
             ("<=*", "0.0.0", true),
             ("<=*", "0.0.0-0", true),
-
             // <= wildcard minor
             ("<=1", "2.0.0", false),
             ("<=1", "2.0.0-0", false),
@@ -1165,7 +1224,6 @@ mod tests {
             ("<=1", "1.0.0-0", true),
             ("<=1", "0.0.0", true),
             ("<=1", "0.0.0-0", true),
-
             // <= wildcard patch
             ("<=1.1", "2.0.0", false),
             ("<=1.1", "2.0.0-0", false),
@@ -1187,7 +1245,6 @@ mod tests {
             ("<=1.0", "1.0.0-0", true),
             ("<=1.0", "0.0.0", true),
             ("<=1.0", "0.0.0-0", true),
-
             // <= exact
             ("<=1.1.0", "2.0.0", false),
             ("<=1.1.0", "2.0.0-0", false),
@@ -1249,14 +1306,13 @@ mod tests {
             ("<=1.0.0-0", "1.0.0-0", true),
             ("<=1.0.0-0", "0.0.0", true),
             ("<=1.0.0-0", "0.0.0-0", true),
-
             // https://github.com/microsoft/TypeScript/issues/50909
             (">4.8", "4.9.0-beta", true),
             (">=4.9", "4.9.0-beta", true),
             ("<4.9", "4.9.0-beta", false),
             ("<=4.8", "4.9.0-beta", false),
         ];
-        for &(range_text, version_text, expected) in comparators_tests {
+        for &(range_text, version_text, expected) in COMPARATORS_TESTS {
             assert_range_test("comparators", range_text, version_text, expected);
         }
     }
@@ -1380,22 +1436,32 @@ mod tests {
     }
 
     fn assert_ranges_good_bad(version_range_string: &str, tests: TestGoodBad) {
-        let version_range = try_parse_version_range(version_range_string).unwrap_or_else(|| panic!("{version_range_string}"));
+        let version_range = try_parse_version_range(version_range_string)
+            .unwrap_or_else(|| panic!("{version_range_string}"));
         for good in tests.good {
             let v = try_parse_version(good).unwrap();
-            assert!(version_range.test(&v), "{good} should be matched by range {version_range_string}");
+            assert!(
+                version_range.test(&v),
+                "{good} should be matched by range {version_range_string}"
+            );
         }
 
         for bad in tests.bad {
             let v = try_parse_version(bad).unwrap();
-            assert!(!version_range.test(&v), "{bad} should not be matched by range {version_range_string}");
+            assert!(
+                !version_range.test(&v),
+                "{bad} should not be matched by range {version_range_string}"
+            );
         }
     }
 
     fn assert_range_test(name: &str, range_text: &str, version_text: &str, in_range: bool) {
-        let test_name = format!("{name} (version {version_text} in range {range_text}) == {in_range}");
-        let version_range = try_parse_version_range(range_text).unwrap_or_else(|| panic!("{test_name}"));
-        let version = try_parse_version(version_text).unwrap_or_else(|e| panic!("{test_name}: {e}"));
+        let test_name =
+            format!("{name} (version {version_text} in range {range_text}) == {in_range}");
+        let version_range =
+            try_parse_version_range(range_text).unwrap_or_else(|| panic!("{test_name}"));
+        let version =
+            try_parse_version(version_text).unwrap_or_else(|e| panic!("{test_name}: {e}"));
         assert_eq!(version_range.test(&version), in_range, "{test_name}");
     }
 }

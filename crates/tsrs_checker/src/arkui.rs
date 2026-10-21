@@ -4,7 +4,7 @@ impl Checker {
     // OH checker/arkui.go: SDK system components and configured render contexts.
     pub(crate) fn is_system_ets_component(&mut self, node: P<Node>) -> bool {
         if !ast::is_identifier(node)
-            || !tsrs_core::ets_contains(&self.compiler_options.ets.components, node.text())
+            || !tsrs_core::ets_contains(self.compiler_options.ets.components.as_deref(), node.text())
             || self.compiler_options.ets_loader_path.is_empty()
         {
             return false;
@@ -25,7 +25,7 @@ impl Checker {
         while let Some(current) = container {
             if ast::is_method_declaration(current)
                 && ast::get_containing_class(current).is_some_and(ast::is_struct_declaration)
-                && current.name().is_some_and(|name| tsrs_core::ets_contains(&options.method, name.text()))
+                && current.name().is_some_and(|name| tsrs_core::ets_contains(options.method.as_deref(), name.text()))
             {
                 return true;
             }
@@ -49,7 +49,7 @@ impl Checker {
         }
         self.check_class_like_declaration(node);
         if let Some(name) = node.name() {
-            if ast::is_identifier(name) && tsrs_core::ets_contains(&self.compiler_options.ets.components, name.text()) {
+            if ast::is_identifier(name) && tsrs_core::ets_contains(self.compiler_options.ets.components.as_deref(), name.text()) {
                 self.error(
                     Some(name),
                     &diagnostics::The_struct_name_cannot_contain_reserved_tag_name_Colon_0,
@@ -61,7 +61,7 @@ impl Checker {
         self.register_for_unused_identifiers_check(node);
     }
 
-    pub(crate) fn get_arkui_style_property(&mut self, node: P<Node>, left: P<Node>, right: P<Node>) -> Option<P<Symbol>> {
+    pub(crate) fn get_arkui_style_property(&self, node: P<Node>, left: P<Node>, right: P<Node>) -> Option<P<Symbol>> {
         let mut root = ets_component_root(left);
         if root.is_none() {
             let mut ancestor = Some(node);
@@ -106,7 +106,7 @@ impl Checker {
                         continue;
                     }
                     let name = call.expression().unwrap().text();
-                    if (tsrs_core::ets_contains(&options.extend.decorator, name)
+                    if (tsrs_core::ets_contains(options.extend.decorator.as_deref(), name)
                         || options.extend.decorator.is_none() && "Extend".contains(name))
                         && ast::is_identifier(root.expression().unwrap())
                         && call.arguments()[0].text() == root.expression().unwrap().text()

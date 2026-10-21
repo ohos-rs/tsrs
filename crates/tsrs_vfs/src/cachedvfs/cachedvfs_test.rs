@@ -78,7 +78,11 @@ fn create_mock_fs() -> FSMock {
 
 // Runs the call sequence shared by the cached-method tests and checks the
 // underlying call count after each step.
-fn check_cached(call: impl Fn(&FS<&FSMock>, &str), count: impl Fn(&Calls) -> usize, other_path: &str) {
+fn check_cached(
+    call: impl Fn(&FS<&FSMock>, &str),
+    count: impl Fn(&Calls) -> usize,
+    other_path: &str,
+) {
     let underlying = create_mock_fs();
     let cached = from(&underlying);
     let n = || count(&underlying.calls.lock().unwrap());
@@ -157,7 +161,7 @@ fn test_directory_exists() {
 fn test_file_exists() {
     check_cached(
         |c, p| {
-            c.file_exists(&format!("{}/file.txt", p));
+            c.file_exists(&format!("{p}/file.txt"));
         },
         |c| c.file_exists.len(),
         "/other/path",

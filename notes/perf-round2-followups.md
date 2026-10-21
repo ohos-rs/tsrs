@@ -31,6 +31,13 @@ is type-checked, CI runs on pull requests, and the workspace is at 0.11.0. The i
   indexed-access chain (see "Measured and rejected"). Not tried: redesigning `getResolvedBaseConstraint` to resolve
   each type from the top (the note's option 3).
 
+## Pending review
+
+- **Resolver path scratch buffers** (`notes/perf-resolver-allocations.md`): reuse thread-local strings for
+  extension and module-suffix probes. Allocation calls fall 3.7% / 12.7% in the corresponding probes;
+  historical whole-project instructions fall 0.09% on xstate / 0.04% on VS Code. Retained for owner review;
+  below the usual landing thresholds, with deterministic Linux verification outstanding.
+
 ## Not verified yet
 
 - **The 32 GiB reservation outside macOS and GitHub runners: verified.** main ran in a Linux x86-64 dev sandbox
@@ -64,6 +71,11 @@ is type-checked, CI runs on pull requests, and the workspace is at 0.11.0. The i
   a `panic = "abort"` conformance job as guards.
 
 ## Ideas, by expected value
+
+- **ThinLTO for the PGO instrumented build: measured** (notes/perf-pgo.md, 2026-10-10): recording build
+   186.4 -> 116.5 s (-37.5%) on 18-core macOS arm64, paired PGO comparison pipeline -18.5%; no consistent runtime
+   regression observed, identical test outcomes. Use a rustc flag in RUSTFLAGS; changing Cargo's profile changes
+   the symbols PGO matches. The final build uses fat LTO.
 
 0. **BOLT for the Linux release binaries: landed** (notes/perf-build-level.md): -2.7% / -3.2% / -1.0% wall at 1 / 4 /
    8 checkers on the 38k-file codebase, -3.4% to -4.0% on vscode, identical output and gates. `release.yml` and
@@ -115,7 +127,62 @@ is type-checked, CI runs on pull requests, and the workspace is at 0.11.0. The i
   - No change in memory or `--extendedDiagnostics` counters.
   - Diagnostics byte-identical, and shadow mode clean on the suite, fourslash and four corpora.
 
+## Shared type graph under `--maxMemory` (#281, landed, opt-in)
+
+A seed checker checks a sample of files and its region is frozen; checkers become forks that read it and keep their
+own writes in overlays. Under `--maxMemory` a retired checker is replaced by a fork, so it starts with the seed's graph
+instead of rebuilding it, and the pool starts at once instead of waiting for the seed. In main behind the
+`tsrs_core/shared-graph` Cargo feature and `TSRS_SHARED_GRAPH=1` (npm binaries do not include it); the seed is 5% of the checking
+work under `--maxMemory` (`TSRS_SHARED_GRAPH_SEED_PERCENT`). On a large private monorepo at 8 checkers and
+`--maxMemory 8G`: 28.6 s and 2.76 T instructions against 32.9 s and 3.17 T without the seed, at the same peak (8.7-8.8 GB);
+diagnostics identical (notes/spike-shared-graph.md sections 10-10.2). The feature compiled in costs +3.6% instructions
+with the switch off, which is why it is not in the default build.
+
 ## Measured and rejected (do not redo)
+
+- Unicode normalization library cleanup ([rust-stdlib-normalization.md](rust-stdlib-normalization.md)), applied at
+  the user's request: unicode-normalization 0.1.25 matches the existing Unicode 17 NFD output. Five-pair Mac
+  screening on Compiler/Compiler-Unions: -0.017% to -0.011% single instructions, -0.198% to -0.056% default RSS;
+  no qualifying performance win. Keep category tables (the evaluated crate uses Unicode 16), simple casing and
+  byte decoding; direct Rust character properties change their contracts. Keep the existing stream-safe omission.
+
+- Unconditionally refreshing loaded interface diagnostic caches to cover canonical report-placement changes:
+  Stagehand warm default 136 -> 402 ms, 9.14 -> 26.50 G instructions, 424 -> 879 MiB. Persisting a versioned
+  signature of the actual virtual check slots restores reuse while preserving export-alias invalidation
+  (`notes/fix-history-dependent-diagnostics.md`).
+
+- Combined symbol lookup/insert APIs from PR 338 (`notes/perf-lookup-insert.md`): the repository-wide refactor
+  originally increased single-threaded instructions on 11/17 public projects. Restoring the existing symbol-table
+  lookup/insertion paths and binder/checker symbol creation, while keeping ordinary map-entry cleanup, leaves all
+  17 below main by 0.021-0.312% on Linux. The grouped reversion is measured; individual helper costs are not.
+  Revisit only with an isolated implementation that preserves hit-path cost. No standalone speed or memory win.
+
+- Within the flow-walk skip (notes/perf-flow-skip-unnarrowed.md, landed): computing an assertion candidate's effects
+  signature in the skip check instead of peeking at it (overflowed the 512 MB stack on vscode: it starts resolution
+  chains no walk does); condition aliases matched by name across the whole file (+41% bind instructions on vscode);
+  root names instead of reference paths (a quarter of the skips).
+
+- Unconditional loop-to-iterator conversion (PR 317; notes/perf-iterator-regressions.md): the original patch added
+  0.036–0.339% single-threaded instructions on 16 of 17 public projects, and restarting the formatter's diagnostic
+  search on each call made it quadratic. Keep advancing cursors and measured hot loops; iterator syntax alone
+  does not establish equivalent cost. The final direct comparison is below the pre-refactor baseline on all 17
+  projects; retain the template iterators whose isolated reversion regressed counts. The note records the causes,
+  rejected candidates, allocation checks and instruction/RSS measurements.
+
+- Derived equality and ordering on the niche-encoded `TextPos` enum (PR #306;
+  notes/perf-unsigned-positions.md): extra discriminant handling despite a four-byte encoding that already supplies
+  equality and order. The first correctness-clean refactor added 0.086% to 1.002% instructions on all seventeen
+  projects. Direct encoded-key comparisons and cold failure paths remove that work without enlarging the positions.
+  Keep the relation budget signed as in Go: its negative exhausted states otherwise require saturation on every
+  recorded relation. The owner explicitly requested eliminating even instruction increases below the usual gate.
+  The subsequent internal-integer audit is also owner-requested domain cleanup, not a speedup claim: unsigned
+  masks and bounded IDs retain their width, emitter indexes avoid narrowing, and genuine signed domains remain
+  signed. Before/after validation and measurements are recorded in the same note.
+
+- Requested rust decimal number parsing ([rust-decimal-parsing.md](rust-decimal-parsing.md)): production code -121 lines. Five-pair
+  Mac screening on Compiler/Compiler-Unions: -0.004% to +0.002% single instructions,
+  +0.260% to +0.881% default RSS. Retained for maintenance at the user's request, with no
+  qualifying performance gain or speedup claim.
 
 - A tracing collector for checker data instead of retiring checkers (notes/mem-checker-gc.md): weak identity caches
   free 3% more than garbage at mid-run; even an upper bound with member tables and value-symbol links weak frees
@@ -126,14 +193,40 @@ is type-checked, CI runs on pull requests, and the workspace is at 0.11.0. The i
   +4% wall from page faults); retiring a checker only where its queue changes directory (no instruction change: the
   rebuild cost is the shared base); staggering the checkers' first retirements (-2.2% peak for +2.5% instructions).
 
+- Oxc-style numeric-literal conversion and `dragonbox_ecma` formatting (notes/perf-oxc-numbers.md): exact against
+  pinned Go and all existing passing baselines, but no qualifying gain on Compiler, Compiler-Unions, xstate-main
+  or vscode. After repeating a noisy xstate sample, the largest median paired single-threaded instruction
+  reduction was 0.030%; default peak RSS was essentially unchanged (macOS screening, not the Linux instruction
+  gate). Initially rejected on performance, then both changes were applied at the owner's explicit request on
+  2026-10-11 to align with Oxc. These measurements do not establish a speedup; further performance work needs a
+  numeric-conversion profile or new evidence of a qualifying whole-project improvement.
+  The requested math/big library cleanup ([rust-stdlib-bigint.md](rust-stdlib-bigint.md)) keeps Go's parsing and
+  256-bit intermediate rounding around num-bigint. Five-pair Mac screening on Compiler/Compiler-Unions is
+  -0.001% to +0.007% single instructions and -0.188% to -0.139% default RSS; retained for maintenance, no speedup claim.
+- Oxc-style lightweight VFS metadata (`notes/perf-vfs-lightweight-metadata.md`): existence probes avoid constructing
+  full `FileInfo`, and Linux requests only `STATX_TYPE`. Public macOS screening was -0.27% single-threaded
+  instructions and -0.49% default peak RSS, below the landing bars; the Linux-only path still needs a pinned
+  `bench/count.py` run before this can be reconsidered.
+- Scanner arena string construction (notes/perf-scanner-arena-builder.md, branch
+  `codex/scanner-arena-builder`): exact over 14,013 public VS Code files; parse-only heap allocations -16.8% and
+  instructions about -0.10%. Abandoned growth buffers add about 0.7 MB of arena requests without changing chunk
+  capacity or peak RSS. Retained as an independent implementation at the owner's request on 2026-10-11. Repeat
+  only with an exact-sizing or composed design that can move whole-project instructions or peak memory across a
+  landing threshold.
+- Scanner numeric-cache identity avoidance (notes/perf-scanner-numeric-identity.md, branch
+  `codex/scanner-numeric-identity`): exact over 14,013 public VS Code files; parse-only heap allocations -13.5%
+  and instructions about -0.24%, with full-front-end peak RSS unchanged within 0.10%. Retained as an independent
+  implementation at the owner's request on 2026-10-11. Repeat only with a workload or composition that can move
+  whole-project instructions or peak memory across a landing threshold.
 - `mimalloc-safe 0.1.67` without its `v3` feature (notes/perf-mimalloc-safe.md): the crate defaults to mimalloc
   v2.5.2, unlike the old crate's v3.3.2 default. On macOS arm64 it adds about 4% peak RSS at the default checker
   count on both Compiler workloads; the prior large Linux measurement found v2 3-14% slower. The migration enables
   `v3` (v3.5.2): on pinned vscode it is within +0.03-0.15% instructions and -0.69% to +0.46% peak RSS of the old
   build; the smaller Compiler workloads agree.
-- A type graph shared by the checker threads (frozen seed + forks; notes/spike-shared-graph.md, branch
-  `spike/shared-graph`, PR 213 closed): exact in every run, but on the 16-vCPU Linux runner peak -5..-10% at the
-  default 8 checkers for +6..+18% wall (the serial seed). Revisit only with a seed that costs no wall time.
+- A type graph shared by the checker threads as the default (frozen seed + forks; notes/spike-shared-graph.md
+  sections 1-9, PR 213 closed): exact in every run, but on the 16-vCPU Linux runner peak -5..-10% at the default 8
+  checkers for +6..+18% wall, because every checker waits for the serial seed. Under `--maxMemory` it landed (see
+  "Shared type graph under `--maxMemory`" above); without a memory target the wait is still there.
 - Checking a relation without reporting first and elaborating only on failure, as bun does
   (notes/perf-excalidraw-typefest.md): on excalidraw at 9 checkers, 501 -> 379 MiB after the deferred constraint
   check. Not exact against tsgo: the reporting run spends more of the relation complexity budget, so a
@@ -155,6 +248,11 @@ is type-checked, CI runs on pull requests, and the workspace is at 0.11.0. The i
   2 MiB of RSS per checker.
 - A full unit-property index for relations to union targets: would skip at most 0.2% (big) / 0.1% (vscode) of failed
   constituent checks; the rest is inherent (notes/perf-checker-algorithms.md, "Row 1").
+
+- Requested shared go-style quoting and integer parsing ([shared-go-compat.md](shared-go-compat.md)): production code -102 lines. Five-pair
+  Mac screening on Compiler/Compiler-Unions: -0.002% to +0.001% single instructions,
+  -0.056% to +0.339% default RSS. Retained for maintenance at the user's request, with no
+  qualifying performance gain or speedup claim.
 
 - Zero-based handles on Linux (reserve 4-32 GiB so a dereference needs no base; #62, notes/mem-pointer-compression.md
   section 6 on that branch): removes 2.7 of the 7 points of extra x86 instructions, but wall and cycles move by 0.7-2%,
@@ -251,6 +349,11 @@ is type-checked, CI runs on pull requests, and the workspace is at 0.11.0. The i
   lines. Untried: a wider header filter, a bulk freeze without per-table headers.
 - Flat flow-label edges and one shared Start per file for bodyless signatures (reverted in #191;
   notes/mem-flow-compaction.md): -5.4 MB arena on vscode (0.2% of peak), for 377 lines of binder representation.
+- Requested rust string helper cleanup ([rust-string-helpers.md](rust-string-helpers.md)): production code -53 lines. Five-pair
+  Mac screening on Compiler/Compiler-Unions: -0.002% to +0.008% single instructions,
+  +0.056% to +0.458% default RSS. Retained for maintenance at the user's request, with no
+  qualifying performance gain or speedup claim.
+
 - A global identifier interner (notes/mem-round2.md, step 9): -0.075 GiB single-threaded on the private monorepo, but
   parse time +9% (2.6 -> 2.8 s) and +1% instructions from hashing and locking 7.8M identifiers; `PackedStr` took -0.10
   GiB with no table.
@@ -293,6 +396,10 @@ is type-checked, CI runs on pull requests, and the workspace is at 0.11.0. The i
   measurement, so variances differ between checkers (cal-diy at 4 checkers printed 40 more lines).
 - Go's pdqsort (`goslices::sort_func`) for every symbol sort, not only where `compareSymbols` is not total
   (notes/lsp-memfix.md): +1.4% instructions on webpack (16.56 vs 16.33 G).
+  The requested Rust slice cleanup ([rust-stdlib-slices.md](rust-stdlib-slices.md)) changes only ordinary
+  stable sorts and position searches with pure comparators. Five-pair Mac screening on Compiler/Compiler-Unions:
+  -0.006% to -0.002% single instructions, -0.179% to +0.261% default RSS. No qualifying gain; retain Go's sort/search
+  where comparison history, non-total comparators or equal-element order is observable.
 - Flow memo variants (notes/perf-flow-union-inference.md): no checkpoints (webpack -4.4% instead of -7.0%, xstate
   +0.50% instead of +0.13%), table sizes 2^10 to 2^16 (no measurable difference), the per-node step out of line
   (+0.17% on xstate).
@@ -312,6 +419,17 @@ is type-checked, CI runs on pull requests, and the workspace is at 0.11.0. The i
 - Longest-processing-time-first queues and thieves taking from the front (notes/perf-checker-64.md): LPT +3.6% CPU at
   16 checkers and 5-8% more CPU per checker with the static assignment (program order keeps caches warm), README bench
   -2%; front-stealing +4-6% CPU at every count.
+- Assignment and stealing knobs on the 38k-file codebase at 8 checkers (notes/perf-icount-assign.md): the module
+  affinity's mu, gamma and passes away from 1 / 0.5 / 3 (+0.3% to +2.2% exact, static assignment); stealing runs of
+  files instead of single files, picking the victim by module overlap with the thief (+0.6% to +1.0%), and a gate on
+  starting a new victim late (only trims the extra stealing a loaded machine causes): within the noise. One thief per
+  queue at a time cost vscode 2% of check time at 9-12 checkers (1-7% at 4-16 when a thief never gave up its place);
+  the landed limit is checkers/4 at a time from 8 to 15.
+- Requested rust base64 encoding ([rust-base64.md](rust-base64.md)): production code -11 lines. Five-pair
+  Mac screening on Compiler/Compiler-Unions: -0.005% to +0.005% single instructions,
+  +0.130% to +0.557% default RSS. Retained for maintenance at the user's request, with no
+  qualifying performance gain or speedup claim.
+
 - Memory-traffic work at 32 checkers (notes/perf-memory-traffic-32.md): IPC is equal or higher at 32 checkers than at
   1 (vscode 1.92 -> 1.96) and miss rates are low, so padding, pinning, prefetching and hot/cold splits have nothing to
   win; `ReferenceInstantiations` slot hashes (A2) were within noise (+11 MiB peak).
@@ -338,13 +456,71 @@ is type-checked, CI runs on pull requests, and the workspace is at 0.11.0. The i
   while the cold-process incremental path is ~1 s. Also reasoned out there without measurement: per-file summaries as
   declaration text (declaration emit is not total, import cycles, not identity-preserving), per-file check regions
   (types made in a body can enter long-lived caches), mmap of source files (SIGBUS on truncation).
+- From the instruction-count hill climb (notes/perf-icount-hillclimb.md; the 38k-file codebase, 8 checkers, static
+  assignment, user-space instructions): an inline fast path in `getPropertyOfType` for a hit in resolved members
+  (1.7387T -> 1.7836T, +2.6%), the same as a small out-of-line function (+2.6%: most calls are on lazy member tables,
+  and the slow path repeats the lookup), and an inline value-hit path with the rest out of line (1.5660T -> 1.6111T,
+  +2.9%); a union fast path in `getNormalizedType` (+0.04%) and in the inline `getReducedApparentType` (+0.19%);
+  `isSimpleTypeRelatedTo` answering object-object pairs inline (-0.02%, within noise); recursion identities cached
+  per relater stack entry (+0.13%); negative entries (a marker symbol) in union/intersection property caches, stored
+  only with no member or type resolution in progress (+0.05%: 9M hits for 3.5M stores, shadow-verified, but the
+  larger caches slow every other lookup and insert). Extra code inlined into functions with many call sites cost more
+  than it saved every time it was tried.
+  Round 2 (same note): the contextual-union position cache guarded per constituent (a stack of the types whose
+  members are being resolved) instead of by no resolution in progress (1.47283T -> 1.47307T); a per-(union, name) set
+  of absent properties checked before `createUnionOrIntersectionProperty`, recorded only when every constituent is a
+  resolved plain object without it (+0.05%); an inline compare of up to 16 bytes instead of `bcmp` in symbol-table key
+  matching (C library -2.7G, `SymbolMap::search` +2.7G, total +0.36%); a per-union memo that the apparent-type
+  mapping in `getApparentTypeOfContextualType` is the identity (+0.02%).
+  Round 3 (same note; same-binary runs differ by up to 0.04%): `isTypeRelatedTo`'s first checks in a leaf function
+  with the rest out of line (+0.04%: most calls reach the rest); the member-table lookup of the relater's walks also
+  in `getTypeOfConcretePropertyOfContextualType` (+0.6% when the helper was outlined, +0.03% forced inline); the
+  object case of `Type::target` forced inline with the rest out of line (+0.38%: `isGenericTupleType` stopped being
+  inlined); a 256-bit Bloom filter of the keys of indexed symbol tables (+0.25%: `SymbolMap::search` and `insert`
+  both grew); rejecting different-flag pairs before the identity relation in inference's exact matching (+0.03%:
+  nearly all pairs are object types with equal flags).
+  Round 4 (same note): the symbol table index with a position/tag split that depends on the table size, computed per
+  lookup (1.36945T -> 1.36934T: `SymbolMap::search` +2.8G ate the insert savings; the landed index has fixed widths);
+  the index at most half full (-0.2% more than three quarters, peak RSS +0.6%); the 16-bit slots with one lookup
+  closure for both widths (+0.26%: the closure was outlined); presizing the index from the entry capacity (+0.03%);
+  the object case of `Type::target` inline again (+0.33%, as in round 3); `#[inline]` on `isStatement` (+0.07%); a
+  number-literal case in `compareTypes` inline (+0.33%) or out of line (+0.08%); pooled lists in `getUnionType`
+  (-0.04%) and `contextualPropertyTypeOfConstituent` (-0.02%), both within noise. Not built: a memo of each flow
+  node's conditional or mapped ancestor (80% of lookups repeat a node, about 0.13% for about 50 MB), a memo of
+  intersection type facts (the base constraint can be mid-resolution), and a direct-mapped front cache for relation
+  lookups (simulated: 29% hits, about 0.1% net).
+- Heap allocation churn (notes/perf-heap-churn.md, landed): vscode single-threaded 41.3M -> 22.3M heap allocations,
+  -2.0% to -4.0% instructions on five projects, from returning stored names and lists instead of copies (accessed
+  property names, effective call arguments, path helpers), arena concatenation of symbol declarations, two pools and
+  two `SmallVec`s. Do not redo those sites. Left, with the reason, in the note: `SymbolMap` growth (memory-tuned),
+  `SymbolTable` snapshots (callees may mutate the table), results Go allocates too, `get_text_of_node`'s copy
+  (58 callers). The now-removed heap sampler attributed each allocation to its caller's caller
+  (the note has the correction used); account for that when reading those measurements. Measured and not landed there:
+  `somePropertyReducesToNever`'s count map from a per-checker pool, -0.88% mui-docs / -0.83% mikro-orm instructions
+  (branch `perf/property-count-pool`; landed later with notes/perf-icount-alloc.md, -0.78% there with other pools).
+- From notes/perf-icount-alloc.md (exact VM counts, locality mode, a large private monorepo at 8 checkers): the
+  arguments of a pending type alias held as a `Cow` (the alias's own list when unchanged, a pooled buffer when
+  changed), together with pooled lists for template-literal instantiation: +0.20%, and +0.26% with the helpers out
+  of line (not explained). Pools for symbol and signature lists that are copied straight into the arena,
+  `getNamedMembers` into a pooled buffer, and object-literal all-properties tables presized: -0.012%, inside the
+  spread. A pool's push and pop cost about what mimalloc's fast path does. Pooling paid for hash tables and for
+  growth chains (realloc and copy), not for one short-lived Vec.
+  Relater round (notes/perf-icount-relater.md; another large private monorepo, DynamoRIO counts): an exact early exit
+  from the deeply-nested walk (+0.04% single-threaded), `Relation::set` through hashbrown's `entry` (-0.005%, noise),
+  a Bloom filter of names in `some_property_reduces_to_never`'s counts (+0.03%).
 
-## The lint ratchet
+- Standard parsing/whitespace helper cleanup ([rust-stdlib-helpers.md](rust-stdlib-helpers.md)), applied at the
+  user's request: exact whitespace predicates and integer contracts, with Go syntax/range wording retained.
+  Five-pair Mac screening on Compiler/Compiler-Unions: -0.009% to +0.013% single instructions, -0.537% to +0.379%
+  default RSS; no qualifying gain. Keep Go boolean spellings, quoting, clamped/base-detecting parsers and JSON
+  compatibility rather than treating std substitutions as universally equivalent.
+
+## Clippy baseline (complete)
 
 `tools/lint/baseline.tsv` went from 1,373 findings to 312 (#57-#59, #61, #63; notes/lint-paydown-compiler.md) and is
-now 3 (status 2026-10-10: 2 `clippy::needless_pass_by_value` in tsrs_modulespecifiers/src/specifiers.rs, 1 `dead_code`
-in tsrs_parser/src/parser_1.rs). Measured on the way: none of the 43 `#[inline(always)]` were needed; the unchecked
-string conversions and link-store indexing are (+1.6% to +5%, +0.6%); removing ~170 clones did not change speed.
+now gone (2026-10-12); every enabled Clippy lint is denied directly. Measured on the way: none of the 43
+`#[inline(always)]` were needed; the unchecked string conversions and link-store indexing are (+1.6% to +5%,
++0.6%); removing ~170 clones did not change speed.
 
 ## Housekeeping
 

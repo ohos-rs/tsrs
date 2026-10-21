@@ -22,7 +22,7 @@ use std::sync::{LazyLock, Mutex};
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsrs_ast::{self as ast, SourceFile, SourceFileParseOptions, SymbolFlags};
 use tsrs_core::arena::Region;
-use tsrs_core::{ScriptKind, P};
+use tsrs_core::{P, ScriptKind};
 
 use crate::program::Program;
 
@@ -40,6 +40,8 @@ pub enum LeafMode {
 
 static REGIONS_ON: AtomicBool = AtomicBool::new(false);
 static STATS: AtomicBool = AtomicBool::new(false);
+/// `bind_in_file_regions`.
+static OWN_FILE_REGIONS: AtomicBool = AtomicBool::new(false);
 /// `LeafSettings::every_file`.
 static EVERY_FILE: AtomicBool = AtomicBool::new(false);
 /// The directory predicted paths are matched relative to (`enable`).
@@ -53,7 +55,8 @@ static CURRENT_DIRECTORY: std::sync::OnceLock<String> = std::sync::OnceLock::new
 /// Whether a file is a leaf is still decided exactly (`classify`): a predicted file that is not one keeps its region,
 /// a leaf that was not predicted is not freed. A root file that nothing else imports cannot be told at parse time:
 /// the files that import it may not have been parsed yet.
-const PREDICTED_LEAF_PATTERNS: &[&str] = &[".test.", ".spec.", "/test/", "/tests/", "/__tests__/", ".stories.", "/__mocks__/"];
+const PREDICTED_LEAF_PATTERNS: &[&str] =
+    &[".test.", ".spec.", "/test/", "/tests/", "/__tests__/", ".stories.", "/__mocks__/"];
 
 thread_local! {
     /// The host is parsing a root file of the program (`parse_task`).
@@ -96,20 +99,23 @@ pub struct LeafSettings {
 /// at any count.
 pub const MAX_DEFAULT_CHECKERS: usize = 16;
 
-/// Whether the CLI may parse declaration-file member lists lazily (notes/mem-lazy-dts-members.md): `TSRS_LAZY_DTS=0`
-/// turns it off, and so do the debug modes that walk or freeze the whole program (the reachability census, the
-/// shared-object check).
+/// Keeps lazy declaration parsing within its supported CLI modes.
+///
+/// Whether the CLI may parse declaration-file member lists lazily (notes/mem-lazy-dts-members.md):
+/// `TSRS_LAZY_DTS=0` turns it off, and so does the shared-object check, which freezes the whole program.
 pub fn lazy_dts_allowed() -> bool {
     if std::env::var_os("TSRS_LAZY_DTS").is_some_and(|v| v == "0" || v == "off") {
         return false;
     }
-    let census = std::env::var_os("TSRS_CENSUS").is_some_and(|v| v == "1") || tsrs_core::census_recording();
-    !census && !tsrs_core::ptr::shared_check::enabled()
+    !tsrs_core::ptr::shared_check::enabled()
 }
 
-/// Parses and binds declaration-file member lists lazily in every program created from here on, process-wide (the CLI
-/// before `new_program` when no declaration file is type-checked; `TSRS_LAZY_DTS=force` in the test runner, to check
-/// that forcing every list gives the same baselines). Never in the language server or the API.
+/// Enables lazy declaration parsing for subsequent CLI programs.
+///
+/// Parses and binds declaration-file member lists lazily in every program created from here on, process-wide
+/// (the CLI before `new_program` when no declaration file is type-checked; `TSRS_LAZY_DTS=force` in the test
+/// runner, to check that forcing every list gives the same baselines). Never in the language server or the
+/// API.
 pub fn enable_lazy_dts() {
     tsrs_parser::enable_lazy_dts();
     tsrs_binder::enable_lazy_dts();
@@ -120,29 +126,36 @@ pub fn enable_lazy_dts() {
 // Relaxed (stores and loads): set by the CLI before the program is created.
 static LAZY_DTS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Before the checkers of a multi-checker pass are created: parses and binds, in parallel on the worker pool, the lazy
-/// member lists that every checker asks for at the start, so that the checkers do not wait for one another on them
-/// (notes/mem-lazy-dts-members.md, "Shared lists"). Two sets, each a property of the program, not of a run:
+/// Before the checkers of a multi-checker pass are created: parses and binds, in parallel on the worker pool,
+/// the lazy member lists that every checker asks for at the start, so that the checkers do not wait for one
+/// another on them (notes/mem-lazy-dts-members.md, "Shared lists"). Two sets, each a property of the program,
+/// not of a run:
 ///
-/// - the global libraries: every declaration file that enters the program through a default lib, a `lib` option or
-///   `/// <reference lib>`, an automatic type directive, the `types` option or a `/// <reference types>` directive, and
-///   the files those pull in with `/// <reference path>` (`@types/node`'s `index.d.ts` references the rest of the
-///   package). Their globals and ambient modules are what every checker resolves first; module-scoped packages that
-///   enter only through imports stay lazy;
-/// - the interfaces and classes that merge into the global scope more than once (declared in several script files or
-///   `declare global` blocks): `initialize_checker` clones the first symbol's tables and merges the others into them.
+/// - the global libraries: every declaration file that enters the program through a default lib, a `lib`
+///   option or `/// <reference lib>`, an automatic type directive, the `types` option or a
+///   `/// <reference types>` directive, and the files those pull in with `/// <reference path>`
+///   (`@types/node`'s `index.d.ts` references the rest of the package). Their globals and ambient modules
+///   are what every checker resolves first; module-scoped packages that enter only through imports stay lazy;
+/// - the interfaces and classes that merge into the global scope more than once (declared in several script
+///   files or `declare global` blocks): `initialize_checker` clones the first symbol's tables and merges
+///   the others into them.
 ///
-/// Forcing a list early changes nothing observable (`lazylist`). `TSRS_LAZY_DTS_SHARED=0` forces only the merges.
+/// Forcing a list early changes nothing observable (`lazylist`). `TSRS_LAZY_DTS_SHARED=0` forces only the
+/// merges.
 pub(crate) fn force_shared_lists(program: &crate::program::Program) {
     // Relaxed: see `LAZY_DTS`.
     if !LAZY_DTS.load(std::sync::atomic::Ordering::Relaxed) {
         return;
     }
     let mut lists: Vec<P<tsrs_ast::lazylist::LazyNodeList>> = Vec::new();
-    if !std::env::var_os("TSRS_LAZY_DTS_SHARED").is_some_and(|v| v == "0") {
-        for file in global_library_files(program) {
-            lists.extend(file.lazy_lists.get().iter().copied().filter(|l| l.state() == tsrs_ast::lazylist::DEFERRED));
-        }
+    if std::env::var_os("TSRS_LAZY_DTS_SHARED").is_none_or(|v| v != "0") {
+        lists.extend(global_library_files(program).into_iter().flat_map(|file| {
+            file.lazy_lists
+                .get()
+                .iter()
+                .copied()
+                .filter(|l| l.state() == tsrs_ast::lazylist::DEFERRED)
+        }));
     }
     let mut by_name: FxHashMap<&'static str, Vec<P<tsrs_ast::Symbol>>> = FxHashMap::default();
     let mut add = |table: Option<P<tsrs_ast::SymbolTable>>| {
@@ -150,7 +163,7 @@ pub(crate) fn force_shared_lists(program: &crate::program::Program) {
             table.for_each(|name, symbol| by_name.entry(name).or_default().push(symbol));
         }
     };
-    for &file in program.files.iter() {
+    for &file in program.files {
         if !ast::is_external_or_common_js_module(file) {
             add(file.locals());
         }
@@ -161,14 +174,28 @@ pub(crate) fn force_shared_lists(program: &crate::program::Program) {
             }
         }
     }
-    #[expect(clippy::iter_over_hash_type, reason = "collects lists to force; forcing order cannot be seen")]
-    for symbols in by_name.values() {
-        if symbols.len() > 1 {
-            lists.extend(symbols.iter().filter_map(|s| s.lazy_list()).filter(|l| l.state() == tsrs_ast::lazylist::DEFERRED));
-        }
-    }
+    // collects lists to force; forcing order cannot be seen
+    lists.extend(
+        by_name
+            .values()
+            .filter_map(|symbols| {
+                if symbols.len() > 1 {
+                    Some(
+                        symbols
+                            .iter()
+                            .filter_map(|s| s.lazy_list())
+                            .filter(|l| l.state() == tsrs_ast::lazylist::DEFERRED),
+                    )
+                } else {
+                    None
+                }
+            })
+            .flatten(),
+    );
     use rayon::prelude::*;
-    tsrs_core::phases::time("Lazy lists: shared", || crate::program::worker_pool().install(|| lists.par_iter().for_each(|l| l.ensure())));
+    tsrs_core::phases::time(program.options().diagnostics_enabled(), "Lazy lists: shared", || {
+        crate::program::worker_pool().install(|| lists.par_iter().for_each(|l| l.ensure()));
+    });
 }
 
 /// The declaration files of the global libraries (`force_shared_lists`), in program order.
@@ -177,11 +204,17 @@ fn global_library_files(program: &crate::program::Program) -> Vec<P<SourceFile>>
     let reasons = &program.file_include_data.file_include_reasons;
     let mut global: FxHashSet<&str> = FxHashSet::default();
     let mut by_reference: Vec<(&str, &str)> = Vec::new(); // (referencing file's path, referenced file's path)
-    #[expect(clippy::iter_over_hash_type, reason = "builds a set and an edge list that is closed over below")]
+    #[expect(
+        clippy::iter_over_hash_type,
+        reason = "builds a set and an edge list that is closed over below"
+    )]
     for (path, rs) in reasons {
         for r in rs {
             match r.kind {
-                K::LibFile | K::LibReferenceDirective | K::AutomaticTypeDirectiveFile | K::TypeReferenceDirective => {
+                K::LibFile
+                | K::LibReferenceDirective
+                | K::AutomaticTypeDirectiveFile
+                | K::TypeReferenceDirective => {
                     global.insert(path);
                 }
                 K::ReferenceFile => by_reference.push((r.as_referenced_file_data().file, path)),
@@ -200,24 +233,25 @@ fn global_library_files(program: &crate::program::Program) -> Vec<P<SourceFile>>
             break;
         }
     }
-    program.files.iter().copied().filter(|f| f.is_declaration_file() && global.contains(&*f.path().0)).collect()
+    program
+        .files
+        .iter()
+        .copied()
+        .filter(|f| f.is_declaration_file() && global.contains(&*f.path().0))
+        .collect()
 }
 
+/// Reads the leaf-reclamation policy selected for CLI programs.
+///
 /// `TSRS_FREE_LEAVES`, a comma-separated list: unset frees the predicted leaves when the program gets at most
-/// `MAX_DEFAULT_CHECKERS` checkers (`checkers`: the most it can get, `checker_count_upper_bound`); `1` frees them at any
-/// count; `0` turns file regions off; `keep` makes the regions (at any count) but frees nothing; `stats` reports
-/// (`stats_report`); `all` gives every TypeScript root file a region (`LeafSettings::every_file`), at any count. Off
-/// under the debug modes that walk files or checker data after the pass (`TSRS_FILE_TIMES` walks every tree;
-/// `TSRS_ASSIGNMENT_STATS`, the work and heap censuses walk checker tables) or that must see every block alive (the
-/// reachability census, `TSRS_CENSUS=1`). Off without compressed pointers on unix (`Region::retire_on_free`),
-/// whatever the value.
+/// `MAX_DEFAULT_CHECKERS` checkers (`checkers`: the most it can get, `checker_count_upper_bound`); `1` frees
+/// them at any count; `0` turns file regions off; `keep` makes the regions (at any count) but frees nothing;
+/// `stats` reports (`stats_report`); `all` gives every TypeScript root file a region
+/// (`LeafSettings::every_file`), at any count. Off under the debug modes that walk files or checker data
+/// after the pass (`TSRS_FILE_TIMES` walks every tree; the work census walks checker tables). Off
+/// without compressed pointers on unix (`Region::retire_on_free`), whatever the value.
 pub fn leaf_settings_from_env(checkers: usize) -> LeafSettings {
-    let census = std::env::var_os("TSRS_CENSUS").is_some_and(|v| v == "1") || tsrs_core::census_recording();
-    #[cfg(feature = "checker")]
-    let checker_census = crate::Checker::census_enabled() || crate::Checker::heap_census_enabled();
-    #[cfg(not(feature = "checker"))]
-    let checker_census = false;
-    if census || checker_census || crate::checkerpool::file_times_path().is_some() || crate::checkerpool::assignment_stats_enabled() {
+    if crate::Checker::census_enabled() || crate::checkerpool::file_times_path().is_some() {
         return LeafSettings::default();
     }
     // Only where a freed region's pages go back to the system and its range is never reused (`Region::retire_on_free`
@@ -251,8 +285,23 @@ pub fn leaf_settings_from_env(checkers: usize) -> LeafSettings {
     settings
 }
 
-/// Turns file regions on for the programs created from here on, process-wide (the CLI, before `new_program`; never
-/// the language server, the API or the test harnesses). Predicted paths are matched relative to `current_directory`.
+/// Gives subsequent CLI programs per-file arena ownership.
+///
+/// Turns file regions on for the programs created from here on, process-wide (the CLI, before `new_program`;
+/// never the language server, the API or the test harnesses). Predicted paths are matched relative to
+/// `current_directory`. From now on, `bind` binds a file that was parsed in a registered region of its own in
+/// that region, so its binder data is freed with it (a watch session's file regions, `tsrs_execute`
+/// watchmem.rs), or outlives the program that bound it (the declaration files a `tsc -b` shares between projects).
+/// Opt-in: in a process with other registered regions (API builds), a region containing a file may be held by the
+/// building thread.
+pub fn bind_in_file_regions() {
+    // Relaxed: set before the session parses anything; the binding threads get their work through locks taken after.
+    OWN_FILE_REGIONS.store(true, Ordering::Relaxed);
+    // The same sessions free their programs' regions, so lazily filled data of the objects outside every region (the
+    // command lines) must not go to one of those, which it would until the first file region is created.
+    tsrs_core::arena::route_by_owner();
+}
+
 pub fn enable(settings: LeafSettings, current_directory: &str) {
     let _ = CURRENT_DIRECTORY.set(current_directory.trim_end_matches('/').to_string());
     // Relaxed (all three): set on the main thread before the program, and any worker that reads them, exists.
@@ -264,7 +313,9 @@ pub fn enable(settings: LeafSettings, current_directory: &str) {
 /// Whether `file_name` matches `PREDICTED_LEAF_PATTERNS` (relative to the current directory).
 fn predicted_leaf(file_name: &str) -> bool {
     let relative = match CURRENT_DIRECTORY.get() {
-        Some(dir) if !dir.is_empty() && file_name.starts_with(dir.as_str()) => &file_name[dir.len()..],
+        Some(dir) if !dir.is_empty() && file_name.starts_with(dir.as_str()) => {
+            &file_name[dir.len()..]
+        }
         _ => file_name,
     };
     PREDICTED_LEAF_PATTERNS.iter().any(|pattern| relative.contains(pattern))
@@ -320,7 +371,11 @@ fn first_chunk(text_len: usize) -> usize {
 /// file's region is then carved right after this one's last used byte instead of after an unused tail and its partly
 /// used page. Binding on the same thread right away (the parallel loader) grows the region into the space just given
 /// back.
-pub(crate) fn parse(opts: SourceFileParseOptions, text: String, script_kind: ScriptKind) -> P<SourceFile> {
+pub(crate) fn parse(
+    opts: SourceFileParseOptions,
+    text: String,
+    script_kind: ScriptKind,
+) -> P<SourceFile> {
     let region = Region::new_scratch_in_large_slabs(first_chunk(text.len()));
     let file = {
         let _scratch = region.enter_scratch();
@@ -334,6 +389,18 @@ pub(crate) fn parse(opts: SourceFileParseOptions, text: String, script_kind: Scr
 /// `tsrs_binder::bind_source_file`, in the file's region if it has one (then trimmed to what parse and bind used, if
 /// this thread carved it last).
 pub(crate) fn bind(file: P<SourceFile>) {
+    // Relaxed: see `bind_in_file_regions`.
+    if !file.is_bound()
+        && OWN_FILE_REGIONS.load(Ordering::Relaxed)
+        && let Some(region) = Region::containing(file.addr())
+    {
+        {
+            let _scope = region.enter();
+            tsrs_binder::bind_source_file(file);
+        }
+        region.trim();
+        return;
+    }
     if file.is_bound() || !region_candidate(file.file_name(), file.script_kind.get()) {
         tsrs_binder::bind_source_file(file);
         return;
@@ -397,7 +464,10 @@ pub(crate) fn classify(program: &Program) -> bool {
             leaf_nodes += file.node_count.get();
         }
     }
-    #[expect(clippy::iter_over_hash_type, reason = "independent per region; no output depends on the order")]
+    #[expect(
+        clippy::iter_over_hash_type,
+        reason = "independent per region; no output depends on the order"
+    )]
     for (file, region) in regions.iter() {
         // Never freed (also the regions of files parsed ahead and not used): their values live for the process, as
         // in a thread arena, so the list of the ones to drop (24 bytes per symbol table, the one heap-owning value
@@ -434,7 +504,8 @@ pub(crate) fn classify(program: &Program) -> bool {
 pub(crate) fn prepare(program: &Program) {
     if program.leaf_files != LeafMode::Off {
         // Not under the lock: binding (`bind`) takes it, and creating a checker may bind.
-        let with_region: FxHashSet<P<SourceFile>> = REGIONS.lock().unwrap().keys().copied().collect();
+        let with_region: FxHashSet<P<SourceFile>> =
+            REGIONS.lock().unwrap().keys().copied().collect();
         leaf_referred(program, |file| with_region.contains(&file));
     }
 }
@@ -442,50 +513,87 @@ pub(crate) fn prepare(program: &Program) {
 /// `referred_files` of the files that can be leaves (those with a region; every file with `stats`, which also counts
 /// the leaves the prediction missed), computed once per program. The program's files, include reasons and resolutions
 /// do not change once it is loaded, and the regions are all made while it loads.
-fn leaf_referred(program: &Program, has_region: impl Fn(P<SourceFile>) -> bool + Sync) -> &FxHashSet<P<SourceFile>> {
-    program.leaf_referred.get_or_init(|| referred_files(program, |file| stats() || has_region(file)))
+fn leaf_referred(
+    program: &Program,
+    has_region: impl Fn(P<SourceFile>) -> bool + Sync,
+) -> &FxHashSet<P<SourceFile>> {
+    program
+        .leaf_referred
+        .get_or_init(|| referred_files(program, |file| stats() || has_region(file)))
 }
 
-/// The files for which `wanted` holds that another file of the program refers to: every file with an include reason
-/// other than being a root (an import, a `/// <reference path>`, a type reference directive, a lib reference, a
-/// default lib, an automatic type directive), and every target of a resolved import, module augmentation or type
-/// reference directive of another file. A file that refers only to itself is not counted.
+/// The files for which `wanted` holds that another file of the program refers to: every file with an include
+/// reason other than being a root (an import, a `/// <reference path>`, a type reference directive, a lib
+/// reference, a default lib, an automatic type directive), and every target of a resolved import, module
+/// augmentation or type reference directive of another file. A file that refers only to itself is not
+/// counted.
 ///
-/// This runs inside the check time, before the pass. The resolutions (vscode: 110k) are read on the worker pool, like
-/// the import graph of the checker assignment (checkerpool.rs `get_import_adjacency`), and a resolved name is looked
-/// up by the name itself first (`files_by_name`): normalizing every name (`get_source_file_for_resolved_module`) took
-/// 24 ms on one thread, and collecting every importer's names before that another 3-5 ms on one thread.
-fn referred_files(program: &Program, wanted: impl Fn(P<SourceFile>) -> bool + Sync) -> FxHashSet<P<SourceFile>> {
+/// This runs inside the check time, before the pass. The resolutions (vscode: 110k) are read on the worker
+/// pool, like the import graph of the checker assignment (checkerpool.rs `get_import_adjacency`), and a
+/// resolved name is looked up by the name itself first (`files_by_name`): normalizing every name
+/// (`get_source_file_for_resolved_module`) took 24 ms on one thread, and collecting every importer's names
+/// before that another 3-5 ms on one thread.
+fn referred_files(
+    program: &Program,
+    wanted: impl Fn(P<SourceFile>) -> bool + Sync,
+) -> FxHashSet<P<SourceFile>> {
     let mut referred = FxHashSet::default();
-    #[expect(clippy::iter_over_hash_type, reason = "builds a set; the order of insertion cannot be seen")]
-    for (path, reasons) in &program.file_include_data.file_include_reasons {
-        if reasons.iter().any(|r| !r.is_root_file()) {
-            if let Some(&file) = program.files_by_path.get(path) {
-                if wanted(file) {
-                    referred.insert(file);
+    // builds a set; the order of insertion cannot be seen
+    referred.extend(program.file_include_data.file_include_reasons.iter().filter_map(
+        |(path, reasons)| {
+            if reasons.iter().any(|r| !r.is_root_file()) {
+                if let Some(&file) = program.files_by_path.get(path) {
+                    if wanted(file) { Some(file) } else { None }
+                } else {
+                    None
                 }
+            } else {
+                None
             }
-        }
-    }
+        },
+    ));
     let by_name = files_by_name(program);
     let target = |from: Option<P<SourceFile>>, name: &str| -> Option<P<SourceFile>> {
-        let file = by_name.get(name).copied().or_else(|| program.get_source_file_for_resolved_module(name))?;
+        let file = by_name
+            .get(name)
+            .copied()
+            .or_else(|| program.get_source_file_for_resolved_module(name))?;
         (Some(file) != from && wanted(file)).then_some(file)
     };
-    let modules = |(path, resolutions): (&tsrs_core::tspath::Path, &tsrs_module::ModeAwareCache<P<tsrs_module::ResolvedModule>>)| {
+    let modules = |(path, resolutions): (
+        &tsrs_core::tspath::Path,
+        &tsrs_module::ModeAwareCache<P<tsrs_module::ResolvedModule>>,
+    )| {
         let from = program.files_by_path.get(path).copied();
-        resolutions.values().filter(|r| r.is_resolved()).filter_map(|r| target(from, r.resolved_file_name)).collect::<Vec<_>>()
+        resolutions
+            .values()
+            .filter(|r| r.is_resolved())
+            .filter_map(|r| target(from, r.resolved_file_name))
+            .collect::<Vec<_>>()
     };
-    let types = |(path, resolutions): (&tsrs_core::tspath::Path, &tsrs_module::ModeAwareCache<P<tsrs_module::ResolvedTypeReferenceDirective>>)| {
+    let types = |(path, resolutions): (
+        &tsrs_core::tspath::Path,
+        &tsrs_module::ModeAwareCache<P<tsrs_module::ResolvedTypeReferenceDirective>>,
+    )| {
         let from = program.files_by_path.get(path).copied();
-        resolutions.values().filter(|r| r.is_resolved()).filter_map(|r| target(from, r.resolved_file_name)).collect::<Vec<_>>()
+        resolutions
+            .values()
+            .filter(|r| r.is_resolved())
+            .filter_map(|r| target(from, r.resolved_file_name))
+            .collect::<Vec<_>>()
     };
     let targets: Vec<Vec<P<SourceFile>>> = if program.single_threaded() {
-        program.resolved_modules.iter().map(modules).chain(program.type_resolutions_in_file.iter().map(types)).collect()
+        program
+            .resolved_modules
+            .iter()
+            .map(modules)
+            .chain(program.type_resolutions_in_file.iter().map(types))
+            .collect()
     } else {
         use rayon::prelude::*;
         crate::program::worker_pool().install(|| {
-            let mut targets: Vec<Vec<P<SourceFile>>> = program.resolved_modules.par_iter().map(modules).collect();
+            let mut targets: Vec<Vec<P<SourceFile>>> =
+                program.resolved_modules.par_iter().map(modules).collect();
             targets.par_extend(program.type_resolutions_in_file.par_iter().map(types));
             targets
         })
@@ -498,18 +606,23 @@ fn referred_files(program: &Program, wanted: impl Fn(P<SourceFile>) -> bool + Sy
 /// finding a resolved name here gives the file `get_source_file_for_resolved_module` would (it looks the normalized
 /// name up in `files_by_path`, and a file's path is its normalized name).
 fn files_by_name(program: &Program) -> FxHashMap<&str, P<SourceFile>> {
-    program.files.iter().filter(|&&file| program.files_by_path.get(file.path()) == Some(&file)).map(|file| (file.file_name(), *file)).collect()
+    program
+        .files
+        .iter()
+        .filter(|&&file| program.files_by_path.get(file.path()) == Some(&file))
+        .map(|file| (file.file_name(), *file))
+        .collect()
 }
 
-/// Whether nothing of `file` can be reached from another file that does not refer to it. It is a type-checked,
-/// non-declaration TypeScript external module (its top-level declarations are module scoped; JavaScript is excluded
-/// because CommonJS exports and expando assignments can declare globals), with no module augmentation (including
-/// `declare global`), no ambient module, no pattern ambient module, no UMD global (`export as namespace`), and no
-/// `// @ts-check` directive (read through the file by `skip_type_checking`). And it exports no alias (`export ...
-/// from`, `export *`, `export =`, `export { local }`, `export default <name>`): the checker's whole-program loops
-/// (`getAlternativeContainingModules`) ask every module whether it re-exports a symbol, and a module whose exports
-/// are its own declarations answers no for any symbol declared elsewhere, so they can skip it
-/// (`Checker::is_unreadable_check_leaf`).
+/// Whether nothing of `file` can be reached from another file that does not refer to it. It is a
+/// type-checked, non-declaration TypeScript external module (its top-level declarations are module scoped;
+/// JavaScript is excluded because `CommonJS` exports and expando assignments can declare globals), with no
+/// module augmentation (including `declare global`), no ambient module, no pattern ambient module, no UMD
+/// global (`export as namespace`), and no `// @ts-check` directive (read through the file by
+/// `skip_type_checking`). And it exports no alias (`export ... from`, `export *`, `export =`, `export { local
+/// }`, `export default <name>`): the checker's whole-program loops (`getAlternativeContainingModules`) ask
+/// every module whether it re-exports a symbol, and a module whose exports are its own declarations answers
+/// no for any symbol declared elsewhere, so they can skip it (`Checker::is_unreadable_check_leaf`).
 fn adds_nothing(program: &Program, file: P<SourceFile>) -> bool {
     if program.skip_type_checking(file, false)
         || file.is_declaration_file.get()
@@ -523,8 +636,12 @@ fn adds_nothing(program: &Program, file: P<SourceFile>) -> bool {
     {
         return false;
     }
-    let Some(symbol) = file.symbol() else { return false };
-    let Some(exports) = symbol.exports() else { return true };
+    let Some(symbol) = file.symbol() else {
+        return false;
+    };
+    let Some(exports) = symbol.exports() else {
+        return true;
+    };
     exports.entries().iter().all(|&(name, s)| {
         name != ast::InternalSymbolNameExportEquals
             && name != ast::InternalSymbolNameExportStar
@@ -537,10 +654,19 @@ fn adds_nothing(program: &Program, file: P<SourceFile>) -> bool {
 /// never asks for one file's diagnostics after that pass, and the pass does not keep each file's settled diagnostics
 /// (it returns them all together), so a caller that did would read freed memory; this makes it a clear error instead.
 /// One atomic load for any other file.
+/// Whether `file` was parsed into a region of its own: it may be freed once checked (the shared-graph seed must not
+/// check it, sharedgraph.rs).
+pub(crate) fn has_region(file: P<SourceFile>) -> bool {
+    region_candidate(file.file_name(), file.script_kind.get())
+        && REGIONS.lock().unwrap().contains_key(&file)
+}
+
 pub(crate) fn assert_not_freed(file: P<SourceFile>) {
-    if file.is_check_leaf() && !REGIONS.lock().unwrap().contains_key(&file) {
-        panic!("fileregions: {} was freed after the type-check pass; its tree can no longer be read", file.file_name());
-    }
+    assert!(
+        !file.is_check_leaf() || REGIONS.lock().unwrap().contains_key(&file),
+        "fileregions: {} was freed after the type-check pass; its tree can no longer be read",
+        file.file_name()
+    );
 }
 
 /// After the type-check pass that freed leaves: gives back the pages of the last batch of freed regions.
@@ -551,7 +677,9 @@ pub(crate) fn pass_done() {
 /// Frees `file`'s region (a leaf whose diagnostics the pass has collected). Called on the checker thread that
 /// checked it; nothing reads the file's tree or binder output afterwards (`classify`).
 pub(crate) fn free(file: P<SourceFile>) {
-    let Some(region) = REGIONS.lock().unwrap().remove(&file) else { return };
+    let Some(region) = REGIONS.lock().unwrap().remove(&file) else {
+        return;
+    };
     if stats() {
         // Relaxed: counters read after the pass's threads joined.
         FREED.fetch_add(1, Ordering::Relaxed);
@@ -569,20 +697,21 @@ pub fn stats_report() -> Option<String> {
     let mb = |b: usize| b as f64 / (1 << 20) as f64;
     // Relaxed (all loads): read on the main thread after the pass's threads joined.
     let load = |c: &AtomicUsize| c.load(Ordering::Relaxed);
-    let reserve = tsrs_core::ptr::reserve_stats().map(|(_, high)| format!("; arena address space used {:.1} MB", mb(high))).unwrap_or_default();
-    let (calls, bytes) = tsrs_core::arena::retired_stats();
+    let reserve = tsrs_core::ptr::reserve_stats()
+        .map(|(_, high)| format!("; arena address space used {:.1} MB", mb(high)))
+        .unwrap_or_default();
     Some(format!(
-        "tsrs: leaf files: {} of {} checked files ({} more not predicted, {:.1}% of the leaves' nodes), {:.1} MB of the {:.1} MB used by {} file regions ({:.1} MB reserved); freed {} ({:.1} MB reserved, {:.1} MB of pages given back in {calls} calls){reserve}\n",
+        "tsrs: leaf files: {} of {} checked files ({} more not predicted, {:.1}% of the leaves' nodes), {:.1} MB of the {:.1} MB used by {} file regions ({:.1} MB reserved); freed {} ({:.1} MB reserved){reserve}\n",
         load(&LEAVES),
         load(&CHECKED_FILES),
         load(&MISSED),
-        100.0 * load(&MISSED_NODES) as f64 / (load(&MISSED_NODES) + load(&LEAF_NODES)).max(1) as f64,
+        100.0 * load(&MISSED_NODES) as f64
+            / (load(&MISSED_NODES) + load(&LEAF_NODES)).max(1) as f64,
         mb(load(&LEAF_BYTES)),
         mb(load(&REGION_USED)),
         load(&REGION_FILES),
         mb(load(&REGION_BYTES)),
         load(&FREED),
         mb(load(&FREED_BYTES)),
-        mb(bytes),
     ))
 }

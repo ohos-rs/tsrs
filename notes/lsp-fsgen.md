@@ -2,9 +2,11 @@
 
 `tools/gen-fourslash` (Go, `go/types`) turns every Go fourslash test into a Rust function in
 `crates/tsrs_fourslash/src/tests/gen/gen_NN.rs` (one `pub mod` per Go file, one `pub fn` per Go function) plus a
-registry in `gen/mod.rs` (name, Go file, line, fn, skip reason). The harness (`fourslash.rs`, `baselineutil.rs`,
+registry in `gen/mod.rs` (name, Go file, line, fn, skip reason). The optimized `tsrs_fourslash_harness` crate
+(`fourslash.rs`, `baselineutil.rs`,
 `statebaseline.rs`, `harnessutil.rs`, `tsbaseline.rs`, `testing.rs`, `test_parser.rs`) is a port of Go's and drives the
-in-process server. How to regenerate and run, and the pass counts: docs/LSP.md, "Fourslash". This note keeps the
+in-process server; `tsrs_fourslash` contains only generated tests and a thin runner and re-exports the harness. How to
+regenerate and run, and the pass counts: docs/LSP.md, "Fourslash". This note keeps the
 mapping rules of the generator and the harness's deviations from Go. (It absorbs the
 former note of the wave that wired the harness to the in-process server.)
 
@@ -27,6 +29,9 @@ at the time all 4,484 constant contents produced the same files, markers, ranges
   `MarkerOrRange` -> enum. `x.(bool)` -> `x.assert_bool()`.
 - `defer CALL` -> the rest of the block runs under `go::run` (catch_unwind), then CALL, then `go::resume`;
   `defer testutil.RecoverAndFail(t, msg)` -> `testutil::recover_and_fail(t, msg, result)`.
+- The canonical test wrapper (`Parallel`, `RecoverAndFail`, constant content, `NewFourslash` with default
+  capabilities, `done`) passes the one-use content literal to one non-generic `fourslash::run_generated_test`
+  helper. Variations keep the general defer lowering above.
 - Closures that use the FourslashTest receive it as first parameter (PORTING.md callback rule): harness callbacks
   (`GoToEachMarker`), local closures; harness-returned closures (`done`, `reset`, `VerifyCompletionsResult`
   fields) are `Box<dyn FnOnce(&mut FourslashTest, &T, ..)>` and called as `done(&mut *f, t)`.

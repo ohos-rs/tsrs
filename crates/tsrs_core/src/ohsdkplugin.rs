@@ -26,7 +26,7 @@ pub struct OhSdkClassCheckPlugin {
 #[derive(Clone, Debug)]
 pub struct OhSdkPluginNodeSnapshot {
     pub file_name: String,
-    /// The immutable parsed SourceFile's node ID; a new parse has a new ID even
+    /// The immutable parsed `SourceFile` node ID; a new parse has a new ID even
     /// if its arena address is reused after an embedded program is released.
     pub file_id: u64,
     /// Borrowed only during submission while its program is alive.
@@ -84,13 +84,29 @@ pub trait OhSdkPluginExecutor: std::fmt::Debug + Send + Sync {
         config: Arc<serde_json::Map<String, serde_json::Value>>) -> OhSdkPendingSyscap;
 }
 
-/// Derived configuration belongs to an immutable compiler-options snapshot.
-/// Cloning options clears the derived cache: the clone can be reconfigured before
-/// publication (including incremental updates), while explicit configs share Arc.
+/// Identity for `CompilerOptions` equality: executors are runtime handles, so the same handle compares equal
+/// and distinct ones do not (the options' serialized configuration is what the watcher compares).
+impl PartialEq for dyn OhSdkPluginExecutor {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other)
+    }
+}
+
+/// Derived configuration for an immutable compiler-options snapshot.
+///
+/// Cloning options clears the derived cache: the clone can be reconfigured before publication (including
+/// incremental updates), while explicit configs share `Arc`.
 #[derive(Debug, Default)]
 pub struct OhSdkPluginConfigCache(OnceLock<Arc<serde_json::Map<String, Value>>>);
 impl Clone for OhSdkPluginConfigCache {
     fn clone(&self) -> Self { Self::default() }
+}
+/// The cache is derived data: compare what it holds (nothing before first use, so fresh options are equal).
+impl PartialEq for OhSdkPluginConfigCache {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.get().map(std::convert::AsRef::as_ref)
+            == other.0.get().map(std::convert::AsRef::as_ref)
+    }
 }
 impl OhSdkPluginConfigCache {
     pub fn get(&self, o: &crate::CompilerOptions) -> Arc<serde_json::Map<String, Value>> {

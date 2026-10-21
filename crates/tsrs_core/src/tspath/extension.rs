@@ -16,21 +16,46 @@ pub const EXTENSION_CJS: &str = ".cjs";
 pub const EXTENSION_CTS: &str = ".cts";
 pub const EXTENSION_DCTS: &str = ".d.cts";
 
-pub static SUPPORTED_DECLARATION_EXTENSIONS: &[&str] = &[EXTENSION_DTS, EXTENSION_DCTS, EXTENSION_DMTS, EXTENSION_DETS];
-pub static SUPPORTED_TS_IMPLEMENTATION_EXTENSIONS: &[&str] = &[EXTENSION_TS, EXTENSION_TSX, EXTENSION_MTS, EXTENSION_CTS, EXTENSION_ETS];
-static SUPPORTED_TS_EXTENSIONS_FOR_EXTRACT_EXTENSION: &[&str] =
-    &[EXTENSION_DETS, EXTENSION_ETS, EXTENSION_DTS, EXTENSION_DCTS, EXTENSION_DMTS, EXTENSION_TS, EXTENSION_TSX, EXTENSION_MTS, EXTENSION_CTS];
+pub static SUPPORTED_DECLARATION_EXTENSIONS: &[&str] =
+    &[EXTENSION_DTS, EXTENSION_DCTS, EXTENSION_DMTS, EXTENSION_DETS];
+pub static SUPPORTED_TS_IMPLEMENTATION_EXTENSIONS: &[&str] =
+    &[EXTENSION_TS, EXTENSION_TSX, EXTENSION_MTS, EXTENSION_CTS, EXTENSION_ETS];
+static SUPPORTED_TS_EXTENSIONS_FOR_EXTRACT_EXTENSION: &[&str] = &[
+    EXTENSION_DETS,
+    EXTENSION_ETS,
+    EXTENSION_DTS,
+    EXTENSION_DCTS,
+    EXTENSION_DMTS,
+    EXTENSION_TS,
+    EXTENSION_TSX,
+    EXTENSION_MTS,
+    EXTENSION_CTS,
+];
 pub static ALL_SUPPORTED_EXTENSIONS: &[&[&str]] = &[
     &[EXTENSION_TS, EXTENSION_TSX, EXTENSION_DTS, EXTENSION_ETS, EXTENSION_DETS, EXTENSION_JS, EXTENSION_JSX],
     &[EXTENSION_CTS, EXTENSION_DCTS, EXTENSION_CJS],
     &[EXTENSION_MTS, EXTENSION_DMTS, EXTENSION_MJS],
 ];
-pub static SUPPORTED_TS_EXTENSIONS: &[&[&str]] =
-    &[&[EXTENSION_TS, EXTENSION_TSX, EXTENSION_DTS, EXTENSION_ETS, EXTENSION_DETS], &[EXTENSION_CTS, EXTENSION_DCTS], &[EXTENSION_MTS, EXTENSION_DMTS]];
-pub static SUPPORTED_TS_EXTENSIONS_FLAT: &[&str] =
-    &[EXTENSION_TS, EXTENSION_TSX, EXTENSION_DTS, EXTENSION_CTS, EXTENSION_DCTS, EXTENSION_MTS, EXTENSION_DMTS, EXTENSION_ETS, EXTENSION_DETS];
-pub static SUPPORTED_JS_EXTENSIONS: &[&[&str]] = &[&[EXTENSION_JS, EXTENSION_JSX], &[EXTENSION_MJS], &[EXTENSION_CJS]];
-pub static SUPPORTED_JS_EXTENSIONS_FLAT: &[&str] = &[EXTENSION_JS, EXTENSION_JSX, EXTENSION_MJS, EXTENSION_CJS];
+pub static SUPPORTED_TS_EXTENSIONS: &[&[&str]] = &[
+    &[EXTENSION_TS, EXTENSION_TSX, EXTENSION_DTS, EXTENSION_ETS, EXTENSION_DETS],
+    &[EXTENSION_CTS, EXTENSION_DCTS],
+    &[EXTENSION_MTS, EXTENSION_DMTS],
+];
+pub static SUPPORTED_TS_EXTENSIONS_FLAT: &[&str] = &[
+    EXTENSION_TS,
+    EXTENSION_TSX,
+    EXTENSION_DTS,
+    EXTENSION_CTS,
+    EXTENSION_DCTS,
+    EXTENSION_MTS,
+    EXTENSION_DMTS,
+    EXTENSION_ETS,
+    EXTENSION_DETS,
+];
+pub static SUPPORTED_JS_EXTENSIONS: &[&[&str]] =
+    &[&[EXTENSION_JS, EXTENSION_JSX], &[EXTENSION_MJS], &[EXTENSION_CJS]];
+pub static SUPPORTED_JS_EXTENSIONS_FLAT: &[&str] =
+    &[EXTENSION_JS, EXTENSION_JSX, EXTENSION_MJS, EXTENSION_CJS];
 pub static ALL_SUPPORTED_EXTENSIONS_WITH_JSON: &[&[&str]] = &[
     &[EXTENSION_TS, EXTENSION_TSX, EXTENSION_DTS, EXTENSION_ETS, EXTENSION_DETS, EXTENSION_JS, EXTENSION_JSX],
     &[EXTENSION_CTS, EXTENSION_DCTS, EXTENSION_CJS],
@@ -43,8 +68,18 @@ pub static SUPPORTED_TS_EXTENSIONS_WITH_JSON: &[&[&str]] = &[
     &[EXTENSION_MTS, EXTENSION_DMTS],
     &[EXTENSION_JSON],
 ];
-pub static SUPPORTED_TS_EXTENSIONS_WITH_JSON_FLAT: &[&str] =
-    &[EXTENSION_TS, EXTENSION_TSX, EXTENSION_DTS, EXTENSION_CTS, EXTENSION_DCTS, EXTENSION_MTS, EXTENSION_DMTS, EXTENSION_ETS, EXTENSION_DETS, EXTENSION_JSON];
+pub static SUPPORTED_TS_EXTENSIONS_WITH_JSON_FLAT: &[&str] = &[
+    EXTENSION_TS,
+    EXTENSION_TSX,
+    EXTENSION_DTS,
+    EXTENSION_CTS,
+    EXTENSION_DCTS,
+    EXTENSION_MTS,
+    EXTENSION_DMTS,
+    EXTENSION_ETS,
+    EXTENSION_DETS,
+    EXTENSION_JSON,
+];
 pub static EXTENSIONS_NOT_SUPPORTING_EXTENSIONLESS_RESOLUTION: &[&str] =
     &[EXTENSION_MTS, EXTENSION_DMTS, EXTENSION_MJS, EXTENSION_CTS, EXTENSION_DCTS, EXTENSION_CJS];
 
@@ -80,10 +115,8 @@ static EXTENSIONS_TO_REMOVE: &[&str] = &[
 
 pub fn remove_file_extension(path: &str) -> &str {
     // Remove any known extension even if it has more than one dot
-    for ext in EXTENSIONS_TO_REMOVE {
-        if path.ends_with(ext) {
-            return &path[..path.len() - ext.len()];
-        }
+    if let Some(result) = EXTENSIONS_TO_REMOVE.iter().find_map(|&ext| path.strip_suffix(ext)) {
+        return result;
     }
 
     path
@@ -102,10 +135,9 @@ pub fn remove_any_file_extension(path: &str) -> &str {
 }
 
 pub fn try_get_extension_from_path(p: &str) -> &'static str {
-    for ext in EXTENSIONS_TO_REMOVE {
-        if file_extension_is(p, ext) {
-            return ext;
-        }
+    if let Some(result) = EXTENSIONS_TO_REMOVE.iter().copied().find(|ext| file_extension_is(p, ext))
+    {
+        return result;
     }
     ""
 }
@@ -115,19 +147,16 @@ pub fn remove_extension<'a>(path: &'a str, extension: &str) -> &'a str {
 }
 
 pub fn file_extension_is_one_of(path: &str, extensions: &[&str]) -> bool {
-    for ext in extensions {
-        if file_extension_is(path, ext) {
-            return true;
-        }
-    }
-    false
+    extensions.iter().any(|ext| file_extension_is(path, ext))
 }
 
 pub fn try_extract_ts_extension(file_name: &str) -> &'static str {
-    for ext in SUPPORTED_TS_EXTENSIONS_FOR_EXTRACT_EXTENSION {
-        if file_extension_is(file_name, ext) {
-            return ext;
-        }
+    if let Some(result) = SUPPORTED_TS_EXTENSIONS_FOR_EXTRACT_EXTENSION
+        .iter()
+        .copied()
+        .find(|ext| file_extension_is(file_name, ext))
+    {
+        return result;
     }
     ""
 }
@@ -137,7 +166,8 @@ pub fn has_ts_file_extension(path: &str) -> bool {
 }
 
 pub fn has_implementation_ts_file_extension(path: &str) -> bool {
-    file_extension_is_one_of(path, SUPPORTED_TS_IMPLEMENTATION_EXTENSIONS) && !is_declaration_file_name(path)
+    file_extension_is_one_of(path, SUPPORTED_TS_IMPLEMENTATION_EXTENSIONS)
+        && !is_declaration_file_name(path)
 }
 
 pub fn has_js_file_extension(path: &str) -> bool {
@@ -158,10 +188,11 @@ pub fn extension_is_one_of(ext: &str, extensions: &[&str]) -> bool {
 
 pub fn get_declaration_file_extension(file_name: &str) -> String {
     let base = get_base_file_name(file_name);
-    for ext in SUPPORTED_DECLARATION_EXTENSIONS {
-        if base.ends_with(ext) {
-            return ext.to_string();
-        }
+    if let Some(result) = SUPPORTED_DECLARATION_EXTENSIONS
+        .iter()
+        .find_map(|ext| if base.ends_with(ext) { Some(ext.to_string()) } else { None })
+    {
+        return result;
     }
     if base.ends_with(EXTENSION_TS) {
         if let Some(index) = base.find(".d.") {
@@ -178,7 +209,10 @@ pub fn get_declaration_emit_extension_for_path(path: &str) -> String {
         EXTENSION_DMTS.to_string()
     } else if file_extension_is_one_of(path, &[EXTENSION_CJS, EXTENSION_CTS]) {
         EXTENSION_DCTS.to_string()
-    } else if file_extension_is_one_of(path, &[EXTENSION_TS, EXTENSION_TSX, EXTENSION_JS, EXTENSION_JSX]) {
+    } else if file_extension_is_one_of(
+        path,
+        &[EXTENSION_TS, EXTENSION_TSX, EXTENSION_JS, EXTENSION_JSX],
+    ) {
         EXTENSION_DTS.to_string()
     } else {
         let ext = get_any_extension_from_path(path, &[], false);
@@ -194,7 +228,12 @@ pub fn get_declaration_emit_extension_for_path(path: &str) -> String {
 // ChangeAnyExtension("/path/to/file.ext", ".js", ".ext") === "/path/to/file.js"
 // ChangeAnyExtension("/path/to/file.ext", ".js", ".ts") === "/path/to/file.ext"
 // ChangeAnyExtension("/path/to/file.ext", ".js", [".ext", ".ts"]) === "/path/to/file.js"
-pub fn change_any_extension(path: &str, ext: &str, extensions: &[&str], ignore_case: bool) -> String {
+pub fn change_any_extension(
+    path: &str,
+    ext: &str,
+    extensions: &[&str],
+    ignore_case: bool,
+) -> String {
     let pathext = get_any_extension_from_path(path, extensions, ignore_case);
     if !pathext.is_empty() {
         let result = &path[..path.len() - pathext.len()];
@@ -221,7 +260,11 @@ pub fn change_extension(path: &str, new_extension: &str) -> String {
 pub fn change_full_extension(path: &str, new_extension: &str) -> String {
     let declaration_extension = get_declaration_file_extension(path);
     if !declaration_extension.is_empty() {
-        let ext = if !new_extension.starts_with('.') { format!(".{new_extension}") } else { new_extension.to_string() };
+        let ext = if !new_extension.starts_with('.') {
+            format!(".{new_extension}")
+        } else {
+            new_extension.to_string()
+        };
         return format!("{}{}", &path[..path.len() - declaration_extension.len()], ext);
     }
     change_extension(path, new_extension)
@@ -243,5 +286,10 @@ pub fn get_possible_original_input_extension_for_extension(path: &str) -> Vec<St
         let inner = &ext[".d.".len()..ext.len() - ".ts".len()];
         return vec![format!(".{inner}")];
     }
-    vec![EXTENSION_TSX.to_string(), EXTENSION_TS.to_string(), EXTENSION_JSX.to_string(), EXTENSION_JS.to_string()]
+    vec![
+        EXTENSION_TSX.to_string(),
+        EXTENSION_TS.to_string(),
+        EXTENSION_JSX.to_string(),
+        EXTENSION_JS.to_string(),
+    ]
 }

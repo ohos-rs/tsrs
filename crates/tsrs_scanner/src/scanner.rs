@@ -2,7 +2,7 @@
 //!
 //! Text and positions. The scanner scans a `&'static str` (for the parser, the file's source text: leaked,
 //! embedded, or copied into the current arena or region; other callers pass their own static or `alloc_str` text).
-//! Positions are byte offsets (`i32`), exactly as in Go.
+//! Positions are unsigned byte offsets. Scanner EOF is represented separately from rune values.
 //!
 //! Token values. `token_value()` returns `&'static str`. When the Go scanner would produce a
 //! substring of the source text (the overwhelmingly common case: identifiers, keywords, simple
@@ -23,7 +23,7 @@
 //! (`ScanError::args`); pass them on as `&[&dyn Display]`.
 //!
 //! Speculation (Go `Mark` / `Rewind`). `mark()` returns a `Copy` `ScannerState` snapshot
-//! (positions, token, token value, flags, JSDoc asterisk depth and the slice of comment directives
+//! (positions, token, token value, flags, `JSDoc` asterisk depth and the slice of comment directives
 //! collected so far); `rewind(state)` restores it. Adding a directive copies the slice into a new
 //! arena slice, so a saved snapshot is never modified, which is what Go's shared-backing-array
 //! slice restore amounts to. Buffered
@@ -32,29 +32,46 @@
 //! on rewind, as the Go parser does.
 
 use std::borrow::Cow;
-use std::fmt::Display;
+use std::fmt::{Display, Write as _};
 use std::sync::OnceLock;
 
 use rustc_hash::FxHashMap;
 use tsrs_ast as ast;
-use tsrs_ast::{CommentDirective, CommentDirectiveKind, CommentRange, Kind, Node, NodeFlags, SourceFile, SourceFileLike, TokenFlags};
-use tsrs_core::{alloc_str, jsnum, stringutil, LanguageVariant, ScriptTarget, TextPos, TextRange, UTF16Offset, P};
+use tsrs_ast::{
+    CommentDirective, CommentDirectiveKind, CommentRange, Kind, Node, NodeFlags, SourceFile,
+    SourceFileLike, TokenFlags,
+};
+use tsrs_core::{
+    ArenaStringBuilder, LanguageVariant, P, ScriptTarget, TextRange, UTF16Offset, alloc_str, jsnum,
+    stringutil::{self, Rune},
+};
 use tsrs_diagnostics as diagnostics;
 use tsrs_diagnostics::Message;
 
-use crate::regexp::{char_code_to_reg_exp_flag, RegExpParser, RegularExpressionFlags};
+use crate::regexp::{RegExpParser, RegularExpressionFlags, char_code_to_reg_exp_flag};
 use crate::utilities::token_is_identifier_or_keyword;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum IdentifierVariant {
     Standard,
+    #[expect(
+        clippy::upper_case_acronyms,
+        reason = "The name matches the upstream Go or protocol vocabulary."
+    )]
     JSX,
     RegExpGroupName,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum JsxWhitespaceState {
+    Leading,
+    AllWhitespace,
+    SeenNonWhitespace,
+}
+
 bitflags::bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
-    pub struct EscapeSequenceScanningFlags: i32 {
+    pub struct EscapeSequenceScanningFlags: u32 {
         const String = 1 << 0;
         const ReportErrors = 1 << 1;
         const RegularExpression = 1 << 2;
@@ -70,8 +87,8 @@ bitflags::bitflags! {
 #[derive(Clone, Debug)]
 pub struct ScanError {
     pub message: &'static Message,
-    pub start: i32,
-    pub length: i32,
+    pub start: u32,
+    pub length: u32,
     pub args: Vec<String>,
 }
 
@@ -85,12 +102,15 @@ macro_rules! keywords {
 // Go `textToKeyword` is a map. The port looks keywords up in a perfect hash over the first two bytes, the last
 // byte and the length (every keyword has at least two bytes); KEYWORD_HASH_MUL was searched for the current
 // keyword list, and the table is built at compile time, which fails if two keywords collide.
-const KEYWORD_HASH_MUL: u32 = 0xae8526c7;
+const KEYWORD_HASH_MUL: u32 = 0xae85_26c7;
 const NO_KEYWORD: u8 = u8::MAX;
 
 #[inline]
 const fn keyword_hash(b: &[u8]) -> usize {
-    let key = b[0] as u32 | (b[1] as u32) << 8 | (b[b.len() - 1] as u32) << 16 | (b.len() as u32) << 24;
+    let key = b[0] as u32
+        | ((b[1] as u32) << 8)
+        | ((b[b.len() - 1] as u32) << 16)
+        | ((b.len() as u32) << 24);
     (key.wrapping_mul(KEYWORD_HASH_MUL) >> 24) as usize
 }
 
@@ -279,32 +299,28 @@ fn text_to_token() -> &'static FxHashMap<&'static str, Kind> {
     static M: OnceLock<FxHashMap<&'static str, Kind>> = OnceLock::new();
     M.get_or_init(|| {
         let mut m = FxHashMap::default();
-        for &(text, kind) in TEXT_TO_PUNCTUATION {
-            m.insert(text, kind);
-        }
-        for &(text, kind) in TEXT_TO_KEYWORD {
-            m.insert(text, kind);
-        }
+        m.extend(TEXT_TO_PUNCTUATION.iter().map(|&(text, kind)| (text, kind)));
+        m.extend(TEXT_TO_KEYWORD.iter().map(|&(text, kind)| (text, kind)));
         m
     })
 }
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ScannerState {
-    pub(crate) pos: i32,                             // Current position in text (and ending position of current token)
-    pub(crate) full_start_pos: i32,                  // Starting position of current token including preceding whitespace
-    pub(crate) token_start: i32,                     // Starting position of non-whitespace part of current token
-    pub(crate) token: Kind,                          // Kind of current token
-    pub(crate) token_value: &'static str,            // Parsed value of current token
-    pub(crate) token_flags: TokenFlags,              // Flags for current token
+    pub(crate) pos: u32, // Current position in text (and ending position of current token)
+    pub(crate) full_start_pos: u32, // Starting position of current token including preceding whitespace
+    pub(crate) token_start: u32,    // Starting position of non-whitespace part of current token
+    pub(crate) token: Kind,         // Kind of current token
+    pub(crate) token_value: &'static str, // Parsed value of current token
+    pub(crate) token_flags: TokenFlags, // Flags for current token
     pub(crate) comment_directives: &'static [CommentDirective], // a snapshot, like Go's slice header: Rewind restores it
-    pub(crate) skip_jsdoc_leading_asterisks: i32,    // Leading asterisks to skip when scanning types inside JSDoc. Should be 0 outside JSDoc
+    pub(crate) skip_jsdoc_leading_asterisks: u32, // Leading asterisks to skip when scanning types inside JSDoc. Should be 0 outside JSDoc
 }
 
 #[derive(Default)]
 pub struct Scanner {
     pub(crate) text: &'static str,
-    pub(crate) end: i32,
+    pub(crate) end: u32,
     language_variant: LanguageVariant,
     open_harmony49: bool,
     script_target: ScriptTarget,
@@ -318,7 +334,57 @@ pub struct Scanner {
     hex_digit_cache: FxHashMap<&'static str, &'static str>,
 }
 
-pub(crate) const RUNE_SELF: i32 = 0x80;
+// Like Oxc's byte handlers, dispatch out of the token loop so simple tokens do not
+// pay for the stack frame of numeric, comment, and Unicode scanning. None is the
+// old `continue 'scan` for skipped trivia; Some returns the token kind directly.
+type ByteHandler = fn(&mut Scanner) -> Option<Kind>;
+
+static BYTE_HANDLERS: [ByteHandler; 256] = {
+    let mut table = [Scanner::scan_byte_default as ByteHandler; 256];
+    let mut byte = 0;
+    while byte < table.len() {
+        table[byte] = match byte as u8 {
+            0x09 | 0x0B | 0x0C | 0x20 => Scanner::scan_byte_whitespace,
+            0x0A | 0x0D => Scanner::scan_byte_line_break,
+            0x21 /* ! */ => Scanner::scan_byte_exclamation,
+            0x22 | 0x27 /* " ' */ => Scanner::scan_byte_string,
+            0x60 /* ` */ => Scanner::scan_byte_template,
+            0x25 /* % */ => Scanner::scan_byte_percent,
+            0x26 /* & */ => Scanner::scan_byte_ampersand,
+            0x28 /* ( */ => Scanner::scan_byte_open_paren,
+            0x29 /* ) */ => Scanner::scan_byte_close_paren,
+            0x2A /* * */ => Scanner::scan_byte_asterisk,
+            0x2B /* + */ => Scanner::scan_byte_plus,
+            0x2C /* , */ => Scanner::scan_byte_comma,
+            0x2D /* - */ => Scanner::scan_byte_minus,
+            0x2E /* . */ => Scanner::scan_byte_dot,
+            0x2F /* / */ => Scanner::scan_byte_slash,
+            0x30..=0x39 /* 0-9 */ => Scanner::scan_byte_number,
+            0x3A /* : */ => Scanner::scan_byte_colon,
+            0x3B /* ; */ => Scanner::scan_byte_semicolon,
+            0x3C /* < */ => Scanner::scan_byte_less_than,
+            0x3D /* = */ => Scanner::scan_byte_equals,
+            0x3E /* > */ => Scanner::scan_byte_greater_than,
+            0x3F /* ? */ => Scanner::scan_byte_question,
+            0x5B /* [ */ => Scanner::scan_byte_open_bracket,
+            0x5D /* ] */ => Scanner::scan_byte_close_bracket,
+            0x5E /* ^ */ => Scanner::scan_byte_caret,
+            0x7B /* { */ => Scanner::scan_byte_open_brace,
+            0x7C /* | */ => Scanner::scan_byte_bar,
+            0x7D /* } */ => Scanner::scan_byte_close_brace,
+            0x7E /* ~ */ => Scanner::scan_byte_tilde,
+            0x40 /* @ */ => Scanner::scan_byte_at,
+            0x5C /* \ */ => Scanner::scan_byte_identifier_slow,
+            0x23 /* # */ => Scanner::scan_byte_hash,
+            b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'$' => Scanner::scan_byte_identifier,
+            _ => Scanner::scan_byte_default,
+        };
+        byte += 1;
+    }
+    table
+};
+
+pub(crate) const RUNE_SELF: Rune = 0x80;
 
 /// `[A-Za-z0-9_$]` by byte.
 static ASCII_IDENTIFIER_PART: [bool; 256] = {
@@ -331,23 +397,49 @@ static ASCII_IDENTIFIER_PART: [bool; 256] = {
     }
     t
 };
-pub(crate) const RUNE_ERROR: i32 = 0xFFFD;
+
+static ASCII_JSDOC_COMMENT_TEXT: [[bool; 256]; 2] = {
+    let mut tables = [[false; 256]; 2];
+    let mut byte = 0;
+    while byte < 128 {
+        let is_text = !matches!(byte as u8, b'\r' | b'\n' | b'`');
+        tables[0][byte] = is_text && !matches!(byte as u8, b'{' | b'@');
+        tables[1][byte] = is_text;
+        byte += 1;
+    }
+    tables
+};
+pub(crate) const RUNE_ERROR: Rune = 0xFFFD;
+
+static STRING_LITERAL_END: [[bool; 256]; 2] = {
+    let mut table = [[false; 256]; 2];
+    let mut i = 0;
+    while i < table.len() {
+        table[i][b'\\' as usize] = true;
+        table[i][b'\r' as usize] = true;
+        table[i][b'\n' as usize] = true;
+        i += 1;
+    }
+    table[0][b'\'' as usize] = true;
+    table[1][b'"' as usize] = true;
+    table
+};
 
 /// Go `utf8.DecodeRuneInString` over raw bytes: `(RuneError, 0)` for empty input,
 /// `(RuneError, 1)` for an invalid encoding.
 #[inline]
-pub(crate) fn decode_rune(b: &[u8]) -> (i32, usize) {
+pub(crate) fn decode_rune(b: &[u8]) -> (Rune, usize) {
     let Some(&b0) = b.first() else {
         return (RUNE_ERROR, 0);
     };
     if b0 < 0x80 {
-        return (b0 as i32, 1);
+        return (u32::from(b0), 1);
     }
     decode_rune_slow(b)
 }
 
 #[cold]
-fn decode_rune_slow(b: &[u8]) -> (i32, usize) {
+fn decode_rune_slow(b: &[u8]) -> (Rune, usize) {
     let b0 = b[0] as u32;
     let cont = |i: usize, lo: u8, hi: u8| -> Option<u32> {
         let c = *b.get(i)?;
@@ -356,9 +448,9 @@ fn decode_rune_slow(b: &[u8]) -> (i32, usize) {
         }
         Some((c & 0x3F) as u32)
     };
-    match b0 {
+    let (r, size) = match b0 {
         0xC2..=0xDF => match cont(1, 0x80, 0xBF) {
-            Some(c1) => ((((b0 & 0x1F) << 6) | c1) as i32, 2),
+            Some(c1) => (((b0 & 0x1F) << 6) | c1, 2),
             None => (RUNE_ERROR, 1),
         },
         0xE0..=0xEF => {
@@ -368,7 +460,7 @@ fn decode_rune_slow(b: &[u8]) -> (i32, usize) {
                 _ => (0x80, 0xBF),
             };
             match (cont(1, lo, hi), cont(2, 0x80, 0xBF)) {
-                (Some(c1), Some(c2)) => ((((b0 & 0x0F) << 12) | (c1 << 6) | c2) as i32, 3),
+                (Some(c1), Some(c2)) => (((b0 & 0x0F) << 12) | (c1 << 6) | c2, 3),
                 _ => (RUNE_ERROR, 1),
             }
         }
@@ -379,23 +471,26 @@ fn decode_rune_slow(b: &[u8]) -> (i32, usize) {
                 _ => (0x80, 0xBF),
             };
             match (cont(1, lo, hi), cont(2, 0x80, 0xBF), cont(3, 0x80, 0xBF)) {
-                (Some(c1), Some(c2), Some(c3)) => ((((b0 & 0x07) << 18) | (c1 << 12) | (c2 << 6) | c3) as i32, 4),
+                (Some(c1), Some(c2), Some(c3)) => {
+                    (((b0 & 0x07) << 18) | (c1 << 12) | (c2 << 6) | c3, 4)
+                }
                 _ => (RUNE_ERROR, 1),
             }
         }
         _ => (RUNE_ERROR, 1),
-    }
+    };
+    (r, size)
 }
 
 /// Go `utf8.DecodeLastRuneInString`.
-pub(crate) fn decode_last_rune(b: &[u8]) -> (i32, usize) {
+pub(crate) fn decode_last_rune(b: &[u8]) -> (Rune, usize) {
     let end = b.len();
     if end == 0 {
         return (RUNE_ERROR, 0);
     }
     let last = b[end - 1];
     if last < 0x80 {
-        return (last as i32, 1);
+        return (u32::from(last), 1);
     }
     let lim = end.saturating_sub(4);
     let mut start = end - 1;
@@ -414,12 +509,12 @@ pub(crate) fn decode_last_rune(b: &[u8]) -> (i32, usize) {
 
 /// Go `string(r)`: invalid code points (surrogates, out of range) become U+FFFD.
 #[inline]
-pub(crate) fn rune_to_char(r: i32) -> char {
-    char::from_u32(r as u32).unwrap_or('\u{FFFD}')
+pub(crate) fn rune_to_char(r: Rune) -> char {
+    char::from_u32(r).unwrap_or('\u{FFFD}')
 }
 
 #[inline]
-pub(crate) fn rune_string(r: i32) -> String {
+pub(crate) fn rune_string(r: Rune) -> String {
     rune_to_char(r).to_string()
 }
 
@@ -470,15 +565,15 @@ impl Scanner {
         self.state.token_flags
     }
 
-    pub fn token_full_start(&self) -> i32 {
+    pub fn token_full_start(&self) -> u32 {
         self.state.full_start_pos
     }
 
-    pub fn token_start(&self) -> i32 {
+    pub fn token_start(&self) -> u32 {
         self.state.token_start
     }
 
-    pub fn token_end(&self) -> i32 {
+    pub fn token_end(&self) -> u32 {
         self.state.pos
     }
 
@@ -521,16 +616,13 @@ impl Scanner {
         std::mem::take(&mut self.errors)
     }
 
-    pub fn reset_pos(&mut self, pos: i32) {
-        if pos < 0 {
-            panic!("Cannot reset token state to negative position");
-        }
+    pub fn reset_pos(&mut self, pos: u32) {
         self.state.pos = pos;
         self.state.full_start_pos = pos;
         self.state.token_start = pos;
     }
 
-    pub fn reset_token_state(&mut self, pos: i32) {
+    pub fn reset_token_state(&mut self, pos: u32) {
         self.reset_pos(pos);
         self.state.token = Kind::Unknown;
         self.state.token_value = "";
@@ -541,7 +633,7 @@ impl Scanner {
         if skip {
             self.state.skip_jsdoc_leading_asterisks += 1;
         } else {
-            self.state.skip_jsdoc_leading_asterisks += -1;
+            self.state.skip_jsdoc_leading_asterisks -= 1;
         }
     }
 
@@ -586,7 +678,9 @@ impl Scanner {
                 return;
             };
             comment_text = &comment_text[i + 1..];
-            if !self.state.token_flags.intersects(TokenFlags::PrecedingJSDocWithDeprecated) && has_jsdoc_tag(comment_text, &["deprecated"]) {
+            if !self.state.token_flags.intersects(TokenFlags::PrecedingJSDocWithDeprecated)
+                && has_jsdoc_tag(comment_text, &["deprecated"])
+            {
                 self.state.token_flags |= TokenFlags::PrecedingJSDocWithDeprecated;
             }
             if !self.state.token_flags.intersects(TokenFlags::PrecedingJSDocWithSeeOrLink)
@@ -594,7 +688,9 @@ impl Scanner {
             {
                 self.state.token_flags |= TokenFlags::PrecedingJSDocWithSeeOrLink;
             }
-            if self.state.token_flags.contains(TokenFlags::PrecedingJSDocWithDeprecated | TokenFlags::PrecedingJSDocWithSeeOrLink) {
+            if self.state.token_flags.contains(
+                TokenFlags::PrecedingJSDocWithDeprecated | TokenFlags::PrecedingJSDocWithSeeOrLink,
+            ) {
                 return;
             }
         }
@@ -602,7 +698,7 @@ impl Scanner {
 
     pub fn set_text(&mut self, text: &'static str) {
         self.text = text;
-        self.end = text.len() as i32;
+        self.end = text.len() as u32;
         self.state = ScannerState::default();
     }
 
@@ -627,44 +723,52 @@ impl Scanner {
         self.error_at(diagnostic, self.state.pos, 0, &[]);
     }
 
-    pub(crate) fn error_at(&mut self, diagnostic: &'static Message, pos: i32, length: i32, args: &[&dyn Display]) {
+    pub(crate) fn error_at(
+        &mut self,
+        diagnostic: &'static Message,
+        pos: u32,
+        length: u32,
+        args: &[&dyn Display],
+    ) {
         if self.on_error {
-            self.errors.push(ScanError { message: diagnostic, start: pos, length, args: args.iter().map(|a| a.to_string()).collect() });
+            self.errors.push(ScanError {
+                message: diagnostic,
+                start: pos,
+                length,
+                args: args.iter().map(std::string::ToString::to_string).collect(),
+            });
         }
     }
 
-    // NOTE: even though this returns a rune, it only decodes the current byte.
-    // It must be checked against utf8.RuneSelf to verify that a call to charAndSize
-    // is not needed.
+    // NOTE: this only returns the current byte. It must be checked against
+    // utf8.RuneSelf to verify that a call to charAndSize is not needed.
     #[inline]
-    pub(crate) fn char(&self) -> i32 {
-        if self.state.pos < self.end {
-            return self.text.as_bytes()[self.state.pos as usize] as i32;
-        }
-        -1
+    pub(crate) fn char(&self) -> Option<u8> {
+        self.text.as_bytes().get(self.state.pos as usize).copied()
     }
 
-    // NOTE: this returns a rune, but only decodes the byte at the offset.
+    // NOTE: this only returns the byte at the offset.
     #[inline]
-    pub(crate) fn char_at(&self, offset: i32) -> i32 {
-        let p = self.state.pos + offset;
-        if p < self.end {
-            return self.text.as_bytes()[p as usize] as i32;
-        }
-        -1
+    pub(crate) fn char_at(&self, offset: u32) -> Option<u8> {
+        self.state
+            .pos
+            .checked_add(offset)
+            .and_then(|p| self.text.as_bytes().get(p as usize))
+            .copied()
     }
 
     #[inline]
-    pub(crate) fn char_and_size(&self) -> (i32, i32) {
+    pub(crate) fn char_and_size(&self) -> (Rune, u32) {
         // Fast path: a single ASCII byte.
         if self.state.pos < self.end {
             let b = self.text.as_bytes()[self.state.pos as usize];
             if b < 0x80 {
-                return (b as i32, 1);
+                return (u32::from(b), 1);
             }
         }
-        let (r, size) = decode_rune(&self.text.as_bytes()[(self.state.pos as usize).min(self.text.len())..]);
-        (r, size as i32)
+        let (r, size) =
+            decode_rune(&self.text.as_bytes()[(self.state.pos as usize).min(self.text.len())..]);
+        (r, size as u32)
     }
 
     // scanASCIIWhile advances s.pos over the longest run of ASCII bytes for which
@@ -681,11 +785,58 @@ impl Scanner {
             }
             i += 1;
         }
-        self.state.pos += i as i32;
+        self.state.pos += i as u32;
     }
 
     #[inline]
-    fn slice(&self, start: i32, end: i32) -> &'static str {
+    fn scan_ascii_identifier_parts(&mut self) {
+        let text = &self.text.as_bytes()[self.state.pos as usize..self.end as usize];
+        let (batches, tail) = text.as_chunks::<32>();
+        let mut scanned = 0;
+        for batch in batches {
+            for (i, &byte) in batch.iter().enumerate() {
+                if !ASCII_IDENTIFIER_PART[byte as usize] {
+                    self.state.pos += (scanned + i) as u32;
+                    return;
+                }
+            }
+            scanned += batch.len();
+        }
+        for &byte in tail {
+            if !ASCII_IDENTIFIER_PART[byte as usize] {
+                break;
+            }
+            scanned += 1;
+        }
+        self.state.pos += scanned as u32;
+    }
+
+    #[inline]
+    fn scan_ascii_jsdoc_comment_text(&mut self, in_backticks: bool) {
+        let text = &self.text.as_bytes()[self.state.pos as usize..];
+        let table = &ASCII_JSDOC_COMMENT_TEXT[in_backticks as usize];
+        let (batches, tail) = text.as_chunks::<32>();
+        let mut scanned = 0;
+        for batch in batches {
+            for (i, &byte) in batch.iter().enumerate() {
+                if !table[byte as usize] {
+                    self.state.pos += (scanned + i) as u32;
+                    return;
+                }
+            }
+            scanned += batch.len();
+        }
+        for &byte in tail {
+            if !table[byte as usize] {
+                break;
+            }
+            scanned += 1;
+        }
+        self.state.pos += scanned as u32;
+    }
+
+    #[inline]
+    fn slice(&self, start: u32, end: u32) -> &'static str {
         &self.text[start as usize..end as usize]
     }
 
@@ -706,10 +857,10 @@ impl Scanner {
             let start = a_start - base;
             return &self.text[start..start + a.len() + b.len()];
         }
-        let mut s = String::with_capacity(a.len() + b.len());
+        let mut s = ArenaStringBuilder::with_capacity(a.len() + b.len());
         s.push_str(a);
         s.push_str(b);
-        alloc_str(&s)
+        s.into_str()
     }
 
     /// Returns `s` as a `'static` value without copying if it already is a slice of the text.
@@ -726,530 +877,758 @@ impl Scanner {
     pub fn scan(&mut self) -> Kind {
         self.state.full_start_pos = self.state.pos;
         self.state.token_flags = TokenFlags::None;
-        'scan: loop {
-            let ch = self.char();
-            self.state.token_start = self.state.pos;
-
-            match ch {
-                0x09 | 0x0B | 0x0C | 0x20 => {
-                    self.state.pos += 1;
-                    if self.skip_trivia {
-                        // The next iteration would skip any further single-line whitespace byte the same way.
-                        self.scan_ascii_while(|b| b == b' ' || b == b'\t' || b == 0x0B || b == 0x0C);
-                        continue 'scan;
+        loop {
+            let mut pos = self.state.pos;
+            let bytes = self.text.as_bytes();
+            let byte = loop {
+                if pos >= self.end {
+                    self.state.pos = pos;
+                    self.state.token_start = pos;
+                    self.state.token = Kind::EndOfFile;
+                    return Kind::EndOfFile;
+                }
+                let byte = bytes[pos as usize];
+                if self.skip_trivia {
+                    // Keep ASCII trivia out of the function table: even a single space
+                    // otherwise pays for the frame of the Unicode trivia path.
+                    match byte {
+                        b' ' | b'\t' | 0x0B | 0x0C => {}
+                        b'\r' | b'\n' => self.state.token_flags |= TokenFlags::PrecedingLineBreak,
+                        _ => break byte,
                     }
-                    loop {
-                        let (ch, size) = self.char_and_size();
-                        if !stringutil::is_white_space_single_line(ch) {
-                            break;
-                        }
-                        self.state.pos += size;
-                    }
-                    self.state.token = Kind::WhitespaceTrivia;
+                    pos += 1;
+                } else {
+                    break byte;
                 }
-                0x0A | 0x0D => {
-                    self.state.token_flags |= TokenFlags::PrecedingLineBreak;
-                    if self.skip_trivia {
-                        self.state.pos += 1;
-                        self.scan_ascii_while(|b| b == b' ' || (b'\t'..=b'\r').contains(&b));
-                        continue 'scan;
-                    }
-                    if ch == '\r' as i32 && self.char_at(1) == '\n' as i32 {
-                        self.state.pos += 2;
-                    } else {
-                        self.state.pos += 1;
-                    }
-                    self.state.token = Kind::NewLineTrivia;
-                }
-                0x21 /* ! */ => {
-                    if self.char_at(1) == '=' as i32 {
-                        if self.char_at(2) == '=' as i32 {
-                            self.state.pos += 3;
-                            self.state.token = Kind::ExclamationEqualsEqualsToken;
-                        } else {
-                            self.state.pos += 2;
-                            self.state.token = Kind::ExclamationEqualsToken;
-                        }
-                    } else {
-                        self.state.pos += 1;
-                        self.state.token = Kind::ExclamationToken;
-                    }
-                }
-                0x22 | 0x27 /* " ' */ => {
-                    self.state.token_value = self.scan_string(false /*jsxAttributeString*/);
-                    self.state.token = Kind::StringLiteral;
-                }
-                0x60 /* ` */ => {
-                    self.state.token = self.scan_template_and_set_token_value(false /*shouldEmitInvalidEscapeError*/);
-                }
-                0x25 /* % */ => {
-                    if self.char_at(1) == '=' as i32 {
-                        self.state.pos += 2;
-                        self.state.token = Kind::PercentEqualsToken;
-                    } else {
-                        self.state.pos += 1;
-                        self.state.token = Kind::PercentToken;
-                    }
-                }
-                0x26 /* & */ => {
-                    let next = self.char_at(1);
-                    if next == '&' as i32 {
-                        if self.char_at(2) == '=' as i32 {
-                            self.state.pos += 3;
-                            self.state.token = Kind::AmpersandAmpersandEqualsToken;
-                        } else {
-                            self.state.pos += 2;
-                            self.state.token = Kind::AmpersandAmpersandToken;
-                        }
-                    } else if next == '=' as i32 {
-                        self.state.pos += 2;
-                        self.state.token = Kind::AmpersandEqualsToken;
-                    } else {
-                        self.state.pos += 1;
-                        self.state.token = Kind::AmpersandToken;
-                    }
-                }
-                0x28 /* ( */ => {
-                    self.state.pos += 1;
-                    self.state.token = Kind::OpenParenToken;
-                }
-                0x29 /* ) */ => {
-                    self.state.pos += 1;
-                    self.state.token = Kind::CloseParenToken;
-                }
-                0x2A /* * */ => {
-                    let next = self.char_at(1);
-                    if next == '=' as i32 {
-                        self.state.pos += 2;
-                        self.state.token = Kind::AsteriskEqualsToken;
-                    } else if next == '*' as i32 {
-                        if self.char_at(2) == '=' as i32 {
-                            self.state.pos += 3;
-                            self.state.token = Kind::AsteriskAsteriskEqualsToken;
-                        } else {
-                            self.state.pos += 2;
-                            self.state.token = Kind::AsteriskAsteriskToken;
-                        }
-                    } else {
-                        self.state.pos += 1;
-                        if self.state.skip_jsdoc_leading_asterisks != 0
-                            && !self.state.token_flags.intersects(TokenFlags::PrecedingJSDocLeadingAsterisks)
-                            && self.state.token_flags.intersects(TokenFlags::PrecedingLineBreak)
-                        {
-                            self.state.token_flags |= TokenFlags::PrecedingJSDocLeadingAsterisks;
-                            continue 'scan;
-                        }
-                        self.state.token = Kind::AsteriskToken;
-                    }
-                }
-                0x2B /* + */ => {
-                    let next = self.char_at(1);
-                    if next == '=' as i32 {
-                        self.state.pos += 2;
-                        self.state.token = Kind::PlusEqualsToken;
-                    } else if next == '+' as i32 {
-                        self.state.pos += 2;
-                        self.state.token = Kind::PlusPlusToken;
-                    } else {
-                        self.state.pos += 1;
-                        self.state.token = Kind::PlusToken;
-                    }
-                }
-                0x2C /* , */ => {
-                    self.state.pos += 1;
-                    self.state.token = Kind::CommaToken;
-                }
-                0x2D /* - */ => {
-                    let next = self.char_at(1);
-                    if next == '=' as i32 {
-                        self.state.pos += 2;
-                        self.state.token = Kind::MinusEqualsToken;
-                    } else if next == '-' as i32 {
-                        self.state.pos += 2;
-                        self.state.token = Kind::MinusMinusToken;
-                    } else {
-                        self.state.pos += 1;
-                        self.state.token = Kind::MinusToken;
-                    }
-                }
-                0x2E /* . */ => {
-                    let next = self.char_at(1);
-                    if stringutil::is_digit(next) {
-                        self.state.token = self.scan_number();
-                    } else if next == '.' as i32 && self.char_at(2) == '.' as i32 {
-                        self.state.pos += 3;
-                        self.state.token = Kind::DotDotDotToken;
-                    } else {
-                        self.state.pos += 1;
-                        self.state.token = Kind::DotToken;
-                    }
-                }
-                0x2F /* / */ => {
-                    // Single-line comment
-                    if self.char_at(1) == '/' as i32 {
-                        self.state.pos += 2;
-
-                        loop {
-                            self.scan_ascii_while(|b| b != b'\n' && b != b'\r');
-                            let (ch1, size) = self.char_and_size();
-                            if size == 0 || stringutil::is_line_break(ch1) {
-                                break;
-                            }
-                            self.state.pos += size;
-                        }
-
-                        self.process_comment_directive(self.state.token_start, self.state.pos, false);
-
-                        if self.skip_trivia {
-                            continue 'scan;
-                        }
-                        self.state.token = Kind::SingleLineCommentTrivia;
-                        return self.state.token;
-                    }
-                    // Multi-line comment
-                    if self.char_at(1) == '*' as i32 {
-                        self.state.pos += 2;
-                        let is_jsdoc = self.char() == '*' as i32 && self.char_at(1) != '/' as i32;
-
-                        let mut comment_closed = false;
-                        let mut last_line_start = self.state.token_start;
-                        loop {
-                            self.scan_ascii_while(|b| b != b'*' && b != b'\n' && b != b'\r');
-                            let (ch1, size) = self.char_and_size();
-                            if size == 0 {
-                                break;
-                            }
-
-                            if ch1 == '*' as i32 && self.char_at(1) == '/' as i32 {
-                                self.state.pos += 2;
-                                comment_closed = true;
-                                break;
-                            }
-
-                            self.state.pos += size;
-
-                            if stringutil::is_line_break(ch1) {
-                                last_line_start = self.state.pos;
-                                self.state.token_flags |= TokenFlags::PrecedingLineBreak;
-                            }
-                        }
-
-                        if is_jsdoc {
-                            self.state.token_flags |= TokenFlags::PrecedingJSDocComment;
-                            self.scan_jsdoc_comment_for_tags(self.slice(self.state.token_start, self.state.pos));
-                        }
-
-                        self.process_comment_directive(last_line_start, self.state.pos, true);
-
-                        if !comment_closed {
-                            self.error(&diagnostics::Asterisk_Slash_expected);
-                        }
-
-                        if self.skip_trivia {
-                            continue 'scan;
-                        }
-
-                        if !comment_closed {
-                            self.state.token_flags |= TokenFlags::Unterminated;
-                        }
-                        self.state.token = Kind::MultiLineCommentTrivia;
-                        return self.state.token;
-                    }
-                    if self.char_at(1) == '=' as i32 {
-                        self.state.pos += 2;
-                        self.state.token = Kind::SlashEqualsToken;
-                    } else {
-                        self.state.pos += 1;
-                        self.state.token = Kind::SlashToken;
-                    }
-                }
-                0x30..=0x39 /* 0-9 */ => 'digit: {
-                    if ch == '0' as i32 {
-                        if self.char_at(1) == 'X' as i32 || self.char_at(1) == 'x' as i32 {
-                            let start = self.state.pos;
-                            self.state.pos += 2;
-                            let mut digits = self.scan_hex_digits(1, true, true);
-                            if digits.is_empty() {
-                                self.error(&diagnostics::Hexadecimal_digit_expected);
-                                digits = "0";
-                            }
-                            if let Some(&cached_value) = self.hex_number_cache.get(digits) {
-                                self.state.token_value = cached_value;
-                            } else {
-                                let raw_text = self.slice(start, self.state.pos);
-                                if raw_text.starts_with("0x") && &raw_text[2..] == digits {
-                                    self.state.token_value = raw_text;
-                                } else {
-                                    self.state.token_value = alloc_str(&format!("0x{digits}"));
-                                }
-                                self.pin_unless_source(digits, self.state.token_value);
-                                self.hex_number_cache.insert(digits, self.state.token_value);
-                            }
-                            self.state.token_flags |= TokenFlags::HexSpecifier;
-                            self.state.token = self.scan_big_int_suffix();
-                            break 'digit;
-                        }
-                        if self.char_at(1) == 'B' as i32 || self.char_at(1) == 'b' as i32 {
-                            self.state.pos += 2;
-                            let mut digits = self.scan_binary_or_octal_digits(2);
-                            if digits.is_empty() {
-                                self.error(&diagnostics::Binary_digit_expected);
-                                digits = "0".to_string();
-                            }
-                            self.state.token_value = alloc_str(&format!("0b{digits}"));
-                            self.state.token_flags |= TokenFlags::BinarySpecifier;
-                            self.state.token = self.scan_big_int_suffix();
-                            break 'digit;
-                        }
-                        if self.char_at(1) == 'O' as i32 || self.char_at(1) == 'o' as i32 {
-                            self.state.pos += 2;
-                            let mut digits = self.scan_binary_or_octal_digits(8);
-                            if digits.is_empty() {
-                                self.error(&diagnostics::Octal_digit_expected);
-                                digits = "0".to_string();
-                            }
-                            self.state.token_value = alloc_str(&format!("0o{digits}"));
-                            self.state.token_flags |= TokenFlags::OctalSpecifier;
-                            self.state.token = self.scan_big_int_suffix();
-                            break 'digit;
-                        }
-                    }
-                    self.state.token = self.scan_number();
-                }
-                0x3A /* : */ => {
-                    self.state.pos += 1;
-                    self.state.token = Kind::ColonToken;
-                }
-                0x3B /* ; */ => {
-                    self.state.pos += 1;
-                    self.state.token = Kind::SemicolonToken;
-                }
-                0x3C /* < */ => {
-                    if self.char_at(1) == '<' as i32 && is_conflict_marker_trivia(self.text, self.state.pos) {
-                        self.state.pos = self.scan_conflict_marker_trivia_reporting(self.state.pos);
-                        if self.skip_trivia {
-                            continue 'scan;
-                        } else {
-                            self.state.token = Kind::ConflictMarkerTrivia;
-                            return self.state.token;
-                        }
-                    }
-                    if self.char_at(1) == '<' as i32 {
-                        if self.char_at(2) == '=' as i32 {
-                            self.state.pos += 3;
-                            self.state.token = Kind::LessThanLessThanEqualsToken;
-                        } else {
-                            self.state.pos += 2;
-                            self.state.token = Kind::LessThanLessThanToken;
-                        }
-                    } else if self.char_at(1) == '=' as i32 {
-                        self.state.pos += 2;
-                        self.state.token = Kind::LessThanEqualsToken;
-                    } else if self.language_variant == LanguageVariant::JSX && self.char_at(1) == '/' as i32 && self.char_at(2) != '*' as i32 {
-                        self.state.pos += 2;
-                        self.state.token = Kind::LessThanSlashToken;
-                    } else {
-                        self.state.pos += 1;
-                        self.state.token = Kind::LessThanToken;
-                    }
-                }
-                0x3D /* = */ => {
-                    if self.char_at(1) == '=' as i32 && is_conflict_marker_trivia(self.text, self.state.pos) {
-                        self.state.pos = self.scan_conflict_marker_trivia_reporting(self.state.pos);
-                        if self.skip_trivia {
-                            continue 'scan;
-                        } else {
-                            self.state.token = Kind::ConflictMarkerTrivia;
-                            return self.state.token;
-                        }
-                    }
-                    if self.char_at(1) == '=' as i32 {
-                        if self.char_at(2) == '=' as i32 {
-                            self.state.pos += 3;
-                            self.state.token = Kind::EqualsEqualsEqualsToken;
-                        } else {
-                            self.state.pos += 2;
-                            self.state.token = Kind::EqualsEqualsToken;
-                        }
-                    } else if self.char_at(1) == '>' as i32 {
-                        self.state.pos += 2;
-                        self.state.token = Kind::EqualsGreaterThanToken;
-                    } else {
-                        self.state.pos += 1;
-                        self.state.token = Kind::EqualsToken;
-                    }
-                }
-                0x3E /* > */ => {
-                    if self.char_at(1) == '>' as i32 && is_conflict_marker_trivia(self.text, self.state.pos) {
-                        self.state.pos = self.scan_conflict_marker_trivia_reporting(self.state.pos);
-                        if self.skip_trivia {
-                            continue 'scan;
-                        } else {
-                            self.state.token = Kind::ConflictMarkerTrivia;
-                            return self.state.token;
-                        }
-                    }
-                    self.state.pos += 1;
-                    self.state.token = Kind::GreaterThanToken;
-                }
-                0x3F /* ? */ => {
-                    if self.char_at(1) == '.' as i32 && !stringutil::is_digit(self.char_at(2)) {
-                        self.state.pos += 2;
-                        self.state.token = Kind::QuestionDotToken;
-                    } else if self.char_at(1) == '?' as i32 {
-                        if self.char_at(2) == '=' as i32 {
-                            self.state.pos += 3;
-                            self.state.token = Kind::QuestionQuestionEqualsToken;
-                        } else {
-                            self.state.pos += 2;
-                            self.state.token = Kind::QuestionQuestionToken;
-                        }
-                    } else {
-                        self.state.pos += 1;
-                        self.state.token = Kind::QuestionToken;
-                    }
-                }
-                0x5B /* [ */ => {
-                    self.state.pos += 1;
-                    self.state.token = Kind::OpenBracketToken;
-                }
-                0x5D /* ] */ => {
-                    self.state.pos += 1;
-                    self.state.token = Kind::CloseBracketToken;
-                }
-                0x5E /* ^ */ => {
-                    if self.char_at(1) == '=' as i32 {
-                        self.state.pos += 2;
-                        self.state.token = Kind::CaretEqualsToken;
-                    } else {
-                        self.state.pos += 1;
-                        self.state.token = Kind::CaretToken;
-                    }
-                }
-                0x7B /* { */ => {
-                    self.state.pos += 1;
-                    self.state.token = Kind::OpenBraceToken;
-                }
-                0x7C /* | */ => {
-                    if self.char_at(1) == '|' as i32 && is_conflict_marker_trivia(self.text, self.state.pos) {
-                        self.state.pos = self.scan_conflict_marker_trivia_reporting(self.state.pos);
-                        if self.skip_trivia {
-                            continue 'scan;
-                        } else {
-                            self.state.token = Kind::ConflictMarkerTrivia;
-                            return self.state.token;
-                        }
-                    }
-                    if self.char_at(1) == '|' as i32 {
-                        if self.char_at(2) == '=' as i32 {
-                            self.state.pos += 3;
-                            self.state.token = Kind::BarBarEqualsToken;
-                        } else {
-                            self.state.pos += 2;
-                            self.state.token = Kind::BarBarToken;
-                        }
-                    } else if self.char_at(1) == '=' as i32 {
-                        self.state.pos += 2;
-                        self.state.token = Kind::BarEqualsToken;
-                    } else {
-                        self.state.pos += 1;
-                        self.state.token = Kind::BarToken;
-                    }
-                }
-                0x7D /* } */ => {
-                    self.state.pos += 1;
-                    self.state.token = Kind::CloseBraceToken;
-                }
-                0x7E /* ~ */ => {
-                    self.state.pos += 1;
-                    self.state.token = Kind::TildeToken;
-                }
-                0x40 /* @ */ => {
-                    self.state.pos += 1;
-                    self.state.token = Kind::AtToken;
-                }
-                0x5C /* \ */ => {
-                    if self.scan_identifier(0, IdentifierVariant::Standard) {
-                        self.state.token = get_identifier_token(self.state.token_value);
-                    } else {
-                        self.scan_invalid_character();
-                    }
-                }
-                0x23 /* # */ => 'hash: {
-                    if self.char_at(1) == '!' as i32 {
-                        if self.state.pos == 0 {
-                            self.state.pos += 2;
-                            let (mut ch, mut size) = self.char_and_size();
-                            while size > 0 && !stringutil::is_line_break(ch) {
-                                self.state.pos += size;
-                                (ch, size) = self.char_and_size();
-                            }
-                            continue 'scan;
-                        }
-                        self.error_at(&diagnostics::X_can_only_be_used_at_the_start_of_a_file, self.state.pos, 2, &[]);
-                        self.state.pos += 2;
-                        self.state.token = Kind::Unknown;
-                        break 'hash;
-                    }
-                    if !self.scan_identifier(1, IdentifierVariant::Standard) {
-                        self.error_at(&diagnostics::Invalid_character, self.state.pos - 1, 1, &[]);
-                        self.state.token_value = "#";
-                    }
-                    self.state.token = Kind::PrivateIdentifier;
-                }
-                _ => 'default: {
-                    if ch < 0 {
-                        self.state.token = Kind::EndOfFile;
-                        break 'default;
-                    }
-                    if self.scan_identifier(0, IdentifierVariant::Standard) {
-                        self.state.token = get_identifier_token(self.state.token_value);
-                        break 'default;
-                    }
-                    let (mut ch, mut size) = self.char_and_size();
-                    if ch == RUNE_ERROR {
-                        self.error_at(&diagnostics::File_appears_to_be_binary, 0, 0, &[]);
-                        self.state.pos = self.text.len() as i32;
-                        self.state.token = Kind::NonTextFileMarkerTrivia;
-                        break 'default;
-                    }
-                    if stringutil::is_white_space_single_line(ch) {
-                        self.state.pos += size;
-
-                        // If we get here and it's not 0x0085 (nextLine), then we're handling non-ASCII whitespace.
-                        // Handle skipTrivia like we do in the space case above.
-                        if ch == 0x0085 || self.skip_trivia {
-                            continue 'scan;
-                        }
-
-                        loop {
-                            (ch, size) = self.char_and_size();
-                            if !stringutil::is_white_space_single_line(ch) {
-                                break;
-                            }
-                            self.state.pos += size;
-                        }
-                        self.state.token = Kind::WhitespaceTrivia;
-                        return self.state.token;
-                    }
-                    if stringutil::is_line_break(ch) {
-                        self.state.token_flags |= TokenFlags::PrecedingLineBreak;
-                        self.state.pos += size;
-                        continue 'scan;
-                    }
-                    self.scan_invalid_character();
-                }
+            };
+            self.state.pos = pos;
+            self.state.token_start = pos;
+            if let Some(token) = BYTE_HANDLERS[byte as usize](self) {
+                self.state.token = token;
+                return token;
             }
-            return self.state.token;
         }
     }
 
-    fn scan_conflict_marker_trivia_reporting(&mut self, pos: i32) -> i32 {
-        let text = self.text;
-        scan_conflict_marker_trivia(text, pos, Some(&mut |diag, pos, length| self.error_at(diag, pos, length, &[])))
+    #[cold]
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "BYTE_HANDLERS requires Option<Kind>; other byte handlers return None to continue scanning trivia."
+    )]
+    fn scan_byte_whitespace(&mut self) -> Option<Kind> {
+        debug_assert!(!self.skip_trivia);
+        self.state.pos += 1;
+        loop {
+            let (ch, size) = self.char_and_size();
+            if !stringutil::is_white_space_single_line(ch) {
+                break;
+            }
+            self.state.pos += size;
+        }
+        Some(Kind::WhitespaceTrivia)
     }
 
-    fn process_comment_directive(&mut self, start: i32, end: i32, multiline: bool) {
+    #[cold]
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "BYTE_HANDLERS requires Option<Kind>; other byte handlers return None to continue scanning trivia."
+    )]
+    fn scan_byte_line_break(&mut self) -> Option<Kind> {
+        debug_assert!(!self.skip_trivia);
+        let ch = self.char();
+        self.state.token_flags |= TokenFlags::PrecedingLineBreak;
+        if ch == Some(b'\r') && self.char_at(1) == Some(b'\n') {
+            self.state.pos += 2;
+        } else {
+            self.state.pos += 1;
+        }
+        Some(Kind::NewLineTrivia)
+    }
+
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "BYTE_HANDLERS requires Option<Kind>; other byte handlers return None to continue scanning trivia."
+    )]
+    fn scan_byte_exclamation(&mut self) -> Option<Kind> {
+        let token = if self.char_at(1) == Some(b'=') {
+            if self.char_at(2) == Some(b'=') {
+                self.state.pos += 3;
+                Kind::ExclamationEqualsEqualsToken
+            } else {
+                self.state.pos += 2;
+                Kind::ExclamationEqualsToken
+            }
+        } else {
+            self.state.pos += 1;
+            Kind::ExclamationToken
+        };
+        Some(token)
+    }
+
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "BYTE_HANDLERS requires Option<Kind>; other byte handlers return None to continue scanning trivia."
+    )]
+    fn scan_byte_string(&mut self) -> Option<Kind> {
+        self.state.token_value = self.scan_string(false /*jsxAttributeString*/);
+        Some(Kind::StringLiteral)
+    }
+
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "BYTE_HANDLERS requires Option<Kind>; other byte handlers return None to continue scanning trivia."
+    )]
+    fn scan_byte_template(&mut self) -> Option<Kind> {
+        Some(self.scan_template_and_set_token_value(false /*shouldEmitInvalidEscapeError*/))
+    }
+
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "BYTE_HANDLERS requires Option<Kind>; other byte handlers return None to continue scanning trivia."
+    )]
+    fn scan_byte_percent(&mut self) -> Option<Kind> {
+        let token = if self.char_at(1) == Some(b'=') {
+            self.state.pos += 2;
+            Kind::PercentEqualsToken
+        } else {
+            self.state.pos += 1;
+            Kind::PercentToken
+        };
+        Some(token)
+    }
+
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "BYTE_HANDLERS requires Option<Kind>; other byte handlers return None to continue scanning trivia."
+    )]
+    fn scan_byte_ampersand(&mut self) -> Option<Kind> {
+        let next = self.char_at(1);
+        let token = if next == Some(b'&') {
+            if self.char_at(2) == Some(b'=') {
+                self.state.pos += 3;
+                Kind::AmpersandAmpersandEqualsToken
+            } else {
+                self.state.pos += 2;
+                Kind::AmpersandAmpersandToken
+            }
+        } else if next == Some(b'=') {
+            self.state.pos += 2;
+            Kind::AmpersandEqualsToken
+        } else {
+            self.state.pos += 1;
+            Kind::AmpersandToken
+        };
+        Some(token)
+    }
+
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "BYTE_HANDLERS requires Option<Kind>; other byte handlers return None to continue scanning trivia."
+    )]
+    fn scan_byte_open_paren(&mut self) -> Option<Kind> {
+        self.state.pos += 1;
+        Some(Kind::OpenParenToken)
+    }
+
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "BYTE_HANDLERS requires Option<Kind>; other byte handlers return None to continue scanning trivia."
+    )]
+    fn scan_byte_close_paren(&mut self) -> Option<Kind> {
+        self.state.pos += 1;
+        Some(Kind::CloseParenToken)
+    }
+
+    fn scan_byte_asterisk(&mut self) -> Option<Kind> {
+        let next = self.char_at(1);
+        let token = if next == Some(b'=') {
+            self.state.pos += 2;
+            Kind::AsteriskEqualsToken
+        } else if next == Some(b'*') {
+            if self.char_at(2) == Some(b'=') {
+                self.state.pos += 3;
+                Kind::AsteriskAsteriskEqualsToken
+            } else {
+                self.state.pos += 2;
+                Kind::AsteriskAsteriskToken
+            }
+        } else {
+            self.state.pos += 1;
+            if self.state.skip_jsdoc_leading_asterisks != 0
+                && !self.state.token_flags.intersects(TokenFlags::PrecedingJSDocLeadingAsterisks)
+                && self.state.token_flags.intersects(TokenFlags::PrecedingLineBreak)
+            {
+                self.state.token_flags |= TokenFlags::PrecedingJSDocLeadingAsterisks;
+                return None;
+            }
+            Kind::AsteriskToken
+        };
+        Some(token)
+    }
+
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "BYTE_HANDLERS requires Option<Kind>; other byte handlers return None to continue scanning trivia."
+    )]
+    fn scan_byte_plus(&mut self) -> Option<Kind> {
+        let next = self.char_at(1);
+        let token = if next == Some(b'=') {
+            self.state.pos += 2;
+            Kind::PlusEqualsToken
+        } else if next == Some(b'+') {
+            self.state.pos += 2;
+            Kind::PlusPlusToken
+        } else {
+            self.state.pos += 1;
+            Kind::PlusToken
+        };
+        Some(token)
+    }
+
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "BYTE_HANDLERS requires Option<Kind>; other byte handlers return None to continue scanning trivia."
+    )]
+    fn scan_byte_comma(&mut self) -> Option<Kind> {
+        self.state.pos += 1;
+        Some(Kind::CommaToken)
+    }
+
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "BYTE_HANDLERS requires Option<Kind>; other byte handlers return None to continue scanning trivia."
+    )]
+    fn scan_byte_minus(&mut self) -> Option<Kind> {
+        let next = self.char_at(1);
+        let token = if next == Some(b'=') {
+            self.state.pos += 2;
+            Kind::MinusEqualsToken
+        } else if next == Some(b'-') {
+            self.state.pos += 2;
+            Kind::MinusMinusToken
+        } else {
+            self.state.pos += 1;
+            Kind::MinusToken
+        };
+        Some(token)
+    }
+
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "BYTE_HANDLERS requires Option<Kind>; other byte handlers return None to continue scanning trivia."
+    )]
+    fn scan_byte_dot(&mut self) -> Option<Kind> {
+        let next = self.char_at(1);
+        let token = if next.is_some_and(|ch| stringutil::is_digit(u32::from(ch))) {
+            self.scan_number()
+        } else if next == Some(b'.') && self.char_at(2) == Some(b'.') {
+            self.state.pos += 3;
+            Kind::DotDotDotToken
+        } else {
+            self.state.pos += 1;
+            Kind::DotToken
+        };
+        Some(token)
+    }
+
+    fn scan_byte_slash(&mut self) -> Option<Kind> {
+        // Single-line comment
+        if self.char_at(1) == Some(b'/') {
+            self.state.pos += 2;
+
+            loop {
+                self.scan_ascii_while(|b| b != b'\n' && b != b'\r');
+                let (ch1, size) = self.char_and_size();
+                if size == 0 || stringutil::is_line_break(ch1) {
+                    break;
+                }
+                self.state.pos += size;
+            }
+
+            self.process_comment_directive(self.state.token_start, self.state.pos, false);
+
+            if self.skip_trivia {
+                return None;
+            }
+            return Some(Kind::SingleLineCommentTrivia);
+        }
+        // Multi-line comment
+        if self.char_at(1) == Some(b'*') {
+            self.state.pos += 2;
+            let is_jsdoc = self.char() == Some(b'*') && self.char_at(1) != Some(b'/');
+
+            let mut comment_closed = false;
+            let mut last_line_start = self.state.token_start;
+            loop {
+                self.scan_ascii_while(|b| b != b'*' && b != b'\n' && b != b'\r');
+                let (ch1, size) = self.char_and_size();
+                if size == 0 {
+                    break;
+                }
+
+                if ch1 == '*' as Rune && self.char_at(1) == Some(b'/') {
+                    self.state.pos += 2;
+                    comment_closed = true;
+                    break;
+                }
+
+                self.state.pos += size;
+
+                if stringutil::is_line_break(ch1) {
+                    self.state.token_flags |= TokenFlags::PrecedingLineBreak;
+                    (comment_closed, last_line_start) = self.scan_multi_line_comment_tail();
+                    break;
+                }
+            }
+
+            if is_jsdoc {
+                self.state.token_flags |= TokenFlags::PrecedingJSDocComment;
+                self.scan_jsdoc_comment_for_tags(
+                    self.slice(self.state.token_start, self.state.pos),
+                );
+            }
+
+            self.process_comment_directive(last_line_start, self.state.pos, true);
+
+            if !comment_closed {
+                self.error(&diagnostics::Asterisk_Slash_expected);
+            }
+
+            if self.skip_trivia {
+                return None;
+            }
+
+            if !comment_closed {
+                self.state.token_flags |= TokenFlags::Unterminated;
+            }
+            return Some(Kind::MultiLineCommentTrivia);
+        }
+        let token = if self.char_at(1) == Some(b'=') {
+            self.state.pos += 2;
+            Kind::SlashEqualsToken
+        } else {
+            self.state.pos += 1;
+            Kind::SlashToken
+        };
+        Some(token)
+    }
+
+    // After the first line break, only the closing delimiter and final line start remain relevant.
+    // Keep the final line start for comment directives; CRLF ends after LF, like the scalar loop.
+    fn scan_multi_line_comment_tail(&mut self) -> (bool, u32) {
+        let start = self.state.pos as usize;
+        debug_assert!(start <= self.end as usize);
+        debug_assert!(
+            self.text[..start]
+                .chars()
+                .next_back()
+                .is_some_and(|ch| stringutil::is_line_break(ch as Rune))
+        );
+        let remaining = &self.text.as_bytes()[start..self.end as usize];
+        let closing = memchr::memmem::find(remaining, b"*/");
+        let comment_closed = closing.is_some();
+        let body = &remaining[..closing.unwrap_or(remaining.len())];
+        let mut search_end = body.len();
+        let mut last_line_start = start;
+        while let Some(i) = memchr::memrchr3(b'\r', b'\n', 0xE2, &body[..search_end]) {
+            if body[i] != 0xE2 {
+                last_line_start = start + i + 1;
+                break;
+            }
+            if matches!(body.get(i..i + 3), Some([0xE2, 0x80, 0xA8 | 0xA9])) {
+                last_line_start = start + i + 3;
+                break;
+            }
+            search_end = i;
+        }
+        self.state.pos = (start + body.len()) as u32;
+        if comment_closed {
+            self.state.pos += 2;
+        }
+        (comment_closed, last_line_start as u32)
+    }
+
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "BYTE_HANDLERS requires Option<Kind>; other byte handlers return None to continue scanning trivia."
+    )]
+    fn scan_byte_number(&mut self) -> Option<Kind> {
+        let ch = self.char();
+        let token = 'digit: {
+            if ch == Some(b'0') {
+                if self.char_at(1) == Some(b'X') || self.char_at(1) == Some(b'x') {
+                    let start = self.state.pos;
+                    self.state.pos += 2;
+                    let mut digits = self.scan_hex_digits(1, true, true);
+                    if digits.is_empty() {
+                        self.error(&diagnostics::Hexadecimal_digit_expected);
+                        digits = "0";
+                    }
+                    let raw_text = self.slice(start, self.state.pos);
+                    if raw_text.starts_with("0x") && &raw_text[2..] == digits {
+                        self.state.token_value = raw_text;
+                    } else if let Some(&cached_value) = self.hex_number_cache.get(digits) {
+                        self.state.token_value = cached_value;
+                    } else {
+                        let mut value = ArenaStringBuilder::with_capacity(2 + digits.len());
+                        value.push_str("0x");
+                        value.push_str(digits);
+                        self.state.token_value = value.into_str();
+                        self.pin_unless_source(digits, self.state.token_value);
+                        self.hex_number_cache.insert(digits, self.state.token_value);
+                    }
+                    self.state.token_flags |= TokenFlags::HexSpecifier;
+                    break 'digit self.scan_big_int_suffix();
+                }
+                if self.char_at(1) == Some(b'B') || self.char_at(1) == Some(b'b') {
+                    self.state.pos += 2;
+                    let (value, has_digits) = self.scan_binary_or_octal_digits(2, "0b");
+                    if !has_digits {
+                        self.error(&diagnostics::Binary_digit_expected);
+                        self.state.token_value = "0b0";
+                    } else {
+                        self.state.token_value = value;
+                    }
+                    self.state.token_flags |= TokenFlags::BinarySpecifier;
+                    break 'digit self.scan_big_int_suffix();
+                }
+                if self.char_at(1) == Some(b'O') || self.char_at(1) == Some(b'o') {
+                    self.state.pos += 2;
+                    let (value, has_digits) = self.scan_binary_or_octal_digits(8, "0o");
+                    if !has_digits {
+                        self.error(&diagnostics::Octal_digit_expected);
+                        self.state.token_value = "0o0";
+                    } else {
+                        self.state.token_value = value;
+                    }
+                    self.state.token_flags |= TokenFlags::OctalSpecifier;
+                    break 'digit self.scan_big_int_suffix();
+                }
+            }
+            self.scan_number()
+        };
+        Some(token)
+    }
+
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "BYTE_HANDLERS requires Option<Kind>; other byte handlers return None to continue scanning trivia."
+    )]
+    fn scan_byte_colon(&mut self) -> Option<Kind> {
+        self.state.pos += 1;
+        Some(Kind::ColonToken)
+    }
+
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "BYTE_HANDLERS requires Option<Kind>; other byte handlers return None to continue scanning trivia."
+    )]
+    fn scan_byte_semicolon(&mut self) -> Option<Kind> {
+        self.state.pos += 1;
+        Some(Kind::SemicolonToken)
+    }
+
+    fn scan_byte_less_than(&mut self) -> Option<Kind> {
+        if self.char_at(1) == Some(b'<') && is_conflict_marker_trivia(self.text, self.state.pos) {
+            self.state.pos = self.scan_conflict_marker_trivia_reporting(self.state.pos);
+            if self.skip_trivia {
+                return None;
+            }
+            return Some(Kind::ConflictMarkerTrivia);
+        }
+        let token = if self.char_at(1) == Some(b'<') {
+            if self.char_at(2) == Some(b'=') {
+                self.state.pos += 3;
+                Kind::LessThanLessThanEqualsToken
+            } else {
+                self.state.pos += 2;
+                Kind::LessThanLessThanToken
+            }
+        } else if self.char_at(1) == Some(b'=') {
+            self.state.pos += 2;
+            Kind::LessThanEqualsToken
+        } else if self.language_variant == LanguageVariant::JSX
+            && self.char_at(1) == Some(b'/')
+            && self.char_at(2) != Some(b'*')
+        {
+            self.state.pos += 2;
+            Kind::LessThanSlashToken
+        } else {
+            self.state.pos += 1;
+            Kind::LessThanToken
+        };
+        Some(token)
+    }
+
+    fn scan_byte_equals(&mut self) -> Option<Kind> {
+        if self.char_at(1) == Some(b'=') && is_conflict_marker_trivia(self.text, self.state.pos) {
+            self.state.pos = self.scan_conflict_marker_trivia_reporting(self.state.pos);
+            if self.skip_trivia {
+                return None;
+            }
+            return Some(Kind::ConflictMarkerTrivia);
+        }
+        let token = if self.char_at(1) == Some(b'=') {
+            if self.char_at(2) == Some(b'=') {
+                self.state.pos += 3;
+                Kind::EqualsEqualsEqualsToken
+            } else {
+                self.state.pos += 2;
+                Kind::EqualsEqualsToken
+            }
+        } else if self.char_at(1) == Some(b'>') {
+            self.state.pos += 2;
+            Kind::EqualsGreaterThanToken
+        } else {
+            self.state.pos += 1;
+            Kind::EqualsToken
+        };
+        Some(token)
+    }
+
+    fn scan_byte_greater_than(&mut self) -> Option<Kind> {
+        if self.char_at(1) == Some(b'>') && is_conflict_marker_trivia(self.text, self.state.pos) {
+            self.state.pos = self.scan_conflict_marker_trivia_reporting(self.state.pos);
+            if self.skip_trivia {
+                return None;
+            }
+            return Some(Kind::ConflictMarkerTrivia);
+        }
+        self.state.pos += 1;
+        Some(Kind::GreaterThanToken)
+    }
+
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "BYTE_HANDLERS requires Option<Kind>; other byte handlers return None to continue scanning trivia."
+    )]
+    fn scan_byte_question(&mut self) -> Option<Kind> {
+        let token = if self.char_at(1) == Some(b'.')
+            && !self.char_at(2).is_some_and(|ch| stringutil::is_digit(u32::from(ch)))
+        {
+            self.state.pos += 2;
+            Kind::QuestionDotToken
+        } else if self.char_at(1) == Some(b'?') {
+            if self.char_at(2) == Some(b'=') {
+                self.state.pos += 3;
+                Kind::QuestionQuestionEqualsToken
+            } else {
+                self.state.pos += 2;
+                Kind::QuestionQuestionToken
+            }
+        } else {
+            self.state.pos += 1;
+            Kind::QuestionToken
+        };
+        Some(token)
+    }
+
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "BYTE_HANDLERS requires Option<Kind>; other byte handlers return None to continue scanning trivia."
+    )]
+    fn scan_byte_open_bracket(&mut self) -> Option<Kind> {
+        self.state.pos += 1;
+        Some(Kind::OpenBracketToken)
+    }
+
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "BYTE_HANDLERS requires Option<Kind>; other byte handlers return None to continue scanning trivia."
+    )]
+    fn scan_byte_close_bracket(&mut self) -> Option<Kind> {
+        self.state.pos += 1;
+        Some(Kind::CloseBracketToken)
+    }
+
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "BYTE_HANDLERS requires Option<Kind>; other byte handlers return None to continue scanning trivia."
+    )]
+    fn scan_byte_caret(&mut self) -> Option<Kind> {
+        let token = if self.char_at(1) == Some(b'=') {
+            self.state.pos += 2;
+            Kind::CaretEqualsToken
+        } else {
+            self.state.pos += 1;
+            Kind::CaretToken
+        };
+        Some(token)
+    }
+
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "BYTE_HANDLERS requires Option<Kind>; other byte handlers return None to continue scanning trivia."
+    )]
+    fn scan_byte_open_brace(&mut self) -> Option<Kind> {
+        self.state.pos += 1;
+        Some(Kind::OpenBraceToken)
+    }
+
+    fn scan_byte_bar(&mut self) -> Option<Kind> {
+        if self.char_at(1) == Some(b'|') && is_conflict_marker_trivia(self.text, self.state.pos) {
+            self.state.pos = self.scan_conflict_marker_trivia_reporting(self.state.pos);
+            if self.skip_trivia {
+                return None;
+            }
+            return Some(Kind::ConflictMarkerTrivia);
+        }
+        let token = if self.char_at(1) == Some(b'|') {
+            if self.char_at(2) == Some(b'=') {
+                self.state.pos += 3;
+                Kind::BarBarEqualsToken
+            } else {
+                self.state.pos += 2;
+                Kind::BarBarToken
+            }
+        } else if self.char_at(1) == Some(b'=') {
+            self.state.pos += 2;
+            Kind::BarEqualsToken
+        } else {
+            self.state.pos += 1;
+            Kind::BarToken
+        };
+        Some(token)
+    }
+
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "BYTE_HANDLERS requires Option<Kind>; other byte handlers return None to continue scanning trivia."
+    )]
+    fn scan_byte_close_brace(&mut self) -> Option<Kind> {
+        self.state.pos += 1;
+        Some(Kind::CloseBraceToken)
+    }
+
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "BYTE_HANDLERS requires Option<Kind>; other byte handlers return None to continue scanning trivia."
+    )]
+    fn scan_byte_tilde(&mut self) -> Option<Kind> {
+        self.state.pos += 1;
+        Some(Kind::TildeToken)
+    }
+
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "BYTE_HANDLERS requires Option<Kind>; other byte handlers return None to continue scanning trivia."
+    )]
+    fn scan_byte_at(&mut self) -> Option<Kind> {
+        self.state.pos += 1;
+        Some(Kind::AtToken)
+    }
+
+    fn scan_byte_identifier(&mut self) -> Option<Kind> {
+        debug_assert!(matches!(self.char(), Some(b'A'..=b'Z' | b'a'..=b'z' | b'$' | b'_')));
+        let start = self.state.pos;
+        self.state.pos += 1;
+        self.scan_ascii_identifier_parts();
+        let ch = self.char();
+        if ch.is_none_or(|ch| ch < RUNE_SELF as u8 && ch != b'\\') {
+            self.state.token_value = self.slice(start, self.state.pos);
+            return Some(get_identifier_token(self.state.token_value));
+        }
+        // The generic scanner handles a Unicode continuation or escape from the
+        // original start, including malformed escapes and diagnostic positions.
+        self.state.pos = start;
+        self.scan_byte_identifier_slow()
+    }
+
+    #[cold]
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "BYTE_HANDLERS requires Option<Kind>; other byte handlers return None to continue scanning trivia."
+    )]
+    fn scan_byte_identifier_slow(&mut self) -> Option<Kind> {
+        let token = if self.scan_identifier(0, IdentifierVariant::Standard) {
+            get_identifier_token(self.state.token_value)
+        } else {
+            self.scan_invalid_character();
+            Kind::Unknown
+        };
+        Some(token)
+    }
+
+    fn scan_byte_hash(&mut self) -> Option<Kind> {
+        let token = 'hash: {
+            if self.char_at(1) == Some(b'!') {
+                if self.state.pos == 0 {
+                    self.state.pos += 2;
+                    let (mut ch, mut size) = self.char_and_size();
+                    while size > 0 && !stringutil::is_line_break(ch) {
+                        self.state.pos += size;
+                        (ch, size) = self.char_and_size();
+                    }
+                    return None;
+                }
+                self.error_at(
+                    &diagnostics::X_can_only_be_used_at_the_start_of_a_file,
+                    self.state.pos,
+                    2,
+                    &[],
+                );
+                self.state.pos += 2;
+                break 'hash Kind::Unknown;
+            }
+            if !self.scan_identifier(1, IdentifierVariant::Standard) {
+                self.error_at(&diagnostics::Invalid_character, self.state.pos - 1, 1, &[]);
+                self.state.token_value = "#";
+            }
+            Kind::PrivateIdentifier
+        };
+        Some(token)
+    }
+
+    fn scan_byte_default(&mut self) -> Option<Kind> {
+        let token = 'default: {
+            if self.scan_identifier(0, IdentifierVariant::Standard) {
+                break 'default get_identifier_token(self.state.token_value);
+            }
+            let (mut ch, mut size) = self.char_and_size();
+            if ch == RUNE_ERROR {
+                self.error_at(&diagnostics::File_appears_to_be_binary, 0, 0, &[]);
+                self.state.pos = self.text.len() as u32;
+                break 'default Kind::NonTextFileMarkerTrivia;
+            }
+            if stringutil::is_white_space_single_line(ch) {
+                self.state.pos += size;
+
+                // If we get here and it's not 0x0085 (nextLine), then we're handling non-ASCII whitespace.
+                // Handle skipTrivia like we do in the space case above.
+                if ch == 0x0085 || self.skip_trivia {
+                    return None;
+                }
+
+                loop {
+                    (ch, size) = self.char_and_size();
+                    if !stringutil::is_white_space_single_line(ch) {
+                        break;
+                    }
+                    self.state.pos += size;
+                }
+                return Some(Kind::WhitespaceTrivia);
+            }
+            if stringutil::is_line_break(ch) {
+                self.state.token_flags |= TokenFlags::PrecedingLineBreak;
+                self.state.pos += size;
+                return None;
+            }
+            self.scan_invalid_character();
+            Kind::Unknown
+        };
+        Some(token)
+    }
+
+    fn scan_conflict_marker_trivia_reporting(&mut self, pos: u32) -> u32 {
+        let text = self.text;
+        scan_conflict_marker_trivia(
+            text,
+            pos,
+            Some(&mut |diag, pos, length| self.error_at(diag, pos, length, &[])),
+        )
+    }
+
+    fn process_comment_directive(&mut self, start: u32, end: u32, multiline: bool) {
         let text = self.text.as_bytes();
         let end_u = end as usize;
         // Skip starting slashes and whitespace
@@ -1312,23 +1691,23 @@ impl Scanner {
 
     fn re_scan_greater_than_token_inner(&mut self) {
         self.state.pos = self.state.token_start + 1;
-        if self.char() == '>' as i32 {
-            if self.char_at(1) == '>' as i32 {
-                if self.char_at(2) == '=' as i32 {
+        if self.char() == Some(b'>') {
+            if self.char_at(1) == Some(b'>') {
+                if self.char_at(2) == Some(b'=') {
                     self.state.pos += 3;
                     self.state.token = Kind::GreaterThanGreaterThanGreaterThanEqualsToken;
                 } else {
                     self.state.pos += 2;
                     self.state.token = Kind::GreaterThanGreaterThanGreaterThanToken;
                 }
-            } else if self.char_at(1) == '=' as i32 {
+            } else if self.char_at(1) == Some(b'=') {
                 self.state.pos += 2;
                 self.state.token = Kind::GreaterThanGreaterThanEqualsToken;
             } else {
                 self.state.pos += 1;
                 self.state.token = Kind::GreaterThanGreaterThanToken;
             }
-        } else if self.char() == '=' as i32 {
+        } else if self.char() == Some(b'=') {
             self.state.pos += 1;
             self.state.token = Kind::GreaterThanEqualsToken;
         }
@@ -1341,9 +1720,10 @@ impl Scanner {
     }
 
     pub fn re_scan_asterisk_equals_token(&mut self) -> Kind {
-        if self.state.token != Kind::AsteriskEqualsToken {
-            panic!("'ReScanAsteriskEqualsToken' should only be called on a '*='");
-        }
+        assert!(
+            self.state.token == Kind::AsteriskEqualsToken,
+            "'ReScanAsteriskEqualsToken' should only be called on a '*='"
+        );
         self.state.pos = self.state.token_start + 1;
         self.state.token = Kind::EqualsToken;
         self.state.token
@@ -1380,7 +1760,7 @@ impl Scanner {
                     self.state.token_flags |= TokenFlags::Unterminated;
                     break;
                 }
-                let ch = text[p as usize] as i32;
+                let ch = u32::from(text[p as usize]);
                 if stringutil::is_line_break(ch) {
                     self.state.token_flags |= TokenFlags::Unterminated;
                     break;
@@ -1388,23 +1768,24 @@ impl Scanner {
                     // Parsing an escape character;
                     // reset the flag and just advance to the next char.
                     in_escape = false;
-                } else if ch == '/' as i32 && !in_character_class {
+                } else if ch == '/' as Rune && !in_character_class {
                     // A slash within a character class is permissible,
                     // but in general it signals the end of the regexp literal.
                     break;
-                } else if ch == '[' as i32 {
+                } else if ch == '[' as Rune {
                     in_character_class = true;
-                } else if ch == '\\' as i32 {
+                } else if ch == '\\' as Rune {
                     in_escape = true;
-                } else if ch == ']' as i32 {
+                } else if ch == ']' as Rune {
                     in_character_class = false;
                 } else if !in_character_class
-                    && ch == '(' as i32
+                    && ch == '(' as Rune
                     && p + 1 < end
                     && text[(p + 1) as usize] == b'?'
                     && p + 2 < end
                     && text[(p + 2) as usize] == b'<'
-                    && (p + 3 >= end || (text[(p + 3) as usize] != b'=' && text[(p + 3) as usize] != b'!'))
+                    && (p + 3 >= end
+                        || (text[(p + 3) as usize] != b'=' && text[(p + 3) as usize] != b'!'))
                 {
                     named_capture_groups = true;
                 }
@@ -1451,30 +1832,48 @@ impl Scanner {
                 // Whitespaces and semicolons at the end are not likely to be part of the regex
                 while p > start_of_reg_exp_body {
                     let (ch, size) = decode_last_rune(&text[..p as usize]);
-                    if stringutil::is_white_space_like(ch) || ch == ';' as i32 {
-                        p -= size as i32;
+                    if stringutil::is_white_space_like(ch) || ch == ';' as Rune {
+                        p -= size as u32;
                     } else {
                         break;
                     }
                 }
-                self.error_at(&diagnostics::Unterminated_regular_expression_literal, self.state.token_start, p - self.state.token_start, &[]);
+                self.error_at(
+                    &diagnostics::Unterminated_regular_expression_literal,
+                    self.state.token_start,
+                    p - self.state.token_start,
+                    &[],
+                );
             } else {
                 // Consume the slash character
                 p += 1;
                 let mut reg_exp_flags = RegularExpressionFlags::None;
                 while p < end {
                     let (ch, size) = decode_rune(&text[p as usize..]);
-                    let size = size as i32;
+                    let size = size as u32;
                     if ch == RUNE_ERROR || !is_identifier_part(ch) {
                         break;
                     }
                     if should_report_errors {
                         match char_code_to_reg_exp_flag(ch) {
-                            None => self.error_at(&diagnostics::Unknown_regular_expression_flag, p, size, &[]),
+                            None => self.error_at(
+                                &diagnostics::Unknown_regular_expression_flag,
+                                p,
+                                size,
+                                &[],
+                            ),
                             Some(flag) if reg_exp_flags.intersects(flag) => {
-                                self.error_at(&diagnostics::Duplicate_regular_expression_flag, p, size, &[]);
+                                self.error_at(
+                                    &diagnostics::Duplicate_regular_expression_flag,
+                                    p,
+                                    size,
+                                    &[],
+                                );
                             }
-                            Some(flag) if (reg_exp_flags | flag).contains(RegularExpressionFlags::AnyUnicodeMode) => {
+                            Some(flag)
+                                if (reg_exp_flags | flag)
+                                    .contains(RegularExpressionFlags::AnyUnicodeMode) =>
+                            {
                                 self.error_at(
                                     &diagnostics::The_Unicode_u_flag_and_the_Unicode_Sets_v_flag_cannot_be_set_simultaneously,
                                     p,
@@ -1523,8 +1922,8 @@ impl Scanner {
         self.state.token
     }
 
-    /// OH 4.9 scanner.ts::reScanSlashToken scans delimiters and identifier
-    /// flags only; it does not run the newer TypeScript RegExp syntax checker.
+    /// OH 4.9 `scanner.ts::reScanSlashToken` scans delimiters and identifier
+    /// flags only; it does not run the newer TypeScript `RegExp` syntax checker.
     fn re_scan_open_harmony_slash_token(&mut self) -> Kind {
         if self.state.token != Kind::SlashToken && self.state.token != Kind::SlashEqualsToken {
             return self.state.token;
@@ -1547,22 +1946,22 @@ impl Scanner {
             }
             if in_escape {
                 in_escape = false;
-            } else if ch == '/' as i32 && !in_character_class {
+            } else if ch == '/' as u32 && !in_character_class {
                 pos += 1;
                 break;
-            } else if ch == '[' as i32 {
+            } else if ch == '[' as u32 {
                 in_character_class = true;
-            } else if ch == '\\' as i32 {
+            } else if ch == '\\' as u32 {
                 in_escape = true;
-            } else if ch == ']' as i32 {
+            } else if ch == ']' as u32 {
                 in_character_class = false;
             }
-            pos += size as i32;
+            pos += size as u32;
         }
         while pos < self.end {
             let (ch, size) = decode_rune(&text[pos as usize..]);
             if !is_identifier_part(ch) { break; }
-            pos += size as i32;
+            pos += size as u32;
         }
         self.state.pos = pos;
         self.state.token_value = self.slice(self.state.token_start, pos);
@@ -1586,9 +1985,10 @@ impl Scanner {
     }
 
     pub fn re_scan_question_token(&mut self) -> Kind {
-        if self.state.token != Kind::QuestionQuestionToken {
-            panic!("'reScanQuestionToken' should only be called on a '??'");
-        }
+        assert!(
+            self.state.token == Kind::QuestionQuestionToken,
+            "'reScanQuestionToken' should only be called on a '??'"
+        );
         self.state.pos = self.state.token_start + 1;
         self.state.token = Kind::QuestionToken;
         self.state.token
@@ -1601,31 +2001,32 @@ impl Scanner {
     pub fn scan_jsx_token_ex(&mut self, allow_multiline_jsx_text: bool) -> Kind {
         self.state.full_start_pos = self.state.pos;
         self.state.token_start = self.state.pos;
-        let ch = self.char();
-        if ch < 0 {
+        let Some(ch) = self.char() else {
             self.state.token = Kind::EndOfFile;
-        } else if ch == '<' as i32 {
-            if self.char_at(1) == '/' as i32 {
+            return self.state.token;
+        };
+        if ch == b'<' {
+            if self.char_at(1) == Some(b'/') {
                 self.state.pos += 2;
                 self.state.token = Kind::LessThanSlashToken;
             } else {
                 self.state.pos += 1;
                 self.state.token = Kind::LessThanToken;
             }
-        } else if ch == '{' as i32 {
+        } else if ch == b'{' {
             self.state.pos += 1;
             self.state.token = Kind::OpenBraceToken;
         } else {
             // First non-whitespace character on this line.
-            let mut first_non_whitespace = 0;
+            let mut whitespace_state = JsxWhitespaceState::Leading;
             // These initial values are special because the first line is:
             // firstNonWhitespace = 0 to indicate that we want leading whitespace
             loop {
                 let (ch, size) = self.char_and_size();
-                if size == 0 || ch == '{' as i32 {
+                if size == 0 || ch == '{' as Rune {
                     break;
                 }
-                if ch == '<' as i32 {
+                if ch == '<' as Rune {
                     if is_conflict_marker_trivia(self.text, self.state.pos) {
                         self.state.pos = self.scan_conflict_marker_trivia_reporting(self.state.pos);
                         self.state.token = Kind::ConflictMarkerTrivia;
@@ -1633,10 +2034,20 @@ impl Scanner {
                     }
                     break;
                 }
-                if ch == '>' as i32 {
-                    self.error_at(&diagnostics::Unexpected_token_Did_you_mean_or_gt, self.state.pos, 1, &[]);
-                } else if ch == '}' as i32 {
-                    self.error_at(&diagnostics::Unexpected_token_Did_you_mean_or_rbrace, self.state.pos, 1, &[]);
+                if ch == '>' as Rune {
+                    self.error_at(
+                        &diagnostics::Unexpected_token_Did_you_mean_or_gt,
+                        self.state.pos,
+                        1,
+                        &[],
+                    );
+                } else if ch == '}' as Rune {
+                    self.error_at(
+                        &diagnostics::Unexpected_token_Did_you_mean_or_rbrace,
+                        self.state.pos,
+                        1,
+                        &[],
+                    );
                 }
                 // FirstNonWhitespace is 0, then we only see whitespaces so far. If we see a linebreak, we want to ignore that whitespaces.
                 // i.e (- : whitespace)
@@ -1644,20 +2055,24 @@ impl Scanner {
                 //      </div> becomes <div></div>
                 //
                 //      <div>----</div> becomes <div>----</div>
-                if stringutil::is_line_break(ch) && first_non_whitespace == 0 {
-                    first_non_whitespace = -1;
-                } else if !allow_multiline_jsx_text && stringutil::is_line_break(ch) && first_non_whitespace > 0 {
+                if stringutil::is_line_break(ch) && whitespace_state == JsxWhitespaceState::Leading
+                {
+                    whitespace_state = JsxWhitespaceState::AllWhitespace;
+                } else if !allow_multiline_jsx_text
+                    && stringutil::is_line_break(ch)
+                    && whitespace_state == JsxWhitespaceState::SeenNonWhitespace
+                {
                     // Stop JsxText on each line during formatting. This allows the formatter to
                     // indent each line correctly.
                     break;
                 } else if !stringutil::is_white_space_like(ch) {
-                    first_non_whitespace = self.state.pos;
+                    whitespace_state = JsxWhitespaceState::SeenNonWhitespace;
                 }
                 self.state.pos += size;
             }
             self.state.token_value = self.slice(self.state.full_start_pos, self.state.pos);
             self.state.token = Kind::JsxText;
-            if first_non_whitespace == -1 {
+            if whitespace_state == JsxWhitespaceState::AllWhitespace {
                 self.state.token = Kind::JsxTextAllWhiteSpaces;
             }
         }
@@ -1690,7 +2105,7 @@ impl Scanner {
         }
         self.state.token_start = self.state.pos;
         match self.char() {
-            0x22 | 0x27 => {
+            Some(0x22 | 0x27) => {
                 self.state.token_value = self.scan_string(true /*jsxAttributeString*/);
                 self.state.token = Kind::StringLiteral;
                 self.state.token
@@ -1706,7 +2121,7 @@ impl Scanner {
         self.scan_jsx_attribute_value()
     }
 
-    /** In addition to the usual JSDoc ast.Kinds, can also return ast.KindJSDocCommentTextToken */
+    /** In addition to the usual `JSDoc` ast.Kinds, can also return ast.KindJSDocCommentTextToken */
     pub fn scan_jsdoc_comment_text_token(&mut self, in_backticks: bool) -> Kind {
         self.state.full_start_pos = self.state.pos;
         self.state.token_flags = TokenFlags::None;
@@ -1716,12 +2131,19 @@ impl Scanner {
         }
         self.state.token_start = self.state.pos;
         let text = self.text.as_bytes();
-        let (mut ch, mut size) = self.char_and_size();
-        while (self.state.pos as usize) < self.text.len() && !stringutil::is_line_break(ch) && ch != '`' as i32 {
+        while (self.state.pos as usize) < self.text.len() {
+            self.scan_ascii_jsdoc_comment_text(in_backticks);
+            if self.state.pos as usize == self.text.len() {
+                break;
+            }
+            let (ch, size) = self.char_and_size();
+            if stringutil::is_line_break(ch) || ch == '`' as Rune {
+                break;
+            }
             if !in_backticks {
-                if ch == '{' as i32 {
+                if ch == '{' as Rune {
                     break;
-                } else if ch == '@' as i32 && self.state.pos >= 0 {
+                } else if ch == '@' as Rune {
                     // @ doesn't start a new tag inside ``, and elsewhere, only after whitespace and before identifier
                     let (previous, _) = decode_last_rune(&text[..self.state.pos as usize]);
                     if stringutil::is_white_space_single_line(previous) {
@@ -1733,7 +2155,6 @@ impl Scanner {
                 }
             }
             self.state.pos += size;
-            (ch, size) = self.char_and_size();
         }
         if self.state.pos == self.state.token_start {
             return self.scan_jsdoc_token();
@@ -1751,7 +2172,9 @@ impl Scanner {
             return true;
         }
         let (ch, _) = decode_rune(&self.text.as_bytes()[self.state.pos as usize..]);
-        is_identifier_start(ch) || stringutil::is_white_space_single_line(ch) || stringutil::is_line_break(ch)
+        is_identifier_start(ch)
+            || stringutil::is_white_space_single_line(ch)
+            || stringutil::is_line_break(ch)
     }
 
     pub fn scan_jsdoc_token(&mut self) -> Kind {
@@ -1776,7 +2199,7 @@ impl Scanner {
             }
             0x40 /* @ */ => Some(Kind::AtToken),
             0x0D | 0x0A => {
-                if ch == '\r' as i32 && self.char() == '\n' as i32 {
+                if ch == '\r' as Rune && self.char() == Some(b'\n') {
                     self.state.pos += 1;
                 }
                 self.state.token_flags |= TokenFlags::PrecedingLineBreak;
@@ -1813,17 +2236,25 @@ impl Scanner {
         self.state.token
     }
 
-    pub(crate) fn scan_identifier(&mut self, prefix_length: i32, variant: IdentifierVariant) -> bool {
+    pub(crate) fn scan_identifier(
+        &mut self,
+        prefix_length: u32,
+        variant: IdentifierVariant,
+    ) -> bool {
         let start = self.state.pos;
         self.state.pos += prefix_length;
         let identifier_start = self.state.pos;
         let ch = self.char();
         // Fast path for simple ASCII identifiers
-        if variant != IdentifierVariant::JSX && (stringutil::is_ascii_letter(ch) || ch == '_' as i32 || ch == '$' as i32) {
+        if variant != IdentifierVariant::JSX
+            && ch.is_some_and(|ch| {
+                stringutil::is_ascii_letter(u32::from(ch)) || ch == b'_' || ch == b'$'
+            })
+        {
             self.state.pos += 1;
-            self.scan_ascii_while(|b| ASCII_IDENTIFIER_PART[b as usize]);
+            self.scan_ascii_identifier_parts();
             let ch = self.char();
-            if ch < RUNE_SELF && ch != '\\' as i32 {
+            if ch.is_none_or(|ch| ch < RUNE_SELF as u8 && ch != b'\\') {
                 self.state.token_value = self.slice(start, self.state.pos);
                 return true;
             }
@@ -1831,7 +2262,11 @@ impl Scanner {
         }
         let (mut ch, mut size) = self.char_and_size();
         if is_identifier_start(ch) {
-            let language_variant = if variant == IdentifierVariant::JSX { LanguageVariant::JSX } else { LanguageVariant::Standard };
+            let language_variant = if variant == IdentifierVariant::JSX {
+                LanguageVariant::JSX
+            } else {
+                LanguageVariant::Standard
+            };
             loop {
                 self.state.pos += size;
                 (ch, size) = self.char_and_size();
@@ -1840,21 +2275,23 @@ impl Scanner {
                 }
             }
             self.state.token_value = self.slice(start, self.state.pos);
-            if ch == '\\' as i32 {
+            if ch == '\\' as Rune {
                 let parts = self.scan_identifier_parts(variant);
                 self.state.token_value = self.concat_value(self.state.token_value, parts);
             }
             return true;
         }
-        if ch == '\\' as i32 {
-            if let Some(escaped) =
-                self.scan_identifier_escape(|ch| is_identifier_start(ch), variant == IdentifierVariant::RegExpGroupName)
-            {
-                let mut value = String::new();
+        if ch == '\\' as Rune {
+            if let Some(escaped) = self.scan_identifier_escape(
+                is_identifier_start,
+                variant == IdentifierVariant::RegExpGroupName,
+            ) {
+                let mut value =
+                    ArenaStringBuilder::with_capacity((self.state.pos - start) as usize * 2);
                 value.push_str(self.slice(start, identifier_start));
                 value.push(rune_to_char(escaped));
                 value.push_str(self.scan_identifier_parts(variant));
-                self.state.token_value = alloc_str(&value);
+                self.state.token_value = value.into_str();
                 return true;
             }
         }
@@ -1862,22 +2299,29 @@ impl Scanner {
     }
 
     fn scan_identifier_parts(&mut self, variant: IdentifierVariant) -> &'static str {
-        let mut sb: Option<String> = None;
+        let mut sb: Option<ArenaStringBuilder> = None;
         let mut start = self.state.pos;
-        let language_variant = if variant == IdentifierVariant::JSX { LanguageVariant::JSX } else { LanguageVariant::Standard };
+        let language_variant = if variant == IdentifierVariant::JSX {
+            LanguageVariant::JSX
+        } else {
+            LanguageVariant::Standard
+        };
         loop {
             let (ch, size) = self.char_and_size();
             if is_identifier_part_ex(ch, language_variant) {
                 self.state.pos += size;
                 continue;
             }
-            if ch == '\\' as i32 {
+            if ch == '\\' as Rune {
                 let escape_start = self.state.pos;
                 if let Some(escaped) = self.scan_identifier_escape(
                     |ch| is_identifier_part_ex(ch, language_variant),
                     variant == IdentifierVariant::RegExpGroupName,
                 ) {
-                    let sb = sb.get_or_insert_with(String::new);
+                    let so_far = (escape_start - start) as usize;
+                    let sb = sb.get_or_insert_with(|| {
+                        ArenaStringBuilder::with_capacity((so_far * 2).max(16))
+                    });
                     sb.push_str(self.slice(start, escape_start));
                     sb.push(rune_to_char(escaped));
                     start = self.state.pos;
@@ -1890,26 +2334,33 @@ impl Scanner {
             None => self.slice(start, self.state.pos),
             Some(mut sb) => {
                 sb.push_str(self.slice(start, self.state.pos));
-                alloc_str(&sb)
+                sb.into_str()
             }
         }
     }
 
-    fn scan_identifier_escape(&mut self, is_valid: impl Fn(i32) -> bool, allow_surrogate_pair_escape: bool) -> Option<i32> {
-        let escaped = self.peek_unicode_escape();
-        if escaped >= 0 && is_valid(escaped) {
-            return Some(self.scan_unicode_escape(true));
+    fn scan_identifier_escape(
+        &mut self,
+        is_valid: impl Fn(u32) -> bool,
+        allow_surrogate_pair_escape: bool,
+    ) -> Option<u32> {
+        let escaped = self.peek_unicode_escape()?;
+        if is_valid(escaped) {
+            return self.scan_unicode_escape(true);
         }
-        if allow_surrogate_pair_escape && self.char_at(2) != '{' as i32 && stringutil::is_high_surrogate(escaped) {
+        if allow_surrogate_pair_escape
+            && self.char_at(2) != Some(b'{')
+            && stringutil::is_high_surrogate(escaped)
+        {
             // Unlike normal identifiers, group names in regular expressions, whether in Unicode mode or not,
             // accept \u HexLeadSurrogate \u HexTrailSurrogate as part of RegExpIdentifierName.
             // See https://github.com/tc39/ecma262/pull/1869 for the change.
             let saved_pos = self.state.pos;
             let saved_token_flags = self.state.token_flags;
-            self.scan_unicode_escape(false);
+            let _ = self.scan_unicode_escape(false);
             // scanLowSurrogateEscape also accepts the braced form used in string literals,
             // but RegExpIdentifierName does not allow it.
-            if self.char_at(2) != '{' as i32 {
+            if self.char_at(2) != Some(b'{') {
                 if let Some(code_point) = self.scan_low_surrogate_escape(escaped) {
                     if is_valid(code_point) {
                         return Some(code_point);
@@ -1923,92 +2374,138 @@ impl Scanner {
     }
 
     fn scan_string(&mut self, jsx_attribute_string: bool) -> &'static str {
-        let quote = self.char();
-        if quote == '\'' as i32 {
+        let quote = self.char().expect("scan_string starts at a quote");
+        if quote == b'\'' {
             self.state.token_flags |= TokenFlags::SingleQuote;
         }
         self.state.pos += 1;
-        // Fast path for simple strings without escape sequences.
-        let rest = &self.text.as_bytes()[self.state.pos as usize..];
-        if let Some(str_len) = memchr::memchr(quote as u8, rest) {
-            if str_len == 0 {
-                self.state.pos += 1;
-                return "";
+        let start = self.state.pos;
+        let table = &STRING_LITERAL_END[usize::from(quote == b'"')];
+        if jsx_attribute_string {
+            let rest = &self.text.as_bytes()[start as usize..];
+            if let Some(str_len) = memchr::memchr(quote, rest) {
+                self.state.pos += str_len as u32;
+            } else {
+                self.state.pos = self.text.len() as u32;
             }
-            let str_bytes = &rest[..str_len];
-            if jsx_attribute_string || memchr::memchr3(b'\\', b'\r', b'\n', str_bytes).is_none() {
-                let s = self.slice(self.state.pos, self.state.pos + str_len as i32);
-                self.state.pos += str_len as i32 + 1;
-                return s;
-            }
+        } else {
+            self.scan_string_text(table);
         }
-        let mut sb = String::new();
-        let mut start = self.state.pos;
-        loop {
-            let ch = self.char();
-            if ch < 0 {
-                sb.push_str(self.slice(start, self.state.pos));
-                self.state.token_flags |= TokenFlags::Unterminated;
-                self.error(&diagnostics::Unterminated_string_literal);
-                break;
-            }
-            if ch == quote {
-                sb.push_str(self.slice(start, self.state.pos));
-                self.state.pos += 1;
-                break;
-            }
-            if ch == '\\' as i32 && !jsx_attribute_string {
-                sb.push_str(self.slice(start, self.state.pos));
-                let escaped = self.scan_escape_sequence(EscapeSequenceScanningFlags::String | EscapeSequenceScanningFlags::ReportErrors);
-                sb.push_str(&escaped);
-                start = self.state.pos;
-                continue;
-            }
-            if (ch == '\n' as i32 || ch == '\r' as i32) && !jsx_attribute_string {
-                sb.push_str(self.slice(start, self.state.pos));
-                self.state.token_flags |= TokenFlags::Unterminated;
-                self.error(&diagnostics::Unterminated_string_literal);
-                break;
-            }
+        if self.char() == Some(quote) {
+            let end = self.state.pos;
             self.state.pos += 1;
+            return if start == end { "" } else { self.slice(start, end) };
         }
-        self.intern_value(&sb)
+        self.scan_string_slow(quote, start, table)
     }
 
-    fn scan_template_and_set_token_value(&mut self, should_emit_invalid_escape_error: bool) -> Kind {
-        let started_with_backtick = self.char() == '`' as i32;
+    #[inline]
+    fn scan_string_text(&mut self, table: &[bool; 256]) {
+        let text = &self.text.as_bytes()[self.state.pos as usize..];
+        let (batches, tail) = text.as_chunks::<32>();
+        let mut scanned = 0;
+        for batch in batches {
+            for (i, &byte) in batch.iter().enumerate() {
+                if table[byte as usize] {
+                    self.state.pos += (scanned + i) as u32;
+                    return;
+                }
+            }
+            scanned += batch.len();
+        }
+        for &byte in tail {
+            if table[byte as usize] {
+                break;
+            }
+            scanned += 1;
+        }
+        self.state.pos += scanned as u32;
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn scan_string_slow(&mut self, quote: u8, mut start: u32, table: &[bool; 256]) -> &'static str {
+        // Keep the original first-quote capacity estimate on the allocating path.
+        let rest = &self.text.as_bytes()[self.state.pos as usize..];
+        let capacity = memchr::memchr(quote, rest)
+            .map_or(16, |offset| (self.state.pos - start) as usize + offset);
+        let mut sb = ArenaStringBuilder::with_capacity(capacity);
+        loop {
+            sb.push_str(self.slice(start, self.state.pos));
+            let Some(ch) = self.char() else {
+                self.state.token_flags |= TokenFlags::Unterminated;
+                self.error(&diagnostics::Unterminated_string_literal);
+                break;
+            };
+            if ch == quote {
+                self.state.pos += 1;
+                break;
+            }
+            if ch == b'\\' {
+                let escaped = self.scan_escape_sequence(
+                    EscapeSequenceScanningFlags::String | EscapeSequenceScanningFlags::ReportErrors,
+                );
+                sb.push_str(&escaped);
+                start = self.state.pos;
+                self.scan_string_text(table);
+                continue;
+            }
+            debug_assert!(ch == b'\n' || ch == b'\r');
+            self.state.token_flags |= TokenFlags::Unterminated;
+            self.error(&diagnostics::Unterminated_string_literal);
+            break;
+        }
+        sb.into_str()
+    }
+
+    fn scan_template_and_set_token_value(
+        &mut self,
+        should_emit_invalid_escape_error: bool,
+    ) -> Kind {
+        let started_with_backtick = self.char() == Some(b'`');
         self.state.pos += 1;
         let mut start = self.state.pos;
         // Go collects the parts in a slice and joins them; a single untouched part is a text slice.
-        let mut parts: Option<String> = None;
+        let mut parts: Option<ArenaStringBuilder> = None;
         let token;
         loop {
             self.scan_ascii_while(|b| b != b'`' && b != b'$' && b != b'\\' && b != b'\r');
             let ch = self.char();
-            if ch < 0 || ch == '`' as i32 {
+            if ch.is_none() || ch == Some(b'`') {
                 let part_end = self.state.pos;
-                if ch == '`' as i32 {
+                if ch == Some(b'`') {
                     self.state.pos += 1;
                 } else {
                     self.state.token_flags |= TokenFlags::Unterminated;
                     self.error(&diagnostics::Unterminated_template_literal);
                 }
                 self.finish_template_parts(&mut parts, start, part_end);
-                token = if started_with_backtick { Kind::NoSubstitutionTemplateLiteral } else { Kind::TemplateTail };
+                token = if started_with_backtick {
+                    Kind::NoSubstitutionTemplateLiteral
+                } else {
+                    Kind::TemplateTail
+                };
                 break;
             }
-            if ch == '$' as i32 && self.char_at(1) == '{' as i32 {
+            if ch == Some(b'$') && self.char_at(1) == Some(b'{') {
                 let part_end = self.state.pos;
                 self.state.pos += 2;
                 self.finish_template_parts(&mut parts, start, part_end);
-                token = if started_with_backtick { Kind::TemplateHead } else { Kind::TemplateMiddle };
+                token =
+                    if started_with_backtick { Kind::TemplateHead } else { Kind::TemplateMiddle };
                 break;
             }
-            if ch == '\\' as i32 {
-                let buf = parts.get_or_insert_with(String::new);
+            if ch == Some(b'\\') {
+                let so_far = (self.state.pos - start) as usize;
+                let buf = parts
+                    .get_or_insert_with(|| ArenaStringBuilder::with_capacity((so_far * 2).max(16)));
                 buf.push_str(self.slice(start, self.state.pos));
                 let flags = EscapeSequenceScanningFlags::String
-                    | if should_emit_invalid_escape_error { EscapeSequenceScanningFlags::ReportErrors } else { EscapeSequenceScanningFlags::empty() };
+                    | if should_emit_invalid_escape_error {
+                        EscapeSequenceScanningFlags::ReportErrors
+                    } else {
+                        EscapeSequenceScanningFlags::empty()
+                    };
                 let escaped = self.scan_escape_sequence(flags);
                 parts.as_mut().unwrap().push_str(&escaped);
                 start = self.state.pos;
@@ -2016,11 +2513,13 @@ impl Scanner {
             }
             // Speculated ECMAScript 6 Spec 11.8.6.1:
             // <CR><LF> and <CR> LineTerminatorSequences are normalized to <LF> for Template Values
-            if ch == '\r' as i32 {
-                let buf = parts.get_or_insert_with(String::new);
+            if ch == Some(b'\r') {
+                let so_far = (self.state.pos - start) as usize;
+                let buf = parts
+                    .get_or_insert_with(|| ArenaStringBuilder::with_capacity((so_far * 2).max(16)));
                 buf.push_str(self.slice(start, self.state.pos));
                 self.state.pos += 1;
-                if self.char() == '\n' as i32 {
+                if self.char() == Some(b'\n') {
                     self.state.pos += 1;
                 }
                 parts.as_mut().unwrap().push('\n');
@@ -2032,65 +2531,78 @@ impl Scanner {
         token
     }
 
-    fn finish_template_parts(&mut self, parts: &mut Option<String>, start: i32, end: i32) {
+    fn finish_template_parts(
+        &mut self,
+        parts: &mut Option<ArenaStringBuilder>,
+        start: u32,
+        end: u32,
+    ) {
         self.state.token_value = match parts.take() {
             None => self.slice(start, end),
             Some(mut buf) => {
                 buf.push_str(self.slice(start, end));
-                alloc_str(&buf)
+                buf.into_str()
             }
         };
     }
 
-    pub(crate) fn scan_escape_sequence(&mut self, flags: EscapeSequenceScanningFlags) -> Cow<'static, str> {
+    pub(crate) fn scan_escape_sequence(
+        &mut self,
+        flags: EscapeSequenceScanningFlags,
+    ) -> Cow<'static, str> {
         let start = self.state.pos;
         self.state.pos += 1;
-        let ch = self.char();
-        if ch < 0 {
+        let Some(ch) = self.char() else {
             self.error(&diagnostics::Unexpected_end_of_text);
             return Cow::Borrowed("");
-        }
+        };
         self.state.pos += 1;
         match ch {
             0x30..=0x37 /* 0-7 */ => {
-                if self.open_harmony49 && !flags.intersects(EscapeSequenceScanningFlags::RegularExpression) {
-                    if ch == '0' as i32 {
-                        if !flags.intersects(EscapeSequenceScanningFlags::ReportErrors) && stringutil::is_digit(self.char()) {
+                if self.open_harmony49
+                    && !flags.intersects(EscapeSequenceScanningFlags::RegularExpression)
+                {
+                    if ch == b'0' {
+                        if !flags.intersects(EscapeSequenceScanningFlags::ReportErrors)
+                            && self.char().is_some_and(|ch| {
+                                stringutil::is_digit(u32::from(ch))
+                            })
+                        {
                             self.state.pos += 1;
                             self.state.token_flags |= TokenFlags::ContainsInvalidEscape;
                             return Cow::Borrowed(self.slice(start, self.state.pos));
                         }
                         return Cow::Borrowed("\x00");
                     }
-                    return Cow::Owned(rune_string(ch));
+                    return Cow::Owned(rune_string(u32::from(ch)));
                 }
-                if ch == '0' as i32 {
+                if ch == b'0' {
                     // Although '0' preceding any digit is treated as LegacyOctalEscapeSequence,
                     // '\08' should separately be interpreted as '\0' + '8'.
-                    if !stringutil::is_digit(self.char()) {
+                    if !self.char().is_some_and(|ch| stringutil::is_digit(u32::from(ch))) {
                         return Cow::Borrowed("\x00");
                     }
                 }
-                if ch <= '3' as i32 {
+                if ch <= b'3' {
                     // '\01', '\011'
                     // '\1', '\17', '\177'
-                    if stringutil::is_octal_digit(self.char()) {
+                    if self.char().is_some_and(|ch| stringutil::is_octal_digit(u32::from(ch))) {
                         self.state.pos += 1;
                     }
                 }
                 // '\17', '\177'
                 // '\4', '\47' but not '\477'
-                if stringutil::is_octal_digit(self.char()) {
+                if self.char().is_some_and(|ch| stringutil::is_octal_digit(u32::from(ch))) {
                     self.state.pos += 1;
                 }
                 // '\47'
                 self.state.token_flags |= TokenFlags::ContainsInvalidEscape;
                 if flags.intersects(EscapeSequenceScanningFlags::ReportInvalidEscapeErrors) {
-                    let code = i64::from_str_radix(self.slice(start + 1, self.state.pos), 8).unwrap_or(0) as i32;
-                    let arg = format!("\\x{:02x}", code);
+                    let code = u32::from_str_radix(self.slice(start + 1, self.state.pos), 8).unwrap_or(0);
+                    let arg = format!("\\x{code:02x}");
                     if flags.intersects(EscapeSequenceScanningFlags::RegularExpression)
                         && !flags.intersects(EscapeSequenceScanningFlags::AtomEscape)
-                        && ch != '0' as i32
+                        && ch != b'0'
                     {
                         self.error_at(
                             &diagnostics::Octal_escape_sequences_and_backreferences_are_not_allowed_in_a_character_class_If_this_was_intended_as_an_escape_sequence_use_the_syntax_0_instead,
@@ -2106,7 +2618,7 @@ impl Scanner {
                 Cow::Borrowed(self.slice(start, self.state.pos))
             }
             0x38 | 0x39 /* 8 9 */ => {
-                if self.open_harmony49 && !flags.intersects(EscapeSequenceScanningFlags::RegularExpression) { return Cow::Owned(rune_string(ch)); }
+                if self.open_harmony49 && !flags.intersects(EscapeSequenceScanningFlags::RegularExpression) { return Cow::Owned(rune_string(u32::from(ch))); }
                 // the invalid '\8' and '\9'
                 self.state.token_flags |= TokenFlags::ContainsInvalidEscape;
                 if flags.intersects(EscapeSequenceScanningFlags::ReportInvalidEscapeErrors) {
@@ -2121,7 +2633,7 @@ impl Scanner {
                         let text = self.slice(start, self.state.pos);
                         self.error_at(&diagnostics::Escape_sequence_0_is_not_allowed, start, self.state.pos - start, &[&text]);
                     }
-                    return Cow::Owned(rune_string(ch));
+                    return Cow::Owned(rune_string(u32::from(ch)));
                 }
                 Cow::Borrowed(self.slice(start, self.state.pos))
             }
@@ -2135,7 +2647,7 @@ impl Scanner {
             0x22 /* " */ => Cow::Borrowed("\""),
             0x75 /* u */ => {
                 // '\uDDDD' and '\u{DDDDDD}'
-                let extended = self.char() == '{' as i32;
+                let extended = self.char() == Some(b'{');
                 self.state.pos -= 2;
                 let code_point = self.scan_unicode_escape(flags.intersects(EscapeSequenceScanningFlags::ReportInvalidEscapeErrors));
                 if extended {
@@ -2150,9 +2662,9 @@ impl Scanner {
                             );
                         }
                     }
-                    if code_point < 0 {
+                    let Some(code_point) = code_point else {
                         return Cow::Borrowed(self.slice(start, self.state.pos));
-                    }
+                    };
                     // In string literals, a high surrogate \u{...} followed by a low
                     // surrogate escape forms a single code point, exactly as adjacent
                     // UTF-16 code units would in a JavaScript string.
@@ -2163,9 +2675,10 @@ impl Scanner {
                     }
                     return Cow::Owned(stringutil::encode_js_string_rune(code_point));
                 }
-                if code_point < 0 {
+                let Some(code_point) = code_point else {
                     return Cow::Borrowed(self.slice(start, self.state.pos));
-                } else if stringutil::is_high_surrogate(code_point) {
+                };
+                if stringutil::is_high_surrogate(code_point) {
                     if !flags.intersects(EscapeSequenceScanningFlags::RegularExpression) {
                         // Combine \uHigh followed by any low surrogate escape (\uLow or
                         // \u{Low}) into a single code point in string literals, matching
@@ -2174,16 +2687,16 @@ impl Scanner {
                             return Cow::Owned(rune_string(combined));
                         }
                     } else if flags.intersects(EscapeSequenceScanningFlags::AnyUnicodeMode)
-                        && self.char() == '\\' as i32
-                        && self.char_at(1) == 'u' as i32
-                        && self.char_at(2) != '{' as i32
+                        && self.char() == Some(b'\\')
+                        && self.char_at(1) == Some(b'u')
+                        && self.char_at(2) != Some(b'{')
                     {
                         // In regex AnyUnicodeMode, combine \uHigh\uLow so scanClassRanges
                         // can compare the pair numerically. In non-unicode regex mode they
                         // are separate atoms, and extended \u{...} escapes never combine.
                         let saved_pos = self.state.pos;
                         let next_code_point = self.scan_unicode_escape(flags.intersects(EscapeSequenceScanningFlags::ReportInvalidEscapeErrors));
-                        if stringutil::is_low_surrogate(next_code_point) {
+                        if let Some(next_code_point) = next_code_point.filter(|&ch| stringutil::is_low_surrogate(ch)) {
                             return Cow::Owned(rune_string(stringutil::surrogate_pair_to_code_point(code_point, next_code_point)));
                         }
                         self.state.pos = saved_pos;
@@ -2196,7 +2709,7 @@ impl Scanner {
             0x78 /* x */ => {
                 // '\xDD'
                 while self.state.pos < start + 4 {
-                    if !stringutil::is_hex_digit(self.char()) {
+                    if !self.char().is_some_and(|ch| stringutil::is_hex_digit(u32::from(ch))) {
                         self.state.token_flags |= TokenFlags::ContainsInvalidEscape;
                         if flags.intersects(EscapeSequenceScanningFlags::ReportInvalidEscapeErrors) {
                             self.error(&diagnostics::Hexadecimal_digit_expected);
@@ -2206,27 +2719,27 @@ impl Scanner {
                     self.state.pos += 1;
                 }
                 self.state.token_flags |= TokenFlags::HexEscape;
-                let escaped_value = i64::from_str_radix(self.slice(start + 2, self.state.pos), 16).unwrap_or(0) as i32;
+                let escaped_value = u32::from_str_radix(self.slice(start + 2, self.state.pos), 16).unwrap_or(0);
                 Cow::Owned(rune_string(escaped_value))
             }
             // when encountering a LineContinuation (i.e. a backslash and a line terminator sequence),
             // the line terminator is interpreted to be "the empty code unit sequence".
             0x0D /* \r */ => {
-                if self.char() == '\n' as i32 {
+                if self.char() == Some(b'\n') {
                     self.state.pos += 1;
                 }
                 Cow::Borrowed("")
             }
             0x0A /* \n */ => Cow::Borrowed(""),
             _ => {
-                let mut ch = ch;
+                let mut ch = u32::from(ch);
                 // ch was read as a single byte; for multi-byte UTF-8 characters,
                 // we need to decode the full rune and advance past all its bytes.
                 if ch >= RUNE_SELF {
                     self.state.pos -= 1; // back up past the single-byte advance
                     let (r, size) = decode_rune(&self.text.as_bytes()[self.state.pos as usize..]);
                     ch = r;
-                    self.state.pos += size as i32;
+                    self.state.pos += size as u32;
                 }
                 // LineContinuation: a backslash followed by a line terminator is "the empty code unit sequence".
                 if ch == 0x2028 || ch == 0x2029 {
@@ -2249,29 +2762,32 @@ impl Scanner {
     }
 
     // Known to be at \u
-    pub(crate) fn scan_unicode_escape(&mut self, should_emit_invalid_escape_error: bool) -> i32 {
+    pub(crate) fn scan_unicode_escape(
+        &mut self,
+        should_emit_invalid_escape_error: bool,
+    ) -> Option<u32> {
         self.state.pos += 2;
         let start = self.state.pos;
-        let extended = self.char() == '{' as i32;
-        let hex_digits;
-        if extended {
+        let extended = self.char() == Some(b'{');
+
+        let hex_digits = if extended {
             self.state.pos += 1;
-            hex_digits = self.scan_hex_digits(1, true, false);
+            self.scan_hex_digits(1, true, false)
         } else {
             self.state.token_flags |= TokenFlags::UnicodeEscape;
-            hex_digits = self.scan_hex_digits(4, false, false);
-        }
+            self.scan_hex_digits(4, false, false)
+        };
         if hex_digits.is_empty() {
             self.state.token_flags |= TokenFlags::ContainsInvalidEscape;
             if should_emit_invalid_escape_error {
                 self.error(&diagnostics::Hexadecimal_digit_expected);
             }
-            return -1;
+            return None;
         }
         let hex_value = parse_int_32(hex_digits, 16);
         if extended {
             let mut is_invalid_extended_escape = false;
-            if hex_value > 0x10FFFF {
+            if hex_value > 0x0010_FFFF {
                 if should_emit_invalid_escape_error {
                     self.error_at(
                         &diagnostics::An_extended_Unicode_escape_value_must_be_between_0x0_and_0x10FFFF_inclusive,
@@ -2287,7 +2803,7 @@ impl Scanner {
                     self.error(&diagnostics::Unexpected_end_of_text);
                 }
                 is_invalid_extended_escape = true;
-            } else if self.char() == '}' as i32 {
+            } else if self.char() == Some(b'}') {
                 self.state.pos += 1;
             } else {
                 if should_emit_invalid_escape_error {
@@ -2297,11 +2813,11 @@ impl Scanner {
             }
             if is_invalid_extended_escape {
                 self.state.token_flags |= TokenFlags::ContainsInvalidEscape;
-                return -1;
+                return None;
             }
             self.state.token_flags |= TokenFlags::ExtendedUnicodeEscape;
         }
-        hex_value as i32
+        u32::try_from(hex_value).ok()
     }
 
     // scanLowSurrogateEscape attempts to consume a low-surrogate Unicode escape
@@ -2311,8 +2827,8 @@ impl Scanner {
     // string, regardless of which escape syntax produced each half. On success it
     // returns the combined code point; otherwise it restores the scanner
     // position and returns None.
-    fn scan_low_surrogate_escape(&mut self, high: i32) -> Option<i32> {
-        if self.char() != '\\' as i32 || self.char_at(1) != 'u' as i32 {
+    fn scan_low_surrogate_escape(&mut self, high: u32) -> Option<u32> {
+        if self.char() != Some(b'\\') || self.char_at(1) != Some(b'u') {
             return None;
         }
         let saved_pos = self.state.pos;
@@ -2321,8 +2837,8 @@ impl Scanner {
         // low surrogate we rewind below, and the caller re-scans the same escape and
         // reports any error then, so reporting here would duplicate diagnostics.
         let low = self.scan_unicode_escape(false);
-        if stringutil::is_low_surrogate(low) {
-            return Some(stringutil::surrogate_pair_to_code_point(high, low));
+        if low.is_some_and(stringutil::is_low_surrogate) {
+            return Some(stringutil::surrogate_pair_to_code_point(high, low.unwrap()) as u32);
         }
         self.state.pos = saved_pos;
         self.state.token_flags = saved_token_flags;
@@ -2330,9 +2846,9 @@ impl Scanner {
     }
 
     // Current character is known to be a backslash. Check for Unicode escape of the form '\uXXXX'
-    // or '\u{XXXXXX}' and return code point value if valid Unicode escape is found. Otherwise return -1.
-    fn peek_unicode_escape(&mut self) -> i32 {
-        if self.char_at(1) == 'u' as i32 {
+    // or '\u{XXXXXX}' and return the code point if a valid Unicode escape is found.
+    fn peek_unicode_escape(&mut self) -> Option<u32> {
+        if self.char_at(1) == Some(b'u') {
             let save_pos = self.state.pos;
             let save_token_flags = self.state.token_flags;
             let code_point = self.scan_unicode_escape(false);
@@ -2340,17 +2856,23 @@ impl Scanner {
             self.state.token_flags = save_token_flags;
             return code_point;
         }
-        -1
+        None
     }
 
     fn scan_number(&mut self) -> Kind {
         let mut start = self.state.pos;
         let fixed_part: Cow<'static, str>;
-        if self.char() == '0' as i32 {
+        if self.char() == Some(b'0') {
             self.state.pos += 1;
-            if self.char() == '_' as i32 {
-                self.state.token_flags |= TokenFlags::ContainsSeparator | TokenFlags::ContainsInvalidSeparator;
-                self.error_at(&diagnostics::Numeric_separators_are_not_allowed_here, self.state.pos, 1, &[]);
+            if self.char() == Some(b'_') {
+                self.state.token_flags |=
+                    TokenFlags::ContainsSeparator | TokenFlags::ContainsInvalidSeparator;
+                self.error_at(
+                    &diagnostics::Numeric_separators_are_not_allowed_here,
+                    self.state.pos,
+                    1,
+                    &[],
+                );
                 self.state.pos = start;
                 fixed_part = self.scan_number_fragment();
             } else {
@@ -2362,14 +2884,21 @@ impl Scanner {
                     fixed_part = Cow::Borrowed(digits);
                 } else {
                     let val = parse_int_64(digits, 8);
-                    self.state.token_value = alloc_str(&val.to_string());
+                    let mut value = ArenaStringBuilder::with_capacity(digits.len());
+                    write!(value, "{val}").unwrap();
+                    self.state.token_value = value.into_str();
                     self.state.token_flags |= TokenFlags::Octal;
                     let with_minus = self.state.token == Kind::MinusToken;
                     let literal = format!("{}0o{:o}", if with_minus { "-" } else { "" }, val);
                     if with_minus {
                         start -= 1;
                     }
-                    self.error_at(&diagnostics::Octal_literals_are_not_allowed_Use_the_syntax_0, start, self.state.pos - start, &[&literal]);
+                    self.error_at(
+                        &diagnostics::Octal_literals_are_not_allowed_Use_the_syntax_0,
+                        start,
+                        self.state.pos - start,
+                        &[&literal],
+                    );
                     return Kind::NumericLiteral;
                 }
             }
@@ -2380,15 +2909,15 @@ impl Scanner {
         let mut fractional_part: Cow<'static, str> = Cow::Borrowed("");
         let mut exponent_preamble = "";
         let mut exponent_part: Cow<'static, str> = Cow::Borrowed("");
-        if self.char() == '.' as i32 {
+        if self.char() == Some(b'.') {
             self.state.pos += 1;
             fractional_part = self.scan_number_fragment();
         }
         let mut end = self.state.pos;
-        if self.char() == 'E' as i32 || self.char() == 'e' as i32 {
+        if self.char() == Some(b'E') || self.char() == Some(b'e') {
             self.state.pos += 1;
             self.state.token_flags |= TokenFlags::Scientific;
-            if self.char() == '+' as i32 || self.char() == '-' as i32 {
+            if self.char() == Some(b'+') || self.char() == Some(b'-') {
                 self.state.pos += 1;
             }
             let start_numeric_part = self.state.pos;
@@ -2401,7 +2930,13 @@ impl Scanner {
             }
         }
         if self.state.token_flags.intersects(TokenFlags::ContainsSeparator) {
-            let mut value = String::from(&*fixed_part);
+            let capacity = fixed_part.len()
+                + usize::from(!fractional_part.is_empty())
+                + fractional_part.len()
+                + exponent_preamble.len()
+                + exponent_part.len();
+            let mut value = ArenaStringBuilder::with_capacity(capacity);
+            value.push_str(&fixed_part);
             if !fractional_part.is_empty() {
                 value.push('.');
                 value.push_str(&fractional_part);
@@ -2410,33 +2945,51 @@ impl Scanner {
                 value.push_str(exponent_preamble);
                 value.push_str(&exponent_part);
             }
-            self.state.token_value = self.intern_value(&value);
+            self.state.token_value = value.into_str();
         } else {
             self.state.token_value = self.slice(start, end);
         }
         if self.state.token_flags.intersects(TokenFlags::ContainsLeadingZero) {
-            self.error_at(&diagnostics::Decimals_with_leading_zeros_are_not_allowed, start, self.state.pos - start, &[]);
-            self.state.token_value = self.canonical_number(self.state.token_value);
+            self.error_at(
+                &diagnostics::Decimals_with_leading_zeros_are_not_allowed,
+                start,
+                self.state.pos - start,
+                &[],
+            );
+            self.state.token_value = Self::canonical_number(self.state.token_value);
             return Kind::NumericLiteral;
         }
-        let result;
-        if fixed_part_end == self.state.pos {
-            result = self.scan_big_int_suffix();
+
+        let result = if fixed_part_end == self.state.pos {
+            self.scan_big_int_suffix()
         } else {
-            self.state.token_value = self.canonical_number(self.state.token_value);
-            result = Kind::NumericLiteral;
-        }
+            self.state.token_value = Self::canonical_number(self.state.token_value);
+            Kind::NumericLiteral
+        };
         let (ch, _) = self.char_and_size();
         if is_identifier_start(ch) {
             let id_start = self.state.pos;
             let id = self.scan_identifier_parts(IdentifierVariant::Standard);
-            if result != Kind::BigIntLiteral && id.len() == 1 && self.text.as_bytes()[id_start as usize] == b'n' {
+            if result != Kind::BigIntLiteral
+                && id.len() == 1
+                && self.text.as_bytes()[id_start as usize] == b'n'
+            {
                 if self.state.token_flags.intersects(TokenFlags::Scientific) {
-                    self.error_at(&diagnostics::A_bigint_literal_cannot_use_exponential_notation, start, self.state.pos - start, &[]);
+                    self.error_at(
+                        &diagnostics::A_bigint_literal_cannot_use_exponential_notation,
+                        start,
+                        self.state.pos - start,
+                        &[],
+                    );
                     return result;
                 }
                 if fixed_part_end < id_start {
-                    self.error_at(&diagnostics::A_bigint_literal_must_be_an_integer, start, self.state.pos - start, &[]);
+                    self.error_at(
+                        &diagnostics::A_bigint_literal_must_be_an_integer,
+                        start,
+                        self.state.pos - start,
+                        &[],
+                    );
                     return result;
                 }
             }
@@ -2452,8 +3005,19 @@ impl Scanner {
     }
 
     /// Go `jsnum.FromString(v).String()`, reusing `v` when it is already canonical.
-    fn canonical_number(&self, v: &'static str) -> &'static str {
-        let s = jsnum::from_string(v).string();
+    fn canonical_number(v: &'static str) -> &'static str {
+        // Every decimal integer with at most 15 digits is a safe integer. Its scanner spelling is canonical when it
+        // has no leading zero, so neither conversion nor a temporary formatting String is needed. Longer integers,
+        // fractions and exponents still go through Number::string for ECMAScript rounding and formatting.
+        let bytes = v.as_bytes();
+        if bytes == b"0"
+            || bytes.len() <= 15
+                && matches!(bytes.first(), Some(b'1'..=b'9'))
+                && bytes[1..].iter().all(u8::is_ascii_digit)
+        {
+            return v;
+        }
+        let s = crate::number::parse_literal(v).unwrap_or_else(|| jsnum::from_string(v)).string();
         if s == v {
             return v;
         }
@@ -2473,7 +3037,7 @@ impl Scanner {
                 is_previous_token_separator = false;
             }
             let ch = self.char();
-            if ch == '_' as i32 {
+            if ch == Some(b'_') {
                 self.state.token_flags |= TokenFlags::ContainsSeparator;
                 if allow_separator {
                     allow_separator = false;
@@ -2482,9 +3046,19 @@ impl Scanner {
                 } else {
                     self.state.token_flags |= TokenFlags::ContainsInvalidSeparator;
                     if is_previous_token_separator {
-                        self.error_at(&diagnostics::Multiple_consecutive_numeric_separators_are_not_permitted, self.state.pos, 1, &[]);
+                        self.error_at(
+                            &diagnostics::Multiple_consecutive_numeric_separators_are_not_permitted,
+                            self.state.pos,
+                            1,
+                            &[],
+                        );
                     } else {
-                        self.error_at(&diagnostics::Numeric_separators_are_not_allowed_here, self.state.pos, 1, &[]);
+                        self.error_at(
+                            &diagnostics::Numeric_separators_are_not_allowed_here,
+                            self.state.pos,
+                            1,
+                            &[],
+                        );
                     }
                 }
                 self.state.pos += 1;
@@ -2495,7 +3069,12 @@ impl Scanner {
         }
         if is_previous_token_separator {
             self.state.token_flags |= TokenFlags::ContainsInvalidSeparator;
-            self.error_at(&diagnostics::Numeric_separators_are_not_allowed_here, self.state.pos - 1, 1, &[]);
+            self.error_at(
+                &diagnostics::Numeric_separators_are_not_allowed_here,
+                self.state.pos - 1,
+                1,
+                &[],
+            );
         }
         if result.is_empty() {
             return Cow::Borrowed(self.slice(start, self.state.pos));
@@ -2507,8 +3086,8 @@ impl Scanner {
     fn scan_digits(&mut self) -> (&'static str, bool) {
         let start = self.state.pos;
         let mut is_octal = true;
-        while stringutil::is_digit(self.char()) {
-            if !stringutil::is_octal_digit(self.char()) {
+        while self.char().is_some_and(|ch| stringutil::is_digit(u32::from(ch))) {
+            if !self.char().is_some_and(|ch| stringutil::is_octal_digit(u32::from(ch))) {
                 is_octal = false;
             }
             self.state.pos += 1;
@@ -2516,26 +3095,41 @@ impl Scanner {
         (self.slice(start, self.state.pos), is_octal)
     }
 
-    pub(crate) fn scan_hex_digits(&mut self, min_count: i32, scan_as_many_as_possible: bool, can_have_separators: bool) -> &'static str {
+    pub(crate) fn scan_hex_digits(
+        &mut self,
+        min_count: u32,
+        scan_as_many_as_possible: bool,
+        can_have_separators: bool,
+    ) -> &'static str {
         let mut digit_count = 0;
         let start = self.state.pos;
         let mut allow_separator = false;
         let mut is_previous_token_separator = false;
         while digit_count < min_count || scan_as_many_as_possible {
             let ch = self.char();
-            if stringutil::is_hex_digit(ch) {
+            if ch.is_some_and(|ch| stringutil::is_hex_digit(u32::from(ch))) {
                 allow_separator = can_have_separators;
                 is_previous_token_separator = false;
                 digit_count += 1;
-            } else if can_have_separators && ch == '_' as i32 {
+            } else if can_have_separators && ch == Some(b'_') {
                 self.state.token_flags |= TokenFlags::ContainsSeparator;
                 if allow_separator {
                     allow_separator = false;
                     is_previous_token_separator = true;
                 } else if is_previous_token_separator {
-                    self.error_at(&diagnostics::Multiple_consecutive_numeric_separators_are_not_permitted, self.state.pos, 1, &[]);
+                    self.error_at(
+                        &diagnostics::Multiple_consecutive_numeric_separators_are_not_permitted,
+                        self.state.pos,
+                        1,
+                        &[],
+                    );
                 } else {
-                    self.error_at(&diagnostics::Numeric_separators_are_not_allowed_here, self.state.pos, 1, &[]);
+                    self.error_at(
+                        &diagnostics::Numeric_separators_are_not_allowed_here,
+                        self.state.pos,
+                        1,
+                        &[],
+                    );
                 }
             } else {
                 break;
@@ -2543,27 +3137,38 @@ impl Scanner {
             self.state.pos += 1;
         }
         if is_previous_token_separator {
-            self.error_at(&diagnostics::Numeric_separators_are_not_allowed_here, self.state.pos - 1, 1, &[]);
+            self.error_at(
+                &diagnostics::Numeric_separators_are_not_allowed_here,
+                self.state.pos - 1,
+                1,
+                &[],
+            );
         }
         if digit_count < min_count {
             return "";
         }
         let digits = self.slice(start, self.state.pos);
+        let has_separator = memchr::memchr(b'_', digits.as_bytes()).is_some();
+        let has_uppercase = digits.bytes().any(|b| b.is_ascii_uppercase());
+        if !has_separator && !has_uppercase {
+            return digits;
+        }
         if let Some(&cached) = self.hex_digit_cache.get(digits) {
             cached
         } else {
             let original = digits;
-            let mut result = Cow::Borrowed(digits);
-            if self.state.token_flags.intersects(TokenFlags::ContainsSeparator) {
-                result = Cow::Owned(result.replace('_', ""));
-            }
-            // standardize hex literals to lowercase
-            if result.bytes().any(|b| b.is_ascii_uppercase()) {
-                result = Cow::Owned(result.to_ascii_lowercase());
-            }
-            let digits = match result {
-                Cow::Borrowed(s) => s,
-                Cow::Owned(s) => alloc_str(&s),
+            let has_separator = self.state.token_flags.intersects(TokenFlags::ContainsSeparator);
+            let has_uppercase = digits.bytes().any(|b| b.is_ascii_uppercase());
+            let digits = if has_separator || has_uppercase {
+                let mut result = ArenaStringBuilder::with_capacity(digits.len());
+                for byte in digits.bytes() {
+                    if byte != b'_' {
+                        result.push(byte.to_ascii_lowercase() as char);
+                    }
+                }
+                result.into_str()
+            } else {
+                digits
             };
             self.pin_unless_source(original, digits);
             self.hex_digit_cache.insert(original, digits);
@@ -2571,25 +3176,38 @@ impl Scanner {
         }
     }
 
-    fn scan_binary_or_octal_digits(&mut self, base: i32) -> String {
-        let mut sb = String::new();
+    fn scan_binary_or_octal_digits(&mut self, base: u8, prefix: &str) -> (&'static str, bool) {
+        let mut sb = ArenaStringBuilder::with_capacity(16);
+        sb.push_str(prefix);
+        let mut has_digits = false;
         let mut allow_separator = false;
         let mut is_previous_token_separator = false;
         loop {
             let ch = self.char();
-            if stringutil::is_digit(ch) && ch - ('0' as i32) < base {
-                sb.push(ch as u8 as char);
+            if ch.is_some_and(|ch| ch.is_ascii_digit() && ch - b'0' < base) {
+                sb.push(ch.unwrap() as char);
+                has_digits = true;
                 allow_separator = true;
                 is_previous_token_separator = false;
-            } else if ch == '_' as i32 {
+            } else if ch == Some(b'_') {
                 self.state.token_flags |= TokenFlags::ContainsSeparator;
                 if allow_separator {
                     allow_separator = false;
                     is_previous_token_separator = true;
                 } else if is_previous_token_separator {
-                    self.error_at(&diagnostics::Multiple_consecutive_numeric_separators_are_not_permitted, self.state.pos, 1, &[]);
+                    self.error_at(
+                        &diagnostics::Multiple_consecutive_numeric_separators_are_not_permitted,
+                        self.state.pos,
+                        1,
+                        &[],
+                    );
                 } else {
-                    self.error_at(&diagnostics::Numeric_separators_are_not_allowed_here, self.state.pos, 1, &[]);
+                    self.error_at(
+                        &diagnostics::Numeric_separators_are_not_allowed_here,
+                        self.state.pos,
+                        1,
+                        &[],
+                    );
                 }
             } else {
                 break;
@@ -2597,19 +3215,25 @@ impl Scanner {
             self.state.pos += 1;
         }
         if is_previous_token_separator {
-            self.error_at(&diagnostics::Numeric_separators_are_not_allowed_here, self.state.pos - 1, 1, &[]);
+            self.error_at(
+                &diagnostics::Numeric_separators_are_not_allowed_here,
+                self.state.pos - 1,
+                1,
+                &[],
+            );
         }
-        sb
+        (sb.into_str(), has_digits)
     }
 
     fn scan_big_int_suffix(&mut self) -> Kind {
-        if self.char() == 'n' as i32 {
+        if self.char() == Some(b'n') {
             // Go: tokenValue += "n"; when the value is a text slice directly followed by the `n`
             // this is again a text slice.
             let n = self.slice(self.state.pos, self.state.pos + 1);
             self.state.token_value = self.concat_value(self.state.token_value, n);
             if self.state.token_flags.intersects(TokenFlags::BinaryOrOctalSpecifier) {
-                self.state.token_value = alloc_str(&(jsnum::parse_pseudo_big_int(self.state.token_value) + "n"));
+                self.state.token_value =
+                    alloc_str(&(jsnum::parse_pseudo_big_int(self.state.token_value) + "n"));
             }
             self.state.pos += 1;
             return Kind::BigIntLiteral;
@@ -2617,9 +3241,12 @@ impl Scanner {
         if let Some(&cached) = self.number_cache.get(self.state.token_value) {
             self.state.token_value = cached;
         } else {
-            let token_value = self.canonical_number(self.state.token_value);
-            self.pin_unless_source(self.state.token_value, token_value);
-            self.number_cache.insert(self.state.token_value, token_value);
+            let original = self.state.token_value;
+            let token_value = Self::canonical_number(original);
+            if token_value != original {
+                self.pin_unless_source(original, token_value);
+                self.number_cache.insert(original, token_value);
+            }
             self.state.token_value = token_value;
         }
         Kind::NumericLiteral
@@ -2664,18 +3291,18 @@ fn parse_int_64(s: &str, base: u32) -> i64 {
 // hasJSDocTag reports whether text starts with one of the given tag names followed
 // by a valid JSDoc tag terminator (whitespace, '}', '*', or end-of-string).
 fn has_jsdoc_tag(text: &[u8], tags: &[&str]) -> bool {
-    for tag in tags {
+    if tags.iter().any(|tag| {
         let tag = tag.as_bytes();
         if !text.starts_with(tag) {
-            continue;
+            return false;
         }
         if text.len() == tag.len() {
             return true;
         }
         let ch = text[tag.len()];
-        if ch == b' ' || ch == b'\t' || ch == b'\n' || ch == b'\r' || ch == b'}' || ch == b'*' {
-            return true;
-        }
+        ch == b' ' || ch == b'\t' || ch == b'\n' || ch == b'\r' || ch == b'}' || ch == b'*'
+    }) {
+        return true;
     }
     false
 }
@@ -2696,36 +3323,35 @@ pub fn is_valid_identifier(s: &str) -> bool {
     if s.is_empty() {
         return false;
     }
-    for (i, ch) in s.char_indices() {
-        let ch = ch as i32;
-        if i == 0 && !is_identifier_start(ch) || i != 0 && !is_identifier_part(ch) {
-            return false;
-        }
-    }
-    true
+    !(s.char_indices().into_iter().any(|(i, ch)| {
+        i == 0 && !is_identifier_start(ch as Rune) || i != 0 && !is_identifier_part(ch as Rune)
+    }))
 }
 
 // Section 6.1.4
-pub(crate) fn is_word_character(ch: i32) -> bool {
-    stringutil::is_ascii_letter(ch) || stringutil::is_digit(ch) || ch == '_' as i32
+pub(crate) fn is_word_character(ch: Rune) -> bool {
+    stringutil::is_ascii_letter(ch) || stringutil::is_digit(ch) || ch == '_' as Rune
 }
 
 #[inline]
-pub fn is_identifier_start(ch: i32) -> bool {
-    stringutil::is_ascii_letter(ch) || ch == '_' as i32 || ch == '$' as i32 || ch >= RUNE_SELF && stringutil::is_unicode_identifier_start(ch)
+pub fn is_identifier_start(ch: Rune) -> bool {
+    stringutil::is_ascii_letter(ch)
+        || ch == '_' as Rune
+        || ch == '$' as Rune
+        || ch >= RUNE_SELF && stringutil::is_unicode_identifier_start(ch)
 }
 
 #[inline]
-pub fn is_identifier_part(ch: i32) -> bool {
+pub fn is_identifier_part(ch: Rune) -> bool {
     is_identifier_part_ex(ch, LanguageVariant::Standard)
 }
 
 #[inline]
-pub fn is_identifier_part_ex(ch: i32, language_variant: LanguageVariant) -> bool {
+pub fn is_identifier_part_ex(ch: Rune, language_variant: LanguageVariant) -> bool {
     is_word_character(ch)
-        || ch == '$' as i32
+        || ch == '$' as Rune
         || ch >= RUNE_SELF && stringutil::is_unicode_identifier_part(ch)
-        || language_variant == LanguageVariant::JSX && ch == '-' as i32 // ":" is part of JSXNamespacedName, but not JSXIdentifier.
+        || language_variant == LanguageVariant::JSX && ch == '-' as Rune // ":" is part of JSXNamespacedName, but not JSXIdentifier.
 }
 
 fn token_to_text() -> &'static [&'static str] {
@@ -2753,11 +3379,11 @@ pub fn string_to_token(s: &str) -> Kind {
 
 pub fn get_viable_keyword_suggestions() -> Vec<&'static str> {
     let mut result = Vec::with_capacity(TEXT_TO_KEYWORD.len());
-    for &(text, _) in TEXT_TO_KEYWORD {
-        if text.len() > 2 {
-            result.push(text);
-        }
-    }
+    result.extend(
+        TEXT_TO_KEYWORD
+            .iter()
+            .filter_map(|&(text, _)| if text.len() > 2 { Some(text) } else { None }),
+    );
     result
 }
 
@@ -2768,19 +3394,16 @@ pub struct SkipTriviaOptions {
     pub in_jsdoc: bool,
 }
 
-pub fn skip_trivia(text: &str, pos: i32) -> i32 {
+pub fn skip_trivia(text: &str, pos: u32) -> u32 {
     skip_trivia_ex(text, pos, None)
 }
 
-pub fn skip_trivia_ex(text: &str, pos: i32, options: Option<&SkipTriviaOptions>) -> i32 {
-    if ast::position_is_synthesized(pos) {
-        return pos;
-    }
+pub fn skip_trivia_ex(text: &str, pos: u32, options: Option<&SkipTriviaOptions>) -> u32 {
     let default_options = SkipTriviaOptions::default();
     let options = options.unwrap_or(&default_options);
 
     let bytes = text.as_bytes();
-    let text_len = bytes.len() as i32;
+    let text_len = bytes.len() as u32;
     let mut pos = pos;
     let mut can_consume_star = false;
     // Keep in sync with couldStartTrivia
@@ -2791,7 +3414,7 @@ pub fn skip_trivia_ex(text: &str, pos: i32, options: Option<&SkipTriviaOptions>)
         let (ch, size) = decode_rune(&bytes[pos as usize..]);
         match ch {
             0x0D | 0x0A => {
-                if ch == '\r' as i32 && pos + 1 < text_len && bytes[(pos + 1) as usize] == b'\n' {
+                if ch == '\r' as Rune && pos + 1 < text_len && bytes[(pos + 1) as usize] == b'\n' {
                     pos += 1;
                 }
                 pos += 1;
@@ -2814,7 +3437,7 @@ pub fn skip_trivia_ex(text: &str, pos: i32, options: Option<&SkipTriviaOptions>)
                             if stringutil::is_line_break(ch) {
                                 break;
                             }
-                            pos += size as i32;
+                            pos += size as u32;
                         }
                         can_consume_star = false;
                         continue;
@@ -2827,7 +3450,7 @@ pub fn skip_trivia_ex(text: &str, pos: i32, options: Option<&SkipTriviaOptions>)
                                 break;
                             }
                             let (_, size) = decode_rune(&bytes[pos as usize..]);
-                            pos += size as i32;
+                            pos += size as u32;
                         }
                         can_consume_star = false;
                         continue;
@@ -2856,8 +3479,8 @@ pub fn skip_trivia_ex(text: &str, pos: i32, options: Option<&SkipTriviaOptions>)
                 }
             }
             _ => {
-                if ch > MAX_ASCII_CHARACTER as i32 && stringutil::is_white_space_like(ch) {
-                    pos += size as i32;
+                if ch > MAX_ASCII_CHARACTER as Rune && stringutil::is_white_space_like(ch) {
+                    pos += size as u32;
                     continue;
                 }
             }
@@ -2868,15 +3491,12 @@ pub fn skip_trivia_ex(text: &str, pos: i32, options: Option<&SkipTriviaOptions>)
 
 // All conflict markers consist of the same character repeated seven times.  If it is
 // a <<<<<<< or >>>>>>> marker then it is also followed by a space.
-const MERGE_CONFLICT_MARKER_LENGTH: i32 = "<<<<<<<".len() as i32;
+const MERGE_CONFLICT_MARKER_LENGTH: u32 = "<<<<<<<".len() as u32;
 const MAX_ASCII_CHARACTER: u8 = 127;
 
-pub(crate) fn is_conflict_marker_trivia(text: &str, pos: i32) -> bool {
-    if pos < 0 {
-        panic!("pos < 0");
-    }
+pub(crate) fn is_conflict_marker_trivia(text: &str, pos: u32) -> bool {
     let bytes = text.as_bytes();
-    let len = bytes.len() as i32;
+    let len = bytes.len() as u32;
 
     // Fast reject: a conflict marker is the same byte repeated seven times. If the
     // second byte differs (the overwhelmingly common case for `<`, `>`, `=`, `|`
@@ -2886,7 +3506,8 @@ pub(crate) fn is_conflict_marker_trivia(text: &str, pos: i32) -> bool {
     }
 
     // Conflict markers must be at the start of a line.
-    let mut at_line_start = pos == 0 || stringutil::is_line_break(bytes[(pos - 1) as usize] as i32);
+    let mut at_line_start =
+        pos == 0 || stringutil::is_line_break(u32::from(bytes[(pos - 1) as usize]));
     if !at_line_start && pos >= 2 {
         let (prev, _) = decode_last_rune(&bytes[..(pos - 2) as usize]);
         at_line_start = stringutil::is_line_break(prev);
@@ -2895,10 +3516,8 @@ pub(crate) fn is_conflict_marker_trivia(text: &str, pos: i32) -> bool {
         let ch = bytes[pos as usize];
 
         if (pos + MERGE_CONFLICT_MARKER_LENGTH) < len {
-            for i in 0..MERGE_CONFLICT_MARKER_LENGTH {
-                if bytes[(pos + i) as usize] != ch {
-                    return false;
-                }
+            if (0..MERGE_CONFLICT_MARKER_LENGTH).any(|i| bytes[(pos + i) as usize] != ch) {
+                return false;
             }
 
             return ch == b'=' || bytes[(pos + MERGE_CONFLICT_MARKER_LENGTH) as usize] == b' ';
@@ -2908,29 +3527,41 @@ pub(crate) fn is_conflict_marker_trivia(text: &str, pos: i32) -> bool {
     false
 }
 
-pub(crate) fn scan_conflict_marker_trivia(text: &str, pos: i32, report_error: Option<&mut dyn FnMut(&'static Message, i32, i32)>) -> i32 {
+pub(crate) fn scan_conflict_marker_trivia(
+    text: &str,
+    pos: u32,
+    report_error: Option<&mut dyn FnMut(&'static Message, u32, u32)>,
+) -> u32 {
     if let Some(report_error) = report_error {
-        report_error(&diagnostics::Merge_conflict_marker_encountered, pos, MERGE_CONFLICT_MARKER_LENGTH);
+        report_error(
+            &diagnostics::Merge_conflict_marker_encountered,
+            pos,
+            MERGE_CONFLICT_MARKER_LENGTH,
+        );
     }
     let bytes = text.as_bytes();
     let mut pos = pos;
     let (mut ch, mut size) = decode_rune(&bytes[pos as usize..]);
-    let length = bytes.len() as i32;
+    let length = bytes.len() as u32;
 
-    if ch == '<' as i32 || ch == '>' as i32 {
+    if ch == '<' as Rune || ch == '>' as Rune {
         while pos < length && !stringutil::is_line_break(ch) {
-            pos += size as i32;
+            pos += size as u32;
             (ch, size) = decode_rune(&bytes[pos as usize..]);
         }
     } else {
-        if ch != '|' as i32 && ch != '=' as i32 {
-            panic!("Assertion failed: ch must be either '|' or '='");
-        }
+        assert!(
+            !(ch != '|' as Rune && ch != '=' as Rune),
+            "Assertion failed: ch must be either '|' or '='"
+        );
         // Consume everything from the start of a ||||||| or ======= marker to the start
         // of the next ======= or >>>>>>> marker.
         while pos < length {
             let current_char = bytes[pos as usize];
-            if (current_char == b'=' || current_char == b'>') && current_char as i32 != ch && is_conflict_marker_trivia(text, pos) {
+            if (current_char == b'=' || current_char == b'>')
+                && u32::from(current_char) != ch
+                && is_conflict_marker_trivia(text, pos)
+            {
                 break;
             }
 
@@ -2941,18 +3572,16 @@ pub(crate) fn scan_conflict_marker_trivia(text: &str, pos: i32, report_error: Op
     pos
 }
 
-pub(crate) fn is_shebang_trivia(text: &str, pos: i32) -> bool {
+pub(crate) fn is_shebang_trivia(text: &str, pos: u32) -> bool {
     let bytes = text.as_bytes();
     if bytes.len() < 2 {
         return false;
     }
-    if pos != 0 {
-        panic!("Shebangs check must only be done at the start of the file");
-    }
+    assert!(pos == 0, "Shebangs check must only be done at the start of the file");
     bytes[0] == b'#' && bytes[1] == b'!'
 }
 
-pub(crate) fn scan_shebang_trivia(text: &str, pos: i32) -> i32 {
+pub(crate) fn scan_shebang_trivia(text: &str, pos: u32) -> u32 {
     let bytes = text.as_bytes();
     let mut pos = pos + 2;
     while (pos as usize) < bytes.len() {
@@ -2960,7 +3589,7 @@ pub(crate) fn scan_shebang_trivia(text: &str, pos: i32) -> i32 {
         if stringutil::is_line_break(ch) {
             break;
         }
-        pos += size as i32;
+        pos += size as u32;
     }
     pos
 }
@@ -2974,35 +3603,43 @@ pub fn get_shebang(text: &str) -> &str {
     &text[..end as usize]
 }
 
-pub fn get_scanner_for_source_file(source_file: P<SourceFile>, pos: i32) -> Scanner {
+pub fn get_scanner_for_source_file(source_file: P<SourceFile>, pos: u32) -> Scanner {
     let mut s = Scanner::new();
     s.text = source_file.text();
     s.state.pos = pos;
-    s.end = s.text.len() as i32;
+    s.end = s.text.len() as u32;
     s.language_variant = source_file.language_variant();
     s.scan();
     s
 }
 
-pub fn scan_token_at_position(source_file: P<SourceFile>, pos: i32) -> Kind {
+pub fn scan_token_at_position(source_file: P<SourceFile>, pos: u32) -> Kind {
     let s = get_scanner_for_source_file(source_file, pos);
     s.state.token
 }
 
-pub fn get_range_of_token_at_position(source_file: P<SourceFile>, pos: i32) -> TextRange {
+pub fn get_range_of_token_at_position(source_file: P<SourceFile>, pos: u32) -> TextRange {
     let s = get_scanner_for_source_file(source_file, pos);
     TextRange::new(s.state.token_start, s.state.pos)
 }
 
-pub fn get_token_pos_of_node(node: P<Node>, source_file: P<SourceFile>, include_jsdoc: bool) -> i32 {
+pub fn get_token_pos_of_node(
+    node: P<Node>,
+    source_file: P<SourceFile>,
+    include_jsdoc: bool,
+) -> u32 {
     // With nodes that have no width (i.e. 'Missing' nodes), we actually *don't*
     // want to skip trivia because this will launch us forward to the next token.
     if ast::node_is_missing(Some(node)) {
-        return node.pos();
+        return node.pos().expect_source("parsed nodes have source positions");
     }
     if ast::is_jsdoc_node(node) || node.kind() == Kind::JsxText {
         // JsxText cannot actually contain comments, even though the scanner will think it sees comments
-        return skip_trivia_ex(source_file.text(), node.pos(), Some(&SkipTriviaOptions { stop_at_comments: true, ..Default::default() }));
+        return skip_trivia_ex(
+            source_file.text(),
+            node.pos().expect_source("parsed nodes have source positions"),
+            Some(&SkipTriviaOptions { stop_at_comments: true, ..Default::default() }),
+        );
     }
     if include_jsdoc {
         let jsdoc = node.jsdoc(Some(source_file.get()));
@@ -3010,31 +3647,50 @@ pub fn get_token_pos_of_node(node: P<Node>, source_file: P<SourceFile>, include_
             return get_token_pos_of_node(jsdoc[0], source_file, false /*includeJSDoc*/);
         }
     }
-    if node.is_virtual() { return node.pos(); }
+    if node.is_virtual() {
+        return node.pos().source_offset().unwrap_or(0);
+    }
     skip_trivia_ex(
         source_file.text(),
-        node.pos(),
-        Some(&SkipTriviaOptions { in_jsdoc: node.flags().intersects(NodeFlags::JSDoc), ..Default::default() }),
+        node.pos().expect_source("parsed nodes have source positions"),
+        Some(&SkipTriviaOptions {
+            in_jsdoc: node.flags().intersects(NodeFlags::JSDoc),
+            ..Default::default()
+        }),
     )
 }
 
 fn get_error_range_for_arrow_function(source_file: P<SourceFile>, node: P<Node>) -> TextRange {
-    let pos = skip_trivia(source_file.text(), node.pos());
+    let pos = skip_trivia(
+        source_file.text(),
+        node.pos().expect_source("parsed nodes have source positions"),
+    );
     let body = node.body();
     if let Some(body) = body {
         if body.kind() == Kind::Block {
-            let start_line = get_ecma_line_of_position(&*source_file, body.pos());
-            let end_line = get_ecma_line_of_position(&*source_file, body.end());
+            let start_line = get_ecma_line_of_position(
+                &*source_file,
+                body.pos().expect_source("parsed nodes have source positions"),
+            );
+            let end_line = get_ecma_line_of_position(
+                &*source_file,
+                body.end().expect_source("parsed nodes have source positions"),
+            );
             if start_line < end_line {
                 // The arrow function spans multiple lines, make the error span be the first line, inclusive.
-                return TextRange::new(pos, get_ecma_end_line_position(source_file, start_line) + 1);
+                let end =
+                    get_ecma_end_line_position(source_file, start_line).map_or(pos, |end| end + 1);
+                return TextRange::new(pos, end);
             }
         }
     }
-    TextRange::new(pos, node.end())
+    TextRange::new(pos, node.end().expect_source("parsed nodes have source positions"))
 }
 
-fn find_originating_jsdoc_satisfies_tag(source_file: P<SourceFile>, node: P<Node>) -> Option<P<Node>> {
+fn find_originating_jsdoc_satisfies_tag(
+    source_file: P<SourceFile>,
+    node: P<Node>,
+) -> Option<P<Node>> {
     let target_type = node.as_satisfies_expression().type_;
     if !target_type.flags().intersects(NodeFlags::Reparsed) {
         return None;
@@ -3112,33 +3768,59 @@ pub fn get_error_range_for_node(source_file: P<SourceFile>, node: P<Node>) -> Te
             return get_error_range_for_arrow_function(source_file, node);
         }
         Kind::CaseClause | Kind::DefaultClause => {
-            let start = skip_trivia(source_file.text(), node.pos());
-            let mut end = node.end();
+            let start = skip_trivia(
+                source_file.text(),
+                node.pos().expect_source("parsed nodes have source positions"),
+            );
+            let mut end = node.end().expect_source("parsed nodes have source positions");
             let statements = node.statements();
             if !statements.is_empty() {
-                end = statements[0].pos();
+                end = statements[0].pos().expect_source("parsed nodes have source positions");
             }
             return TextRange::new(start, end);
         }
         Kind::ReturnStatement | Kind::YieldExpression => {
-            let pos = skip_trivia(source_file.text(), node.pos());
+            let pos = skip_trivia(
+                source_file.text(),
+                node.pos().expect_source("parsed nodes have source positions"),
+            );
             return get_range_of_token_at_position(source_file, pos);
         }
         Kind::SatisfiesExpression => {
-            if let Some(js_doc_satisfies_tag) = find_originating_jsdoc_satisfies_tag(source_file, node) {
-                let pos = skip_trivia(source_file.text(), js_doc_satisfies_tag.tag_name().pos());
+            if let Some(js_doc_satisfies_tag) =
+                find_originating_jsdoc_satisfies_tag(source_file, node)
+            {
+                let pos = skip_trivia(
+                    source_file.text(),
+                    js_doc_satisfies_tag
+                        .tag_name()
+                        .pos()
+                        .expect_source("parsed nodes have source positions"),
+                );
                 return get_range_of_token_at_position(source_file, pos);
             }
-            let pos = skip_trivia(source_file.text(), node.as_satisfies_expression().expression.end());
+            let pos = skip_trivia(
+                source_file.text(),
+                node.as_satisfies_expression()
+                    .expression
+                    .end()
+                    .expect_source("parsed nodes have source positions"),
+            );
             return get_range_of_token_at_position(source_file, pos);
         }
         Kind::Constructor => {
             if node.flags().intersects(NodeFlags::Reparsed) {
                 error_node = Some(node);
             } else {
-                let mut scanner = get_scanner_for_source_file(source_file, node.pos());
+                let mut scanner = get_scanner_for_source_file(
+                    source_file,
+                    node.pos().expect_source("parsed nodes have source positions"),
+                );
                 let start = scanner.token_start();
-                while scanner.token() != Kind::ConstructorKeyword && scanner.token() != Kind::StringLiteral && scanner.token() != Kind::EndOfFile {
+                while scanner.token() != Kind::ConstructorKeyword
+                    && scanner.token() != Kind::StringLiteral
+                    && scanner.token() != Kind::EndOfFile
+                {
                     scanner.scan();
                 }
                 return TextRange::new(start, scanner.token_end());
@@ -3149,37 +3831,46 @@ pub fn get_error_range_for_node(source_file: P<SourceFile>, node: P<Node>) -> Te
     let Some(error_node) = error_node else {
         // If we don't have a better node, then just set the error on the first token of
         // construct.
-        return get_range_of_token_at_position(source_file, node.pos());
+        return get_range_of_token_at_position(
+            source_file,
+            node.pos().expect_source("parsed nodes have source positions"),
+        );
     };
-    let mut pos = error_node.pos();
-    if !ast::node_is_missing(Some(error_node)) && !ast::is_jsx_text(error_node) && !node.is_virtual() {
+    let mut pos = error_node.pos().expect_source("parsed nodes have source positions");
+    if !ast::node_is_missing(Some(error_node))
+        && !ast::is_jsx_text(error_node)
+        && !node.is_virtual()
+    {
         pos = skip_trivia(source_file.text(), pos);
     }
-    TextRange::new(pos, error_node.end())
+    TextRange::new(pos, error_node.end().expect_source("parsed nodes have source positions"))
 }
 
-pub fn compute_line_of_position(line_starts: &[TextPos], pos: i32) -> i32 {
-    let mut low: i32 = 0;
-    let mut high: i32 = line_starts.len() as i32 - 1;
+pub fn compute_line_of_position(line_starts: &[u32], pos: u32) -> usize {
+    let mut low: usize = 0;
+    let mut high: usize = line_starts.len() - 1;
     while low <= high {
         let middle = low + ((high - low) >> 1);
-        let value = line_starts[middle as usize];
-        if value < pos {
-            low = middle + 1;
-        } else if value > pos {
-            high = middle - 1;
-        } else {
-            return middle;
+        let value = line_starts[middle];
+        match value.cmp(&pos) {
+            std::cmp::Ordering::Less => low = middle + 1,
+            std::cmp::Ordering::Greater => {
+                if middle == 0 {
+                    return 0;
+                }
+                high = middle - 1;
+            }
+            std::cmp::Ordering::Equal => return middle,
         }
     }
-    low - 1
+    low.saturating_sub(1)
 }
 
-pub fn get_ecma_line_starts<S: SourceFileLike + ?Sized>(source_file: &S) -> &[TextPos] {
+pub fn get_ecma_line_starts<S: SourceFileLike + ?Sized>(source_file: &S) -> &[u32] {
     source_file.ecma_line_map()
 }
 
-pub fn get_ecma_line_of_position(source_file: &(impl SourceFileLike + ?Sized), pos: i32) -> i32 {
+pub fn get_ecma_line_of_position(source_file: &(impl SourceFileLike + ?Sized), pos: u32) -> usize {
     let line_map = get_ecma_line_starts(source_file);
     compute_line_of_position(line_map, pos)
 }
@@ -3187,10 +3878,14 @@ pub fn get_ecma_line_of_position(source_file: &(impl SourceFileLike + ?Sized), p
 // GetECMALineAndUTF16CharacterOfPosition returns the 0-based line number and the
 // UTF-16 code unit offset from the start of that line for the given byte position.
 // Uses ECMAScript line separators (LF, CR, CRLF, LS, PS).
-pub fn get_ecma_line_and_utf16_character_of_position(source_file: &(impl SourceFileLike + ?Sized), pos: i32) -> (i32, UTF16Offset) {
+pub fn get_ecma_line_and_utf16_character_of_position(
+    source_file: &(impl SourceFileLike + ?Sized),
+    pos: u32,
+) -> (usize, UTF16Offset) {
     let line_map = get_ecma_line_starts(source_file);
     let line = compute_line_of_position(line_map, pos);
-    let character = tsrs_core::utf16_len(&source_file.text()[line_map[line as usize] as usize..pos as usize]);
+    let character =
+        tsrs_core::utf16_len(&source_file.text()[line_map[line] as usize..pos as usize]);
     (line, character)
 }
 
@@ -3198,47 +3893,71 @@ pub fn get_ecma_line_and_utf16_character_of_position(source_file: &(impl SourceF
 // raw UTF-8 byte offset from the start of that line for the given byte position.
 // Uses ECMAScript line separators (LF, CR, CRLF, LS, PS).
 // Unlike GetECMALineAndUTF16CharacterOfPosition, the offset is in bytes, not UTF-16 code units.
-pub fn get_ecma_line_and_byte_offset_of_position(source_file: &(impl SourceFileLike + ?Sized), pos: i32) -> (i32, i32) {
+pub fn get_ecma_line_and_byte_offset_of_position(
+    source_file: &(impl SourceFileLike + ?Sized),
+    pos: u32,
+) -> (usize, u32) {
     let line_map = get_ecma_line_starts(source_file);
     let line = compute_line_of_position(line_map, pos);
-    let byte_offset = pos - line_map[line as usize];
+    let byte_offset = pos - line_map[line];
     (line, byte_offset)
 }
 
-pub fn get_ecma_end_line_position(source_file: P<SourceFile>, line: i32) -> i32 {
+pub fn get_ecma_end_line_position(source_file: P<SourceFile>, line: usize) -> Option<u32> {
     let text = source_file.text().as_bytes();
-    let mut pos = get_ecma_line_starts(&*source_file)[line as usize];
+    let mut pos = get_ecma_line_starts(&*source_file)[line];
     loop {
         let (ch, size) = decode_rune(&text[pos as usize..]);
         if size == 0 || stringutil::is_line_break(ch) {
-            return pos - 1;
+            return pos.checked_sub(1);
         }
-        pos += size as i32;
+        pos += size as u32;
     }
 }
 
 // GetECMAPositionOfLineAndUTF16Character converts a 0-based line number and UTF-16
 // code unit character offset back to an absolute byte position in the source text.
 // Uses ECMAScript line separators.
-pub fn get_ecma_position_of_line_and_utf16_character(source_file: &(impl SourceFileLike + ?Sized), line: i32, character: UTF16Offset) -> i32 {
+pub fn get_ecma_position_of_line_and_utf16_character(
+    source_file: &(impl SourceFileLike + ?Sized),
+    line: usize,
+    character: UTF16Offset,
+) -> u32 {
     let line_starts = get_ecma_line_starts(source_file);
-    compute_position_of_line_and_utf16_character(line_starts, line, character, source_file.text(), false)
+    compute_position_of_line_and_utf16_character(
+        line_starts,
+        line,
+        character,
+        source_file.text(),
+        false,
+    )
 }
 
 // GetECMAPositionOfLineAndByteOffset converts a 0-based line number and byte offset
 // from line start back to an absolute byte position in the source text.
 // Uses ECMAScript line separators.
-pub fn get_ecma_position_of_line_and_byte_offset(source_file: &(impl SourceFileLike + ?Sized), line: i32, byte_offset: i32) -> i32 {
+pub fn get_ecma_position_of_line_and_byte_offset(
+    source_file: &(impl SourceFileLike + ?Sized),
+    line: usize,
+    byte_offset: u32,
+) -> u32 {
     compute_position_of_line_and_byte_offset(get_ecma_line_starts(source_file), line, byte_offset)
 }
 
 // ComputePositionOfLineAndByteOffset computes a byte position from a line and
 // raw byte offset from the line start. This is a simple addition with validation.
-pub fn compute_position_of_line_and_byte_offset(line_starts: &[TextPos], line: i32, byte_offset: i32) -> i32 {
-    if line < 0 || line as usize >= line_starts.len() {
-        panic!("Bad line number. Line: {}, lineStarts.length: {}.", line, line_starts.len());
-    }
-    line_starts[line as usize] + byte_offset
+pub fn compute_position_of_line_and_byte_offset(
+    line_starts: &[u32],
+    line: usize,
+    byte_offset: u32,
+) -> u32 {
+    assert!(
+        line < line_starts.len(),
+        "Bad line number. Line: {}, lineStarts.length: {}.",
+        line,
+        line_starts.len()
+    );
+    line_starts[line] + byte_offset
 }
 
 // ComputePositionOfLineAndUTF16Character converts a line and UTF-16 character offset
@@ -3246,34 +3965,30 @@ pub fn compute_position_of_line_and_byte_offset(line_starts: &[TextPos], line: i
 // It scans from the line start to correctly handle multi-byte characters.
 // When allowEdits is true, out-of-range values are clamped instead of panicking.
 pub fn compute_position_of_line_and_utf16_character(
-    line_starts: &[TextPos],
-    line: i32,
+    line_starts: &[u32],
+    line: usize,
     character: UTF16Offset,
     text: &str,
     allow_edits: bool,
-) -> i32 {
+) -> u32 {
     let mut line = line;
-    if line < 0 || line as usize >= line_starts.len() {
+    if line >= line_starts.len() {
         if allow_edits {
             // Clamp line to nearest allowable value
-            if line < 0 {
-                line = 0;
-            } else if line as usize >= line_starts.len() {
-                line = line_starts.len() as i32 - 1;
-            }
+            line = line_starts.len() - 1;
         } else {
             panic!("Bad line number. Line: {}, lineStarts.length: {}.", line, line_starts.len());
         }
     }
 
-    let line_start = line_starts[line as usize];
-    let text_len = text.len() as i32;
+    let line_start = line_starts[line];
+    let text_len = text.len() as u32;
 
     if character > 0 {
         // UTF-16 character offset: scan from line start counting UTF-16 code units.
         let mut line_end = text_len;
-        if ((line + 1) as usize) < line_starts.len() {
-            line_end = line_starts[(line + 1) as usize];
+        if line + 1 < line_starts.len() {
+            line_end = line_starts[line + 1];
         }
         let mut utf16_count: UTF16Offset = 0;
         let mut pos = line_start;
@@ -3283,12 +3998,13 @@ pub fn compute_position_of_line_and_utf16_character(
             }
             let (r, size) = decode_rune(&text.as_bytes()[pos as usize..]);
             utf16_count += if r >= 0x10000 { 2 } else { 1 };
-            pos += size as i32;
+            pos += size as u32;
         }
         if !allow_edits {
-            if pos == line_end && utf16_count < character {
-                panic!("Bad UTF-16 character offset. Line: {}, character: {}.", line, character);
-            }
+            assert!(
+                !(pos == line_end && utf16_count < character),
+                "Bad UTF-16 character offset. Line: {line}, character: {character}."
+            );
             assert!(pos <= text_len);
             return pos;
         }
@@ -3313,15 +4029,15 @@ pub fn compute_position_of_line_and_utf16_character(
 
 /// Go `(*ast.NodeFactory).NewCommentRange`; the factory argument of `GetLeadingCommentRanges` /
 /// `GetTrailingCommentRanges` only served this constructor and is dropped.
-fn new_comment_range(kind: Kind, pos: i32, end: i32, has_trailing_new_line: bool) -> CommentRange {
+fn new_comment_range(kind: Kind, pos: u32, end: u32, has_trailing_new_line: bool) -> CommentRange {
     CommentRange { text_range: TextRange::new(pos, end), kind, has_trailing_new_line }
 }
 
-pub fn get_leading_comment_ranges(text: &'static str, pos: i32) -> CommentRangeIter {
+pub fn get_leading_comment_ranges(text: &'static str, pos: u32) -> CommentRangeIter {
     iterate_comment_ranges(text, pos, false)
 }
 
-pub fn get_trailing_comment_ranges(text: &'static str, pos: i32) -> CommentRangeIter {
+pub fn get_trailing_comment_ranges(text: &'static str, pos: u32) -> CommentRangeIter {
     iterate_comment_ranges(text, pos, true)
 }
 
@@ -3331,7 +4047,7 @@ Single-line comment ranges include the leading double-slash characters but not t
 line break. Multi-line comment ranges include the leading slash-asterisk and trailing
 asterisk-slash characters.
 */
-fn iterate_comment_ranges(text: &'static str, pos: i32, trailing: bool) -> CommentRangeIter {
+fn iterate_comment_ranges(text: &'static str, pos: u32, trailing: bool) -> CommentRangeIter {
     let mut pos = pos;
     let mut collecting = trailing;
     if pos == 0 {
@@ -3358,11 +4074,11 @@ fn iterate_comment_ranges(text: &'static str, pos: i32, trailing: bool) -> Comme
 /// `GetTrailingCommentRanges`, as an explicit state machine.
 pub struct CommentRangeIter {
     text: &'static str,
-    pos: i32,
+    pos: u32,
     trailing: bool,
     collecting: bool,
-    pending_pos: i32,
-    pending_end: i32,
+    pending_pos: u32,
+    pending_end: u32,
     pending_kind: Kind,
     pending_has_trailing_new_line: bool,
     has_pending_comment_range: bool,
@@ -3377,12 +4093,12 @@ impl Iterator for CommentRangeIter {
             return None;
         }
         let text = self.text.as_bytes();
-        let len = text.len() as i32;
-        'scan: while self.pos >= 0 && self.pos < len {
+        let len = text.len() as u32;
+        'scan: while self.pos < len {
             let (ch, size) = decode_rune(&text[self.pos as usize..]);
             match ch {
                 0x0D | 0x0A => {
-                    if ch == '\r' as i32 && self.pos + 1 < len && text[(self.pos + 1) as usize] == b'\n' {
+                    if ch == '\r' as Rune && self.pos + 1 < len && text[(self.pos + 1) as usize] == b'\n' {
                         self.pos += 1;
                     }
                     self.pos += 1;
@@ -3395,11 +4111,9 @@ impl Iterator for CommentRangeIter {
                         self.pending_has_trailing_new_line = true;
                     }
 
-                    continue;
                 }
                 0x09 | 0x0B | 0x0C | 0x20 => {
                     self.pos += 1;
-                    continue;
                 }
                 0x2F /* / */ => {
                     let next_char = if self.pos + 1 < len { text[(self.pos + 1) as usize] } else { 0 };
@@ -3416,10 +4130,10 @@ impl Iterator for CommentRangeIter {
                                     has_trailing_new_line = true;
                                     break;
                                 }
-                                self.pos += s as i32;
+                                self.pos += s as u32;
                             }
                         } else if let Some(i) = memchr::memmem::find(&text[self.pos as usize..], b"*/") {
-                            self.pos += i as i32 + 2;
+                            self.pos += i as u32 + 2;
                         } else {
                             self.pos = len;
                         }
@@ -3454,7 +4168,7 @@ impl Iterator for CommentRangeIter {
                         if self.has_pending_comment_range && stringutil::is_line_break(ch) {
                             self.pending_has_trailing_new_line = true;
                         }
-                        self.pos += size as i32;
+                        self.pos += size as u32;
                         continue;
                     }
                     break 'scan;
@@ -3464,7 +4178,12 @@ impl Iterator for CommentRangeIter {
 
         self.done = true;
         if self.has_pending_comment_range {
-            return Some(new_comment_range(self.pending_kind, self.pending_pos, self.pending_end, self.pending_has_trailing_new_line));
+            return Some(new_comment_range(
+                self.pending_kind,
+                self.pending_pos,
+                self.pending_end,
+                self.pending_has_trailing_new_line,
+            ));
         }
         None
     }

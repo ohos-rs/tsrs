@@ -14,7 +14,7 @@ use crate::conn_async::AsyncConn;
 use crate::conn_sync::{ConnOptions, SyncConn};
 use crate::handler::{Caller, CancellationToken, Handler};
 use crate::jsonrpc::{FrameReader, FrameWriter};
-use crate::message::{TransportError, DEFAULT_MAX_FRAME_BYTES};
+use crate::message::{DEFAULT_MAX_FRAME_BYTES, TransportError};
 use crate::msgpack::{MessagePackReader, MessagePackWriter};
 use crate::protocol::WireProtocol;
 
@@ -27,13 +27,17 @@ pub struct Stream {
 }
 
 impl Stream {
-    /// StdioTransport. Stdout is the wire: nothing else in the process may write to it.
+    /// `StdioTransport`. Stdout is the wire: nothing else in the process may write to it.
     pub fn stdio() -> Stream {
-        Stream { reader: Box::new(std::io::stdin()), writer: Box::new(std::io::stdout()), closer: None }
+        Stream {
+            reader: Box::new(std::io::stdin()),
+            writer: Box::new(std::io::stdout()),
+            closer: None,
+        }
     }
 }
 
-/// PipeTransport: listens on `path` (removing a stale socket file first) and accepts one connection.
+/// `PipeTransport`: listens on `path` (removing a stale socket file first) and accepts one connection.
 pub struct PipeListener {
     #[cfg(unix)]
     listener: std::os::unix::net::UnixListener,
@@ -52,7 +56,10 @@ impl PipeListener {
     pub fn bind(path: &Path) -> std::io::Result<PipeListener> {
         Err(std::io::Error::new(
             std::io::ErrorKind::Unsupported,
-            format!("--pipe {}: named pipe transport is not supported on this platform", path.display()),
+            format!(
+                "--pipe {}: named pipe transport is not supported on this platform",
+                path.display()
+            ),
         ))
     }
 
@@ -92,8 +99,8 @@ pub fn generate_pipe_path(name: &str) -> PathBuf {
     std::env::temp_dir().join(name)
 }
 
-/// A caller slot filled once the connection exists (Go: SetConnection after Accept), so the
-/// session and callback filesystem can be built before the connection that owns them.
+/// A caller slot filled once the connection exists (Go: `SetConnection` after Accept), so the session and
+/// callback filesystem can be built before the connection that owns them.
 #[derive(Default)]
 pub struct LateCaller(OnceLock<Arc<dyn Caller>>);
 
@@ -111,35 +118,42 @@ impl Caller for LateCaller {
     fn call(&self, method: &str, params: Option<&[u8]>) -> Result<Vec<u8>, TransportError> {
         match self.0.get() {
             Some(c) => c.call(method, params),
-            None => Err(TransportError::Closed(Some(format!("{method} called before connection set")))),
+            None => {
+                Err(TransportError::Closed(Some(format!("{method} called before connection set"))))
+            }
         }
     }
 
     fn notify(&self, method: &str, params: Option<&[u8]>) -> Result<(), TransportError> {
         match self.0.get() {
             Some(c) => c.notify(method, params),
-            None => Err(TransportError::Closed(Some(format!("{method} called before connection set")))),
+            None => {
+                Err(TransportError::Closed(Some(format!("{method} called before connection set"))))
+            }
         }
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct ServeOptions {
     pub protocol: WireProtocol,
     pub collect_timing: bool,
     pub max_frame_bytes: u64,
     /// See `ConnOptions::reentrancy_grace`.
     pub reentrancy_grace: std::time::Duration,
+    /// See `ConnOptions::shutdown`. The CLI cancels it on SIGINT/SIGTERM (Go signal.NotifyContext).
+    pub shutdown: CancellationToken,
 }
 
 impl ServeOptions {
-    /// `--api` (sync, MessagePack) or `--api --async` (JSON-RPC).
+    /// `--api` (sync, `MessagePack`) or `--api --async` (JSON-RPC).
     pub fn new(is_async: bool) -> ServeOptions {
         ServeOptions {
             protocol: if is_async { WireProtocol::JsonRpc } else { WireProtocol::MessagePack },
             collect_timing: false,
             max_frame_bytes: DEFAULT_MAX_FRAME_BYTES,
             reentrancy_grace: crate::reentrancy::DEFAULT_ASYNC_GRACE,
+            shutdown: CancellationToken::new(),
         }
     }
 }
@@ -152,8 +166,17 @@ pub enum Connection {
 
 impl Connection {
     /// Builds the protocol + connection for `stream` (server.go Run), and points `late` at it.
-    pub fn new(stream: Stream, handler: Arc<dyn Handler>, options: ServeOptions, late: Option<&LateCaller>) -> Connection {
-        let conn_options = ConnOptions { collect_timing: options.collect_timing, reentrancy_grace: options.reentrancy_grace };
+    pub fn new(
+        stream: Stream,
+        handler: Arc<dyn Handler>,
+        options: ServeOptions,
+        late: Option<&LateCaller>,
+    ) -> Connection {
+        let conn_options = ConnOptions {
+            collect_timing: options.collect_timing,
+            reentrancy_grace: options.reentrancy_grace,
+            shutdown: options.shutdown,
+        };
         let conn = match options.protocol {
             WireProtocol::MessagePack => Connection::Sync(SyncConn::new(
                 Box::new(MessagePackReader::with_limit(stream.reader, options.max_frame_bytes)),
@@ -209,15 +232,28 @@ pub fn serve(
     let handler = make_handler(Arc::<LateCaller>::clone(&late));
     let (_listener, stream) = match pipe_path {
         Some(path) => {
-            let listener = PipeListener::bind(path)
-                .map_err(|e| TransportError::Io(std::io::Error::new(e.kind(), format!("failed to create pipe transport: {e}"))))?;
-            let stream = listener
-                .accept()
-                .map_err(|e| TransportError::Io(std::io::Error::new(e.kind(), format!("failed to accept connection: {e}"))))?;
+            let listener = PipeListener::bind(path).map_err(|e| {
+                TransportError::Io(std::io::Error::new(
+                    e.kind(),
+                    format!("failed to create pipe transport: {e}"),
+                ))
+            })?;
+            let stream = listener.accept().map_err(|e| {
+                TransportError::Io(std::io::Error::new(
+                    e.kind(),
+                    format!("failed to accept connection: {e}"),
+                ))
+            })?;
             (Some(listener), stream)
         }
         None => (None, Stream::stdio()),
     };
+    let shutdown = options.shutdown.clone();
     let conn = Connection::new(stream, handler, options, Some(&late));
-    conn.run()
+    let result = conn.run();
+    // serverRunError: once the server context is cancelled, how the connection ended is not an error.
+    if shutdown.is_cancelled() {
+        return Ok(());
+    }
+    result
 }

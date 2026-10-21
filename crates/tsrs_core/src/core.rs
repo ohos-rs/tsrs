@@ -1,8 +1,9 @@
 use crate::stringutil;
 use crate::tspath;
-use crate::{CompilerOptions, ScriptKind, TextPos};
+use crate::{CompilerOptions, ScriptKind};
 use rustc_hash::FxHashMap;
 use std::borrow::Cow;
+use std::cmp::Ordering;
 use std::hash::Hash;
 
 // Go helpers that return their input slice unchanged when nothing changes return `Cow::Borrowed`
@@ -14,26 +15,27 @@ pub fn filter<T: Clone>(slice: &[T], mut f: impl FnMut(&T) -> bool) -> Cow<'_, [
     for (i, value) in slice.iter().enumerate() {
         if !f(value) {
             let mut result = slice[..i].to_vec();
-            for value in &slice[i + 1..] {
-                if f(value) {
-                    result.push(value.clone());
-                }
-            }
+            result.extend(
+                slice[i + 1..]
+                    .iter()
+                    .filter_map(|value| if f(value) { Some(value.clone()) } else { None }),
+            );
             return Cow::Owned(result);
         }
     }
     Cow::Borrowed(slice)
 }
 
-pub fn filter_index<T: Clone>(slice: &[T], mut f: impl FnMut(&T, usize, &[T]) -> bool) -> Cow<'_, [T]> {
+pub fn filter_index<T: Clone>(
+    slice: &[T],
+    mut f: impl FnMut(&T, usize, &[T]) -> bool,
+) -> Cow<'_, [T]> {
     for (i, value) in slice.iter().enumerate() {
         if !f(value, i, slice) {
             let mut result = slice[..i].to_vec();
-            for j in i + 1..slice.len() {
-                if f(&slice[j], j, slice) {
-                    result.push(slice[j].clone());
-                }
-            }
+            result.extend((i + 1..slice.len()).filter_map(|j| {
+                if f(&slice[j], j, slice) { Some(slice[j].clone()) } else { None }
+            }));
             return Cow::Owned(result);
         }
     }
@@ -46,9 +48,10 @@ pub fn map<T, U>(slice: &[T], f: impl FnMut(&T) -> U) -> Vec<U> {
 
 pub fn try_map<T, U, E>(slice: &[T], mut f: impl FnMut(&T) -> Result<U, E>) -> Result<Vec<U>, E> {
     let mut result = Vec::with_capacity(slice.len());
-    for value in slice {
+    result = slice.iter().try_fold(result, |mut result, value| {
         result.push(f(value)?);
-    }
+        Ok::<_, E>(result)
+    })?;
     Ok(result)
 }
 
@@ -65,11 +68,9 @@ pub fn map_filtered<T, U>(slice: &[T], f: impl FnMut(&T) -> Option<U>) -> Vec<U>
     slice.iter().filter_map(f).collect()
 }
 
-pub fn flat_map<T, U, I: IntoIterator<Item = U>>(slice: &[T], mut f: impl FnMut(&T) -> I) -> Vec<U> {
+pub fn flat_map<T, U, I: IntoIterator<Item = U>>(slice: &[T], f: impl FnMut(&T) -> I) -> Vec<U> {
     let mut result = Vec::new();
-    for value in slice {
-        result.extend(f(value));
-    }
+    result.extend(slice.iter().flat_map(f));
     result
 }
 
@@ -80,25 +81,24 @@ pub fn same_map<T: Clone + PartialEq>(slice: &[T], mut f: impl FnMut(&T) -> T) -
             let mut result = Vec::with_capacity(slice.len());
             result.extend_from_slice(&slice[..i]);
             result.push(mapped);
-            for v in &slice[i + 1..] {
-                result.push(f(v));
-            }
+            result.extend(slice[i + 1..].iter().map(&mut f));
             return Cow::Owned(result);
         }
     }
     Cow::Borrowed(slice)
 }
 
-pub fn same_map_index<T: Clone + PartialEq>(slice: &[T], mut f: impl FnMut(&T, usize) -> T) -> Cow<'_, [T]> {
+pub fn same_map_index<T: Clone + PartialEq>(
+    slice: &[T],
+    mut f: impl FnMut(&T, usize) -> T,
+) -> Cow<'_, [T]> {
     for (i, value) in slice.iter().enumerate() {
         let mapped = f(value, i);
         if mapped != *value {
             let mut result = Vec::with_capacity(slice.len());
             result.extend_from_slice(&slice[..i]);
             result.push(mapped);
-            for j in i + 1..slice.len() {
-                result.push(f(&slice[j], j));
-            }
+            result.extend((i + 1..slice.len()).map(|j| f(&slice[j], j)));
             return Cow::Owned(result);
         }
     }
@@ -133,18 +133,12 @@ pub fn find_last<T: Clone>(slice: &[T], mut f: impl FnMut(&T) -> bool) -> Option
     slice.iter().rev().find(|v| f(v)).cloned()
 }
 
-pub fn find_index<T>(slice: &[T], f: impl FnMut(&T) -> bool) -> i32 {
-    match slice.iter().position(f) {
-        Some(i) => i as i32,
-        None => -1,
-    }
+pub fn find_index<T>(slice: &[T], f: impl FnMut(&T) -> bool) -> Option<usize> {
+    slice.iter().position(f)
 }
 
-pub fn find_last_index<T>(slice: &[T], f: impl FnMut(&T) -> bool) -> i32 {
-    match slice.iter().rposition(f) {
-        Some(i) => i as i32,
-        None => -1,
-    }
+pub fn find_last_index<T>(slice: &[T], f: impl FnMut(&T) -> bool) -> Option<usize> {
+    slice.iter().rposition(f)
 }
 
 pub fn first_or_nil<T: Clone>(slice: &[T]) -> Option<T> {
@@ -169,10 +163,10 @@ pub fn first_non_nil<T, U>(slice: &[T], f: impl FnMut(&T) -> Option<U>) -> Optio
 
 pub fn first_non_zero<T: Clone + Default + PartialEq>(values: &[T]) -> T {
     let zero = T::default();
-    for value in values {
-        if *value != zero {
-            return value.clone();
-        }
+    if let Some(result) =
+        values.iter().find_map(|value| if *value != zero { Some(value.clone()) } else { None })
+    {
+        return result;
     }
     zero
 }
@@ -190,24 +184,26 @@ pub fn concatenate<'a, T: Clone>(s1: &'a [T], s2: &'a [T]) -> Cow<'a, [T]> {
     Cow::Owned(result)
 }
 
-pub fn splice<'a, T: Clone>(s1: &'a [T], start: i32, delete_count: i32, items: &[T]) -> Cow<'a, [T]> {
-    let len = s1.len() as i32;
-    let mut start = start;
-    if start < 0 {
-        start += len;
-    }
-    if start < 0 {
-        start = 0;
-    }
-    if start > len {
-        start = len;
-    }
-    let delete_count = delete_count.max(0);
-    let end = (start + delete_count).min(len);
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SpliceStart {
+    FromStart(usize),
+    FromEnd(usize),
+}
+
+pub fn splice<'a, T: Clone>(
+    s1: &'a [T],
+    start: SpliceStart,
+    delete_count: usize,
+    items: &[T],
+) -> Cow<'a, [T]> {
+    let start = match start {
+        SpliceStart::FromStart(start) => start.min(s1.len()),
+        SpliceStart::FromEnd(distance) => s1.len().saturating_sub(distance),
+    };
+    let end = start + delete_count.min(s1.len() - start);
     if start == end && items.is_empty() {
         return Cow::Borrowed(s1);
     }
-    let (start, end) = (start as usize, end as usize);
     let mut result = Vec::with_capacity(s1.len() - (end - start) + items.len());
     result.extend_from_slice(&s1[..start]);
     result.extend_from_slice(items);
@@ -225,14 +221,12 @@ pub fn replace_element<T: Clone>(slice: &[T], i: usize, t: T) -> Vec<T> {
     result
 }
 
-pub fn insert_sorted<T>(slice: &mut Vec<T>, element: T, mut cmp: impl FnMut(&T, &T) -> i32) {
-    let i = match slice.binary_search_by(|probe| cmp(probe, &element).cmp(&0)) {
+pub fn insert_sorted<T>(slice: &mut Vec<T>, element: T, mut cmp: impl FnMut(&T, &T) -> Ordering) {
+    let i = match slice.binary_search_by(|probe| cmp(probe, &element)) {
         Ok(i) => {
             // slices.BinarySearchFunc returns the first matching position.
             let mut i = i;
-            while i > 0 && cmp(&slice[i - 1], &element) == 0 {
-                i -= 1;
-            }
+            i -= (0..i).rev().take_while(|&i| cmp(&slice[i], &element) == Ordering::Equal).count();
             i
         }
         Err(i) => i,
@@ -241,7 +235,7 @@ pub fn insert_sorted<T>(slice: &mut Vec<T>, element: T, mut cmp: impl FnMut(&T, 
 }
 
 // MinAllFunc returns all minimum elements from xs according to the comparison function cmp.
-pub fn min_all_func<T: Clone>(xs: &[T], mut cmp: impl FnMut(&T, &T) -> i32) -> Vec<T> {
+pub fn min_all_func<T: Clone>(xs: &[T], mut cmp: impl FnMut(&T, &T) -> Ordering) -> Vec<T> {
     if xs.is_empty() {
         return Vec::new();
     }
@@ -251,11 +245,11 @@ pub fn min_all_func<T: Clone>(xs: &[T], mut cmp: impl FnMut(&T, &T) -> i32) -> V
 
     for x in &xs[1..] {
         let c = cmp(x, &m);
-        if c < 0 {
+        if c == Ordering::Less {
             m = x.clone();
             mins.clear();
             mins.push(x.clone());
-        } else if c == 0 {
+        } else if c == Ordering::Equal {
             mins.push(x.clone());
         }
     }
@@ -285,11 +279,7 @@ pub fn memoize<T: Clone>(create: impl FnOnce() -> T) -> impl FnMut() -> T {
 // constant or precomputed as both branches will be evaluated regardless as to the value of b.
 #[inline]
 pub fn if_else<T>(b: bool, when_true: T, when_false: T) -> T {
-    if b {
-        when_true
-    } else {
-        when_false
-    }
+    if b { when_true } else { when_false }
 }
 
 // Returns value if value is not the zero value of T; Otherwise, returns defaultValue. OrElse should only be used when
@@ -308,7 +298,7 @@ pub fn coalesce<T>(a: Option<T>, b: Option<T>) -> Option<T> {
     a.or(b)
 }
 
-pub type ECMALineStarts = Vec<TextPos>;
+pub type ECMALineStarts = Vec<u32>;
 
 pub fn compute_ecma_line_starts(text: &str) -> ECMALineStarts {
     let mut result = Vec::with_capacity(memchr::memchr_iter(b'\n', text.as_bytes()).count() + 1);
@@ -320,7 +310,7 @@ pub fn compute_ecma_line_starts(text: &str) -> ECMALineStarts {
 }
 
 /// Go returns an `iter.Seq`; here the positions are pushed to `yield_` until it returns false.
-pub fn compute_ecma_line_starts_seq(text: &str, mut yield_: impl FnMut(TextPos) -> bool) {
+pub fn compute_ecma_line_starts_seq(text: &str, mut yield_: impl FnMut(u32) -> bool) {
     let bytes = text.as_bytes();
     let text_len = bytes.len();
     let mut pos = 0usize;
@@ -334,7 +324,7 @@ pub fn compute_ecma_line_starts_seq(text: &str, mut yield_: impl FnMut(TextPos) 
                     if b == b'\r' && pos < text_len && bytes[pos] == b'\n' {
                         pos += 1;
                     }
-                    if !yield_(line_start as TextPos) {
+                    if !yield_(line_start as u32) {
                         return;
                     }
                     line_start = pos;
@@ -345,25 +335,31 @@ pub fn compute_ecma_line_starts_seq(text: &str, mut yield_: impl FnMut(TextPos) 
             let (ch, size) = stringutil::decode_rune(&bytes[pos..]);
             pos += size;
             if stringutil::is_line_break(ch) {
-                if !yield_(line_start as TextPos) {
+                if !yield_(line_start as u32) {
                     return;
                 }
                 line_start = pos;
             }
         }
     }
-    yield_(line_start as TextPos);
+    yield_(line_start as u32);
 }
 
-/// tsrs-only: the number of positions `compute_ecma_line_starts_seq` yields (one per line terminator, with CR LF as
-/// one, plus the last line), counted with vectorized byte searches instead of the per-byte loop.
+/// Counts line starts with the same terminator rules as the line-map builder.
+///
+/// tsrs-only: the number of positions `compute_ecma_line_starts_seq` yields (one per line terminator, with CR
+/// LF as one, plus the last line), counted with vectorized byte searches instead of the per-byte loop.
 pub fn count_ecma_line_starts(text: &str) -> usize {
     let bytes = text.as_bytes();
     let mut n = 1 + memchr::memchr_iter(b'\n', bytes).count();
     n += memchr::memchr_iter(b'\r', bytes).filter(|&i| bytes.get(i + 1) != Some(&b'\n')).count();
     if !text.is_ascii() {
         // U+2028 and U+2029 are E2 80 A8 and E2 80 A9; in valid UTF-8, 0xE2 is always a lead byte.
-        n += memchr::memchr_iter(0xE2, bytes).filter(|&i| bytes.get(i + 1) == Some(&0x80) && matches!(bytes.get(i + 2), Some(0xA8 | 0xA9))).count();
+        n += memchr::memchr_iter(0xE2, bytes)
+            .filter(|&i| {
+                bytes.get(i + 1) == Some(&0x80) && matches!(bytes.get(i + 2), Some(0xA8 | 0xA9))
+            })
+            .count();
     }
     n
 }
@@ -371,14 +367,14 @@ pub fn count_ecma_line_starts(text: &str) -> usize {
 // PositionToLineAndByteOffset returns the 0-based line and byte offset from the
 // start of that line for the given byte position, using the provided line starts.
 // The byte offset is a raw UTF-8 byte offset from the line start, not a UTF-16 code unit count.
-pub fn position_to_line_and_byte_offset(position: i32, line_starts: &[TextPos]) -> (usize, i32) {
+pub fn position_to_line_and_byte_offset(position: u32, line_starts: &[u32]) -> (usize, u32) {
     let idx = line_starts.partition_point(|&s| s <= position);
     let line = if idx == 0 { 0 } else { idx - 1 };
     (line, position - line_starts[line])
 }
 
 // UTF16Offset represents a character offset measured in UTF-16 code units.
-pub type UTF16Offset = i32;
+pub type UTF16Offset = u32;
 
 // UTF16Len returns the number of UTF-16 code units needed to
 // represent the given UTF-8 encoded string.
@@ -387,8 +383,8 @@ pub fn utf16_len(s: &str) -> UTF16Offset {
         return s.len() as UTF16Offset;
     }
     let bytes = s.as_bytes();
-    for i in 0..bytes.len() {
-        if bytes[i] >= 0x80 {
+    for (i, &byte) in bytes.iter().enumerate() {
+        if byte >= 0x80 {
             // Found non-ASCII; count the ASCII prefix, then decode the rest.
             let mut n = i as UTF16Offset;
             let mut j = i;
@@ -405,9 +401,7 @@ pub fn utf16_len(s: &str) -> UTF16Offset {
 
 pub fn flatten<T: Clone>(array: &[Vec<T>]) -> Vec<T> {
     let mut result = Vec::new();
-    for sub_array in array {
-        result.extend_from_slice(sub_array);
-    }
+    result.extend(array.iter().flat_map(|sub_array| sub_array.iter().cloned()));
     result
 }
 
@@ -415,9 +409,13 @@ pub fn get_script_kind_from_file_name(file_name: &str) -> ScriptKind {
     if let Some(dot_pos) = file_name.rfind('.') {
         let ext = stringutil::go_strings_to_lower(&file_name[dot_pos..]);
         match ext.as_str() {
-            tspath::EXTENSION_JS | tspath::EXTENSION_CJS | tspath::EXTENSION_MJS => return ScriptKind::JS,
+            tspath::EXTENSION_JS | tspath::EXTENSION_CJS | tspath::EXTENSION_MJS => {
+                return ScriptKind::JS;
+            }
             tspath::EXTENSION_JSX => return ScriptKind::JSX,
-            tspath::EXTENSION_TS | tspath::EXTENSION_CTS | tspath::EXTENSION_MTS => return ScriptKind::TS,
+            tspath::EXTENSION_TS | tspath::EXTENSION_CTS | tspath::EXTENSION_MTS => {
+                return ScriptKind::TS;
+            }
             tspath::EXTENSION_TSX => return ScriptKind::TSX,
             tspath::EXTENSION_ETS => return ScriptKind::ETS,
             tspath::EXTENSION_JSON => return ScriptKind::JSON,
@@ -464,7 +462,7 @@ pub fn get_spelling_suggestion<T, S: AsRef<str>>(
     name: &str,
     candidates: impl IntoIterator<Item = T>,
     get_name: impl FnMut(&T) -> S,
-    compare: impl FnMut(&T, &T) -> i32,
+    compare: impl FnMut(&T, &T) -> Ordering,
 ) -> Option<T> {
     get_spelling_suggestion_worker(name, candidates, get_name, compare, 0 /*maxCandidates*/)
 }
@@ -473,13 +471,13 @@ pub fn get_spelling_suggestion_with_max_candidate_count<T, S: AsRef<str>>(
     name: &str,
     candidates: impl IntoIterator<Item = T>,
     get_name: impl FnMut(&T) -> S,
-    compare: impl FnMut(&T, &T) -> i32,
+    compare: impl FnMut(&T, &T) -> Ordering,
     max_candidates: usize,
 ) -> Option<T> {
     get_spelling_suggestion_worker(name, candidates, get_name, compare, max_candidates)
 }
 
-fn to_runes(s: &str) -> Vec<i32> {
+fn to_runes(s: &str) -> Vec<stringutil::Rune> {
     let b = s.as_bytes();
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;
@@ -496,12 +494,14 @@ fn get_spelling_suggestion_worker<T, S: AsRef<str>>(
     name: &str,
     candidates: impl IntoIterator<Item = T>,
     mut get_name: impl FnMut(&T) -> S,
-    mut compare: impl FnMut(&T, &T) -> i32,
+    mut compare: impl FnMut(&T, &T) -> Ordering,
     max_candidates: usize,
 ) -> Option<T> {
-    let rune_name = to_runes(name);
-    let maximum_length_difference = 2usize.max((rune_name.len() as f64 * 0.34) as usize);
-    let mut best_distance = (rune_name.len() as f64 * 0.4).floor() + 0.9; // If the best result is worse than this, don't bother.
+    let target_is_ascii = name.is_ascii();
+    let mut target_runes = (!target_is_ascii).then(|| to_runes(name));
+    let target_rune_len = target_runes.as_ref().map_or(name.len(), Vec::len);
+    let maximum_length_difference = 2usize.max((target_rune_len as f64 * 0.34) as usize);
+    let mut best_distance = (target_rune_len as f64 * 0.4).floor() + 0.9; // If the best result is worse than this, don't bother.
     let mut buffers = LevenshteinBuffers::default();
     let mut best_candidate: Option<T> = None;
     let mut checked_candidates = 0;
@@ -513,8 +513,8 @@ fn get_spelling_suggestion_worker<T, S: AsRef<str>>(
         let candidate_name_s = get_name(&candidate);
         let candidate_name = candidate_name_s.as_ref();
         // Go compares the candidate's byte length with the name's rune count here.
-        let max_len = candidate_name.len().max(rune_name.len());
-        let min_len = candidate_name.len().min(rune_name.len());
+        let max_len = candidate_name.len().max(target_rune_len);
+        let min_len = candidate_name.len().min(target_rune_len);
         if !candidate_name.is_empty() && max_len - min_len <= maximum_length_difference {
             if candidate_name == name {
                 continue;
@@ -524,15 +524,35 @@ fn get_spelling_suggestion_worker<T, S: AsRef<str>>(
             if candidate_name.len() < 3 && !stringutil::equal_fold(candidate_name, name) {
                 continue;
             }
-            let distance = levenshtein_with_max(&mut buffers, &rune_name, &to_runes(candidate_name), best_distance);
-            if distance < 0.0 {
+            let distance = if target_is_ascii && candidate_name.is_ascii() {
+                levenshtein_with_max(
+                    &mut buffers,
+                    name.as_bytes(),
+                    candidate_name.as_bytes(),
+                    best_distance,
+                    |c| c.to_ascii_lowercase(),
+                )
+            } else {
+                let target_runes = target_runes.get_or_insert_with(|| to_runes(name));
+                levenshtein_with_max(
+                    &mut buffers,
+                    target_runes,
+                    &to_runes(candidate_name),
+                    best_distance,
+                    stringutil::unicode_to_lower,
+                )
+            };
+            let Some(distance) = distance else {
                 continue;
-            }
+            };
             assert!(distance <= best_distance); // Else `levenshteinWithMax` should return undefined
             if distance < best_distance {
                 best_distance = distance;
                 best_candidate = Some(candidate);
-            } else if best_candidate.as_ref().is_none_or(|best| compare(&candidate, best) < 0) {
+            } else if best_candidate
+                .as_ref()
+                .is_none_or(|best| compare(&candidate, best) == Ordering::Less)
+            {
                 best_candidate = Some(candidate);
             }
         }
@@ -540,8 +560,16 @@ fn get_spelling_suggestion_worker<T, S: AsRef<str>>(
     best_candidate
 }
 
-pub fn get_spelling_suggestion_for_strings<S: AsRef<str>>(name: &str, candidates: impl IntoIterator<Item = S>) -> Option<S> {
-    get_spelling_suggestion(name, candidates, |s| s.as_ref().to_string(), |a, b| stringutil::compare_strings_case_sensitive(a.as_ref(), b.as_ref()))
+pub fn get_spelling_suggestion_for_strings<S: AsRef<str>>(
+    name: &str,
+    candidates: impl IntoIterator<Item = S>,
+) -> Option<S> {
+    get_spelling_suggestion(
+        name,
+        candidates,
+        |s| s.as_ref().to_string(),
+        |a, b| stringutil::compare_strings_case_sensitive(a.as_ref(), b.as_ref()),
+    )
 }
 
 #[derive(Default)]
@@ -550,7 +578,13 @@ struct LevenshteinBuffers {
     current: Vec<f64>,
 }
 
-fn levenshtein_with_max(buffers: &mut LevenshteinBuffers, s1: &[i32], s2: &[i32], max_value: f64) -> f64 {
+fn levenshtein_with_max<T: Copy + Eq>(
+    buffers: &mut LevenshteinBuffers,
+    s1: &[T],
+    s2: &[T],
+    max_value: f64,
+    to_lowercase: impl Fn(T) -> T,
+) -> Option<f64> {
     let buffer_size = s2.len() + 1;
     buffers.previous.clear();
     buffers.previous.resize(buffer_size, 0.0);
@@ -570,11 +604,9 @@ fn levenshtein_with_max(buffers: &mut LevenshteinBuffers, s1: &[i32], s2: &[i32]
         let max_j = ((max_value + i as f64).floor() as i64).min(s2.len() as i64).max(0) as usize;
         let mut col_min = i as f64;
         current[0] = col_min;
-        for j in 1..min_j.min(buffer_size) {
-            current[j] = big;
-        }
+        current.iter_mut().take(min_j.min(buffer_size)).skip(1).for_each(|value| *value = big);
         for j in min_j..=max_j {
-            let substitution_distance = if stringutil::unicode_to_lower(s1[i - 1]) == stringutil::unicode_to_lower(s2[j - 1]) {
+            let substitution_distance = if to_lowercase(s1[i - 1]) == to_lowercase(s2[j - 1]) {
                 previous[j - 1] + 0.1
             } else {
                 previous[j - 1] + 2.0
@@ -587,14 +619,12 @@ fn levenshtein_with_max(buffers: &mut LevenshteinBuffers, s1: &[i32], s2: &[i32]
             current[j] = dist;
             col_min = col_min.min(dist);
         }
-        for j in max_j + 1..=s2.len() {
-            current[j] = big;
-        }
+        current.iter_mut().take(s2.len() + 1).skip(max_j + 1).for_each(|value| *value = big);
         if col_min > max_value {
             // Give up -- everything in this column is > max and it can't get better in future columns.
             buffers.previous = previous;
             buffers.current = current;
-            return -1.0;
+            return None;
         }
         std::mem::swap(&mut previous, &mut current);
     }
@@ -602,9 +632,9 @@ fn levenshtein_with_max(buffers: &mut LevenshteinBuffers, s1: &[i32], s2: &[i32]
     buffers.previous = previous;
     buffers.current = current;
     if res > max_value {
-        return -1.0;
+        return None;
     }
-    res
+    Some(res)
 }
 
 #[inline]
@@ -612,14 +642,42 @@ pub fn identity<T>(t: T) -> T {
     t
 }
 
-pub fn index_after(s: &str, pattern: &str, start_index: usize) -> i32 {
-    match s[start_index..].find(pattern) {
-        None => -1,
-        Some(matched) => (matched + start_index) as i32,
-    }
+pub fn index_after(s: &str, pattern: &str, start_index: usize) -> Option<usize> {
+    s[start_index..].find(pattern).map(|matched| matched + start_index)
 }
 
-pub fn should_rewrite_module_specifier(specifier: &str, compiler_options: &CompilerOptions) -> bool {
+/// Go `strings.Index(haystack, needle)` on bytes.
+///
+/// Searched the way Go does: candidates by the needle's first byte and a compare, then `memmem` once too many
+/// candidates fail. Building a searcher first (`str::find`, `memmem::find`) costs time linear in the needle on every
+/// call, which adds up when a caller searches every file of a program for one name; a naive scan costs a compare per
+/// byte.
+pub fn index_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    let Some((&first, _)) = needle.split_first() else {
+        return Some(0);
+    };
+    let last_start = haystack.len().checked_sub(needle.len())?;
+    let mut i = 0;
+    let mut fails = 0;
+    while let Some(offset) = memchr::memchr(first, &haystack[i..=last_start]) {
+        let candidate = i + offset;
+        if &haystack[candidate..candidate + needle.len()] == needle {
+            return Some(candidate);
+        }
+        fails += 1;
+        i = candidate + 1;
+        // Go's cutover to Rabin-Karp.
+        if fails > 4 + (i >> 4) {
+            return memchr::memmem::find(&haystack[i..], needle).map(|found| found + i);
+        }
+    }
+    None
+}
+
+pub fn should_rewrite_module_specifier(
+    specifier: &str,
+    compiler_options: &CompilerOptions,
+) -> bool {
     compiler_options.rewrite_relative_import_extensions.is_true()
         && tspath::path_is_relative(specifier)
         && !tspath::is_declaration_file_name(specifier)
@@ -637,6 +695,10 @@ pub fn single_element_slice<T>(element: Option<T>) -> Vec<T> {
 // onAdded is called for each key-value pair that is in m2 but not in m1.
 // onRemoved is called for each key-value pair that is in m1 but not in m2.
 // onChanged is called for each key where the value in m1 differs from the value in m2.
+#[expect(
+    clippy::implicit_hasher,
+    reason = "The API deliberately accepts only FxHashMap, as required by the workspace hashing policy."
+)]
 pub fn diff_maps<K: Hash + Eq, V: PartialEq>(
     m1: &FxHashMap<K, V>,
     m2: &FxHashMap<K, V>,
@@ -644,12 +706,16 @@ pub fn diff_maps<K: Hash + Eq, V: PartialEq>(
     on_removed: impl FnMut(&K, &V),
     on_changed: impl FnMut(&K, &V, &V),
 ) {
-    diff_maps_func(m1, m2, |a, b| a == b, Some(on_added), Some(on_removed), Some(on_changed))
+    diff_maps_func(m1, m2, |a, b| a == b, Some(on_added), Some(on_removed), Some(on_changed));
 }
 
 #[expect(
     clippy::iter_over_hash_type,
     reason = "Go's DiffMapsFunc ranges over the maps too; the one caller (tsrs_project update_watches) collects watch changes, whose order is not output"
+)]
+#[expect(
+    clippy::implicit_hasher,
+    reason = "The API deliberately accepts only FxHashMap, as required by the workspace hashing policy."
 )]
 pub fn diff_maps_func<K: Hash + Eq, V1, V2>(
     m1: &FxHashMap<K, V1>,
@@ -685,14 +751,19 @@ pub fn diff_maps_func<K: Hash + Eq, V1, V2>(
 }
 
 // CopyMapInto is maps.Copy, unless dst is nil, in which case it clones and returns src.
-pub fn copy_map_into<K: Hash + Eq + Clone, V: Clone>(dst: Option<FxHashMap<K, V>>, src: &FxHashMap<K, V>) -> FxHashMap<K, V> {
+#[expect(
+    clippy::implicit_hasher,
+    reason = "The API deliberately accepts only FxHashMap, as required by the workspace hashing policy."
+)]
+pub fn copy_map_into<K: Hash + Eq + Clone, V: Clone>(
+    dst: Option<FxHashMap<K, V>>,
+    src: &FxHashMap<K, V>,
+) -> FxHashMap<K, V> {
     match dst {
         None => src.clone(),
         Some(mut dst) => {
-            #[expect(clippy::iter_over_hash_type, reason = "inserts distinct keys into a map")]
-            for (k, v) in src {
-                dst.insert(k.clone(), v.clone());
-            }
+            // inserts distinct keys into a map
+            dst.extend(src.iter().map(|(k, v)| (k.clone(), v.clone())));
             dst
         }
     }
@@ -703,16 +774,18 @@ pub fn unordered_equal<T: Hash + Eq>(s1: &[T], s2: &[T]) -> bool {
     if s1.len() != s2.len() {
         return false;
     }
-    let mut counts: FxHashMap<&T, i32> = FxHashMap::default();
+    let mut counts: FxHashMap<&T, usize> = FxHashMap::default();
     for v in s1 {
         *counts.entry(v).or_default() += 1;
     }
     for v in s2 {
-        let c = counts.entry(v).or_default();
-        *c -= 1;
-        if *c < 0 {
+        let Some(c) = counts.get_mut(v) else {
+            return false;
+        };
+        if *c == 0 {
             return false;
         }
+        *c -= 1;
     }
     true
 }
@@ -734,33 +807,32 @@ pub fn deduplicate<T: Clone + PartialEq>(slice: &[T]) -> Cow<'_, [T]> {
     Cow::Borrowed(slice)
 }
 
-pub fn deduplicate_sorted<T: Clone>(slice: &[T], mut is_equal: impl FnMut(&T, &T) -> bool) -> Vec<T> {
+pub fn deduplicate_sorted<T: Clone>(
+    slice: &[T],
+    mut is_equal: impl FnMut(&T, &T) -> bool,
+) -> Vec<T> {
     if slice.is_empty() {
         return Vec::new();
     }
     let mut last = &slice[0];
     let mut deduplicated = vec![slice[0].clone()];
-    for next in &slice[1..] {
+    deduplicated = slice[1..].iter().fold(deduplicated, |mut deduplicated, next| {
         if is_equal(last, next) {
-            continue;
+            return deduplicated;
         }
 
         deduplicated.push(next.clone());
         last = next;
-    }
+
+        deduplicated
+    });
 
     deduplicated
 }
 
 // CompareBooleans treats true as greater than false.
-pub fn compare_booleans(a: bool, b: bool) -> i32 {
-    if a && !b {
-        1
-    } else if !a && b {
-        -1
-    } else {
-        0
-    }
+pub fn compare_booleans(a: bool, b: bool) -> Ordering {
+    a.cmp(&b)
 }
 
 #[cfg(test)]
@@ -768,17 +840,49 @@ mod tests {
     use super::*;
 
     #[test]
+    fn index_bytes_matches_memmem() {
+        let many_fails = format!("{}ab", "a".repeat(500));
+        let multibyte = format!("{}éb", "éa".repeat(200));
+        let cases: [(&str, &str); 14] = [
+            ("hello world", "world"),
+            ("hello world", "worlds"),
+            ("hello", "hello"),
+            ("hell", "hello"),
+            ("", "a"),
+            ("abc", ""),
+            ("abcabc", "c"),
+            (&many_fails, "ab"),
+            (&many_fails, "aab"),
+            (&many_fails, "ac"),
+            (&multibyte, "éb"),
+            (&multibyte, "aé"),
+            (&multibyte, "ab"),
+            ("日本語のテキスト", "テキ"),
+        ];
+        for (text, needle) in cases {
+            for start in 0..=text.len() {
+                let haystack = &text.as_bytes()[start..];
+                assert_eq!(
+                    index_bytes(haystack, needle.as_bytes()),
+                    memchr::memmem::find(haystack, needle.as_bytes()),
+                    "{needle:?} in {text:?} from {start}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn helpers() {
         let v = [1, 2, 3, 4];
         assert!(matches!(filter(&v, |x| *x > 0), Cow::Borrowed(_)));
         assert_eq!(&*filter(&v, |x| x % 2 == 0), &[2, 4]);
-        assert_eq!(&*splice(&v, 1, 2, &[9]), &[1, 9, 4]);
-        assert_eq!(&*splice(&v, -1, 1, &[]), &[1, 2, 3]);
+        assert_eq!(&*splice(&v, SpliceStart::FromStart(1), 2, &[9]), &[1, 9, 4]);
+        assert_eq!(&*splice(&v, SpliceStart::FromEnd(1), 1, &[]), &[1, 2, 3]);
         assert_eq!(&*deduplicate(&[1, 2, 1, 3, 2]), &[1, 2, 3]);
         assert!(same(&v[..], &v[..]));
         assert!(!same(&v[..], &[1, 2, 3, 4][..]));
         let mut s = vec![1, 3, 5];
-        insert_sorted(&mut s, 4, |a, b| a - b);
+        insert_sorted(&mut s, 4, Ord::cmp);
         assert_eq!(s, vec![1, 3, 4, 5]);
         assert_eq!(compute_ecma_line_starts("a\r\nb\nc\u{2028}d\re"), vec![0, 3, 5, 9, 11]);
         assert_eq!(position_to_line_and_byte_offset(4, &[0, 3, 5]), (1, 1));
@@ -814,8 +918,13 @@ mod tests {
     #[test]
     fn spelling() {
         let names = ["foo", "bar", "length", "lengthy_name"];
-        assert_eq!(get_spelling_suggestion_for_strings("lenght", names.iter().copied()), Some("length"));
+        assert_eq!(
+            get_spelling_suggestion_for_strings("lenght", names.iter().copied()),
+            Some("length")
+        );
         assert_eq!(get_spelling_suggestion_for_strings("xyzzy", names.iter().copied()), None);
         assert_eq!(get_spelling_suggestion_for_strings("Foo", names.iter().copied()), Some("foo"));
+        assert_eq!(get_spelling_suggestion_for_strings("École", ["école"]), Some("école"));
+        assert_eq!(get_spelling_suggestion_for_strings("Ecole", ["école"]), Some("école"));
     }
 }

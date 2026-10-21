@@ -3,10 +3,13 @@
 
 use std::io::{BufReader, BufWriter, Read, Write};
 
-use crate::message::{read_exact_bounded, Id, Message, Response, ResponseError, TransportError, DEFAULT_MAX_FRAME_BYTES};
+use crate::message::{
+    DEFAULT_MAX_FRAME_BYTES, Id, Message, Response, ResponseError, TransportError,
+    read_exact_bounded,
+};
 use crate::protocol::{ProtocolReader, ProtocolWriter};
 
-/// protocol_msgpack.go MessageType.
+/// `protocol_msgpack.go` `MessageType`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum MessageType {
@@ -72,7 +75,7 @@ impl<R: Read> MessagePackReader<R> {
                 Ok(0) if first => return Err(TransportError::Eof),
                 Ok(0) => return Err(TransportError::UnexpectedEof("msgpack: read tuple")),
                 Ok(_) => return Ok(b[0]),
-                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
                 Err(e) => return Err(TransportError::Io(e)),
             }
         }
@@ -81,13 +84,15 @@ impl<R: Read> MessagePackReader<R> {
     fn read_n<const N: usize>(&mut self) -> Result<[u8; N], TransportError> {
         let mut buf = [0u8; N];
         self.r.read_exact(&mut buf).map_err(|e| match e.kind() {
-            std::io::ErrorKind::UnexpectedEof => TransportError::UnexpectedEof("msgpack: read bin length"),
+            std::io::ErrorKind::UnexpectedEof => {
+                TransportError::UnexpectedEof("msgpack: read bin length")
+            }
             _ => TransportError::Io(e),
         })?;
         Ok(buf)
     }
 
-    /// protocol_msgpack.go readTuple.
+    /// `protocol_msgpack.go` readTuple.
     pub fn read_tuple(&mut self) -> Result<Tuple, TransportError> {
         let t = self.read_byte(true)?;
         if t != MSGPACK_FIXED_ARRAY3 {
@@ -106,7 +111,9 @@ impl<R: Read> MessagePackReader<R> {
             )));
         };
         let Some(msg_type) = MessageType::from_u8(raw_type) else {
-            return Err(TransportError::Protocol(format!("{ERR_INVALID_REQUEST}: unknown message type: {raw_type}")));
+            return Err(TransportError::Protocol(format!(
+                "{ERR_INVALID_REQUEST}: unknown message type: {raw_type}"
+            )));
         };
         let method = self.read_bin()?;
         let payload = self.read_bin()?;
@@ -122,7 +129,7 @@ impl<R: Read> MessagePackReader<R> {
             _ => {
                 return Err(TransportError::Protocol(format!(
                     "{ERR_INVALID_REQUEST}: expected binary data (0xc4-0xc6), received: 0x{t:02x}"
-                )))
+                )));
             }
         };
         read_exact_bounded(&mut self.r, size, self.max_frame_bytes, "msgpack: read bin")
@@ -130,10 +137,10 @@ impl<R: Read> MessagePackReader<R> {
 }
 
 impl<R: Read + Send> ProtocolReader for MessagePackReader<R> {
-    /// protocol_msgpack.go ReadMessage. The protocol has no request IDs: the method name is the ID.
+    /// `protocol_msgpack.go` `ReadMessage`. The protocol has no request IDs: the method name is the ID.
     fn read_message(&mut self) -> Result<Message, TransportError> {
         let tuple = self.read_tuple()?;
-        let method = String::from_utf8_lossy(&tuple.method).into_owned();
+        let method = tsrs_core::utf8::from_utf8_lossy(&tuple.method).into_owned();
         let mut msg = Message::default();
         match tuple.msg_type {
             MessageType::Request => {
@@ -147,10 +154,15 @@ impl<R: Read + Send> ProtocolReader for MessagePackReader<R> {
             }
             MessageType::CallError => {
                 msg.id = Some(Id::Str(method));
-                msg.error = Some(ResponseError::internal(String::from_utf8_lossy(&tuple.payload).into_owned()));
+                msg.error = Some(ResponseError::internal(
+                    tsrs_core::utf8::from_utf8_lossy(&tuple.payload).into_owned(),
+                ));
             }
             other => {
-                return Err(TransportError::Protocol(format!("unexpected message type: {}", other as u8)));
+                return Err(TransportError::Protocol(format!(
+                    "unexpected message type: {}",
+                    other as u8
+                )));
             }
         }
         Ok(msg)
@@ -166,9 +178,14 @@ impl<W: Write> MessagePackWriter<W> {
         MessagePackWriter { w: BufWriter::with_capacity(64 * 1024, w) }
     }
 
-    /// protocol_msgpack.go writeTuple: message type as a positive fixint, then two bin fields,
-    /// then a flush.
-    pub fn write_tuple(&mut self, msg_type: MessageType, method: &[u8], payload: &[u8]) -> Result<(), TransportError> {
+    /// `protocol_msgpack.go` writeTuple: message type as a positive fixint, then two bin fields, then a
+    /// flush.
+    pub fn write_tuple(
+        &mut self,
+        msg_type: MessageType,
+        method: &[u8],
+        payload: &[u8],
+    ) -> Result<(), TransportError> {
         self.w.write_all(&[MSGPACK_FIXED_ARRAY3, msg_type as u8])?;
         self.write_bin(method)?;
         self.write_bin(payload)?;
@@ -185,7 +202,9 @@ impl<W: Write> MessagePackWriter<W> {
             self.w.write_all(&(len as u16).to_be_bytes())?;
         } else {
             let Ok(len32) = u32::try_from(len) else {
-                return Err(TransportError::Protocol(format!("msgpack: payload of {len} bytes exceeds bin32")));
+                return Err(TransportError::Protocol(format!(
+                    "msgpack: payload of {len} bytes exceeds bin32"
+                )));
             };
             self.w.write_all(&[MSGPACK_BIN32])?;
             self.w.write_all(&len32.to_be_bytes())?;
@@ -197,12 +216,21 @@ impl<W: Write> MessagePackWriter<W> {
 
 impl<W: Write + Send> ProtocolWriter for MessagePackWriter<W> {
     /// Requests from the server are Call tuples; params nil marshals to `null`.
-    fn write_request(&mut self, _id: &Id, method: &str, params: Option<&[u8]>) -> Result<(), TransportError> {
+    fn write_request(
+        &mut self,
+        _id: &Id,
+        method: &str,
+        params: Option<&[u8]>,
+    ) -> Result<(), TransportError> {
         self.write_tuple(MessageType::Call, method.as_bytes(), params.unwrap_or(b"null"))
     }
 
     /// The msgpack protocol does not distinguish notifications from calls.
-    fn write_notification(&mut self, method: &str, params: Option<&[u8]>) -> Result<(), TransportError> {
+    fn write_notification(
+        &mut self,
+        method: &str,
+        params: Option<&[u8]>,
+    ) -> Result<(), TransportError> {
         self.write_tuple(MessageType::Call, method.as_bytes(), params.unwrap_or(b"null"))
     }
 
@@ -210,7 +238,9 @@ impl<W: Write + Send> ProtocolWriter for MessagePackWriter<W> {
         let method = id.to_string();
         let payload: &[u8] = match result {
             // json.Marshal of a json.Value validates it.
-            Response::Json(json) => crate::jsonrpc::validate_json(json).map_err(TransportError::Protocol)?.as_bytes(),
+            Response::Json(json) => {
+                crate::jsonrpc::validate_json(json).map_err(TransportError::Protocol)?.as_bytes()
+            }
             Response::Binary(raw) => raw,
         };
         self.write_tuple(MessageType::Response, method.as_bytes(), payload)

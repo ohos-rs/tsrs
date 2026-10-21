@@ -1,7 +1,7 @@
 use crate::*;
 use tsrs_ast::*;
-use tsrs_core::*;
 use tsrs_core::tspath;
+use tsrs_core::*;
 
 // Non-function declarations in util.go (hand-ported in types.rs):
 //   type regexPatternCacheKey (util.go:19)
@@ -14,14 +14,18 @@ use tsrs_core::tspath;
 // func ProcessEntrypointEnding (util.go:388) is not generated; it is hand-ported below (process_entrypoint_ending).
 
 // util.go:29
-pub(crate) fn compare_paths_by_redirect(a: &ModulePath, b: &ModulePath, use_case_sensitive_file_names: bool) -> i32 {
+pub(crate) fn compare_paths_by_redirect(
+    a: &ModulePath,
+    b: &ModulePath,
+    use_case_sensitive_file_names: bool,
+) -> std::cmp::Ordering {
     // Redirects sort first, matching Strada's compareBooleans(b.isRedirect, a.isRedirect).
     let c = compare_booleans(b.is_redirect, a.is_redirect);
-    if c != 0 {
+    if c != std::cmp::Ordering::Equal {
         return c;
     }
     let c = tspath::compare_number_of_directory_separators(&a.file_name, &b.file_name);
-    if c != 0 {
+    if c != std::cmp::Ordering::Equal {
         return c;
     }
     // Strada relies on Map insertion order to break remaining ties deterministically;
@@ -29,7 +33,10 @@ pub(crate) fn compare_paths_by_redirect(a: &ModulePath, b: &ModulePath, use_case
     tspath::compare_paths(
         &a.file_name,
         &b.file_name,
-        &tspath::ComparePathsOptions { use_case_sensitive_file_names, current_directory: String::new() },
+        &tspath::ComparePathsOptions {
+            use_case_sensitive_file_names,
+            current_directory: String::new(),
+        },
     )
 }
 
@@ -40,13 +47,13 @@ pub fn path_is_bare_specifier(path: &str) -> bool {
 
 // util.go:46
 pub fn is_excluded_by_regex(module_specifier: &str, excludes: &[String]) -> bool {
-    for pattern in excludes {
+    if excludes.iter().any(|pattern| {
         let Some(re) = string_to_regex(pattern) else {
-            continue;
+            return false;
         };
-        if re.is_match(module_specifier) {
-            return true;
-        }
+        re.is_match(module_specifier)
+    }) {
+        return true;
     }
     false
 }
@@ -57,27 +64,16 @@ pub(crate) fn string_to_regex(pattern: &str) -> Option<P<regex::Regex>> {
     let mut case_insensitive = false;
 
     if pattern.len() > 2 && pattern.as_bytes()[0] == b'/' {
-        let last_slash = pattern.rfind('/').map_or(-1, |i| i as i32);
-        if last_slash > 0 {
-            let last_slash = last_slash as usize;
+        if let Some(last_slash) = pattern.rfind('/').filter(|&index| index > 0) {
             let bytes = pattern.as_bytes();
-            let mut has_unescaped_middle_slash = false;
-            for i in 1..last_slash {
-                if bytes[i] == b'/' && (i == 0 || bytes[i - 1] != b'\\') {
-                    has_unescaped_middle_slash = true;
-                    break;
-                }
-            }
+            let has_unescaped_middle_slash =
+                (1..last_slash).any(|i| bytes[i] == b'/' && (i == 0 || bytes[i - 1] != b'\\'));
 
             if !has_unescaped_middle_slash {
                 let flags = &pattern[last_slash + 1..];
                 pattern = &pattern[1..last_slash];
 
-                for flag in flags.chars() {
-                    if flag == 'i' {
-                        case_insensitive = true;
-                    }
-                }
+                case_insensitive |= flags.contains('i');
             }
         }
     }
@@ -156,7 +152,10 @@ pub fn get_js_extension_for_declaration_file_extension(ext: &str) -> String {
 pub fn try_get_real_file_name_for_non_js_declaration_file_name(file_name: &str) -> String {
     let base_name = tspath::get_base_file_name(file_name);
     // Ends with .ts, contains ".d.", and is NOT a standard .d.ts file
-    if !file_name.ends_with(tspath::EXTENSION_TS) || !base_name.contains(".d.") || base_name.ends_with(tspath::EXTENSION_DTS) {
+    if !file_name.ends_with(tspath::EXTENSION_TS)
+        || !base_name.contains(".d.")
+        || base_name.ends_with(tspath::EXTENSION_DTS)
+    {
         return String::new();
     }
     let no_extension = tspath::remove_extension(file_name, tspath::EXTENSION_TS);
@@ -172,9 +171,12 @@ pub fn try_get_real_file_name_for_non_js_declaration_file_name(file_name: &str) 
 // util.go:174
 pub(crate) fn get_js_extension_for_file(file_name: &str, options: &CompilerOptions) -> String {
     let result = tsrs_module::try_get_js_extension_for_file(file_name, options);
-    if result.is_empty() {
-        panic!("Extension {} is unsupported:: FileName:: {}", extension_from_path(file_name), file_name);
-    }
+    assert!(
+        !result.is_empty(),
+        "Extension {} is unsupported:: FileName:: {}",
+        extension_from_path(file_name),
+        file_name
+    );
     result.to_string()
 }
 
@@ -185,40 +187,45 @@ pub(crate) fn get_js_extension_for_file(file_name: &str, options: &CompilerOptio
 // util.go:186
 pub(crate) fn extension_from_path(path: &str) -> String {
     let ext = tspath::try_get_extension_from_path(path);
-    if ext.is_empty() {
-        panic!("File {path} has unknown extension.");
-    }
+    assert!(!ext.is_empty(), "File {path} has unknown extension.");
     ext.to_string()
 }
 
 // util.go:194
-pub(crate) fn try_get_any_file_from_path(host: &dyn ModuleSpecifierGenerationHost, path: &str) -> bool {
+pub(crate) fn try_get_any_file_from_path(
+    host: &dyn ModuleSpecifierGenerationHost,
+    path: &str,
+) -> bool {
     // !!! TODO: shouldn't this use readdir instead of fileexists for perf?
     // We check all js, `node` and `json` extensions in addition to TS, since node module resolution would also choose those over the directory
     let ext_groups = tsrs_tsoptions::get_supported_extensions(
         Some(&CompilerOptions { allow_js: Tristate::True, ..Default::default() }),
         &[".node".to_string(), ".json".to_string()],
     );
-    for exts in &ext_groups {
-        for e in exts {
-            let full_path = format!("{path}{e}");
-            if host.file_exists(&tspath::get_normalized_absolute_path(&full_path, host.get_current_directory())) {
-                return true;
-            }
-        }
+    if ext_groups.iter().flatten().any(|e| {
+        let full_path = format!("{path}{e}");
+        host.file_exists(&tspath::get_normalized_absolute_path(
+            &full_path,
+            host.get_current_directory(),
+        ))
+    }) {
+        return true;
     }
     false
 }
 
 // util.go:214
-pub(crate) fn get_paths_relative_to_root_dirs(path: &str, root_dirs: &[String], use_case_sensitive_file_names: bool) -> Vec<String> {
+pub(crate) fn get_paths_relative_to_root_dirs(
+    path: &str,
+    root_dirs: &[String],
+    use_case_sensitive_file_names: bool,
+) -> Vec<String> {
     let mut results = Vec::new();
-    for root_dir in root_dirs {
-        let relative_path = get_relative_path_if_in_same_volume(path, root_dir, use_case_sensitive_file_names);
-        if !is_path_relative_to_parent(&relative_path) {
-            results.push(relative_path);
-        }
-    }
+    results.extend(root_dirs.iter().filter_map(|root_dir| {
+        let relative_path =
+            get_relative_path_if_in_same_volume(path, root_dir, use_case_sensitive_file_names);
+        if !is_path_relative_to_parent(&relative_path) { Some(relative_path) } else { None }
+    }));
     results
 }
 
@@ -228,12 +235,19 @@ pub(crate) fn is_path_relative_to_parent(path: &str) -> bool {
 }
 
 // util.go:229
-pub(crate) fn get_relative_path_if_in_same_volume(path: &str, directory_path: &str, use_case_sensitive_file_names: bool) -> String {
+pub(crate) fn get_relative_path_if_in_same_volume(
+    path: &str,
+    directory_path: &str,
+    use_case_sensitive_file_names: bool,
+) -> String {
     let relative_path = tspath::get_relative_path_to_directory_or_url(
         directory_path,
         path,
         false,
-        &tspath::ComparePathsOptions { use_case_sensitive_file_names, current_directory: directory_path.to_string() },
+        &tspath::ComparePathsOptions {
+            use_case_sensitive_file_names,
+            current_directory: directory_path.to_string(),
+        },
     );
     if tspath::is_rooted_disk_path(&relative_path) {
         return String::new();
@@ -242,29 +256,33 @@ pub(crate) fn get_relative_path_if_in_same_volume(path: &str, directory_path: &s
 }
 
 // util.go:240
-pub(crate) fn package_json_paths_are_equal(a: &str, b: &str, options: &tspath::ComparePathsOptions) -> bool {
+pub(crate) fn package_json_paths_are_equal(
+    a: &str,
+    b: &str,
+    options: &tspath::ComparePathsOptions,
+) -> bool {
     if a == b {
         return true;
     }
     if a.is_empty() || b.is_empty() {
         return false;
     }
-    tspath::compare_paths(a, b, options) == 0
+    tspath::compare_paths(a, b, options) == std::cmp::Ordering::Equal
 }
 
 // util.go:250
 pub(crate) fn prefers_ts_extension(allowed_endings: &[ModuleSpecifierEnding]) -> bool {
     let js_priority = index_of_ending(allowed_endings, ModuleSpecifierEnding::JsExtension);
     let ts_priority = index_of_ending(allowed_endings, ModuleSpecifierEnding::TsExtension);
-    if ts_priority > -1 {
-        return ts_priority < js_priority;
-    }
-    false
+    matches!((ts_priority, js_priority), (Some(ts), Some(js)) if ts < js)
 }
 
 /// Go `slices.Index(allowedEndings, e)`.
-pub(crate) fn index_of_ending(allowed_endings: &[ModuleSpecifierEnding], e: ModuleSpecifierEnding) -> i32 {
-    allowed_endings.iter().position(|x| *x == e).map_or(-1, |i| i as i32)
+pub(crate) fn index_of_ending(
+    allowed_endings: &[ModuleSpecifierEnding],
+    e: ModuleSpecifierEnding,
+) -> Option<usize> {
+    allowed_endings.iter().position(|x| *x == e)
 }
 
 // util.go:259
@@ -280,25 +298,28 @@ pub fn get_node_module_path_parts(full_path: &str) -> Option<NodeModulePathParts
 
     let mut top_level_node_modules_index = 0;
     let mut top_level_package_name_index = 0;
-    let mut package_root_index = 0;
+    let mut package_root_index = None;
 
-    let mut part_start: i32 = 0;
-    let mut part_end: i32 = 0;
+    let mut part_start = 0;
+    let mut part_end = Some(0);
     let mut state = nodeModulesPathParseState::BeforeNodeModules;
 
-    while part_end >= 0 {
-        part_start = part_end;
-        part_end = index_after(full_path, "/", (part_start + 1) as usize);
+    while let Some(end) = part_end {
+        part_start = end;
+        part_end = index_after(full_path, "/", part_start + 1);
         match state {
             nodeModulesPathParseState::BeforeNodeModules => {
-                if full_path[part_start as usize..].starts_with("/node_modules/") {
+                if full_path[part_start..].starts_with("/node_modules/") {
                     top_level_node_modules_index = part_start;
-                    top_level_package_name_index = part_end;
+                    top_level_package_name_index =
+                        part_end.expect("node_modules path has a following package segment");
                     state = nodeModulesPathParseState::NodeModules;
                 }
             }
             nodeModulesPathParseState::NodeModules | nodeModulesPathParseState::Scope => {
-                if state == nodeModulesPathParseState::NodeModules && full_path.as_bytes()[(part_start + 1) as usize] == b'@' {
+                if state == nodeModulesPathParseState::NodeModules
+                    && full_path.as_bytes()[part_start + 1] == b'@'
+                {
                     state = nodeModulesPathParseState::Scope;
                 } else {
                     package_root_index = part_end;
@@ -306,7 +327,7 @@ pub fn get_node_module_path_parts(full_path: &str) -> Option<NodeModulePathParts
                 }
             }
             nodeModulesPathParseState::PackageContent => {
-                if full_path[part_start as usize..].starts_with("/node_modules/") {
+                if full_path[part_start..].starts_with("/node_modules/") {
                     state = nodeModulesPathParseState::NodeModules;
                 } else {
                     state = nodeModulesPathParseState::PackageContent;
@@ -338,8 +359,15 @@ pub fn get_node_modules_package_name(
     options: ModuleSpecifierOptions,
 ) -> String {
     let info = get_info(importing_source_file.file_name(), host);
-    let module_paths = get_all_module_paths(&info, node_modules_file_name, host, compiler_options, preferences, options);
-    for module_path in &module_paths {
+    let module_paths = get_all_module_paths(
+        &info,
+        node_modules_file_name,
+        host,
+        compiler_options,
+        preferences,
+        options,
+    );
+    if let Some(result) = module_paths.iter().find_map(|module_path| {
         let result = try_get_module_name_as_node_module(
             module_path,
             &info,
@@ -351,8 +379,12 @@ pub fn get_node_modules_package_name(
             options.override_import_mode,
         );
         if !result.is_empty() {
-            return result;
+            return Some(result);
         }
+
+        None
+    }) {
+        return result;
     }
     String::new()
 }
@@ -422,13 +454,19 @@ pub fn process_entrypoint_ending(
             ModuleSpecifierEnding::TsExtension | ModuleSpecifierEnding::JsExtension => {
                 // Map .d.ts -> .js, .d.mts -> .mjs, .d.cts -> .cjs
                 let js_extension = get_js_extension_for_declaration_file_extension(&dts_extension);
-                return tspath::change_any_extension(&specifier, &js_extension, &[&dts_extension], false);
+                return tspath::change_any_extension(
+                    &specifier,
+                    &js_extension,
+                    &[&dts_extension],
+                    false,
+                );
             }
             ModuleSpecifierEnding::Minimal | ModuleSpecifierEnding::Index => {
                 if entrypoint.ending == tsrs_module::Ending::Changeable {
                     // .d.mts/.d.cts must keep an extension; rewrite to .mjs/.cjs instead of dropping
                     if dts_extension == tspath::EXTENSION_DTS {
-                        specifier = tspath::remove_extension(&specifier, &dts_extension).to_string();
+                        specifier =
+                            tspath::remove_extension(&specifier, &dts_extension).to_string();
                         if preferred_ending == ModuleSpecifierEnding::Minimal {
                             if let Some(s) = specifier.strip_suffix("/index") {
                                 specifier = s.to_string();
@@ -436,24 +474,47 @@ pub fn process_entrypoint_ending(
                         }
                         return specifier;
                     }
-                    let js_extension = get_js_extension_for_declaration_file_extension(&dts_extension);
-                    return tspath::change_any_extension(&specifier, &js_extension, &[&dts_extension], false);
+                    let js_extension =
+                        get_js_extension_for_declaration_file_extension(&dts_extension);
+                    return tspath::change_any_extension(
+                        &specifier,
+                        &js_extension,
+                        &[&dts_extension],
+                        false,
+                    );
                 }
                 // EndingExtensionChangeable - can only change extension, not remove it
                 let js_extension = get_js_extension_for_declaration_file_extension(&dts_extension);
-                return tspath::change_any_extension(&specifier, &js_extension, &[&dts_extension], false);
+                return tspath::change_any_extension(
+                    &specifier,
+                    &js_extension,
+                    &[&dts_extension],
+                    false,
+                );
             }
         }
     }
 
     // Handle .ts/.tsx/.mts/.cts extensions
-    if tspath::file_extension_is_one_of(&specifier, &[tspath::EXTENSION_TS, tspath::EXTENSION_TSX, tspath::EXTENSION_MTS, tspath::EXTENSION_CTS]) {
+    if tspath::file_extension_is_one_of(
+        &specifier,
+        &[
+            tspath::EXTENSION_TS,
+            tspath::EXTENSION_TSX,
+            tspath::EXTENSION_MTS,
+            tspath::EXTENSION_CTS,
+        ],
+    ) {
         match preferred_ending {
             ModuleSpecifierEnding::TsExtension => return specifier,
             ModuleSpecifierEnding::JsExtension => {
                 let js_extension = tsrs_module::try_get_js_extension_for_file(&specifier, options);
                 if !js_extension.is_empty() {
-                    return format!("{}{}", tspath::remove_file_extension(&specifier), js_extension);
+                    return format!(
+                        "{}{}",
+                        tspath::remove_file_extension(&specifier),
+                        js_extension
+                    );
                 }
                 return specifier;
             }
@@ -470,7 +531,11 @@ pub fn process_entrypoint_ending(
                 // EndingExtensionChangeable - can only change extension, not remove it
                 let js_extension = tsrs_module::try_get_js_extension_for_file(&specifier, options);
                 if !js_extension.is_empty() {
-                    return format!("{}{}", tspath::remove_file_extension(&specifier), js_extension);
+                    return format!(
+                        "{}{}",
+                        tspath::remove_file_extension(&specifier),
+                        js_extension
+                    );
                 }
                 return specifier;
             }
@@ -478,9 +543,19 @@ pub fn process_entrypoint_ending(
     }
 
     // Handle .js/.jsx/.mjs/.cjs extensions
-    if tspath::file_extension_is_one_of(&specifier, &[tspath::EXTENSION_JS, tspath::EXTENSION_JSX, tspath::EXTENSION_MJS, tspath::EXTENSION_CJS]) {
+    if tspath::file_extension_is_one_of(
+        &specifier,
+        &[
+            tspath::EXTENSION_JS,
+            tspath::EXTENSION_JSX,
+            tspath::EXTENSION_MJS,
+            tspath::EXTENSION_CJS,
+        ],
+    ) {
         match preferred_ending {
-            ModuleSpecifierEnding::TsExtension | ModuleSpecifierEnding::JsExtension => return specifier,
+            ModuleSpecifierEnding::TsExtension | ModuleSpecifierEnding::JsExtension => {
+                return specifier;
+            }
             ModuleSpecifierEnding::Minimal | ModuleSpecifierEnding::Index => {
                 if entrypoint.ending == tsrs_module::Ending::Changeable {
                     specifier = tspath::remove_file_extension(&specifier).to_string();

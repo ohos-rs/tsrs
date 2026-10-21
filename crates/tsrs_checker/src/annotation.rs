@@ -11,6 +11,13 @@ pub struct AnnotationLinks {
     checked: Cell<bool>,
 }
 
+impl crate::links::LinkCopy for AnnotationLinks {
+    fn copy_link_from(&self, frozen: &Self) {
+        self.source_retention.set(frozen.source_retention.get());
+        self.checked.set(frozen.checked.get());
+    }
+}
+
 fn is_retention_annotation_declaration(node: P<Node>) -> bool {
     node.name().unwrap().text() == "Retention"
         && tspath::get_base_file_name(ast::get_source_file_of_node(node).unwrap().file_name()).eq_ignore_ascii_case("@arkts.lang.d.ets")
@@ -118,9 +125,8 @@ impl Checker {
             return None;
         }
         let symbol = self.resolve_entity_name(expression, SymbolFlags::Value, true, false, None);
-        symbol
-            .filter(|s| is_annotation_symbol(Some(*s)))
-            .and_then(|s| s.value_declaration())
+        let symbol = symbol.filter(|s| is_annotation_symbol(Some(*s)))?;
+        symbol.value_declaration()
     }
 
     pub(crate) fn check_annotation_use(&mut self, node: P<Node>, declaration: P<Node>) {
@@ -207,7 +213,7 @@ impl Checker {
             }
         } else {
             let class = |n| ast::is_class_declaration(n) && !ast::is_annotation_declaration(n) && !ast::is_struct_declaration(n);
-            if !class(parent) && !(ast::is_method_declaration(parent) && class(parent.parent().unwrap())) {
+            if !(class(parent) || ast::is_method_declaration(parent) && class(parent.parent().unwrap())) {
                 let message = match parent.kind() {
                     Kind::Constructor => &diagnostics::Annotation_cannot_be_applied_for_constructor_got_Colon_0,
                     Kind::GetAccessor | Kind::SetAccessor => &diagnostics::Annotation_cannot_be_applied_for_getter_or_setter_got_Colon_0,
@@ -414,6 +420,10 @@ impl Checker {
     }
 }
 
+#[expect(
+    clippy::float_cmp,
+    reason = "annotation constant values are compared exactly, as in the Go source"
+)]
 fn annotation_binary(operator: Kind, left: AnnotationConstant, right: AnnotationConstant) -> Option<AnnotationConstant> {
     use AnnotationConstant::{Array, Scalar};
     use LiteralValue::{Boolean, Number, String};

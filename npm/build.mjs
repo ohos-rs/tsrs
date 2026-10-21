@@ -1,20 +1,22 @@
 #!/usr/bin/env node
 // Assembles the npm packages for tsrs, the way TypeScript 7 ships its native compiler: one main package (Node launcher,
-// `bin/tsrs`) whose `optionalDependencies` name one package per platform, each holding only that platform's binary.
+// `bin/tsrs`) whose `optionalDependencies` name one package per platform, each holding that platform's binary and,
+// beside it, the default libraries (lib.*.d.ts), which the binary then reads from disk like the npm tsgo.
 //
+//   cargo build --release -p tsrs_cli --features noembed  # npm binary; standalone builds omit the feature
 //   node npm/build.mjs --binary aarch64-apple-darwin=target/release/tsrs --pack
 //   node npm/build.mjs --artifacts dir/ --pack      # dir/<target triple>/tsrs[.exe], as the release workflow lays out
 //   node npm/build.mjs --wasm npm/tsrs-wasm/tsrs.wasm --pack   # the WebAssembly package (tools/wasm/build.sh)
-//   node npm/build.mjs --print-version          # also --print-typescript-commit, --check-tag <tag>
+//   node npm/build.mjs --print-version          # also --print-crate-version, --print-typescript-commit, --print-typescript-nightly, --check-tag <tag>
 //   node npm/build.mjs --sdk-only               # just compile the JS API (npm/tsrs/src -> npm/tsrs/dist)
 //
-// The main package also carries TypeScript 7's unstable JS API (`@maschwenk/tsrs/unstable/sync`, `/async`, `/ast`, ...),
+// The main package also carries TypeScript 7's unstable JS API (`tsrs/unstable/sync`, `/async`, `/ast`, ...),
 // copied from microsoft/TypeScript packages/typescript by npm/sdk/sync-upstream.mjs. It is compiled here with the
-// build-only compiler in npm/package.json (`npm ci --prefix npm` first; `--tsc <path>` to use another TypeScript 7 tsc).
+// build-only compiler in npm/package.json (`pnpm install --frozen-lockfile` first; `--tsc <path>` to use another TypeScript 7 tsc).
 //
-// The package name comes from npm/tsrs/package.json; platform packages are `<name>-<os>-<cpu>`. The version is
+// The package name comes from npm/tsrs/package.json; Linux platform packages have a `-gnu` or `-musl` suffix. The version is
 // `<workspace version>-ts<[workspace.metadata.typescript] version>` from the workspace Cargo.toml, for every package
-// including `@maschwenk/tsrs-wasm` (npm/tsrs-wasm). The main package lists exactly the platforms given here, so a
+// including `@tsrs/wasm` (npm/tsrs-wasm). The main package lists exactly the platforms given here, so a
 // release never points at a platform package that was not published.
 
 import { execFileSync } from "node:child_process";
@@ -24,6 +26,7 @@ import { fileURLToPath } from "node:url";
 
 const npmDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(npmDir, "..");
+const libsDir = path.join(repoRoot, "crates", "tsrs_vfs", "libs");
 
 // Rust target triple -> Node's process.platform / process.arch.
 const TARGETS = {
@@ -31,6 +34,8 @@ const TARGETS = {
     "x86_64-apple-darwin": { os: "darwin", cpu: "x64" },
     "x86_64-unknown-linux-gnu": { os: "linux", cpu: "x64", libc: "glibc" },
     "aarch64-unknown-linux-gnu": { os: "linux", cpu: "arm64", libc: "glibc" },
+    "x86_64-unknown-linux-musl": { os: "linux", cpu: "x64", libc: "musl" },
+    "aarch64-unknown-linux-musl": { os: "linux", cpu: "arm64", libc: "musl" },
     "x86_64-pc-windows-msvc": { os: "win32", cpu: "x64" },
 };
 
@@ -39,7 +44,7 @@ function usage(message) {
     console.error(
         "usage: node npm/build.mjs [--binary <triple>=<path>]... [--artifacts <dir>] [--out <dir>] [--pack] [--tsc <path>]\n" +
             "                          [--wasm <tsrs.wasm>] [--sdk-only]\n" +
-            "                          [--check-tag <git tag>] [--print-version | --print-typescript-commit]\n" +
+            "                          [--check-tag <git tag>] [--print-version | --print-crate-version | --print-typescript-commit | --print-typescript-nightly]\n" +
             `triples: ${Object.keys(TARGETS).join(", ")}`,
     );
     process.exit(message ? 2 : 0);
@@ -89,8 +94,14 @@ function parseArgs(argv) {
             case "--print-version":
                 opts.print = "version";
                 break;
+            case "--print-crate-version":
+                opts.print = "crateVersion";
+                break;
             case "--print-typescript-commit":
                 opts.print = "typescriptCommit";
+                break;
+            case "--print-typescript-nightly":
+                opts.print = "typescriptNightly";
                 break;
             case "-h":
             case "--help":
@@ -119,10 +130,16 @@ function readCargoVersions() {
     }
     const crateVersion = tables["workspace.package"]?.version;
     const ts = tables["workspace.metadata.typescript"];
-    if (!crateVersion || !ts?.version || !ts?.commit) {
-        throw new Error("Cargo.toml needs [workspace.package] version and [workspace.metadata.typescript] version/commit");
+    if (!crateVersion || !ts?.version || !ts?.commit || !ts?.nightly) {
+        throw new Error("Cargo.toml needs [workspace.package] version and [workspace.metadata.typescript] version/commit/nightly");
     }
-    return { crateVersion, version: `${crateVersion}-ts${ts.version}`, typescriptVersion: ts.version, typescriptCommit: ts.commit };
+    return {
+        crateVersion,
+        version: `${crateVersion}-ts${ts.version}`,
+        typescriptVersion: ts.version,
+        typescriptCommit: ts.commit,
+        typescriptNightly: ts.nightly,
+    };
 }
 
 function writeJson(file, value) {
@@ -146,7 +163,7 @@ function buildSdk(tscPath) {
     const pkgDir = path.join(npmDir, "tsrs");
     const tsc = tscPath ?? path.join(npmDir, "node_modules", "typescript", "bin", "tsc");
     if (!fs.existsSync(tsc)) {
-        throw new Error(`the JS API build compiler is not installed (${path.relative(process.cwd(), tsc)}); run \`npm ci --prefix npm\` or pass --tsc`);
+        throw new Error(`the JS API build compiler is not installed (${path.relative(process.cwd(), tsc)}); run \`pnpm install --frozen-lockfile\` or pass --tsc`);
     }
     fs.rmSync(path.join(pkgDir, "dist"), { recursive: true, force: true });
     fs.rmSync(path.join(pkgDir, "tsconfig.tsbuildinfo"), { force: true });
@@ -187,7 +204,7 @@ function stripSourceConditions(value) {
     );
 }
 
-// `@maschwenk/tsrs-wasm`: npm/tsrs-wasm's published files, the module tools/wasm/build.sh wrote, LICENSE and NOTICE,
+// `@tsrs/wasm`: npm/tsrs-wasm's published files, the module tools/wasm/build.sh wrote, LICENSE and NOTICE,
 // at the native packages' version (the module's `--version` prints the same, from crates/tsrs_execute/build.rs).
 function stageWasm(module, out, versions, license, notice) {
     const srcDir = path.join(npmDir, "tsrs-wasm");
@@ -215,14 +232,14 @@ function stageWasm(module, out, versions, license, notice) {
     return dir;
 }
 
-function npmPack(dir, out) {
-    const stdout = execFileSync("npm", ["pack", "--json", "--pack-destination", out], {
+function pnpmPack(dir, out) {
+    const stdout = execFileSync("pnpm", ["pack", "--json", "--pack-destination", out], {
         cwd: dir,
         encoding: "utf8",
         shell: process.platform === "win32",
     });
-    const [info] = JSON.parse(stdout);
-    return path.join(out, info.filename);
+    const info = JSON.parse(stdout);
+    return path.resolve(out, info.filename);
 }
 
 function main() {
@@ -270,29 +287,33 @@ function main() {
     for (const [triple, binary] of [...opts.binaries].sort()) {
         if (!fs.existsSync(binary)) throw new Error(`binary for ${triple} not found: ${binary}`);
         const { os, cpu, libc } = TARGETS[triple];
-        const platformName = `${name}-${os}-${cpu}`;
-        const dir = path.join(opts.out, `${baseName}-${os}-${cpu}`);
+        const platform = `${os}-${cpu}${libc ? `-${libc === "glibc" ? "gnu" : libc}` : ""}`;
+        const platformName = `@tsrs/${platform}`;
+        const dir = path.join(opts.out, `${baseName}-${platform}`);
         fs.mkdirSync(dir, { recursive: true });
 
         const exeName = os === "win32" ? "tsrs.exe" : "tsrs";
         fs.copyFileSync(binary, path.join(dir, exeName));
         fs.chmodSync(path.join(dir, exeName), 0o755);
+        // The binary reads the default libraries from its own directory when they are there (bundled::default_lib_path),
+        // so listings, diagnostics and tsbuildinfo name the same real paths as the npm tsgo.
+        const libNames = fs.readdirSync(libsDir).filter(name => name.endsWith(".d.ts")).sort();
+        for (const libName of libNames) fs.copyFileSync(path.join(libsDir, libName), path.join(dir, libName));
         fs.writeFileSync(path.join(dir, "LICENSE"), license);
         fs.writeFileSync(path.join(dir, "NOTICE.txt"), notice);
         const readme = fs.readFileSync(path.join(npmDir, "platform", "README.md"), "utf8")
             .replaceAll("{{name}}", platformName)
             .replaceAll("{{mainName}}", name)
-            .replaceAll("{{os}}", os)
-            .replaceAll("{{cpu}}", cpu)
+            .replaceAll("{{platform}}", platform)
             .replaceAll("{{version}}", version)
             .replaceAll("{{commit}}", versions.typescriptCommit.slice(0, 12));
         fs.writeFileSync(path.join(dir, "README.md"), readme);
         writeJson(path.join(dir, "package.json"), {
             name: platformName,
             ...common,
-            description: `The ${os}-${cpu} binary for ${name}`,
+            description: `The ${platform} binary for ${name}`,
             preferUnplugged: true,
-            files: [exeName, "NOTICE.txt"],
+            files: [exeName, "NOTICE.txt", ...libNames],
             exports: { "./package.json": "./package.json" },
             os: [os],
             cpu: [cpu],
@@ -306,7 +327,8 @@ function main() {
         const mainDir = path.join(opts.out, baseName);
         // Only what the package's `files` publishes (plus package.json/README); the .ts sources and tests stay behind.
         fs.mkdirSync(mainDir, { recursive: true });
-        for (const entry of ["README.md", "UPSTREAM.json", ...template.files]) {
+        fs.copyFileSync(path.join(repoRoot, "README.md"), path.join(mainDir, "README.md"));
+        for (const entry of ["UPSTREAM.json", ...template.files]) {
             const from = path.join(npmDir, "tsrs", entry);
             if (!fs.existsSync(from)) continue;
             if (fs.statSync(from).isDirectory()) copyDir(from, path.join(mainDir, entry));
@@ -331,7 +353,7 @@ function main() {
     const manifest = [];
     for (const dir of packageDirs) {
         const entry = { name: JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8")).name, dir };
-        if (opts.pack) entry.tarball = npmPack(dir, opts.out);
+        if (opts.pack) entry.tarball = pnpmPack(dir, opts.out);
         console.log(`${opts.pack ? "packed" : "staged"} ${path.relative(process.cwd(), entry.tarball ?? dir)}`);
         manifest.push(entry);
     }

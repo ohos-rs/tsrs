@@ -9,7 +9,7 @@ struct refCountCacheEntry<V> {
 
 struct refCountCacheEntryState<V> {
     value: Option<V>,
-    ref_count: i32,
+    ref_count: usize,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -36,7 +36,13 @@ pub fn new_ref_count_cache<K: Hash + Eq, V, AcquireArgs>(
     options: RefCountCacheOptions,
     parse: impl Fn(&K, AcquireArgs) -> V + Send + Sync + 'static,
 ) -> RefCountCache<K, V, AcquireArgs> {
-    RefCountCache { options, entries: SyncMap::default(), parse: Box::new(parse), on_evict: None, on_revive: None }
+    RefCountCache {
+        options,
+        entries: SyncMap::default(),
+        parse: Box::new(parse),
+        on_evict: None,
+        on_revive: None,
+    }
 }
 
 impl<K: Hash + Eq + Clone, V: Clone, AcquireArgs> RefCountCache<K, V, AcquireArgs> {
@@ -48,10 +54,10 @@ impl<K: Hash + Eq + Clone, V: Clone, AcquireArgs> RefCountCache<K, V, AcquireArg
     //
     // The caller is responsible for calling Deref when done with the value.
     pub fn acquire(&self, identity: &K, acquire_args: AcquireArgs) -> V {
-        self.load_or_store_new_locked_entry(&identity, |entry, loaded| {
+        self.load_or_store_new_locked_entry(identity, |entry, loaded| {
             if !loaded {
                 // New entry - parse the value
-                let value = (self.parse)(&identity, acquire_args);
+                let value = (self.parse)(identity, acquire_args);
                 entry.value = Some(value.clone());
                 return value;
             }
@@ -72,7 +78,7 @@ impl<K: Hash + Eq + Clone, V: Clone, AcquireArgs> RefCountCache<K, V, AcquireArg
     pub fn acquire_existing(&self, identity: &K) -> Option<V> {
         let entry = self.entries.load(identity)?;
         let mut st = entry.mu.lock().unwrap();
-        if st.ref_count <= 0 && !self.options.disable_deletion {
+        if st.ref_count == 0 && !self.options.disable_deletion {
             return None;
         }
         st.ref_count += 1;
@@ -86,8 +92,12 @@ impl<K: Hash + Eq + Clone, V: Clone, AcquireArgs> RefCountCache<K, V, AcquireArg
     // acquisitions of the same identity that miss serialize on it.
     //
     // The caller is responsible for calling Deref when a value is returned without error.
-    pub fn acquire_or_error<E>(&self, identity: &K, produce: impl FnOnce() -> Result<V, E>) -> Result<V, E> {
-        self.load_or_store_new_locked_entry(&identity, |entry, loaded| {
+    pub fn acquire_or_error<E>(
+        &self,
+        identity: &K,
+        produce: impl FnOnce() -> Result<V, E>,
+    ) -> Result<V, E> {
+        self.load_or_store_new_locked_entry(identity, |entry, loaded| {
             if loaded {
                 return Ok(entry.value.clone().unwrap());
             }
@@ -95,7 +105,7 @@ impl<K: Hash + Eq + Clone, V: Clone, AcquireArgs> RefCountCache<K, V, AcquireArg
                 Err(err) => {
                     // Undo the speculative entry so failures are not cached.
                     entry.ref_count = 0;
-                    self.entries.delete(&identity);
+                    self.entries.delete(identity);
                     Err(err)
                 }
                 Ok(value) => {
@@ -110,17 +120,17 @@ impl<K: Hash + Eq + Clone, V: Clone, AcquireArgs> RefCountCache<K, V, AcquireArg
     // Ref increments the reference count for an existing entry.
     // Panics if the entry does not exist.
     pub fn ref_(&self, identity: &K) {
-        let Some(entry) = self.entries.load(&identity) else {
+        let Some(entry) = self.entries.load(identity) else {
             panic!("cache entry not found");
         };
         let mut st = entry.mu.lock().unwrap();
-        if st.ref_count <= 0 && !self.options.disable_deletion {
+        if st.ref_count == 0 && !self.options.disable_deletion {
             // Entry was deleted while we were acquiring the lock
             let value = st.value.clone();
             if let (Some(on_revive), Some(value)) = (&self.on_revive, &value) {
                 on_revive(value);
             }
-            self.load_or_store_new_locked_entry(&identity, |new_entry, _| {
+            self.load_or_store_new_locked_entry(identity, |new_entry, _| {
                 new_entry.value = value;
             });
             return;
@@ -137,8 +147,8 @@ impl<K: Hash + Eq + Clone, V: Clone, AcquireArgs> RefCountCache<K, V, AcquireArg
             return;
         };
         let mut st = entry.mu.lock().unwrap();
-        st.ref_count -= 1;
-        if st.ref_count <= 0 && !self.options.disable_deletion {
+        st.ref_count = st.ref_count.saturating_sub(1);
+        if st.ref_count == 0 && !self.options.disable_deletion {
             self.entries.delete(identity);
             if let (Some(on_evict), Some(value)) = (&self.on_evict, &st.value) {
                 on_evict(value);
@@ -153,15 +163,21 @@ impl<K: Hash + Eq + Clone, V: Clone, AcquireArgs> RefCountCache<K, V, AcquireArg
     //
     // Go returns the entry locked and the caller unlocks it with `defer`; here the caller's code runs as `f`
     // while the lock is held.
-    fn load_or_store_new_locked_entry<R>(&self, key: &K, f: impl FnOnce(&mut refCountCacheEntryState<V>, bool) -> R) -> R {
+    fn load_or_store_new_locked_entry<R>(
+        &self,
+        key: &K,
+        f: impl FnOnce(&mut refCountCacheEntryState<V>, bool) -> R,
+    ) -> R {
         loop {
-            let entry = Arc::new(refCountCacheEntry { mu: Mutex::new(refCountCacheEntryState { value: None, ref_count: 1 }) });
+            let entry = Arc::new(refCountCacheEntry {
+                mu: Mutex::new(refCountCacheEntryState { value: None, ref_count: 1 }),
+            });
             let mut guard = entry.mu.lock().unwrap();
             let (existing, loaded) = self.entries.load_or_store(key.clone(), Arc::clone(&entry));
             if loaded {
                 drop(guard);
                 let mut existing_guard = existing.mu.lock().unwrap();
-                if existing_guard.ref_count <= 0 && !self.options.disable_deletion {
+                if existing_guard.ref_count == 0 && !self.options.disable_deletion {
                     // Existing entry was deleted while we were acquiring the lock
                     continue;
                 }
@@ -176,4 +192,3 @@ impl<K: Hash + Eq + Clone, V: Clone, AcquireArgs> RefCountCache<K, V, AcquireArg
         self.entries.size()
     }
 }
-

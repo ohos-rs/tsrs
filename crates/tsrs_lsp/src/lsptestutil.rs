@@ -1,9 +1,8 @@
-// Port of testutil/lsptestutil/lspclient.go (the in-process LSP test client). Public: the fourslash harness
-// (tsrs_fourslash) drives the server through it, like Go's package lsptestutil.
+// Port of testutil/lsptestutil/lspclient.go (the in-process client for the LSP crate's unit tests).
 
 use std::collections::VecDeque;
 use std::io::{Read, Write};
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -11,10 +10,10 @@ use std::time::Duration;
 use rustc_hash::FxHashMap;
 use tsrs_core::context::{CancelFunc, Context};
 use tsrs_lsproto as lsproto;
-use tsrs_lsproto::jsonrpc::{self, MessageKind, ID};
+use tsrs_lsproto::jsonrpc::{self, ID, MessageKind};
 use tsrs_lsproto::{Error, ErrorTag, Json, Message, RequestMessage, ResponseMessage};
 
-use crate::server::{new_server, to_reader, to_writer, Reader, Server, ServerOptions, Writer};
+use crate::server::{Reader, Server, ServerOptions, Writer, new_server, to_reader, to_writer};
 
 // Go's io.Pipe (buffered here: writes do not wait for the reader).
 #[derive(Default)]
@@ -28,16 +27,16 @@ struct pipe(Arc<(Mutex<pipeState>, Condvar)>);
 
 impl pipe {
     fn close(&self) {
-        self.0 .0.lock().unwrap().closed = true;
-        self.0 .1.notify_all();
+        self.0.0.lock().unwrap().closed = true;
+        self.0.1.notify_all();
     }
 }
 
 impl Read for pipe {
     fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
-        let mut state = self.0 .0.lock().unwrap();
+        let mut state = self.0.0.lock().unwrap();
         while state.buf.is_empty() && !state.closed {
-            state = self.0 .1.wait(state).unwrap();
+            state = self.0.1.wait(state).unwrap();
         }
         let n = out.len().min(state.buf.len());
         for (i, b) in state.buf.drain(..n).enumerate() {
@@ -49,13 +48,16 @@ impl Read for pipe {
 
 impl Write for pipe {
     fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
-        let mut state = self.0 .0.lock().unwrap();
+        let mut state = self.0.0.lock().unwrap();
         if state.closed {
-            return Err(std::io::Error::new(std::io::ErrorKind::BrokenPipe, "io: read/write on closed pipe"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "io: read/write on closed pipe",
+            ));
         }
         state.buf.extend(data);
         drop(state);
-        self.0 .1.notify_all();
+        self.0.1.notify_all();
         Ok(data.len())
     }
 
@@ -92,7 +94,8 @@ fn new_client_transport() -> clientTransport {
 
 // lspclient.go:53
 // ServerRequestHandler handles server-initiated requests and returns the response to send back.
-pub type ServerRequestHandler = Box<dyn Fn(&RequestMessage) -> Option<ResponseMessage> + Send + Sync>;
+pub type ServerRequestHandler =
+    Box<dyn Fn(&RequestMessage) -> Option<ResponseMessage> + Send + Sync>;
 
 // lspclient.go:56
 // ServerNotificationHandler handles server-initiated notifications (e.g., $/progress).
@@ -102,7 +105,7 @@ pub type ServerNotificationHandler = Box<dyn Fn(&RequestMessage) + Send + Sync>;
 pub struct LSPClient {
     pub server: Arc<Server>,
     input_writer: Mutex<Box<dyn Writer>>,
-    id: AtomicI32,
+    id: AtomicU32,
     ctx: Context,
     on_server_request: Option<ServerRequestHandler>,
     pub(crate) on_server_notification: Mutex<Option<ServerNotificationHandler>>,
@@ -135,7 +138,10 @@ impl closeClient {
 
 // lspclient.go:93
 // NewLSPClient creates an LSPClient wrapping the given server and pipes.
-pub fn new_lsp_client(mut server_opts: ServerOptions, on_server_request: Option<ServerRequestHandler>) -> (Arc<LSPClient>, closeClient) {
+pub fn new_lsp_client(
+    mut server_opts: ServerOptions,
+    on_server_request: Option<ServerRequestHandler>,
+) -> (Arc<LSPClient>, closeClient) {
     let transport = new_client_transport();
     server_opts.in_ = transport.server_in;
     server_opts.out = transport.server_out;
@@ -146,7 +152,7 @@ pub fn new_lsp_client(mut server_opts: ServerOptions, on_server_request: Option<
     let client = Arc::new(LSPClient {
         server: Arc::clone(&server),
         input_writer: Mutex::new(transport.client_out),
-        id: AtomicI32::new(0),
+        id: AtomicU32::new(0),
         ctx: ctx.clone(),
         on_server_request,
         on_server_notification: Mutex::new(None),
@@ -182,7 +188,7 @@ impl LSPClient {
     }
 
     // lspclient.go:128
-    fn next_id(&self) -> i32 {
+    fn next_id(&self) -> u32 {
         self.id.fetch_add(1, Ordering::SeqCst)
     }
 
@@ -237,7 +243,11 @@ impl LSPClient {
         }
         let response = response.unwrap_or_else(|| ResponseMessage {
             id: req.id.clone(),
-            error: Some(jsonrpc::ResponseError { code: lsproto::ErrorCode::MethodNotFound.0, message: format!("Unknown method: {}", req.method), data: None }),
+            error: Some(jsonrpc::ResponseError {
+                code: lsproto::ErrorCode::MethodNotFound.0,
+                message: format!("Unknown method: {}", req.method),
+                data: None,
+            }),
             ..Default::default()
         });
 
@@ -256,21 +266,28 @@ impl LSPClient {
 
     // lspclient.go:245
     pub fn write_msg(&self, msg: &Message) {
-        self.write_to_server(msg).unwrap_or_else(|err| panic!("failed to write message: {}", err));
+        self.write_to_server(msg).unwrap_or_else(|err| panic!("failed to write message: {err}"));
     }
 
     // lspclient.go:253
     // SendRequest sends a typed request and waits for the response.
-    pub fn send_request<Params: Json, Resp: Json>(&self, info: lsproto::RequestInfo<Params, Resp>, params: Params) -> (ResponseMessage, Option<Resp>) {
+    pub fn send_request<Params: Json, Resp: Json>(
+        &self,
+        info: lsproto::RequestInfo<Params, Resp>,
+        params: Params,
+    ) -> (ResponseMessage, Option<Resp>) {
         let id = self.next_id();
-        let req_id = lsproto::new_id(&lsproto::IntegerOrString { integer: Some(id), ..Default::default() });
+        let id = i32::try_from(id).expect("LSP test request ID exceeds protocol i32");
+        let req_id =
+            lsproto::new_id(&lsproto::IntegerOrString { integer: Some(id), ..Default::default() });
         let req = info.new_request_message(Some(req_id.clone()), params);
 
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         self.pending_requests.lock().unwrap().insert(req_id, tx);
         self.write_msg(&req.message());
 
-        let resp = rx.recv_timeout(Duration::from_secs(120)).expect("Request cancelled: no response");
+        let resp =
+            rx.recv_timeout(Duration::from_secs(120)).expect("Request cancelled: no response");
         // The result arrives as a raw value; decode it into Resp.
         let result = info.unmarshal_result(resp.result.as_ref()).ok();
         (resp, result)
@@ -278,12 +295,19 @@ impl LSPClient {
 
     // lspclient.go:316
     // SendNotification sends a typed notification.
-    pub fn send_notification<Params: Json>(&self, info: lsproto::NotificationInfo<Params>, params: Params) {
+    pub fn send_notification<Params: Json>(
+        &self,
+        info: lsproto::NotificationInfo<Params>,
+        params: Params,
+    ) {
         self.write_msg(&info.new_notification_message(params).message());
     }
 
     // lspclient.go:327
-    pub fn set_compiler_options_for_inferred_projects(&self, options: Option<tsrs_core::P<tsrs_core::CompilerOptions>>) {
+    pub fn set_compiler_options_for_inferred_projects(
+        &self,
+        options: Option<tsrs_core::P<tsrs_core::CompilerOptions>>,
+    ) {
         self.server.set_compiler_options_for_inferred_projects(&self.ctx, options);
     }
 }
@@ -294,9 +318,13 @@ pub(crate) fn acknowledge_registrations() -> ServerRequestHandler {
     Box::new(|req: &RequestMessage| {
         use lsproto::Method;
         match req.method {
-            Method::ClientRegisterCapability | Method::ClientUnregisterCapability | Method::WindowWorkDoneProgressCreate => {
-                Some(ResponseMessage { id: req.id.clone(), result: Some(lsproto::Null.to_json()), ..Default::default() })
-            }
+            Method::ClientRegisterCapability
+            | Method::ClientUnregisterCapability
+            | Method::WindowWorkDoneProgressCreate => Some(ResponseMessage {
+                id: req.id.clone(),
+                result: Some(lsproto::Null.to_json()),
+                ..Default::default()
+            }),
             _ => None,
         }
     })
@@ -304,7 +332,9 @@ pub(crate) fn acknowledge_registrations() -> ServerRequestHandler {
 
 #[cfg(test)]
 pub(crate) fn test_server_options(cwd: &str, files: &[(&str, &str)]) -> ServerOptions {
-    let fs: Arc<dyn tsrs_vfs::FS> = Arc::new(tsrs_vfs::bundled::wrap_fs(tsrs_vfs::vfstest::from_map(files.iter().copied(), false)));
+    let fs: Arc<dyn tsrs_vfs::FS> = Arc::new(tsrs_vfs::bundled::wrap_fs(
+        tsrs_vfs::vfstest::from_map(files.iter().copied(), false),
+    ));
     ServerOptions {
         in_: Box::new(nullReader),
         out: Box::new(nullWriter),

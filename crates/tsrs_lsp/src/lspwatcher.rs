@@ -11,16 +11,21 @@ use tsrs_core::tspath;
 use tsrs_fswatch as fswatch;
 use tsrs_ls::lsconv;
 use tsrs_lsproto as lsproto;
-use tsrs_project::background::{after_func, Timer};
+use tsrs_project::background::{Timer, after_func};
 use tsrs_project::logging::Logger;
-use tsrs_vfs::{walk_dir, FS};
+use tsrs_vfs::{FS, walk_dir};
 
 // throttleWindow mirrors VS Code's parcel watcher integration: give the
 // first batch a short grace window so adjacent filesystem bursts coalesce.
 const throttleWindow: Duration = Duration::from_millis(75);
 
 pub(crate) trait watcherBackend: Send + Sync {
-    fn watch_directory(&self, dir: &str, f: fswatch::WatchCallback, opts: Vec<fswatch::WatchOption>) -> Result<Box<dyn fswatch::Watch>, fswatch::Error>;
+    fn watch_directory(
+        &self,
+        dir: &str,
+        f: fswatch::WatchCallback,
+        opts: Vec<fswatch::WatchOption>,
+    ) -> Result<Box<dyn fswatch::Watch>, fswatch::Error>;
 }
 
 struct defaultWatcherBackend {
@@ -29,7 +34,12 @@ struct defaultWatcherBackend {
 
 impl watcherBackend for defaultWatcherBackend {
     // lspwatcher.go:34
-    fn watch_directory(&self, dir: &str, f: fswatch::WatchCallback, opts: Vec<fswatch::WatchOption>) -> Result<Box<dyn fswatch::Watch>, fswatch::Error> {
+    fn watch_directory(
+        &self,
+        dir: &str,
+        f: fswatch::WatchCallback,
+        opts: Vec<fswatch::WatchOption>,
+    ) -> Result<Box<dyn fswatch::Watch>, fswatch::Error> {
         self.watcher.watch_directory(dir, f, opts)
     }
 }
@@ -97,8 +107,8 @@ struct watch {
 #[derive(Default)]
 struct watchState {
     subscription: Option<Box<dyn fswatch::Watch>>, // current subscription (target or ancestor); nil if none
-    watched_directory: String,                     // canonicalized directory 'subscription' is rooted at
-    watching_target: bool,                         // whether 'subscription' is rooted at the target directory
+    watched_directory: String, // canonicalized directory 'subscription' is rooted at
+    watching_target: bool,     // whether 'subscription' is rooted at the target directory
     closed: bool,
 }
 
@@ -113,12 +123,22 @@ pub fn new(fs: Arc<dyn FS>, on_changes: OnChanges, logger: Arc<dyn Logger>) -> A
 // NewWithFSWatcher constructs a Watcher backed by the provided fswatch.Watcher.
 // Use this to select a specific backend (e.g. fswatch.Kqueue()) instead of the
 // platform default.
-pub fn new_with_fs_watcher(fs: Arc<dyn FS>, watcher: &'static dyn fswatch::Watcher, on_changes: OnChanges, logger: Arc<dyn Logger>) -> Arc<Watcher> {
+pub fn new_with_fs_watcher(
+    fs: Arc<dyn FS>,
+    watcher: &'static dyn fswatch::Watcher,
+    on_changes: OnChanges,
+    logger: Arc<dyn Logger>,
+) -> Arc<Watcher> {
     new_with_backend(fs, Box::new(defaultWatcherBackend { watcher }), on_changes, logger)
 }
 
 // lspwatcher.go:102
-pub(crate) fn new_with_backend(fs: Arc<dyn FS>, backend: Box<dyn watcherBackend>, on_changes: OnChanges, logger: Arc<dyn Logger>) -> Arc<Watcher> {
+pub(crate) fn new_with_backend(
+    fs: Arc<dyn FS>,
+    backend: Box<dyn watcherBackend>,
+    on_changes: OnChanges,
+    logger: Arc<dyn Logger>,
+) -> Arc<Watcher> {
     Arc::new_cyclic(|this| Watcher {
         fs,
         backend,
@@ -140,14 +160,18 @@ impl Watcher {
     // failure (e.g. resource exhaustion while watching an existing directory)
     // causes WatchFiles to roll back the whole id and return an error, so the
     // session's pending/retry path re-registers it on the next reevaluation.
-    pub fn watch_files(&self, id: &str, file_system_watchers: &[lsproto::FileSystemWatcher]) -> Result<(), String> {
+    pub fn watch_files(
+        &self,
+        id: &str,
+        file_system_watchers: &[lsproto::FileSystemWatcher],
+    ) -> Result<(), String> {
         let mut st = self.mu.lock().unwrap();
         if st.closed {
             return Err("lspwatcher: closed".to_string());
         }
         let watches = st.watches.get_or_insert_with(FxHashMap::default);
         if watches.contains_key(id) {
-            return Err(format!("lspwatcher: watcher {:?} already exists", id));
+            return Err(format!("lspwatcher: watcher {id:?} already exists"));
         }
         // Mark the id as existing before installing any watches so a concurrent
         // WatchFiles for the same id is rejected above.
@@ -159,7 +183,11 @@ impl Watcher {
             let directory = match watch_root(file_system_watcher) {
                 Some(d) if !d.is_empty() => d,
                 _ => {
-                    self.logger.logf(format_args!("lspwatcher: skipping watcher {:?}: unrecognized pattern {:?}", id, watch_pattern_string(file_system_watcher)));
+                    self.logger.logf(format_args!(
+                        "lspwatcher: skipping watcher {:?}: unrecognized pattern {:?}",
+                        id,
+                        watch_pattern_string(file_system_watcher)
+                    ));
                     continue;
                 }
             };
@@ -172,7 +200,9 @@ impl Watcher {
                 this: Weak::clone(this),
             });
             if let Err(err) = new_watch.reconcile(false /*emitSynthetic*/) {
-                self.logger.logf(format_args!("lspwatcher: failed to register watcher {:?} for {:?}: {}", id, directory, err));
+                self.logger.logf(format_args!(
+                    "lspwatcher: failed to register watcher {id:?} for {directory:?}: {err}"
+                ));
                 new_watch.close();
                 failed = true;
                 break;
@@ -183,14 +213,18 @@ impl Watcher {
                 new_watch.close();
                 return Err("lspwatcher: closed".to_string());
             }
-            st.watches.get_or_insert_with(FxHashMap::default).entry(id.to_string()).or_default().push(new_watch);
+            st.watches
+                .get_or_insert_with(FxHashMap::default)
+                .entry(id.to_string())
+                .or_default()
+                .push(new_watch);
         }
 
         if failed {
             // Roll back the whole id so the session's retry (MarkPending) can
             // cleanly re-register it. The session treats an id as a single unit.
             let _ = self.unwatch_files(id);
-            return Err(format!("lspwatcher: failed to register one or more watchers for {:?}", id));
+            return Err(format!("lspwatcher: failed to register one or more watchers for {id:?}"));
         }
         Ok(())
     }
@@ -200,7 +234,7 @@ impl Watcher {
     pub fn unwatch_files(&self, id: &str) -> Result<(), String> {
         let mut st = self.mu.lock().unwrap();
         let Some(watches) = st.watches.as_mut().and_then(|w| w.remove(id)) else {
-            return Err(format!("lspwatcher: no watcher with id {:?}", id));
+            return Err(format!("lspwatcher: no watcher with id {id:?}"));
         };
         drop(st);
         for watch in watches {
@@ -223,9 +257,11 @@ impl Watcher {
         }
         st.pending = None;
         drop(st);
-        for watches in watches_by_id.into_iter().flat_map(|m| m.into_values()) {
-            for watch in watches {
-                watch.close();
+        if let Some(watches_by_id) = watches_by_id {
+            for watches in watches_by_id.into_values() {
+                for watch in watches {
+                    watch.close();
+                }
             }
         }
     }
@@ -239,30 +275,30 @@ impl Watcher {
             return;
         }
         let pending = st.pending.get_or_insert_with(|| IndexMap::with_capacity(events.len()));
-        for event in events {
+        pending.extend(events.iter().filter_map(|event| {
             let change_type = match event.kind {
                 fswatch::EventKind::Update => {
                     // fswatch intentionally doesn't distinguish create vs update.
                     // For LSP consumers this is fine: callers infer create/update
                     // from their own cache and both should invalidate stale state.
                     if kind.0 & (lsproto::WatchKind::Create.0 | lsproto::WatchKind::Change.0) == 0 {
-                        continue;
+                        return None;
                     }
                     lsproto::FileChangeType::Changed
                 }
                 fswatch::EventKind::Delete => {
                     if kind.0 & lsproto::WatchKind::Delete.0 == 0 {
-                        continue;
+                        return None;
                     }
                     lsproto::FileChangeType::Deleted
                 }
-                _ => continue,
+                _ => return None,
             };
 
             let path = tspath::normalize_slashes(&event.path);
             let uri = lsconv::file_name_to_document_uri(&path);
-            pending.insert(uri.0.clone(), lsproto::FileEvent { uri, type_: change_type });
-        }
+            Some((uri.0.clone(), lsproto::FileEvent { uri, type_: change_type }))
+        }));
         self.schedule_flush_locked(&mut st);
     }
 
@@ -287,12 +323,11 @@ impl Watcher {
             });
         } else {
             let entries = self.fs.get_accessible_entries(directory);
-            for name in &entries.files {
-                paths.push(tspath::combine_paths(directory, &[name]));
-            }
-            for name in &entries.directories {
-                paths.push(tspath::combine_paths(directory, &[name]));
-            }
+            paths
+                .extend(entries.files.iter().map(|name| tspath::combine_paths(directory, &[name])));
+            paths.extend(
+                entries.directories.iter().map(|name| tspath::combine_paths(directory, &[name])),
+            );
         }
         self.enqueue_synthetic_creates(&paths);
     }
@@ -312,7 +347,10 @@ impl Watcher {
             if pending.contains_key(&uri.0) {
                 continue;
             }
-            pending.insert(uri.0.clone(), lsproto::FileEvent { uri, type_: lsproto::FileChangeType::Created });
+            pending.insert(
+                uri.0.clone(),
+                lsproto::FileEvent { uri, type_: lsproto::FileChangeType::Created },
+            );
         }
         self.schedule_flush_locked(&mut st);
     }
@@ -400,7 +438,11 @@ impl watch {
                 if self.recursive {
                     options.push(fswatch::with_recursive());
                 }
-                let subscription = watcher.backend.watch_directory(&target_directory, self.target_callback(&target_directory), options)?;
+                let subscription = watcher.backend.watch_directory(
+                    &target_directory,
+                    self.target_callback(&target_directory),
+                    options,
+                )?;
                 let previous = st.subscription.replace(subscription);
                 st.watched_directory.clone_from(&target_directory);
                 st.watching_target = true;
@@ -413,7 +455,8 @@ impl watch {
                 return Ok(());
             }
 
-            let Some(ancestor) = nearest_existing_ancestor(&*watcher.fs, &self.requested_directory) else {
+            let Some(ancestor) = nearest_existing_ancestor(&*watcher.fs, &self.requested_directory)
+            else {
                 // Nothing exists to watch (even the root is gone); drop any subscription.
                 if let Some(previous) = st.subscription.take() {
                     st.watched_directory = String::new();
@@ -423,10 +466,17 @@ impl watch {
                 return Ok(());
             };
             let ancestor_directory = ancestor;
-            if !st.watching_target && st.subscription.is_some() && st.watched_directory == ancestor_directory {
+            if !st.watching_target
+                && st.subscription.is_some()
+                && st.watched_directory == ancestor_directory
+            {
                 return Ok(()); // already watching the correct ancestor
             }
-            let subscription = watcher.backend.watch_directory(&ancestor_directory, self.ancestor_callback(), Vec::new())?;
+            let subscription = watcher.backend.watch_directory(
+                &ancestor_directory,
+                self.ancestor_callback(),
+                Vec::new(),
+            )?;
             let previous = st.subscription.replace(subscription);
             st.watched_directory = ancestor_directory;
             st.watching_target = false;
@@ -460,12 +510,14 @@ impl watch {
             let mut terminated = false;
             if let Some(err) = err {
                 if err.is(fswatch::ErrOverflow) {
-                    watcher.logger.logf(format_args!("lspwatcher: watch overflow in {:?} (some events may have been dropped): {}", watched_directory, err));
+                    watcher.logger.logf(format_args!("lspwatcher: watch overflow in {watched_directory:?} (some events may have been dropped): {err}"));
                 } else if err.is(fswatch::ErrWatchTerminated) {
                     terminated = true;
-                    watcher.logger.logf(format_args!("lspwatcher: watch terminated in {:?} (directory removed): {}", watched_directory, err));
+                    watcher.logger.logf(format_args!("lspwatcher: watch terminated in {watched_directory:?} (directory removed): {err}"));
                 } else {
-                    watcher.logger.logf(format_args!("lspwatcher: watch error in {:?}: {}", watched_directory, err));
+                    watcher.logger.logf(format_args!(
+                        "lspwatcher: watch error in {watched_directory:?}: {err}"
+                    ));
                 }
             }
             if !events.is_empty() {
@@ -551,9 +603,9 @@ fn watch_root(file_system_watcher: &lsproto::FileSystemWatcher) -> Option<String
         return Some(root_from_glob(pattern));
     }
     if let Some(relative_pattern) = &file_system_watcher.glob_pattern.relative_pattern {
-        let base = match &relative_pattern.base_uri.uri {
-            Some(uri) => lsproto::DocumentUri(uri.0.clone()).file_name(),
-            None => return None,
+        let base = {
+            let uri = relative_pattern.base_uri.uri.as_ref()?;
+            lsproto::DocumentUri(uri.0.clone()).file_name()
         };
         let pattern = tspath::combine_paths(&base, &[&relative_pattern.pattern]);
         return Some(root_from_glob(&pattern));
@@ -600,7 +652,9 @@ fn effective_kind(file_system_watcher: &lsproto::FileSystemWatcher) -> lsproto::
     if let Some(kind) = file_system_watcher.kind {
         return kind;
     }
-    lsproto::WatchKind(lsproto::WatchKind::Create.0 | lsproto::WatchKind::Change.0 | lsproto::WatchKind::Delete.0)
+    lsproto::WatchKind(
+        lsproto::WatchKind::Create.0 | lsproto::WatchKind::Change.0 | lsproto::WatchKind::Delete.0,
+    )
 }
 
 #[cfg(test)]

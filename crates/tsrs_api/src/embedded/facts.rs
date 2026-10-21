@@ -1,4 +1,4 @@
-//! Owned ArkTS semantic facts. No arena references escape through these values.
+//! Owned `ArkTS` semantic facts. No arena references escape through these values.
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 

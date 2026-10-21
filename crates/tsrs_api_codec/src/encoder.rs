@@ -13,10 +13,13 @@ use std::sync::OnceLock;
 use rustc_hash::FxHashMap;
 use tsrs_ast::*;
 use tsrs_core::goslices::sort_func;
-use tsrs_core::{binary_search_unique_func, P};
+use tsrs_core::{P, TextPos, binary_search_unique_func};
 
 use crate::format::*;
-use crate::generated::{children_property_mask, node_common_data, node_data_type, record_extended_data, record_node_strings};
+use crate::generated::{
+    children_property_mask, node_common_data, node_data_type, record_extended_data,
+    record_node_strings,
+};
 use crate::msgpack;
 use crate::positionmap::PositionMap;
 use crate::stringtable::StringTable;
@@ -33,14 +36,16 @@ impl std::fmt::Display for EncodeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             EncodeError::Unencodable(k) => write!(f, "{k:?} cannot be encoded"),
-            EncodeError::TooLarge(what) => write!(f, "encoded {what} exceeds the binary format limits"),
+            EncodeError::TooLarge(what) => {
+                write!(f, "encoded {what} exceeds the binary format limits")
+            }
         }
     }
 }
 
 impl std::error::Error for EncodeError {}
 
-/// Go `NodeIndexTable`: encoder index → node (index 0 is the nil sentinel, NodeList records map to `None`).
+/// Go `NodeIndexTable`: encoder index → node (index 0 is the nil sentinel, `NodeList` records map to `None`).
 pub struct NodeIndexTable {
     pub nodes: Vec<Option<P<Node>>>,
     sorted: OnceLock<Vec<u32>>,
@@ -52,31 +57,34 @@ impl NodeIndexTable {
     }
 
     /// Go `GetIndex`, ported exactly: on the first call the non-nil indices are sorted by node id with Go's
-    /// `slices.SortFunc` (pdqsort, `tsrs_core::goslices::sort_func`), assigning ids lazily in comparison order
-    /// like `ast.GetNodeId`, then looked up with `core.BinarySearchUniqueFunc`. A node can occur at several
-    /// indices (a JSDoc comment hosting `@typedef`/`@callback` is encoded under every declaration it is
-    /// attached to); which of them is returned is decided by that sort and search exactly as in Go, so the
-    /// handles sent to clients match. Returns 0 when the node is not in the table.
+    /// `slices.SortFunc` (pdqsort, `tsrs_core::goslices::sort_func`), assigning ids lazily in comparison
+    /// order like `ast.GetNodeId`, then looked up with `core.BinarySearchUniqueFunc`. A node can occur at
+    /// several indices (a `JSDoc` comment hosting `@typedef`/`@callback` is encoded under every declaration
+    /// it is attached to); which of them is returned is decided by that sort and search exactly as in Go, so
+    /// the handles sent to clients match. Returns 0 when the node is not in the table.
     pub fn get_index(&self, node: P<Node>) -> u32 {
         let sorted = self.sorted.get_or_init(|| {
-            let mut idx: Vec<u32> = (0..self.nodes.len() as u32).filter(|&i| self.nodes[i as usize].is_some()).collect();
+            let mut idx: Vec<u32> = (0..self.nodes.len() as u32)
+                .filter(|&i| self.nodes[i as usize].is_some())
+                .collect();
             let nodes = &self.nodes;
             sort_func(&mut idx, |&a, &b| {
-                let (ia, ib) = (get_node_id(nodes[a as usize].unwrap()), get_node_id(nodes[b as usize].unwrap()));
-                ia.cmp(&ib) as i32
+                let (ia, ib) = (
+                    get_node_id(nodes[a as usize].unwrap()),
+                    get_node_id(nodes[b as usize].unwrap()),
+                );
+                ia.cmp(&ib)
             });
             idx
         });
         let target = get_node_id(node);
-        let (i, found) = binary_search_unique_func(sorted, |_, &el| get_node_id(self.nodes[el as usize].unwrap()).cmp(&target) as i32);
-        if found {
-            sorted[i]
-        } else {
-            0
-        }
+        let (i, found) = binary_search_unique_func(sorted, |_, &el| {
+            get_node_id(self.nodes[el as usize].unwrap()).cmp(&target)
+        });
+        if found { sorted[i] } else { 0 }
     }
 
-    /// The node at encoder index `index` (`None` for 0, NodeList records and out-of-range indices).
+    /// The node at encoder index `index` (`None` for 0, `NodeList` records and out-of-range indices).
     pub fn node(&self, index: u32) -> Option<P<Node>> {
         self.nodes.get(index as usize).copied().flatten()
     }
@@ -99,15 +107,16 @@ pub struct EncodeContext {
 }
 
 impl EncodeContext {
-    fn utf16(&self, pos: i32) -> u32 {
-        self.position_map.utf8_to_utf16(pos as i64) as u32
+    fn utf16(&self, pos: TextPos) -> u32 {
+        match pos {
+            TextPos::Synthetic => u32::MAX,
+            TextPos::Source(pos) => self.position_map.utf8_to_utf16(i64::from(pos.get())) as u32,
+        }
     }
 }
 
 pub(crate) fn append_u32s(buf: &mut Vec<u8>, values: &[u32]) {
-    for v in values {
-        buf.extend_from_slice(&v.to_le_bytes());
-    }
+    buf.extend(values.iter().flat_map(|v| v.to_le_bytes()));
 }
 
 /// Go `hasModifiers`.
@@ -146,40 +155,54 @@ pub fn source_file_hash(file: &SourceFile) -> String {
 
 /// Go `SetSourceFileLease`.
 pub fn set_source_file_lease(data: &mut [u8], lease: u64) {
-    data[HEADER_OFFSET_SOURCE_FILE_LEASE..HEADER_OFFSET_SOURCE_FILE_LEASE + 8].copy_from_slice(&lease.to_le_bytes());
+    data[HEADER_OFFSET_SOURCE_FILE_LEASE..HEADER_OFFSET_SOURCE_FILE_LEASE + 8]
+        .copy_from_slice(&lease.to_le_bytes());
 }
 
 /// Go `SetSourceFileID`.
 pub fn set_source_file_id(data: &mut [u8], id: u64) {
-    data[HEADER_OFFSET_SOURCE_FILE_ID..HEADER_OFFSET_SOURCE_FILE_ID + 8].copy_from_slice(&id.to_le_bytes());
+    data[HEADER_OFFSET_SOURCE_FILE_ID..HEADER_OFFSET_SOURCE_FILE_ID + 8]
+        .copy_from_slice(&id.to_le_bytes());
 }
 
 fn encode_parse_options(opts: ExternalModuleIndicatorOptions) -> u32 {
     (opts.jsx as u32) | ((opts.force as u32) << 1)
 }
 
-/// Go `EncodeSourceFile`. Returns the encoded bytes and the node index table (same indices as the bytes). The
-/// caller owns caching the table for the source file's lifetime (Go stores it in the file's data map).
-pub fn encode_source_file(file: &'static SourceFile) -> Result<(Vec<u8>, NodeIndexTable), EncodeError> {
+/// Go `EncodeSourceFile`.
+///
+/// Returns the encoded bytes and the node index table (same indices as the bytes). The caller owns caching
+/// the table for the source file's lifetime (Go stores it in the file's data map).
+pub fn encode_source_file(
+    file: &'static SourceFile,
+) -> Result<(Vec<u8>, NodeIndexTable), EncodeError> {
     encode_tree(file.as_node(), Some(file))
 }
 
-/// Go `EncodeNode`: encodes an arbitrary subtree. `source_file` supplies JSDoc and the position map; pass `None`
-/// for synthesized nodes (e.g. a checker `typeToTypeNode` result), as the pinned session does.
-pub fn encode_node(node: P<Node>, source_file: Option<&'static SourceFile>) -> Result<(Vec<u8>, NodeIndexTable), EncodeError> {
+/// Go `EncodeNode`: encodes an arbitrary subtree. `source_file` supplies `JSDoc` and the position map; pass
+/// `None` for synthesized nodes (e.g. a checker `typeToTypeNode` result), as the pinned session does.
+pub fn encode_node(
+    node: P<Node>,
+    source_file: Option<&'static SourceFile>,
+) -> Result<(Vec<u8>, NodeIndexTable), EncodeError> {
     encode_tree(node, source_file)
 }
 
-/// Walks `root` in exactly the order of the pinned encoder: Go `NodeVisitor.VisitEachChild` with the `VisitNodes`
-/// and `VisitModifiers` hooks overridden, then the node's JSDoc. `enter_node` gets each node, `enter_list` each
-/// NodeList (modifier lists only when non-empty); each returns the state that `leave` restores after the children.
+/// Walks `root` in exactly the order of the pinned encoder: Go `NodeVisitor.VisitEachChild` with the
+/// `VisitNodes` and `VisitModifiers` hooks overridden, then the node's `JSDoc`. `enter_node` gets each node,
+/// `enter_list` each `NodeList` (modifier lists only when non-empty); each returns the state that `leave`
+/// restores after the children.
 trait Walker {
     fn enter_node(&mut self, node: P<Node>) -> (u32, u32);
     fn enter_list(&mut self, list: &NodeList) -> (u32, u32);
     fn leave(&mut self, saved: (u32, u32));
 }
 
-fn walk_children<W: Walker + 'static>(root: P<Node>, file: Option<&'static SourceFile>, state: Rc<RefCell<W>>) {
+fn walk_children<W: Walker + 'static>(
+    root: P<Node>,
+    file: Option<&'static SourceFile>,
+    state: Rc<RefCell<W>>,
+) {
     let visit: VisitFn = {
         let state = Rc::clone(&state);
         Rc::new(move |v: &mut NodeVisitor, node: P<Node>| -> Option<P<Node>> {
@@ -269,8 +292,22 @@ impl Walker for EncodeState {
         self.node_count += 1;
         self.table.push(None);
         self.link_prev();
-        let (pos, end) = (self.cx.utf16(list.pos()), self.cx.utf16(list.end()));
-        let values = [SYNTAX_KIND_NODE_LIST, pos, end, 0, self.parent_index, list.nodes().len() as u32, list.has_trailing_comma() as u32, 0];
+        let pos = self.cx.utf16(list.pos());
+        let end = if list.has_trailing_comma_marker() {
+            u32::MAX - 1
+        } else {
+            self.cx.utf16(list.end())
+        };
+        let values = [
+            SYNTAX_KIND_NODE_LIST,
+            pos,
+            end,
+            0,
+            self.parent_index,
+            list.nodes().len() as u32,
+            list.has_trailing_comma() as u32,
+            0,
+        ];
         append_u32s(&mut self.nodes, &values);
         self.descend()
     }
@@ -286,7 +323,16 @@ impl Walker for EncodeState {
                 0
             }
         };
-        let values = [node.kind() as u32, self.cx.utf16(node.pos()), self.cx.utf16(node.end()), 0, self.parent_index, data, node.flags().bits(), node.is_virtual() as u32];
+        let values = [
+            node.kind() as u32,
+            self.cx.utf16(node.pos()),
+            self.cx.utf16(node.end()),
+            0,
+            self.parent_index,
+            data,
+            node.flags().bits(),
+            node.is_virtual() as u32,
+        ];
         append_u32s(&mut self.nodes, &values);
         if let Some(map) = &mut self.node_index_map {
             if let Some(slot) = map.get_mut(&node) {
@@ -305,7 +351,9 @@ impl Walker for EncodeState {
 fn get_node_data(node: P<Node>, cx: &mut EncodeContext) -> Result<u32, EncodeError> {
     let t = node_data_type(node);
     Ok(match t {
-        NODE_DATA_TYPE_CHILDREN => t | node_common_data(node)? | children_property_mask(node) as u32,
+        NODE_DATA_TYPE_CHILDREN => {
+            t | node_common_data(node)? | children_property_mask(node) as u32
+        }
         NODE_DATA_TYPE_STRING => {
             let idx = record_node_strings(node, &mut cx.strs);
             if idx > NODE_DATA_STRING_INDEX_MASK {
@@ -323,7 +371,10 @@ fn get_node_data(node: P<Node>, cx: &mut EncodeContext) -> Result<u32, EncodeErr
     })
 }
 
-fn encode_tree(root: P<Node>, source_file: Option<&'static SourceFile>) -> Result<(Vec<u8>, NodeIndexTable), EncodeError> {
+fn encode_tree(
+    root: P<Node>,
+    source_file: Option<&'static SourceFile>,
+) -> Result<(Vec<u8>, NodeIndexTable), EncodeError> {
     let is_source_file = root.kind() == Kind::SourceFile;
     let file_text: &'static str = if is_source_file { root.as_source_file().text() } else { "" };
     let position_map = PositionMap::compute(source_file.map_or("", |f| f.text()));
@@ -337,10 +388,10 @@ fn encode_tree(root: P<Node>, source_file: Option<&'static SourceFile>) -> Resul
             total += 1;
         }
         if total > 0 {
-            let mut map = FxHashMap::with_capacity_and_hasher(total, Default::default());
-            for &n in sf.imports.get().iter().chain(sf.module_augmentations.get()) {
-                map.insert(n, 0);
-            }
+            let mut map = FxHashMap::with_capacity_and_hasher(total, rustc_hash::FxBuildHasher);
+            map.extend(
+                sf.imports.get().iter().chain(sf.module_augmentations.get()).map(|&n| (n, 0)),
+            );
             if let Some(e) = emi.filter(|&e| e != root) {
                 map.insert(e, 0);
             }
@@ -349,7 +400,10 @@ fn encode_tree(root: P<Node>, source_file: Option<&'static SourceFile>) -> Resul
     }
     let mut state = EncodeState {
         cx: EncodeContext {
-            strs: StringTable::new(file_text, if is_source_file { source_file.map_or(0, |f| f.text_count.get()) } else { 0 }),
+            strs: StringTable::new(
+                file_text,
+                if is_source_file { source_file.map_or(0, |f| f.text_count.get()) } else { 0 },
+            ),
             position_map,
             extended_data: Vec::new(),
             structured_data: Vec::new(),
@@ -370,7 +424,16 @@ fn encode_tree(root: P<Node>, source_file: Option<&'static SourceFile>) -> Resul
     state.table.push(Some(root)); // index 1 = root node
     let sf_extended_data_offset = state.cx.extended_data.len();
     let data = get_node_data(root, &mut state.cx)?;
-    let values = [root.kind() as u32, state.cx.utf16(root.pos()), state.cx.utf16(root.end()), 0, 0, data, root.flags().bits(), root.is_virtual() as u32];
+    let values = [
+        root.kind() as u32,
+        state.cx.utf16(root.pos()),
+        state.cx.utf16(root.end()),
+        0,
+        0,
+        data,
+        root.flags().bits(),
+        root.is_virtual() as u32,
+    ];
     append_u32s(&mut state.nodes, &values);
 
     let state = Rc::new(RefCell::new(state));
@@ -387,22 +450,36 @@ fn encode_tree(root: P<Node>, source_file: Option<&'static SourceFile>) -> Resul
         hash = source_file.map_or(sf.hash.get(), |f| f.hash.get());
         parse_opts = encode_parse_options(sf.parse_options().external_module_indicator_options);
         let map = state.node_index_map.take().unwrap_or_default();
-        let imports_offset = encode_node_index_array(sf.imports.get(), &map, &mut state.cx.structured_data);
-        let augmentations_offset = encode_node_index_array(sf.module_augmentations.get(), &map, &mut state.cx.structured_data);
-        let ambient_offset = encode_string_array(sf.ambient_module_names.get(), &mut state.cx.structured_data);
+        let imports_offset =
+            encode_node_index_array(sf.imports.get(), &map, &mut state.cx.structured_data);
+        let augmentations_offset = encode_node_index_array(
+            sf.module_augmentations.get(),
+            &map,
+            &mut state.cx.structured_data,
+        );
+        let ambient_offset =
+            encode_string_array(sf.ambient_module_names.get(), &mut state.cx.structured_data);
         let ext = &mut state.cx.extended_data;
-        ext[sf_extended_data_offset + 32..sf_extended_data_offset + 36].copy_from_slice(&imports_offset.to_le_bytes());
-        ext[sf_extended_data_offset + 36..sf_extended_data_offset + 40].copy_from_slice(&augmentations_offset.to_le_bytes());
-        ext[sf_extended_data_offset + 40..sf_extended_data_offset + 44].copy_from_slice(&ambient_offset.to_le_bytes());
+        ext[sf_extended_data_offset + 32..sf_extended_data_offset + 36]
+            .copy_from_slice(&imports_offset.to_le_bytes());
+        ext[sf_extended_data_offset + 36..sf_extended_data_offset + 40]
+            .copy_from_slice(&augmentations_offset.to_le_bytes());
+        ext[sf_extended_data_offset + 40..sf_extended_data_offset + 44]
+            .copy_from_slice(&ambient_offset.to_le_bytes());
         let emi_index = match sf.external_module_indicator.get() {
             None => 0,
             Some(e) if e == root => 1,
             Some(e) => map.get(&e).copied().unwrap_or(0),
         };
-        ext[sf_extended_data_offset + 44..sf_extended_data_offset + 48].copy_from_slice(&emi_index.to_le_bytes());
+        ext[sf_extended_data_offset + 44..sf_extended_data_offset + 48]
+            .copy_from_slice(&emi_index.to_le_bytes());
     }
 
-    let ets_json = is_source_file.then(|| source_file_arkts_options_json(root.as_source_file())).unwrap_or_default();
+    let ets_json = if is_source_file {
+        source_file_arkts_options_json(root.as_source_file())
+    } else {
+        String::new()
+    };
     let ets_options_index = if ets_json.is_empty() { NO_STRUCTURED_DATA } else { state.cx.strs.add(&ets_json, Kind::Unknown, 0, 0) };
     let metadata = (PROTOCOL_VERSION as u32) << 24;
     let offset_string_offsets = HEADER_SIZE;
@@ -472,7 +549,14 @@ pub fn build_node_index_table(file: &'static SourceFile) -> NodeIndexTable {
 
 // ── hand-written extended data (Go recordExtendedData_*) ──────────────────────
 
-pub(crate) fn record_extended_data_source_file(node: P<Node>, cx: &mut EncodeContext) -> Result<(), EncodeError> {
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "Extended-data encoder callbacks share a fallible signature with encoders that can reject node data."
+)]
+pub(crate) fn record_extended_data_source_file(
+    node: P<Node>,
+    cx: &mut EncodeContext,
+) -> Result<(), EncodeError> {
     let sf = node.as_source_file();
     let text_index = cx.strs.add(sf.text(), Kind::SourceFile, node.pos(), node.end());
     // The API's project system does not content-map files yet (tsrs_project compilerhost.rs), so every file encoded
@@ -480,61 +564,93 @@ pub(crate) fn record_extended_data_source_file(node: P<Node>, cx: &mut EncodeCon
     // file name and no diagnostic directives. These are exactly the values the pinned encoder writes for a file
     // without content-mapper info; encoding content-mapper info is not implemented.
     let original_text_index = text_index;
-    let file_name_index = cx.strs.add(sf.file_name(), Kind::Unknown, 0, 0);
-    let path_index = cx.strs.add(&sf.path().0, Kind::Unknown, 0, 0);
+    let file_name_index = cx.strs.add(sf.file_name(), Kind::Unknown, 0u32, 0u32);
+    let path_index = cx.strs.add(&sf.path().0, Kind::Unknown, 0u32, 0u32);
     let pm = &cx.position_map;
     let referenced = encode_file_references(sf.referenced_files.get(), pm, &mut cx.structured_data);
-    let type_refs = encode_file_references(sf.type_reference_directives.get(), pm, &mut cx.structured_data);
-    let lib_refs = encode_file_references(sf.lib_reference_directives.get(), pm, &mut cx.structured_data);
+    let type_refs =
+        encode_file_references(sf.type_reference_directives.get(), pm, &mut cx.structured_data);
+    let lib_refs =
+        encode_file_references(sf.lib_reference_directives.get(), pm, &mut cx.structured_data);
     let span_map_offset = NO_STRUCTURED_DATA;
     let supplemental_offset = NO_STRUCTURED_DATA; // encodeStringArray(empty)
     let canonical_index = NO_STRUCTURED_DATA;
     let content_mapper_index = NO_STRUCTURED_DATA;
     let virtual_file_name_index = NO_STRUCTURED_DATA;
     let diagnostic_directives_offset = NO_STRUCTURED_DATA; // encodeDiagnosticDirectives(empty)
-    append_u32s(&mut cx.extended_data, &[
-        text_index,
-        file_name_index,
-        path_index,
-        sf.language_variant() as u32,
-        sf.script_kind() as u32,
-        referenced,
-        type_refs,
-        lib_refs,
-        NO_STRUCTURED_DATA, // imports (patched after the walk)
-        NO_STRUCTURED_DATA, // moduleAugmentations (patched)
-        NO_STRUCTURED_DATA, // ambientModuleNames (patched)
-        0,                  // externalModuleIndicator (patched)
-        original_text_index,
-        span_map_offset,
-        supplemental_offset,
-        canonical_index,
-        content_mapper_index,
-        virtual_file_name_index,
-        diagnostic_directives_offset,
-    ]);
+    append_u32s(
+        &mut cx.extended_data,
+        &[
+            text_index,
+            file_name_index,
+            path_index,
+            sf.language_variant() as u32,
+            sf.script_kind() as u32,
+            referenced,
+            type_refs,
+            lib_refs,
+            NO_STRUCTURED_DATA, // imports (patched after the walk)
+            NO_STRUCTURED_DATA, // moduleAugmentations (patched)
+            NO_STRUCTURED_DATA, // ambientModuleNames (patched)
+            0,                  // externalModuleIndicator (patched)
+            original_text_index,
+            span_map_offset,
+            supplemental_offset,
+            canonical_index,
+            content_mapper_index,
+            virtual_file_name_index,
+            diagnostic_directives_offset,
+        ],
+    );
     Ok(())
 }
 
-fn record_template_like(node: P<Node>, text: &str, raw_text: &str, flags: TokenFlags, cx: &mut EncodeContext) {
+fn record_template_like(
+    node: P<Node>,
+    text: &str,
+    raw_text: &str,
+    flags: TokenFlags,
+    cx: &mut EncodeContext,
+) {
     let text_index = cx.strs.add(text, node.kind(), node.pos(), node.end());
     let raw_index = cx.strs.add(raw_text, node.kind(), node.pos(), node.end());
-    append_u32s(&mut cx.extended_data, &[text_index, raw_index, flags.bits() as u32]);
+    append_u32s(&mut cx.extended_data, &[text_index, raw_index, flags.bits()]);
 }
 
-pub(crate) fn record_extended_data_template_head(node: P<Node>, cx: &mut EncodeContext) -> Result<(), EncodeError> {
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "Extended-data encoder callbacks share a fallible signature with encoders that can reject node data."
+)]
+pub(crate) fn record_extended_data_template_head(
+    node: P<Node>,
+    cx: &mut EncodeContext,
+) -> Result<(), EncodeError> {
     let n = node.as_template_head();
     record_template_like(node, n.text(), n.raw_text(), n.template_flags(), cx);
     Ok(())
 }
 
-pub(crate) fn record_extended_data_template_middle(node: P<Node>, cx: &mut EncodeContext) -> Result<(), EncodeError> {
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "Extended-data encoder callbacks share a fallible signature with encoders that can reject node data."
+)]
+pub(crate) fn record_extended_data_template_middle(
+    node: P<Node>,
+    cx: &mut EncodeContext,
+) -> Result<(), EncodeError> {
     let n = node.as_template_middle();
     record_template_like(node, n.text(), n.raw_text(), n.template_flags(), cx);
     Ok(())
 }
 
-pub(crate) fn record_extended_data_template_tail(node: P<Node>, cx: &mut EncodeContext) -> Result<(), EncodeError> {
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "Extended-data encoder callbacks share a fallible signature with encoders that can reject node data."
+)]
+pub(crate) fn record_extended_data_template_tail(
+    node: P<Node>,
+    cx: &mut EncodeContext,
+) -> Result<(), EncodeError> {
     let n = node.as_template_tail();
     record_template_like(node, n.text(), n.raw_text(), n.template_flags(), cx);
     Ok(())
@@ -542,34 +658,69 @@ pub(crate) fn record_extended_data_template_tail(node: P<Node>, cx: &mut EncodeC
 
 fn record_literal(node: P<Node>, text: &str, flags: TokenFlags, cx: &mut EncodeContext) {
     let text_index = cx.strs.add(text, node.kind(), node.pos(), node.end());
-    append_u32s(&mut cx.extended_data, &[text_index, flags.bits() as u32]);
+    append_u32s(&mut cx.extended_data, &[text_index, flags.bits()]);
 }
 
-pub(crate) fn record_extended_data_string_literal(node: P<Node>, cx: &mut EncodeContext) -> Result<(), EncodeError> {
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "Extended-data encoder callbacks share a fallible signature with encoders that can reject node data."
+)]
+pub(crate) fn record_extended_data_string_literal(
+    node: P<Node>,
+    cx: &mut EncodeContext,
+) -> Result<(), EncodeError> {
     let n = node.as_string_literal();
     record_literal(node, n.text(), n.token_flags(), cx);
     Ok(())
 }
 
-pub(crate) fn record_extended_data_numeric_literal(node: P<Node>, cx: &mut EncodeContext) -> Result<(), EncodeError> {
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "Extended-data encoder callbacks share a fallible signature with encoders that can reject node data."
+)]
+pub(crate) fn record_extended_data_numeric_literal(
+    node: P<Node>,
+    cx: &mut EncodeContext,
+) -> Result<(), EncodeError> {
     let n = node.as_numeric_literal();
     record_literal(node, n.text(), n.token_flags(), cx);
     Ok(())
 }
 
-pub(crate) fn record_extended_data_big_int_literal(node: P<Node>, cx: &mut EncodeContext) -> Result<(), EncodeError> {
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "Extended-data encoder callbacks share a fallible signature with encoders that can reject node data."
+)]
+pub(crate) fn record_extended_data_big_int_literal(
+    node: P<Node>,
+    cx: &mut EncodeContext,
+) -> Result<(), EncodeError> {
     let n = node.as_big_int_literal();
     record_literal(node, n.text(), n.token_flags(), cx);
     Ok(())
 }
 
-pub(crate) fn record_extended_data_regular_expression_literal(node: P<Node>, cx: &mut EncodeContext) -> Result<(), EncodeError> {
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "Extended-data encoder callbacks share a fallible signature with encoders that can reject node data."
+)]
+pub(crate) fn record_extended_data_regular_expression_literal(
+    node: P<Node>,
+    cx: &mut EncodeContext,
+) -> Result<(), EncodeError> {
     let n = node.as_regular_expression_literal();
     record_literal(node, n.text(), n.token_flags(), cx);
     Ok(())
 }
 
-pub(crate) fn record_extended_data_no_substitution_template_literal(node: P<Node>, cx: &mut EncodeContext) -> Result<(), EncodeError> {
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "Extended-data encoder callbacks share a fallible signature with encoders that can reject node data."
+)]
+pub(crate) fn record_extended_data_no_substitution_template_literal(
+    node: P<Node>,
+    cx: &mut EncodeContext,
+) -> Result<(), EncodeError> {
     let n = node.as_no_substitution_template_literal();
     record_literal(node, n.text(), n.template_flags(), cx);
     Ok(())
@@ -590,8 +741,18 @@ fn encode_file_references(refs: &[P<FileReference>], pm: &PositionMap, buf: &mut
     msgpack::write_array_header(buf, refs.len());
     for r in refs {
         msgpack::write_array_header(buf, 5);
-        msgpack::write_uint(buf, pm.utf8_to_utf16(r.text_range.pos() as i64) as u32);
-        msgpack::write_uint(buf, pm.utf8_to_utf16(r.text_range.end() as i64) as u32);
+        msgpack::write_uint(
+            buf,
+            pm.utf8_to_utf16(i64::from(
+                r.text_range.pos().expect_source("file references have source positions"),
+            )) as u32,
+        );
+        msgpack::write_uint(
+            buf,
+            pm.utf8_to_utf16(i64::from(
+                r.text_range.end().expect_source("file references have source positions"),
+            )) as u32,
+        );
         msgpack::write_string(buf, &r.file_name);
         msgpack::write_uint(buf, r.resolution_mode.value() as u32);
         msgpack::write_bool(buf, r.preserve);
@@ -599,7 +760,11 @@ fn encode_file_references(refs: &[P<FileReference>], pm: &PositionMap, buf: &mut
     offset
 }
 
-fn encode_node_index_array(nodes: &[P<Node>], map: &FxHashMap<P<Node>, u32>, buf: &mut Vec<u8>) -> u32 {
+fn encode_node_index_array(
+    nodes: &[P<Node>],
+    map: &FxHashMap<P<Node>, u32>,
+    buf: &mut Vec<u8>,
+) -> u32 {
     if nodes.is_empty() {
         return NO_STRUCTURED_DATA;
     }
@@ -623,7 +788,7 @@ fn encode_string_array(strs: &[&str], buf: &mut Vec<u8>) -> u32 {
     offset
 }
 
-/// Protocol 10 ArkTS metadata, also used by source-file descriptor identities.
+/// Protocol 10 `ArkTS` metadata, also used by source-file descriptor identities.
 pub fn source_file_arkts_options_json(sf: &SourceFile) -> String {
     let opts = sf.parse_options();
     if sf.script_kind() != tsrs_core::ScriptKind::ETS && !opts.ets_annotations_enable
@@ -632,7 +797,11 @@ pub fn source_file_arkts_options_json(sf: &SourceFile) -> String {
     { return String::new(); }
     let positions = PositionMap::compute(sf.text());
     let ranges: Vec<_> = sf.marked_kit_import_ranges.get().iter().map(|range|
-        [positions.utf8_to_utf16(i64::from(range.pos())), positions.utf8_to_utf16(i64::from(range.end()))]).collect();
+        [
+            positions.utf8_to_utf16(i64::from(range.pos().source_offset().unwrap_or(0))),
+            positions.utf8_to_utf16(i64::from(range.end().source_offset().unwrap_or(0))),
+        ])
+        .collect();
     serde_json::json!({
         "ets": opts.ets,
         "etsAnnotationsEnable": opts.ets_annotations_enable,

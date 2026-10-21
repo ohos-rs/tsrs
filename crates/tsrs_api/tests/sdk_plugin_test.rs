@@ -1,3 +1,4 @@
+#[expect(dead_code, reason = "This target uses only part of the shared integration helper module.")]
 mod common;
 
 use std::collections::BTreeSet;
@@ -164,7 +165,11 @@ impl SpanHost {
         let mut expected = self.legacy_text.lock().unwrap();
         while let Some(node) = pending.pop() {
             expected.insert(
-                (file.file_name().into(), positions.utf8_to_utf16(node.pos()), positions.utf8_to_utf16(node.end())),
+                (
+                    file.file_name().into(),
+                    positions.utf8_to_utf16(node.pos().source_offset().unwrap_or(0)) as i32,
+                    positions.utf8_to_utf16(node.end().source_offset().unwrap_or(0)) as i32,
+                ),
                 tsrs_scanner::get_source_text_of_node_from_source_file(file, node, false),
             );
             node.for_each_child(&mut |child| { pending.push(child); false });

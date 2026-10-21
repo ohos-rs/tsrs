@@ -8,7 +8,9 @@ pub(crate) struct trailingSemicolonDeferringWriter {
     has_pending_semicolon: bool,
 }
 
-pub(crate) fn get_trailing_semicolon_deferring_writer(writer: Box<dyn EmitTextWriter>) -> Box<dyn EmitTextWriter> {
+pub(crate) fn get_trailing_semicolon_deferring_writer(
+    writer: Box<dyn EmitTextWriter>,
+) -> Box<dyn EmitTextWriter> {
     Box::new(trailingSemicolonDeferringWriter { inner: writer, has_pending_semicolon: false })
 }
 
@@ -115,11 +117,11 @@ impl EmitTextWriter for trailingSemicolonDeferringWriter {
         self.inner.write_literal(s);
     }
 
-    fn get_text_pos(&self) -> i32 {
+    fn get_text_pos(&self) -> u32 {
         self.inner.get_text_pos()
     }
 
-    fn get_line(&self) -> i32 {
+    fn get_line(&self) -> u32 {
         self.inner.get_line()
     }
 
@@ -127,7 +129,7 @@ impl EmitTextWriter for trailingSemicolonDeferringWriter {
         self.inner.get_column()
     }
 
-    fn get_indent(&self) -> i32 {
+    fn get_indent(&self) -> u32 {
         self.inner.get_indent()
     }
 

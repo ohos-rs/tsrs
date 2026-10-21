@@ -33,11 +33,11 @@ pub struct Diagnostic {
 impl Diagnostic {
     // Same UTF-8 -> UTF-16 conversion as proto.go NewDiagnosticResponse.
     pub(crate) fn from_compiler(d: &CompilerDiagnostic) -> Self {
-        let (mut pos, mut end) = (d.pos(), d.end());
+        let (mut pos, mut end) = (d.pos().unwrap_or(0), d.end().unwrap_or(0));
         let mut start_position = None;
         let mut end_position = None;
         if let Some(file) = d.file() {
-            let len = file.text().len() as i32;
+            let len = file.text().len() as u32;
             pos = pos.clamp(0, len);
             end = end.clamp(pos, len);
             let position = |p| {
@@ -45,7 +45,7 @@ impl Diagnostic {
                     tsrs_scanner::get_ecma_line_and_utf16_character_of_position(&*file, p);
                 DiagnosticPosition {
                     line: line as u32,
-                    character: character as u32,
+                    character,
                 }
             };
             start_position = Some(position(pos));
@@ -88,8 +88,9 @@ pub struct ArktsBuildDiagnostics {
 }
 
 /// Owned normal diagnostics and comparison keys, tied to their immutable program.
-/// Consume this after obtaining transform facts to retire normal checkers before
-/// running the strict linter. No checker-region pointer crosses this API boundary.
+///
+/// Consume this after obtaining transform facts to retire normal checkers before running the strict linter.
+/// No checker-region pointer crosses this API boundary.
 pub struct ArktsNormalDiagnostics {
     snapshot: ProgramSnapshot,
     keys: tsrs_compiler::ArkTsDiagnosticKeys,

@@ -6,15 +6,21 @@ fn new_gen() -> Generator {
     new_generator("main.js", "/", "/", ComparePathsOptions::default())
 }
 
-fn raw(sources: &[&str], mappings: &str, names: &[&str], sources_content: Option<Vec<Option<&str>>>) -> RawSourceMap {
+fn raw(
+    sources: &[&str],
+    mappings: &str,
+    names: &[&str],
+    sources_content: Option<Vec<Option<&str>>>,
+) -> RawSourceMap {
     RawSourceMap {
         version: 3,
         file: "main.js".to_string(),
         source_root: "/".to_string(),
-        sources: sources.iter().map(|s| s.to_string()).collect(),
+        sources: sources.iter().map(std::string::ToString::to_string).collect(),
         mappings: mappings.to_string(),
-        names: names.iter().map(|s| s.to_string()).collect(),
-        sources_content: sources_content.map(|v| v.into_iter().map(|s| s.map(str::to_string)).collect()),
+        names: names.iter().map(std::string::ToString::to_string).collect(),
+        sources_content: sources_content
+            .map(|v| v.into_iter().map(|s| s.map(str::to_string)).collect()),
     }
 }
 
@@ -34,7 +40,8 @@ fn test_source_map_generator_empty() {
 fn test_source_map_generator_empty_serialized() {
     let mut r#gen = new_gen();
     let actual = r#gen.string();
-    let expected = r#"{"version":3,"file":"main.js","sourceRoot":"/","sources":[],"names":[],"mappings":""}"#;
+    let expected =
+        r#"{"version":3,"file":"main.js","sourceRoot":"/","sources":[],"names":[],"mappings":""}"#;
     assert_eq!(actual, expected);
 }
 
@@ -44,7 +51,7 @@ fn test_source_map_generator_add_source() {
     let mut r#gen = new_gen();
     let source_index = r#gen.add_source("/main.ts");
     let source_map = r#gen.raw_source_map();
-    assert_eq!(source_index, 0);
+    assert_eq!(source_index, SourceIndex::Index(0));
     assert_eq!(source_map, raw(&["main.ts"], "", &[], None));
 }
 
@@ -55,7 +62,7 @@ fn test_source_map_generator_set_source_content() {
     let source_index = r#gen.add_source("/main.ts");
     r#gen.set_source_content(source_index, "foo").unwrap();
     let source_map = r#gen.raw_source_map();
-    assert_eq!(source_index, 0);
+    assert_eq!(source_index, SourceIndex::Index(0));
     assert_eq!(source_map, raw(&["main.ts"], "", &[], Some(vec![Some("foo")])));
 }
 
@@ -67,7 +74,7 @@ fn test_source_map_generator_set_source_content_for_second_source_only() {
     let source_index = r#gen.add_source("/main.ts");
     r#gen.set_source_content(source_index, "foo").unwrap();
     let source_map = r#gen.raw_source_map();
-    assert_eq!(source_index, 1);
+    assert_eq!(source_index, SourceIndex::Index(1));
     assert_eq!(source_map, raw(&["skipped.ts", "main.ts"], "", &[], Some(vec![None, Some("foo")])));
 }
 
@@ -75,8 +82,14 @@ fn test_source_map_generator_set_source_content_for_second_source_only() {
 #[test]
 fn test_source_map_generator_set_source_content_source_index_out_of_range() {
     let mut r#gen = new_gen();
-    assert_eq!(err(r#gen.set_source_content(-1, "")), "sourceIndex is out of range");
-    assert_eq!(err(r#gen.set_source_content(0, "")), "sourceIndex is out of range");
+    assert_eq!(
+        err(r#gen.set_source_content(SourceIndex::Missing, "")),
+        "sourceIndex is out of range"
+    );
+    assert_eq!(
+        err(r#gen.set_source_content(SourceIndex::Index(0), "")),
+        "sourceIndex is out of range"
+    );
 }
 
 // generator_test.go:96
@@ -97,7 +110,7 @@ fn test_source_map_generator_add_name() {
     let mut r#gen = new_gen();
     let name_index = r#gen.add_name("foo");
     let source_map = r#gen.raw_source_map();
-    assert_eq!(name_index, 0);
+    assert_eq!(name_index, NameIndex::Index(0));
     assert_eq!(source_map, raw(&[], "", &["foo"], None));
 }
 
@@ -216,54 +229,30 @@ fn test_source_map_generator_add_generated_mapping_generated_line_cannot_backtra
     assert_eq!(err(r#gen.add_generated_mapping(0, 0)), "generatedLine cannot backtrack");
 }
 
-// generator_test.go:311
-#[test]
-fn test_source_map_generator_add_generated_mapping_generated_character_cannot_be_negative() {
-    let mut r#gen = new_gen();
-    r#gen.add_generated_mapping(0, 0).unwrap();
-    assert_eq!(err(r#gen.add_generated_mapping(0, -1)), "generatedCharacter cannot be negative");
-}
-
 // generator_test.go:318
 #[test]
 fn test_source_map_generator_add_source_mapping_generated_line_cannot_backtrack() {
     let mut r#gen = new_gen();
     let source_index = r#gen.add_source("/main.ts");
     r#gen.add_source_mapping(1, 0, source_index, 0, 0).unwrap();
-    assert_eq!(err(r#gen.add_source_mapping(0, 0, source_index, 0, 0)), "generatedLine cannot backtrack");
-}
-
-// generator_test.go:326
-#[test]
-fn test_source_map_generator_add_source_mapping_generated_character_cannot_be_negative() {
-    let mut r#gen = new_gen();
-    let source_index = r#gen.add_source("/main.ts");
-    r#gen.add_source_mapping(0, 0, source_index, 0, 0).unwrap();
-    assert_eq!(err(r#gen.add_source_mapping(0, -1, source_index, 0, 0)), "generatedCharacter cannot be negative");
+    assert_eq!(
+        err(r#gen.add_source_mapping(0, 0, source_index, 0, 0)),
+        "generatedLine cannot backtrack"
+    );
 }
 
 // generator_test.go:334
 #[test]
 fn test_source_map_generator_add_source_mapping_source_index_is_out_of_range() {
     let mut r#gen = new_gen();
-    assert_eq!(err(r#gen.add_source_mapping(0, 0, -1, 0, 0)), "sourceIndex is out of range");
-    assert_eq!(err(r#gen.add_source_mapping(0, 0, 0, 0, 0)), "sourceIndex is out of range");
-}
-
-// generator_test.go:341
-#[test]
-fn test_source_map_generator_add_source_mapping_source_line_cannot_be_negative() {
-    let mut r#gen = new_gen();
-    let source_index = r#gen.add_source("/main.ts");
-    assert_eq!(err(r#gen.add_source_mapping(0, 0, source_index, -1, 0)), "sourceLine cannot be negative");
-}
-
-// generator_test.go:348
-#[test]
-fn test_source_map_generator_add_source_mapping_source_character_cannot_be_negative() {
-    let mut r#gen = new_gen();
-    let source_index = r#gen.add_source("/main.ts");
-    assert_eq!(err(r#gen.add_source_mapping(0, 0, source_index, 0, -1)), "sourceCharacter cannot be negative");
+    assert_eq!(
+        err(r#gen.add_source_mapping(0, 0, SourceIndex::Missing, 0, 0)),
+        "sourceIndex is out of range"
+    );
+    assert_eq!(
+        err(r#gen.add_source_mapping(0, 0, SourceIndex::Index(0), 0, 0)),
+        "sourceIndex is out of range"
+    );
 }
 
 // generator_test.go:355
@@ -273,17 +262,10 @@ fn test_source_map_generator_add_named_source_mapping_generated_line_cannot_back
     let source_index = r#gen.add_source("/main.ts");
     let name_index = r#gen.add_name("foo");
     r#gen.add_named_source_mapping(1, 0, source_index, 0, 0, name_index).unwrap();
-    assert_eq!(err(r#gen.add_named_source_mapping(0, 0, source_index, 0, 0, name_index)), "generatedLine cannot backtrack");
-}
-
-// generator_test.go:364
-#[test]
-fn test_source_map_generator_add_named_source_mapping_generated_character_cannot_be_negative() {
-    let mut r#gen = new_gen();
-    let source_index = r#gen.add_source("/main.ts");
-    let name_index = r#gen.add_name("foo");
-    r#gen.add_named_source_mapping(0, 0, source_index, 0, 0, name_index).unwrap();
-    assert_eq!(err(r#gen.add_named_source_mapping(0, -1, source_index, 0, 0, name_index)), "generatedCharacter cannot be negative");
+    assert_eq!(
+        err(r#gen.add_named_source_mapping(0, 0, source_index, 0, 0, name_index)),
+        "generatedLine cannot backtrack"
+    );
 }
 
 // generator_test.go:373
@@ -291,26 +273,14 @@ fn test_source_map_generator_add_named_source_mapping_generated_character_cannot
 fn test_source_map_generator_add_named_source_mapping_source_index_is_out_of_range() {
     let mut r#gen = new_gen();
     let name_index = r#gen.add_name("foo");
-    assert_eq!(err(r#gen.add_named_source_mapping(0, 0, -1, 0, 0, name_index)), "sourceIndex is out of range");
-    assert_eq!(err(r#gen.add_named_source_mapping(0, 0, 0, 0, 0, name_index)), "sourceIndex is out of range");
-}
-
-// generator_test.go:381
-#[test]
-fn test_source_map_generator_add_named_source_mapping_source_line_cannot_be_negative() {
-    let mut r#gen = new_gen();
-    let name_index = r#gen.add_name("foo");
-    let source_index = r#gen.add_source("/main.ts");
-    assert_eq!(err(r#gen.add_named_source_mapping(0, 0, source_index, -1, 0, name_index)), "sourceLine cannot be negative");
-}
-
-// generator_test.go:389
-#[test]
-fn test_source_map_generator_add_named_source_mapping_source_character_cannot_be_negative() {
-    let mut r#gen = new_gen();
-    let name_index = r#gen.add_name("foo");
-    let source_index = r#gen.add_source("/main.ts");
-    assert_eq!(err(r#gen.add_named_source_mapping(0, 0, source_index, 0, -1, name_index)), "sourceCharacter cannot be negative");
+    assert_eq!(
+        err(r#gen.add_named_source_mapping(0, 0, SourceIndex::Missing, 0, 0, name_index)),
+        "sourceIndex is out of range"
+    );
+    assert_eq!(
+        err(r#gen.add_named_source_mapping(0, 0, SourceIndex::Index(0), 0, 0, name_index)),
+        "sourceIndex is out of range"
+    );
 }
 
 // generator_test.go:397
@@ -318,6 +288,12 @@ fn test_source_map_generator_add_named_source_mapping_source_character_cannot_be
 fn test_source_map_generator_add_named_source_mapping_name_index_is_out_of_range() {
     let mut r#gen = new_gen();
     let source_index = r#gen.add_source("/main.ts");
-    assert_eq!(err(r#gen.add_named_source_mapping(0, 0, source_index, 0, 0, -1)), "nameIndex is out of range");
-    assert_eq!(err(r#gen.add_named_source_mapping(0, 0, source_index, 0, 0, 0)), "nameIndex is out of range");
+    assert_eq!(
+        err(r#gen.add_named_source_mapping(0, 0, source_index, 0, 0, NameIndex::Missing)),
+        "nameIndex is out of range"
+    );
+    assert_eq!(
+        err(r#gen.add_named_source_mapping(0, 0, source_index, 0, 0, NameIndex::Index(0))),
+        "nameIndex is out of range"
+    );
 }

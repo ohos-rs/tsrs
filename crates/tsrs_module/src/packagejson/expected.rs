@@ -56,13 +56,17 @@ impl ExpectedValue for Vec<String> {
         match value {
             Json::Array(elements) => {
                 let mut result = Vec::with_capacity(elements.len());
-                for element in elements {
+                result = match elements.iter().try_fold(result, |mut result, element| {
                     let mut s = String::new();
                     if !s.unmarshal_from(element) {
-                        return false;
+                        return None;
                     }
                     result.push(s);
-                }
+                    Some(result)
+                }) {
+                    Some(result) => result,
+                    None => return false,
+                };
                 *self = result;
                 true
             }
@@ -78,6 +82,10 @@ impl ExpectedValue for Vec<String> {
     }
 }
 
+#[expect(
+    clippy::implicit_hasher,
+    reason = "The API deliberately accepts only FxHashMap, as required by the workspace hashing policy."
+)]
 impl ExpectedValue for FxHashMap<String, String> {
     fn unmarshal_from(&mut self, value: &Json) -> bool {
         match value {
@@ -139,8 +147,13 @@ pub struct Expected<T> {
 
 impl<T: ExpectedValue> Expected<T> {
     pub(crate) fn unmarshal_json(&mut self, data: &Json) {
-        if let Json::Null = data {
-            *self = Expected { actual_json_type: "null", null: true, valid: false, value: T::default() };
+        if matches!(data, Json::Null) {
+            *self = Expected {
+                actual_json_type: "null",
+                null: true,
+                valid: false,
+                value: T::default(),
+            };
             return;
         }
         // Go decodes the raw value with a fresh `json.Unmarshal`, which rejects duplicate names.
@@ -161,18 +174,14 @@ impl<T: ExpectedValue> Expected<T> {
     }
 
     pub fn get_value(&self) -> Option<&T> {
-        if self.valid {
-            Some(&self.value)
-        } else {
-            None
-        }
+        if self.valid { Some(&self.value) } else { None }
     }
 
     pub fn is_valid(&self) -> bool {
         self.valid
     }
 
-    pub fn expected_json_type(&self) -> &'static str {
+    pub fn expected_json_type() -> &'static str {
         T::expected_json_type()
     }
 
@@ -189,7 +198,7 @@ impl<T: ExpectedValue> TypeValidatedField for Expected<T> {
         Expected::is_valid(self)
     }
     fn expected_json_type(&self) -> &'static str {
-        Expected::expected_json_type(self)
+        Expected::<T>::expected_json_type()
     }
     fn actual_json_type(&self) -> &'static str {
         Expected::actual_json_type(self)

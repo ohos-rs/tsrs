@@ -21,7 +21,7 @@ import type {
     StringLiteralLikeNode,
     TypeElement,
     VariableStatement,
-} from "@maschwenk/tsrs/unstable/ast";
+} from "tsrs/unstable/ast";
 import {
     getCombinedModifierFlags,
     getNameOfDeclaration,
@@ -37,11 +37,11 @@ import {
     NodeFlags,
     SyntaxKind,
     TokenFlags,
-} from "@maschwenk/tsrs/unstable/ast";
+} from "tsrs/unstable/ast";
 import {
     getSynthesizedDeepClone,
     getSynthesizedDeepClones,
-} from "@maschwenk/tsrs/unstable/ast/clone";
+} from "tsrs/unstable/ast/clone";
 import {
     cloneNode,
     createBinaryExpression,
@@ -57,17 +57,17 @@ import {
     createStringLiteral,
     createToken,
     NodeObject,
-} from "@maschwenk/tsrs/unstable/ast/factory";
+} from "tsrs/unstable/ast/factory";
 import {
     visitEachChild,
     visitNode,
     visitNodes,
-} from "@maschwenk/tsrs/unstable/ast/visitor";
+} from "tsrs/unstable/ast/visitor";
 import {
     API,
     Checker,
     TypeFlags,
-} from "@maschwenk/tsrs/unstable/sync";
+} from "tsrs/unstable/sync";
 import assert from "node:assert";
 import {
     describe,
@@ -610,7 +610,8 @@ function spawnAPI(files: Record<string, string> = {
     "/src/foo.ts": `export const foo = 42;`,
 }) {
     return new API({
-        cwd: fileURLToPath(new URL("../../../../", import.meta.url).toString()),        fs: createVirtualFileSystem(files),
+        cwd: fileURLToPath(new URL("../../../../", import.meta.url).toString()),
+        fs: createVirtualFileSystem(files),
     });
 }
 

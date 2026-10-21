@@ -5,52 +5,13 @@ use rustc_hash::FxHashMap;
 use tsrs_ast::{self as ast, Diagnostic, SourceFile};
 use tsrs_core::P;
 
-use crate::program::{sort_and_deduplicate_diagnostics, Program};
+use crate::program::{Program, sort_and_deduplicate_diagnostics};
 use crate::splitcheck;
 
-#[cfg(feature = "checker")]
 pub use tsrs_checker::{Checker, Context};
 
-#[cfg(feature = "checker")]
 fn new_checker(program: &'static Program) -> Box<Checker> {
     tsrs_checker::new_checker(program)
-}
-
-// Built without the checker crate: programs can be created, parsed and bound, but nothing can
-// be type checked.
-#[cfg(not(feature = "checker"))]
-pub struct Checker {
-    pub type_count: u32,
-    pub symbol_count: u32,
-    pub total_instantiation_count: u32,
-    pub lazy_member_stats: tsrs_core::lazymembers::LazyMemberStats,
-}
-
-#[cfg(not(feature = "checker"))]
-pub use tsrs_core::context::Context;
-
-#[cfg(not(feature = "checker"))]
-impl Checker {
-    pub fn get_diagnostics_exported(&mut self, _ctx: &Context, _source_file: P<SourceFile>) -> Vec<P<Diagnostic>> {
-        unimplemented!("tsrs_compiler was built without the `checker` feature")
-    }
-
-    pub fn get_suggestion_diagnostics(&mut self, _ctx: &Context, _source_file: P<SourceFile>) -> Vec<P<Diagnostic>> {
-        unimplemented!("tsrs_compiler was built without the `checker` feature")
-    }
-
-    pub fn get_global_diagnostics(&mut self) -> Vec<P<Diagnostic>> {
-        unimplemented!("tsrs_compiler was built without the `checker` feature")
-    }
-
-    pub fn was_canceled(&mut self) -> bool {
-        false
-    }
-}
-
-#[cfg(not(feature = "checker"))]
-fn new_checker(_program: &'static Program) -> Box<Checker> {
-    Box::new(Checker { type_count: 0, symbol_count: 0, total_instantiation_count: 0, lazy_member_stats: Default::default() })
 }
 
 // checkerpool.go:24
@@ -86,6 +47,7 @@ enum checkerHandleKind {
 impl CheckerHandle {
     fn locked(guard: MutexGuard<'static, SlotChecker>) -> CheckerHandle {
         let scope = guard.enter();
+        crate::sharedgraph::enter_checker(&guard);
         CheckerHandle { kind: checkerHandleKind::Locked { guard, _scope: scope } }
     }
 
@@ -94,11 +56,20 @@ impl CheckerHandle {
     /// # Safety
     /// Until `release` runs, the caller guarantees that `checker` stays alive and that nothing else accesses it
     /// (the pool has marked it held, Go `heldBy[i] = requestID`).
-    pub unsafe fn from_raw(checker: NonNull<Checker>, release: impl FnOnce() + 'static) -> CheckerHandle {
-        CheckerHandle { kind: checkerHandleKind::External { checker, release: Some(Box::new(release)) } }
+    pub unsafe fn from_raw(
+        checker: NonNull<Checker>,
+        release: impl FnOnce() + 'static,
+    ) -> CheckerHandle {
+        CheckerHandle {
+            kind: checkerHandleKind::External { checker, release: Some(Box::new(release)) },
+        }
     }
 
     // Go `done()`.
+    #[expect(
+        clippy::unused_self,
+        reason = "Releasing a checker handle remains an instance lifecycle operation even when the pool owns its storage."
+    )]
     pub fn release(self) {}
 }
 
@@ -138,7 +109,10 @@ impl Drop for CheckerHandle {
 // itself), so a pool that shares checkers between threads stores them in this wrapper and, like the built-in pool,
 // lets only the thread that holds a checker touch it.
 pub struct PooledChecker(Box<Checker>);
-#[expect(clippy::non_send_fields_in_send_ty, reason = "the checker: only the thread that holds it touches it (see above)")]
+#[expect(
+    clippy::non_send_fields_in_send_ty,
+    reason = "the checker: only the thread that holds it touches it (see above)"
+)]
 // SAFETY: the checker's `Rc`s and closures are reachable only from the checker, and the pool lets one thread at a time
 // hold it (see above), so moving it to that thread moves all of them together.
 unsafe impl Send for PooledChecker {}
@@ -219,15 +193,31 @@ struct CheckerSlot(Mutex<SlotChecker>);
 // tsrs-only (notes/mem-recycle-checkers.md): a checker of the built-in pool and, when the type-check pass may retire
 // checkers (`max_memory`), the region that holds everything it allocates. The region is the allocation target
 // whenever the checker runs (`enter`), so dropping the checker and then the region gives back all of its memory.
+//
+// With `ProgramOptions::checker_diagnostic_regions` (watch mode), the diagnostics the checker makes go to a second region of the slot
+// (`arena::Region::route_diagnostics`), freed with the program like the checker's: the snapshot that keeps some of
+// them copies those (tsrs_incremental `Program::copy_diagnostics`).
 pub(crate) struct SlotChecker {
     checker: Option<Box<Checker>>,
     region: Option<tsrs_core::arena::Region>,
     snapshot_owned: bool,
+    diagnostics: Option<tsrs_core::arena::Region>,
 }
 
-enum CheckerScope {
-    Scratch { _scope: tsrs_core::arena::ScratchScope },
-    Snapshot { _scope: tsrs_core::arena::RegionScope },
+/// `SlotChecker::enter`.
+pub(crate) struct CheckerScope {
+    // Before the region's scope: the route applies while the region is the target.
+    _route: Option<tsrs_core::arena::DiagnosticRoute>,
+    _scope: CheckerScopeKind,
+}
+
+#[expect(
+    dead_code,
+    reason = "the payloads keep the arena scope alive until the guard drops"
+)]
+enum CheckerScopeKind {
+    Scratch(tsrs_core::arena::ScratchScope),
+    Snapshot(tsrs_core::arena::RegionScope),
 }
 
 impl SlotChecker {
@@ -237,26 +227,66 @@ impl SlotChecker {
         // too: strict options retain SDK hosts, which can keep Node's event loop alive.
         let snapshot_owned = program.compiler_checker_pool().is_none();
         if !in_region && !snapshot_owned {
-            return SlotChecker { checker: Some(factory(program)), region: None, snapshot_owned };
+            return SlotChecker {
+                checker: Some(factory(program)),
+                region: None,
+                snapshot_owned,
+                diagnostics: None,
+            };
         }
-        let region = if snapshot_owned { tsrs_core::arena::Region::new(1 << 20) }
-            else { tsrs_core::arena::Region::new_scratch(1 << 20) };
+        let region = if snapshot_owned {
+            tsrs_core::arena::Region::new(1 << 20)
+        } else {
+            tsrs_core::arena::Region::new_scratch(1 << 20)
+        };
+        let diagnostics = program
+            .checker_diagnostic_regions
+            .then(|| tsrs_core::arena::Region::new_scratch(64 << 10));
         let checker = {
-            let _scope = Self::enter_region(&region, snapshot_owned);
+            let _scope = Self::enter_region(&region, snapshot_owned, diagnostics.as_ref());
             factory(program)
         };
-        SlotChecker { checker: Some(checker), region: Some(region), snapshot_owned }
+        SlotChecker { checker: Some(checker), region: Some(region), snapshot_owned, diagnostics }
+    }
+
+    // A replacement for a retired checker: a fork of the frozen shared-graph seed when there is one (it starts with the
+    // seed's graph instead of rebuilding it), else a fresh checker; in a region of its own either way.
+    // The retired checker's diagnostics stay with the slot: the pool's results refer to them.
+    fn new_replacement(
+        program: &'static Program,
+        diagnostics: Option<tsrs_core::arena::Region>,
+        factory: fn(&'static Program) -> Box<Checker>,
+    ) -> SlotChecker {
+        let region = tsrs_core::arena::Region::new_scratch(1 << 20);
+        let checker = {
+            let _scope = Self::enter_region(&region, false, diagnostics.as_ref());
+            let fork = crate::sharedgraph::fresh_fork();
+            fork.unwrap_or_else(|| factory(program))
+        };
+        SlotChecker { checker: Some(checker), region: Some(region), snapshot_owned: false, diagnostics }
     }
 
     // Snapshot checkers use the same registered-region ownership as the project
     // pool. CLI recycling uses scratch regions so shared data survives retirement.
     fn enter(&self) -> Option<CheckerScope> {
-        self.region.as_ref().map(|region| Self::enter_region(region, self.snapshot_owned))
+        self.region
+            .as_ref()
+            .map(|region| Self::enter_region(region, self.snapshot_owned, self.diagnostics.as_ref()))
     }
 
-    fn enter_region(region: &tsrs_core::arena::Region, snapshot_owned: bool) -> CheckerScope {
-        if snapshot_owned { CheckerScope::Snapshot { _scope: region.enter() } }
-        else { CheckerScope::Scratch { _scope: region.enter_scratch() } }
+    fn enter_region(
+        region: &tsrs_core::arena::Region,
+        snapshot_owned: bool,
+        diagnostics: Option<&tsrs_core::arena::Region>,
+    ) -> CheckerScope {
+        // Before the region's scope: the route applies while the region is the target.
+        let route = diagnostics.map(tsrs_core::arena::Region::route_diagnostics);
+        let scope = if snapshot_owned {
+            CheckerScopeKind::Snapshot(region.enter())
+        } else {
+            CheckerScopeKind::Scratch(region.enter_scratch())
+        };
+        CheckerScope { _route: route, _scope: scope }
     }
 
     // Drop heap state while its allocation scope is active, then the arena. Both
@@ -267,6 +297,7 @@ impl SlotChecker {
             drop(self.checker.take());
         }
         drop(self.region.take());
+        drop(self.diagnostics.take());
     }
 
     // Bytes of arena the checker holds (its region's chunks), 0 without a region.
@@ -312,7 +343,12 @@ pub(crate) struct RetiredCheckers {
 // TS2859 boundary.
 fn relation_cache_limit() -> usize {
     static N: OnceLock<usize> = OnceLock::new();
-    *N.get_or_init(|| std::env::var("TSRS_RELATION_CACHE_LIMIT").ok().and_then(|v| v.parse().ok()).unwrap_or(2_000_000))
+    *N.get_or_init(|| {
+        std::env::var("TSRS_RELATION_CACHE_LIMIT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(2_000_000)
+    })
 }
 
 // With `--maxMemory`, each checker checks its leaf files before its other files (see the group loop);
@@ -334,7 +370,10 @@ static CLI_MAX_MEMORY: OnceLock<usize> = OnceLock::new();
 /// number is MiB. None if it does not parse.
 pub fn parse_memory_size(v: &str) -> Option<usize> {
     let v = v.trim();
-    let v = v.strip_suffix(['b', 'B']).filter(|s| s.ends_with(|c: char| c.is_ascii_alphabetic())).unwrap_or(v);
+    let v = v
+        .strip_suffix(['b', 'B'])
+        .filter(|s| s.ends_with(|c: char| c.is_ascii_alphabetic()))
+        .unwrap_or(v);
     let (num, shift) = match v.chars().last()?.to_ascii_uppercase() {
         'K' => (&v[..v.len() - 1], 10),
         'M' => (&v[..v.len() - 1], 20),
@@ -352,7 +391,13 @@ pub fn set_max_memory_from_cli(bytes: usize) {
 // The target in bytes (0: off).
 fn max_memory() -> usize {
     static MAX: OnceLock<usize> = OnceLock::new();
-    *MAX.get_or_init(|| CLI_MAX_MEMORY.get().copied().or_else(|| std::env::var("TSRS_MAX_MEMORY").ok().and_then(|v| parse_memory_size(&v))).unwrap_or(0))
+    *MAX.get_or_init(|| {
+        CLI_MAX_MEMORY
+            .get()
+            .copied()
+            .or_else(|| parse_memory_size(&std::env::var("TSRS_MAX_MEMORY").ok()?))
+            .unwrap_or(0)
+    })
 }
 
 // A checker whose region holds less than this is never retired (`TSRS_RETIRE_MIN=<size>` overrides it, for tests):
@@ -360,10 +405,18 @@ fn max_memory() -> usize {
 // smaller ones costs that again for little memory.
 fn retire_min() -> usize {
     static MIN: OnceLock<usize> = OnceLock::new();
-    *MIN.get_or_init(|| std::env::var("TSRS_RETIRE_MIN").ok().and_then(|v| parse_memory_size(&v)).unwrap_or(128 << 20))
+    *MIN.get_or_init(|| {
+        std::env::var("TSRS_RETIRE_MIN")
+            .ok()
+            .and_then(|v| parse_memory_size(&v))
+            .unwrap_or(128 << 20)
+    })
 }
 
-#[expect(clippy::non_send_fields_in_send_ty, reason = "the checker: touched only under its mutex (see above)")]
+#[expect(
+    clippy::non_send_fields_in_send_ty,
+    reason = "the checker: touched only under its mutex (see above)"
+)]
 // SAFETY: the checker's non-`Send` parts are reachable only from the checker, which is reached only through the mutex.
 unsafe impl Send for CheckerSlot {}
 // SAFETY: every access to the checker holds its mutex, and no reference outlives the guard (see above).
@@ -375,11 +428,15 @@ impl Drop for poolState {
     fn drop(&mut self) {
         // SAFETY: `checkers` came from `Box::leak` of a boxed slice in `create_checkers`, and no handle borrowing a
         // checker outlives the pool's program.
-        unsafe { drop(Box::from_raw(std::ptr::from_ref::<[CheckerSlot]>(self.checkers).cast_mut())) };
+        unsafe {
+            drop(Box::from_raw(std::ptr::from_ref::<[CheckerSlot]>(self.checkers).cast_mut()));
+        };
     }
 }
 
 pub(crate) struct poolState {
+    /// The shared graph is on (sharedgraph.rs): the type-check pass starts the seed and turns its checkers into forks.
+    shared_graph: bool,
     // Leaked like the program that owns the pool, so a handle can hold a checker's lock without borrowing the pool.
     checkers: &'static [CheckerSlot],
     // Program file index of each file.
@@ -387,14 +444,10 @@ pub(crate) struct poolState {
     // The checker that runs each program file: the static assignment until stealing moves a file to the checker that
     // checks it, so later passes over the file (declaration diagnostics, emit) use the checker that has its state.
     owners: Vec<std::sync::atomic::AtomicU32>,
+    // The static assignment `owners` started from, for a program that reuses this one (`inherited_associations`).
+    pub(crate) associations: Vec<usize>,
     // Estimated work per program file (checked_file_weights), what stealing balances.
     weights: Vec<i64>,
-    // TSRS_ASSIGNMENT_STATS only: per for_each_checker_group_do call, files each checker took from other checkers.
-    pub(crate) group_stolen: Mutex<Vec<Vec<usize>>>,
-    // TSRS_ASSIGNMENT_STATS only: per for_each_checker_group_do call, (seconds, files run) per checker.
-    pub(crate) group_runs: Mutex<Vec<Vec<(f64, usize)>>>,
-    // TSRS_ASSIGNMENT_STATS only: per for_each_checker_group_do call, thread CPU seconds per checker.
-    pub(crate) group_cpu: Mutex<Vec<Vec<f64>>>,
     // TSRS_FILE_TIMES only: (file, checker, seconds, thread CPU seconds) per checked file, in completion order.
     pub(crate) file_times: Mutex<Vec<(P<SourceFile>, usize, f64, f64)>>,
     // Cost cache only: (file, thread CPU seconds) per checked file, per checker pass.
@@ -414,7 +467,9 @@ pub(crate) fn file_times_path() -> Option<&'static str> {
 
 pub(crate) fn write_file_times(program: &'static Program) {
     use std::fmt::Write;
-    let (Some(path), Some(state)) = (file_times_path(), program.compiler_checker_pool().and_then(|pool| pool.state.get())) else {
+    let (Some(path), Some(state)) =
+        (file_times_path(), program.compiler_checker_pool().and_then(|pool| pool.state.get()))
+    else {
         return;
     };
     fn count_kinds(node: P<tsrs_ast::Node>, counts: &mut [u32]) {
@@ -428,7 +483,14 @@ pub(crate) fn write_file_times(program: &'static Program) {
     for &(file, checker, seconds, cpu) in state.file_times.lock().unwrap().iter() {
         let mut counts = vec![0u32; tsrs_ast::Kind::Count as usize + 1];
         count_kinds(file.as_node(), &mut counts);
-        let _ = write!(out, "{checker}\t{seconds:.6}\t{cpu:.6}\t{}\t{}\t{}\t{}\t", file.node_count.get(), file.text().len(), file.imports().len(), file.file_name());
+        let _ = write!(
+            out,
+            "{checker}\t{seconds:.6}\t{cpu:.6}\t{}\t{}\t{}\t{}\t",
+            file.node_count.get(),
+            file.text().len(),
+            file.imports().len(),
+            file.file_name()
+        );
         for (kind, &count) in counts.iter().enumerate().filter(|&(_, &c)| c > 0) {
             let _ = write!(out, "{:?}={count} ", tsrs_ast::Kind::from_i16(kind as i16));
         }
@@ -437,8 +499,7 @@ pub(crate) fn write_file_times(program: &'static Program) {
     std::fs::write(path, out).expect("TSRS_FILE_TIMES");
 }
 
-// CPU time of the calling thread (TSRS_ASSIGNMENT_STATS): unlike wall time it does not grow when other
-// processes take the cores, so per-checker balance can be compared on a loaded machine.
+// CPU time of the calling thread: used by the per-file timing and checker-cost-cache tools.
 #[cfg(unix)]
 pub(crate) fn thread_cpu_seconds() -> f64 {
     #[repr(C)]
@@ -458,19 +519,12 @@ pub(crate) fn thread_cpu_seconds() -> f64 {
     if unsafe { clock_gettime(CLOCK_THREAD_CPUTIME_ID, &raw mut ts) } != 0 {
         return 0.0;
     }
-    ts.tv_sec as f64 + ts.tv_nsec as f64 * 1e-9
+    (ts.tv_nsec as f64).mul_add(1e-9, ts.tv_sec as f64)
 }
 
 #[cfg(not(unix))]
 pub(crate) fn thread_cpu_seconds() -> f64 {
     0.0
-}
-
-// TSRS_ASSIGNMENT_STATS=1: record per-checker group timings and, after `--extendedDiagnostics`, print the
-// per-checker assignment report (checkerpool_stats.rs). Read once; nothing is recorded when unset.
-pub fn assignment_stats_enabled() -> bool {
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var("TSRS_ASSIGNMENT_STATS").is_ok_and(|v| !v.is_empty() && v != "0"))
 }
 
 pub(crate) struct checkerPool {
@@ -479,6 +533,8 @@ pub(crate) struct checkerPool {
     checker_count: usize,
     single_threaded: bool,
     state: OnceLock<poolState>,
+    // tsrs-only: the file assignment of the pool of the program this one reuses (`inherited_associations`).
+    pub(crate) inherited_associations: Option<Vec<usize>>,
 }
 
 /*
@@ -515,7 +571,11 @@ struct checkerAssociationPolicy {
     balance_penalty_multiplier: i64,
 }
 
-fn get_checker_association_policy(total_weight: i64, declaration_weight: i64, checker_count: usize) -> checkerAssociationPolicy {
+fn get_checker_association_policy(
+    total_weight: i64,
+    declaration_weight: i64,
+    checker_count: usize,
+) -> checkerAssociationPolicy {
     if should_prioritize_source_files(total_weight, declaration_weight, checker_count) {
         return checkerAssociationPolicy {
             prioritize_source_files: true,
@@ -530,12 +590,20 @@ fn get_checker_association_policy(total_weight: i64, declaration_weight: i64, ch
             balance_penalty_multiplier: CHECKER_ASSOCIATION_BALANCE_PENALTY_MULTIPLIER,
         };
     }
-    checkerAssociationPolicy { prioritize_source_files: false, source_file_weight_multiplier: 1, balance_penalty_multiplier: 1 }
+    checkerAssociationPolicy {
+        prioritize_source_files: false,
+        source_file_weight_multiplier: 1,
+        balance_penalty_multiplier: 1,
+    }
 }
 
 // getCheckerAssociationsInOrder partitions the import graph using a weighted adaptation
 // of FENNEL's streaming graph-partitioning objective with gamma = 3/2. A None order means
 // stable program order. Ties are deterministic.
+#[expect(
+    clippy::float_cmp,
+    reason = "Exact score ties preserve the deterministic scheduling tie-breaker."
+)]
 fn get_checker_associations_in_order(
     file_weights: &[i64],
     adjacent_files: &[Vec<usize>],
@@ -557,11 +625,12 @@ fn get_checker_associations_in_order(
         edge_count += adjacent_files[i].len() as i64;
     }
 
-    let mut associations: Vec<i64> = vec![-1; file_weights.len()];
+    let mut associations: Vec<Option<usize>> = vec![None; file_weights.len()];
     let mut checker_weights: Vec<i64> = vec![0; checker_count];
     let checker_count_i = checker_count as i64;
     let average_checker_weight = (total_weight + checker_count_i - 1) / checker_count_i;
-    let max_checker_weight = max_file_weight.max(average_checker_weight + average_checker_weight / 100);
+    let max_checker_weight =
+        max_file_weight.max(average_checker_weight + average_checker_weight / 100);
     let total_weight_float = total_weight as f64;
     let alpha = penalty_multiplier as f64 * (edge_count / 2) as f64 * (checker_count as f64).sqrt()
         / (total_weight_float * total_weight_float.sqrt());
@@ -573,17 +642,16 @@ fn get_checker_associations_in_order(
             None => position,
         };
 
-        neighbor_counts.iter_mut().for_each(|c| *c = 0);
+        neighbor_counts.fill(0);
         for &adjacent_file in &adjacent_files[file_index] {
-            let checker_index = associations[adjacent_file];
-            if checker_index >= 0 {
-                neighbor_counts[checker_index as usize] += 1;
+            if let Some(checker_index) = associations[adjacent_file] {
+                neighbor_counts[checker_index] += 1;
             }
         }
 
         // tsrs-only: the locality assignment also counts the modules a group shares with each checker (affinity.rs).
         let module_affinities = affinity.as_deref_mut().map(|a| a.affinities(file_index));
-        let mut best_checker: i64 = -1;
+        let mut best_checker = None;
         let mut best_score = f64::NEG_INFINITY;
         for (checker_index, &checker_weight) in checker_weights.iter().enumerate() {
             if checker_weight + file_weights[file_index] > max_checker_weight {
@@ -594,41 +662,57 @@ fn get_checker_associations_in_order(
             let new_penalty = new_weight * new_weight.sqrt();
             let old_penalty = old_weight * old_weight.sqrt();
             let penalty = alpha * (new_penalty - old_penalty);
-            let score = neighbor_counts[checker_index] as f64 - penalty + module_affinities.map_or(0.0, |a| a[checker_index]);
+            let score = neighbor_counts[checker_index] as f64 - penalty
+                + module_affinities.map_or(0.0, |a| a[checker_index]);
             if score > best_score
-                || score == best_score && (best_checker < 0 || checker_weight < checker_weights[best_checker as usize])
+                || score == best_score
+                    && best_checker.is_none_or(|best| checker_weight < checker_weights[best])
             {
-                best_checker = checker_index as i64;
+                best_checker = Some(checker_index);
                 best_score = score;
             }
         }
-        if best_checker < 0 {
-            best_checker = 0;
-            for (checker_index, &checker_weight) in checker_weights[1..].iter().enumerate() {
-                if checker_weight < checker_weights[best_checker as usize] {
-                    best_checker = checker_index as i64 + 1;
-                }
-            }
+        if best_checker.is_none() {
+            best_checker = Some(0);
+            best_checker = checker_weights[1..].iter().enumerate().fold(
+                best_checker,
+                |mut best_checker, (checker_index, &checker_weight)| {
+                    if checker_weight < checker_weights[best_checker.unwrap()] {
+                        best_checker = Some(checker_index + 1);
+                    }
+
+                    best_checker
+                },
+            );
         }
-        associations[file_index] = best_checker;
-        checker_weights[best_checker as usize] += file_weights[file_index];
+        let best_checker = best_checker.unwrap();
+        associations[file_index] = Some(best_checker);
+        checker_weights[best_checker] += file_weights[file_index];
         if let Some(affinity) = affinity.as_deref_mut() {
-            affinity.place(file_index, best_checker as usize);
+            affinity.place(file_index, best_checker);
         }
     }
-    associations.into_iter().map(|a| a as usize).collect()
+    associations.into_iter().map(Option::unwrap).collect()
 }
 
 // getCheckerAssociationOrder places source files before declarations and orders each group by
 // descending estimated work. Returning None preserves program order.
-fn get_checker_association_order(file_weights: &[i64], is_declaration_file: &[bool], prioritize_source_files: bool) -> Option<Vec<usize>> {
+fn get_checker_association_order(
+    file_weights: &[i64],
+    is_declaration_file: &[bool],
+    prioritize_source_files: bool,
+) -> Option<Vec<usize>> {
     if !prioritize_source_files {
         return None;
     }
     let mut file_order: Vec<usize> = (0..file_weights.len()).collect();
     file_order.sort_by(|&left, &right| {
         if is_declaration_file[left] != is_declaration_file[right] {
-            return if !is_declaration_file[left] { std::cmp::Ordering::Less } else { std::cmp::Ordering::Greater };
+            return if !is_declaration_file[left] {
+                std::cmp::Ordering::Less
+            } else {
+                std::cmp::Ordering::Greater
+            };
         }
         if file_weights[left] != file_weights[right] {
             return file_weights[right].cmp(&file_weights[left]);
@@ -644,7 +728,11 @@ fn get_checker_association_base_weight(node_count: i64, text_length: i64) -> i64
 
 // shouldPrioritizeSourceFiles reports whether all declaration-file base work is at
 // most half of one average checker load.
-fn should_prioritize_source_files(total_weight: i64, declaration_weight: i64, checker_count: usize) -> bool {
+fn should_prioritize_source_files(
+    total_weight: i64,
+    declaration_weight: i64,
+    checker_count: usize,
+) -> bool {
     declaration_weight * checker_count as i64 * 2 <= total_weight
 }
 
@@ -660,21 +748,28 @@ fn get_checker_association_weights(base_weights: &[i64], import_counts: &[i64]) 
     if total_imports > 0 {
         import_weight = (total_base_weight / total_imports).max(1);
     }
-    base_weights.iter().enumerate().map(|(i, &base_weight)| base_weight + import_counts[i] * import_weight).collect()
+    base_weights
+        .iter()
+        .enumerate()
+        .map(|(i, &base_weight)| base_weight + import_counts[i] * import_weight)
+        .collect()
 }
 
 impl checkerPool {
     // checkerpool.go:305 newCheckerPool / checkerpool.go:309 newCheckerPoolWithTracing (tracing is not ported).
-    pub(crate) fn new(program: &'static Program) -> checkerPool {
-        Self::with_factory(program, new_checker)
+    pub(crate) fn new(program: &'static Program, previous: Option<&checkerPool>) -> checkerPool {
+        Self::with_factory(program, new_checker, previous)
     }
 
-    #[cfg(feature = "checker")]
     pub(crate) fn new_arkts_linter(program: &'static Program) -> checkerPool {
-        Self::with_factory(program, |p| tsrs_checker::new_arkts_linter_checker(p))
+        Self::with_factory(program, |p| tsrs_checker::new_arkts_linter_checker(p), None)
     }
 
-    fn with_factory(program: &'static Program, factory: fn(&'static Program) -> Box<Checker>) -> checkerPool {
+    fn with_factory(
+        program: &'static Program,
+        factory: fn(&'static Program) -> Box<Checker>,
+        previous: Option<&checkerPool>,
+    ) -> checkerPool {
         // Go's default is a constant 4; tsrs picks it per machine and program (default_checker_count).
         let checker_count: i64 = if program.single_threaded() {
             1
@@ -685,9 +780,18 @@ impl checkerPool {
         };
 
         // Go `max(min(checkerCount, len(files), 256), 1)` on int: a negative or zero count is one checker.
-        let checker_count = checker_count.min(program.files.len() as i64).min(256).max(1) as usize;
+        let checker_count = checker_count.min(program.files.len() as i64).clamp(1, 256) as usize;
 
-        checkerPool { factory, program, checker_count, single_threaded: program.single_threaded() || checker_count == 1, state: OnceLock::new() }
+        let inherited_associations =
+            previous.and_then(|previous| inherited_associations(program, checker_count, previous));
+        checkerPool {
+            factory,
+            program,
+            checker_count,
+            single_threaded: program.single_threaded() || checker_count == 1,
+            state: OnceLock::new(),
+            inherited_associations,
+        }
     }
 
     // checkerpool.go:331
@@ -727,7 +831,7 @@ impl checkerPool {
     fn lock_checker(&self, state: &poolState, index: usize) -> MutexGuard<'static, SlotChecker> {
         let mut slot = state.checkers[index].0.lock().unwrap();
         if slot.checker.is_none() {
-            *slot = SlotChecker::new(self.program, state.recycle, self.factory);
+            *slot = SlotChecker::new(self.program, state.recycle || self.program.checker_regions, self.factory);
         }
         slot
     }
@@ -764,45 +868,70 @@ impl checkerPool {
                 crate::program::worker_pool().broadcast(|_| tsrs_core::ptr::release_own_arena());
             }
             let recycle = program.checker_recycling && !self.single_threaded && max_memory() > 0;
+            let shared = crate::sharedgraph::enabled() && !program.single_threaded();
             let create_and_assign = || {
-                let create_start = std::time::Instant::now();
-                #[cfg(feature = "checker")]
+                let create_start =
+                    tsrs_core::phases::Timer::new(program.options().diagnostics_enabled());
                 tsrs_checker::links::set_multiple_checkers(self.checker_count > 1);
-                let slots: Vec<Mutex<Option<CheckerSlot>>> = (0..self.checker_count).map(|_| Mutex::new(None)).collect();
+                let slots: Vec<Mutex<Option<CheckerSlot>>> =
+                    std::iter::repeat_with(|| Mutex::new(None)).take(self.checker_count).collect();
+                // With the shared graph (sharedgraph.rs) the pool's checkers are plain until the type-check pass makes
+                // them forks of the seed.
                 run_work_group(self.single_threaded, self.checker_count, |i| {
-                    *slots[i].lock().unwrap() = Some(CheckerSlot(Mutex::new(SlotChecker::new(program, recycle, self.factory))));
+                    let c = SlotChecker::new(program, recycle || program.checker_regions, self.factory);
+                    if shared && i == 0 {
+                        crate::sharedgraph::note_fresh_checker(&c);
+                    }
+                    *slots[i].lock().unwrap() = Some(CheckerSlot(Mutex::new(c)));
                 });
-                let checkers: &'static [CheckerSlot] =
-                    Box::leak(slots.into_iter().map(|s| s.into_inner().unwrap().unwrap()).collect::<Vec<_>>().into_boxed_slice());
-                tsrs_core::phases::record("Checkers: create", create_start.elapsed());
-                let associations = tsrs_core::phases::time("Checkers: assign files", || compute_associations(program, self.checker_count));
+                let checkers: &'static [CheckerSlot] = Box::leak(
+                    slots
+                        .into_iter()
+                        .map(|s| s.into_inner().unwrap().unwrap())
+                        .collect::<Vec<_>>()
+                        .into_boxed_slice(),
+                );
+                create_start.record("Checkers: create");
+                let associations = match &self.inherited_associations {
+                    Some(associations) => associations.clone(),
+                    None => tsrs_core::phases::time(
+                        program.options().diagnostics_enabled(),
+                        "Checkers: assign files",
+                        || compute_associations(program, self.checker_count),
+                    ),
+                };
                 (checkers, associations)
             };
             // tsrs-only: the CLI's leaf classification reads only the loaded program; it runs meanwhile
             // (fileregions.rs `prepare`).
-            let (checkers, associations) = if program.leaf_files != crate::fileregions::LeafMode::Off && !self.single_threaded {
-                std::thread::scope(|s| {
-                    let prepare = s.spawn(|| crate::fileregions::prepare(program));
-                    let created = create_and_assign();
-                    prepare.join().unwrap();
-                    created
-                })
-            } else {
-                create_and_assign()
-            };
+            let (checkers, associations) =
+                if program.leaf_files != crate::fileregions::LeafMode::Off && !self.single_threaded
+                {
+                    std::thread::scope(|s| {
+                        let prepare = s.spawn(|| crate::fileregions::prepare(program));
+                        let created = create_and_assign();
+                        prepare.join().unwrap();
+                        created
+                    })
+                } else {
+                    create_and_assign()
+                };
 
             let files = &program.files;
-            let file_indices: FxHashMap<P<SourceFile>, usize> = files.iter().enumerate().map(|(i, &f)| (f, i)).collect();
-            let owners = associations.iter().map(|&c| std::sync::atomic::AtomicU32::new(c as u32)).collect();
-            let weights = if self.checker_count > 1 { checked_file_weights(program) } else { Vec::new() };
+            let file_indices: FxHashMap<P<SourceFile>, usize> =
+                files.iter().enumerate().map(|(i, &f)| (f, i)).collect();
+            let owners =
+                associations.iter().map(|&c| std::sync::atomic::AtomicU32::new(c as u32)).collect();
+            let associations_for_reuse = associations;
+            let weights =
+                if self.checker_count > 1 { checked_file_weights(program) } else { Vec::new() };
             poolState {
+                shared_graph: shared,
                 checkers,
                 file_indices,
                 owners,
+                associations: associations_for_reuse,
                 weights,
-                group_stolen: Mutex::new(Vec::new()),
-                group_runs: Mutex::new(Vec::new()),
-                group_cpu: Mutex::new(Vec::new()),
                 file_times: Mutex::new(Vec::new()),
                 file_cpu: Mutex::new(Vec::new()),
                 recycle,
@@ -831,6 +960,7 @@ impl checkerPool {
         let run = |idx: usize| {
             let mut guard = self.lock_checker(state, idx);
             let _scope = guard.enter();
+            crate::sharedgraph::enter_checker(&guard);
             cb(idx, &mut guard);
         };
         run_work_group(self.single_threaded, state.checkers.len(), run);
@@ -839,11 +969,13 @@ impl checkerPool {
     // checkerpool.go:464
     pub(crate) fn get_global_diagnostics(&self) -> Vec<P<Diagnostic>> {
         let state = self.create_checkers();
-        let global_diagnostics: Vec<Mutex<Vec<P<Diagnostic>>>> = (0..state.checkers.len()).map(|_| Mutex::new(Vec::new())).collect();
+        let global_diagnostics: Vec<Mutex<Vec<P<Diagnostic>>>> =
+            std::iter::repeat_with(|| Mutex::new(Vec::new())).take(state.checkers.len()).collect();
         self.for_each_checker_parallel(|idx, checker| {
             *global_diagnostics[idx].lock().unwrap() = checker.get_global_diagnostics();
         });
-        let mut all: Vec<P<Diagnostic>> = global_diagnostics.into_iter().flat_map(|d| d.into_inner().unwrap()).collect();
+        let mut all: Vec<P<Diagnostic>> =
+            global_diagnostics.into_iter().flat_map(|d| d.into_inner().unwrap()).collect();
         all.extend_from_slice(&state.retired.lock().unwrap().global_diagnostics);
         sort_and_deduplicate_diagnostics(&all)
     }
@@ -892,20 +1024,39 @@ impl checkerPool {
         cb: impl Fn(&mut Checker, usize, P<SourceFile>) + Sync,
         finish: Option<&(dyn Fn(&mut Checker, &[usize]) + Sync)>,
     ) {
+        self.for_each_checker_group_do_inner(
+            files,
+            single_threaded,
+            allow_steal,
+            split_ctx,
+            &cb,
+            finish,
+        );
+    }
+
+    // Share the scheduling body across callbacks; dispatch happens once per file, outside the checker walk.
+    fn for_each_checker_group_do_inner(
+        &self,
+        files: &[P<SourceFile>],
+        single_threaded: bool,
+        allow_steal: bool,
+        split_ctx: Option<&Context>,
+        cb: &(dyn Fn(&mut Checker, usize, P<SourceFile>) + Sync),
+        finish: Option<&(dyn Fn(&mut Checker, &[usize]) + Sync)>,
+    ) {
         let state = self.create_checkers();
-        let stats = assignment_stats_enabled();
         let n = state.checkers.len();
-        let times: Vec<Mutex<(f64, usize)>> = if stats { (0..n).map(|_| Mutex::new((0.0, 0))).collect() } else { Vec::new() };
-        let cpu: Vec<Mutex<f64>> = if stats { (0..n).map(|_| Mutex::new(0.0)).collect() } else { Vec::new() };
-        let stolen: Vec<std::sync::atomic::AtomicUsize> = (0..n).map(|_| std::sync::atomic::AtomicUsize::new(0)).collect();
         let file_times = file_times_path().is_some();
         let cost_cache = checker_cost_cache_path().is_some() && n > 1;
         // Each checker's positions in `files`, in the order of `files` (visit_order).
-        let index_of: Vec<Option<usize>> = files.iter().map(|f| state.file_indices.get(f).copied()).collect();
+        let index_of: Vec<Option<usize>> =
+            files.iter().map(|f| state.file_indices.get(f).copied()).collect();
         let mut positions: Vec<Vec<u32>> = vec![Vec::new(); n];
         for i in visit_order(files.len()) {
             // Owners change only inside a work group (stealing); this pass starts after the last one joined.
-            if let Some(owner) = index_of[i].map(|fi| state.owners[fi].load(std::sync::atomic::Ordering::Relaxed) as usize) {
+            if let Some(owner) = index_of[i]
+                .map(|fi| state.owners[fi].load(std::sync::atomic::Ordering::Relaxed) as usize)
+            {
                 positions[owner].push(i as u32);
             }
         }
@@ -915,12 +1066,18 @@ impl checkerPool {
         let active: Vec<usize> = (0..n).filter(|&c| !positions[c].is_empty()).collect();
         let single = single_threaded || self.single_threaded || active.len() <= 1;
         let steal = allow_steal && !single && stealing_enabled();
-        // Like the module affinity, from MIN_CHECKERS checkers on (affinity.rs; steal_sticky).
-        let sticky = steal && n >= crate::affinity::MIN_CHECKERS && steal_sticky();
-        let file_weight = |i: u32| index_of[i as usize].map_or(1, |fi| state.weights.get(fi).copied().unwrap_or(1).max(0) as u64);
+        // Like the module affinity (affinity.rs `applies`; steal_sticky).
+        let sticky = steal && crate::affinity::applies(n, files.len()) && steal_sticky();
+        let max_thieves = max_thieves_per_queue(n);
+        let file_weight = |i: u32| {
+            index_of[i as usize]
+                .map_or(1, |fi| state.weights.get(fi).copied().unwrap_or(1).max(0) as u64)
+        };
         // Positions from `files.len()` on are the queued pieces of split files (`piece_items`).
         let split = match split_ctx {
-            Some(_) if steal && splitcheck::split_config().enabled => plan_splits(self.program, files, &mut positions, &active, file_weight),
+            Some(_) if steal && splitcheck::split_config().enabled => {
+                plan_splits(self.program, files, &mut positions, &active, file_weight)
+            }
             _ => SplitPlan::default(),
         };
         let weight = |i: u32| match split.item_weight(files.len(), i) {
@@ -931,46 +1088,81 @@ impl checkerPool {
             // Each owner starts with the files that could be the pass's tail (heavy_files_first).
             let total: u64 = positions.iter().flatten().map(|&i| weight(i)).sum();
             let threshold = total / (active.len() as u64 * heavy_share_divisor());
-            positions.iter_mut().for_each(|p| heavy_files_first(p, threshold, weight));
+            for position in &mut positions {
+                heavy_files_first(position, threshold, weight);
+            }
             if state.recycle && leaves_first() {
                 // With checkers retired under a memory target their memory stops growing, and what the front end holds sets
                 // the peak: the leaves' trees go once they are checked, so each checker checks its leaves first
                 // (after the heavy files), keeping its files' order otherwise.
-                let is_leaf = |i: u32| (i as usize) < files.len() && files[i as usize].is_check_leaf();
+                let is_leaf =
+                    |i: u32| (i as usize) < files.len() && files[i as usize].is_check_leaf();
                 for p in &mut positions {
                     let heavy = p.iter().take_while(|&&i| weight(i) > threshold).count();
-                    let (leaves, rest): (Vec<u32>, Vec<u32>) = p[heavy..].iter().partition(|&&i| is_leaf(i));
+                    let (leaves, rest): (Vec<u32>, Vec<u32>) =
+                        p[heavy..].iter().partition(|&&i| is_leaf(i));
                     p.truncate(heavy);
                     p.extend(leaves);
                     p.extend(rest);
                 }
             }
         }
-        let queues: Vec<FileQueue> = positions.into_iter().map(|p| FileQueue::new(p, weight)).collect();
+        // The shared-graph seed starts with the type-check pass, after the leaf files are classified
+        // (`fileregions::classify`): as for every checker, the leaf guard (`Checker::is_unreadable_check_leaf`) then
+        // keeps it from reading a leaf file, which may be freed while the seed runs or while a frozen object points into
+        // it.
+        if allow_steal && state.shared_graph {
+            static SEED_STARTED: std::sync::Once = std::sync::Once::new();
+            SEED_STARTED.call_once(|| {
+                crate::sharedgraph::start_seed(self.program, state.weights.clone(), state.recycle);
+            });
+        }
+        let queues: Vec<FileQueue> =
+            positions.into_iter().map(|p| FileQueue::new(p, weight)).collect();
         // `--maxMemory`: each checker's region size after its last file, to retire the largest.
-        let region_sizes: Vec<std::sync::atomic::AtomicUsize> = (0..n).map(|_| std::sync::atomic::AtomicUsize::new(0)).collect();
+        let region_sizes: Vec<std::sync::atomic::AtomicUsize> =
+            std::iter::repeat_with(|| std::sync::atomic::AtomicUsize::new(0)).take(n).collect();
         // TSRS_MEM_SPLIT: the type-check pass reports once every checker is done and before any thread exits.
-        let mem_split = (allow_steal && tsrs_core::memsplit::enabled()).then(|| std::sync::Barrier::new(if single { 1 } else { active.len() }));
+        let mem_split = (allow_steal && tsrs_core::memsplit::enabled())
+            .then(|| std::sync::Barrier::new(if single { 1 } else { active.len() }));
         let run = |checker_idx: usize| {
-            let start = stats.then(std::time::Instant::now);
-            let cpu_start = if stats { thread_cpu_seconds() } else { 0.0 };
-            let mut count = 0;
             let mut visited = Vec::new();
             let mut file_cpu: Vec<(P<SourceFile>, f64)> = Vec::new();
             let mut guard = self.lock_checker(state, checker_idx);
+            // Without `--maxMemory` the checker becomes a fork of the seed now, waiting for it; with it, at its first
+            // file boundary after the freeze (`switch_to_fork` below), so that the pool does not wait for the seed.
+            if allow_steal && state.shared_graph && !state.recycle {
+                let _region = guard.enter();
+                crate::sharedgraph::fork_into(
+                    guard.checker.as_mut().expect("checker acquired before use"),
+                );
+            }
             let mut scope = guard.enter();
+            crate::sharedgraph::enter_checker(&guard);
             let recycle = allow_steal && state.recycle;
-            let mut last_victim = usize::MAX;
-            while let Some((i, from_other)) = queues_next(&queues, checker_idx, steal, sticky.then_some(&mut last_victim)) {
-                if let Some(&(s, k, _)) = i.checked_sub(files.len()).map(|p| &split.piece_items[p]) {
+            let (mut slot, mut last_victim) = (usize::MAX, usize::MAX);
+            while let Some((i, from_other)) = queues_next(
+                &queues,
+                checker_idx,
+                steal,
+                max_thieves,
+                &mut slot,
+                sticky.then_some(&mut last_victim),
+            ) {
+                if let Some(&(s, k, _)) = i.checked_sub(files.len()).map(|p| &split.piece_items[p])
+                {
                     let piece_start = file_times.then(std::time::Instant::now);
                     let cpu_start = if file_times { thread_cpu_seconds() } else { 0.0 };
                     split.files[s].run_queued_piece(&mut guard, split_ctx.unwrap(), k);
                     if let Some(piece_start) = piece_start {
                         let cpu = thread_cpu_seconds() - cpu_start;
-                        state.file_times.lock().unwrap().push((split.files[s].file, checker_idx, piece_start.elapsed().as_secs_f64(), cpu));
+                        state.file_times.lock().unwrap().push((
+                            split.files[s].file,
+                            checker_idx,
+                            piece_start.elapsed().as_secs_f64(),
+                            cpu,
+                        ));
                     }
-                    count += 1;
                     continue;
                 }
                 let file = files[i];
@@ -978,10 +1170,9 @@ impl checkerPool {
                     // Later passes over this file go to the checker that checked it.
                     if let Some(fi) = index_of[i] {
                         // Read only by later passes, after the work group joined.
-                        state.owners[fi].store(checker_idx as u32, std::sync::atomic::Ordering::Relaxed);
+                        state.owners[fi]
+                            .store(checker_idx as u32, std::sync::atomic::Ordering::Relaxed);
                     }
-                    // A counter read after the work group joined.
-                    stolen[checker_idx].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
                 let file_start = file_times.then(std::time::Instant::now);
                 let cpu_start = if cost_cache || file_times { thread_cpu_seconds() } else { 0.0 };
@@ -997,20 +1188,30 @@ impl checkerPool {
                 }
                 if let Some(file_start) = file_start {
                     let cpu = thread_cpu_seconds() - cpu_start;
-                    state.file_times.lock().unwrap().push((file, checker_idx, file_start.elapsed().as_secs_f64(), cpu));
+                    state.file_times.lock().unwrap().push((
+                        file,
+                        checker_idx,
+                        file_start.elapsed().as_secs_f64(),
+                        cpu,
+                    ));
                 }
                 if cost_cache {
                     file_cpu.push((file, thread_cpu_seconds() - cpu_start));
                 }
-                count += 1;
                 if recycle && guard.relation_cache_entries() > relation_cache_limit() {
                     guard.clear_relation_caches();
                 }
                 if recycle {
                     // Read by the other checker threads only to pick the largest; a stale value picks another one.
-                    region_sizes[checker_idx].store(guard.region_bytes(), std::sync::atomic::Ordering::Relaxed);
+                    region_sizes[checker_idx]
+                        .store(guard.region_bytes(), std::sync::atomic::Ordering::Relaxed);
                 }
-                if recycle
+                let switch_to_fork = recycle
+                    && state.shared_graph
+                    && !guard.is_fork
+                    && crate::sharedgraph::try_base().is_some();
+                if switch_to_fork
+                    || recycle
                     && guard.region_bytes() >= retire_min()
                     && tsrs_core::memsplit::process_memory() > max_memory()
                     // Relaxed: see the store above.
@@ -1020,16 +1221,13 @@ impl checkerPool {
                     drop(scope);
                     self.retire_checker(state, &mut guard);
                     scope = guard.enter();
+                    crate::sharedgraph::enter_checker(&guard);
                 }
             }
             if let Some(finish) = finish { finish(&mut guard, &visited); }
             drop(scope);
             if cost_cache {
                 state.file_cpu.lock().unwrap().extend(file_cpu);
-            }
-            if let Some(start) = start {
-                *times[checker_idx].lock().unwrap() = (start.elapsed().as_secs_f64(), count);
-                *cpu[checker_idx].lock().unwrap() = thread_cpu_seconds() - cpu_start;
             }
             // Memory peaks at the end of the type-check pass, while the last checkers still run: one that is done gives
             // back the resident, never used end of its arena chunk.
@@ -1050,15 +1248,14 @@ impl checkerPool {
             }
         };
         run_work_group(single, active.len(), |k| run(active[k]));
-        if allow_steal && state.recycle {
-            tsrs_core::phases::count("Checkers: retired", state.retired.lock().unwrap().count as u64);
+        if allow_steal && state.recycle && self.program.options().diagnostics_enabled() {
+            tsrs_core::phases::count(
+                true,
+                "Checkers: retired",
+                state.retired.lock().unwrap().count as u64,
+            );
         }
         splitcheck::SplitFile::report_stats(&split.files);
-        if stats {
-            state.group_runs.lock().unwrap().push(times.into_iter().map(|t| t.into_inner().unwrap()).collect());
-            state.group_cpu.lock().unwrap().push(cpu.into_iter().map(|t| t.into_inner().unwrap()).collect());
-            state.group_stolen.lock().unwrap().push(stolen.into_iter().map(std::sync::atomic::AtomicUsize::into_inner).collect());
-        }
     }
 }
 
@@ -1068,9 +1265,15 @@ impl checkerPool {
     // diagnostics of the files the old checker checked have been collected, and no later pass runs a checker over
     // them (the CLI's `--noEmit` check, as for leaf freeing).
     fn retire_checker(&self, state: &poolState, slot: &mut SlotChecker) {
-        let mut old = std::mem::replace(slot, SlotChecker::new(self.program, true, self.factory));
+        let diagnostics = slot.diagnostics.take();
+        let mut old = std::mem::replace(
+            slot,
+            SlotChecker::new_replacement(self.program, diagnostics, self.factory),
+        );
         {
             let _scope = old.enter();
+            // Making the replacement left the thread's overlay (sharedgraph.rs): the old checker reads its own again.
+            crate::sharedgraph::enter_checker(&old);
             let globals = old.get_global_diagnostics();
             let mut retired = state.retired.lock().unwrap();
             retired.count += 1;
@@ -1080,6 +1283,21 @@ impl checkerPool {
             retired.instantiation_count += u64::from(old.total_instantiation_count);
             retired.lazy_member_stats.add(&old.lazy_member_stats);
             drop(retired);
+            if crate::sharedgraph::debug_regions() {
+                if let Some(region) = &old.region {
+                    region.retire_on_free();
+                    let chunks: Vec<String> =
+                        region.chunks().iter().map(|&(s, n)| format!("{s:x}+{n:x}")).collect();
+                    eprintln!(
+                        "dbg-retire thread={} fork={} types={} chunks={}",
+                        std::thread::current().name().unwrap_or("?"),
+                        old.is_fork,
+                        old.type_count,
+                        chunks.join(",")
+                    );
+                }
+            }
+            let _ = old.checker.take();
         }
         old.retire();
     }
@@ -1089,7 +1307,9 @@ impl poolState {
     // The checker that runs `file` now (see `owners`).
     fn owner_of(&self, file: P<SourceFile>) -> Option<usize> {
         // Written by stealing inside a work group, read after it joined.
-        self.file_indices.get(&file).map(|&i| self.owners[i].load(std::sync::atomic::Ordering::Relaxed) as usize)
+        self.file_indices
+            .get(&file)
+            .map(|&i| self.owners[i].load(std::sync::atomic::Ordering::Relaxed) as usize)
     }
 
     // The checker that ran program file `i` (the static assignment unless the file was stolen).
@@ -1106,7 +1326,8 @@ impl poolState {
 // assignment is named (`--checkerAssignment` / TSRS_CHECKER_ASSIGNMENT: the fully deterministic static modes, also
 // for the oracles and harnesses) and under Go's check history.
 fn stealing_enabled() -> bool {
-    let named = CLI_CHECKER_ASSIGNMENT.get().is_some() || std::env::var("TSRS_CHECKER_ASSIGNMENT").is_ok_and(|v| !v.is_empty());
+    let named = CLI_CHECKER_ASSIGNMENT.get().is_some()
+        || std::env::var("TSRS_CHECKER_ASSIGNMENT").is_ok_and(|v| !v.is_empty());
     !named && !tsrs_core::compat::go_compatible_history()
 }
 
@@ -1123,7 +1344,11 @@ const HEAVY_SHARE_DIVISOR: u64 = 200;
 fn heavy_share_divisor() -> u64 {
     static VALUE: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
     *VALUE.get_or_init(|| {
-        std::env::var("TSRS_HEAVY_SHARE_DIVISOR").ok().and_then(|v| v.parse().ok()).filter(|&d| d > 0).unwrap_or(HEAVY_SHARE_DIVISOR)
+        std::env::var("TSRS_HEAVY_SHARE_DIVISOR")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .filter(|&d| d > 0)
+            .unwrap_or(HEAVY_SHARE_DIVISOR)
     })
 }
 
@@ -1135,7 +1360,8 @@ fn heavy_share_divisor() -> u64 {
 // thieves' end of the queue (the back) as it was. On vscode at 32 and 64 checkers the check phase went from 0.65 s
 // to 0.50 s, with no change at 8 and 16 (at 1/100; notes/perf-heavy-first-threshold.md has the 1/200 curve).
 fn heavy_files_first(positions: &mut Vec<u32>, threshold: u64, weight: impl Fn(u32) -> u64) {
-    let (mut heavy, light): (Vec<u32>, Vec<u32>) = positions.iter().partition(|&&i| weight(i) > threshold);
+    let (mut heavy, light): (Vec<u32>, Vec<u32>) =
+        positions.iter().partition(|&&i| weight(i) > threshold);
     if heavy.is_empty() {
         return;
     }
@@ -1170,7 +1396,13 @@ impl SplitPlan {
 // a share (with `force:<k>`, every checked declaration file into k pieces); a file that would be one piece is not
 // split. Each queued piece goes to the active checker, other than the file's owner, with the least work in heavy items
 // so far, so the pieces start at once on different checkers.
-fn plan_splits(program: &Program, files: &[P<SourceFile>], positions: &mut [Vec<u32>], active: &[usize], weight: impl Fn(u32) -> u64) -> SplitPlan {
+fn plan_splits(
+    program: &Program,
+    files: &[P<SourceFile>],
+    positions: &mut [Vec<u32>],
+    active: &[usize],
+    weight: impl Fn(u32) -> u64,
+) -> SplitPlan {
     let config = splitcheck::split_config();
     let mut plan = SplitPlan::default();
     if active.len() < 2 {
@@ -1189,8 +1421,15 @@ fn plan_splits(program: &Program, files: &[P<SourceFile>], positions: &mut [Vec<
             // splitting it cost 3-4% of wall time (pieces re-touch the library types); at 32 checkers on webpack and
             // next-packages-next it is about a whole share, and not splitting it made it the tail (README bench
             // 92c3149 against afb54cb: +13% and +21% wall).
-            let min_share = if program.is_source_file_default_library(file.path()) { config.min_share_percent.max(splitcheck::LIB_MIN_SHARE_PERCENT) } else { config.min_share_percent };
-            if !file.is_declaration_file() || w == 0 || (config.force.is_none() && w * 100 < share * min_share) {
+            let min_share = if program.is_source_file_default_library(file.path()) {
+                config.min_share_percent.max(splitcheck::LIB_MIN_SHARE_PERCENT)
+            } else {
+                config.min_share_percent
+            };
+            if !file.is_declaration_file()
+                || w == 0
+                || (config.force.is_none() && w * 100 < share * min_share)
+            {
                 continue;
             }
             let count = config.force.unwrap_or(w.div_ceil(piece_size) as usize).min(active.len());
@@ -1200,15 +1439,20 @@ fn plan_splits(program: &Program, files: &[P<SourceFile>], positions: &mut [Vec<
             }
             let lengths: Vec<u64> = pieces
                 .iter()
-                .map(|r| file.statements().nodes()[r.clone()].iter().map(|s| (s.end() - s.pos()).max(1) as u64).sum())
+                .map(|r| {
+                    file.statements().nodes()[r.clone()]
+                        .iter()
+                        .map(|s| u64::from(s.loc().len().unwrap_or(0).max(1)))
+                        .sum()
+                })
                 .collect();
             let length: u64 = lengths.iter().sum();
-            let piece_weights: Vec<u64> = lengths.iter().map(|&l| (w * l / length.max(1)).max(1)).collect();
+            let piece_weights: Vec<u64> =
+                lengths.iter().map(|&l| (w * l / length.max(1)).max(1)).collect();
             let s = plan.files.len();
             let split_file = splitcheck::SplitFile::new(file, pieces, config.shadow);
-            for k in split_file.queued_pieces() {
-                plan.piece_items.push((s, k, piece_weights[k]));
-            }
+            plan.piece_items
+                .extend(split_file.queued_pieces().into_iter().map(|k| (s, k, piece_weights[k])));
             plan.owner_weights.push(piece_weights[0]);
             plan.split_of.insert(i, s);
             plan.files.push(split_file);
@@ -1219,13 +1463,22 @@ fn plan_splits(program: &Program, files: &[P<SourceFile>], positions: &mut [Vec<
         return plan;
     }
     let threshold = total / (active.len() as u64 * heavy_share_divisor());
-    let item_weight = |i: u32| plan.split_of.get(&i).map_or_else(|| weight(i), |&s| plan.owner_weights[s]);
-    let mut load: Vec<u64> = positions.iter().map(|p| p.iter().map(|&i| item_weight(i)).filter(|&w| w > threshold).sum()).collect();
+    let item_weight =
+        |i: u32| plan.split_of.get(&i).map_or_else(|| weight(i), |&s| plan.owner_weights[s]);
+    let mut load: Vec<u64> = positions
+        .iter()
+        .map(|p| p.iter().map(|&i| item_weight(i)).filter(|&w| w > threshold).sum())
+        .collect();
     let mut order: Vec<usize> = (0..plan.piece_items.len()).collect();
     order.sort_by_key(|&j| std::cmp::Reverse(plan.piece_items[j].2));
     for j in order {
         let (s, _, w) = plan.piece_items[j];
-        let target = active.iter().copied().filter(|&c| c != owners[s]).min_by_key(|&c| (load[c], c)).unwrap();
+        let target = active
+            .iter()
+            .copied()
+            .filter(|&c| c != owners[s])
+            .min_by_key(|&c| (load[c], c))
+            .unwrap();
         load[target] += w;
         positions[target].push((files.len() + j) as u32);
     }
@@ -1239,6 +1492,8 @@ struct FileQueue {
     positions: Vec<u32>,
     prefix: Vec<u64>,
     range: std::sync::atomic::AtomicU64,
+    // A bit per checker (index below 64) that steals from this queue now (max_thieves_per_queue).
+    thieves: std::sync::atomic::AtomicU64,
 }
 
 const QUEUE_LOW: u64 = u32::MAX as u64;
@@ -1248,39 +1503,85 @@ impl FileQueue {
         let mut prefix = Vec::with_capacity(positions.len() + 1);
         let mut sum = 0;
         prefix.push(0);
-        for &i in &positions {
+        prefix.extend(positions.iter().map(|&i| {
             sum += weight(i);
-            prefix.push(sum);
-        }
+            sum
+        }));
         let len = positions.len() as u64;
-        FileQueue { positions, prefix, range: std::sync::atomic::AtomicU64::new(len << 32) }
+        FileQueue {
+            positions,
+            prefix,
+            range: std::sync::atomic::AtomicU64::new(len << 32),
+            thieves: std::sync::atomic::AtomicU64::new(0),
+        }
     }
 
     fn remaining(&self) -> u64 {
         // A heuristic read: a stale value only picks a different victim.
         let r = self.range.load(std::sync::atomic::Ordering::Relaxed);
         let (front, back) = ((r & QUEUE_LOW) as usize, (r >> 32) as usize);
-        if front < back {
-            self.prefix[back] - self.prefix[front]
-        } else {
-            0
+        if front < back { self.prefix[back] - self.prefix[front] } else { 0 }
+    }
+
+    // Whether checker `me` may take from this queue as a thief: it is one of its thieves, or the queue has fewer than
+    // `max` (0: no limit). Checkers from index 64 on are not counted.
+    fn admits(&self, me: usize, max: u32) -> bool {
+        if max == 0 || me >= 64 {
+            return true;
+        }
+        // A heuristic read: `admit` decides.
+        let bits = self.thieves.load(std::sync::atomic::Ordering::Relaxed);
+        bits & (1 << me) != 0 || bits.count_ones() < max
+    }
+
+    // Records `me` as one of this queue's thieves, unless it has `max` others already (then false).
+    fn admit(&self, me: usize, max: u32) -> bool {
+        if max == 0 || me >= 64 {
+            return true;
+        }
+        // The exchange below decides; this read only seeds it.
+        let mut bits = self.thieves.load(std::sync::atomic::Ordering::Relaxed);
+        loop {
+            if bits & (1 << me) != 0 {
+                return true;
+            }
+            if bits.count_ones() >= max {
+                return false;
+            }
+            match self.thieves.compare_exchange_weak(
+                bits,
+                bits | (1 << me),
+                // The exchange only counts thieves; nothing else is published through it.
+                std::sync::atomic::Ordering::Relaxed,
+                std::sync::atomic::Ordering::Relaxed,
+            ) {
+                Ok(_) => return true,
+                Err(current) => bits = current,
+            }
+        }
+    }
+
+    // Checker `me` no longer steals from this queue.
+    fn release(&self, me: usize) {
+        if me < 64 {
+            // As in `admit`: only counts thieves.
+            self.thieves.fetch_and(!(1 << me), std::sync::atomic::Ordering::Relaxed);
         }
     }
 
     fn take(&self, front: bool) -> Option<usize> {
         // The compare-exchange on `range` alone decides who gets a position; nothing else is published through it.
-        let mut r = self.range.load(std::sync::atomic::Ordering::Relaxed);
-        loop {
-            if (r & QUEUE_LOW) >= (r >> 32) {
-                return None;
-            }
-            let new = if front { r + 1 } else { r - (1 << 32) };
-            // As above: the exchange only claims the position.
-            match self.range.compare_exchange_weak(r, new, std::sync::atomic::Ordering::Relaxed, std::sync::atomic::Ordering::Relaxed) {
-                Ok(_) => break,
-                Err(current) => r = current,
-            }
-        }
+        // As above: the exchange only claims the position.
+        let r = self
+            .range
+            .try_update(
+                std::sync::atomic::Ordering::Relaxed, // Only claims the position; publishes no data.
+                std::sync::atomic::Ordering::Relaxed, // A failed claim only retries the range value.
+                |r| {
+                    ((r & QUEUE_LOW) < (r >> 32)).then(|| if front { r + 1 } else { r - (1 << 32) })
+                },
+            )
+            .ok()?;
         let pos = if front { r & QUEUE_LOW } else { (r >> 32) - 1 };
         Some(self.positions[pos as usize] as usize)
     }
@@ -1297,9 +1598,42 @@ fn steal_sticky() -> bool {
     *VALUE.get_or_init(|| !std::env::var("TSRS_STEAL_STICKY").is_ok_and(|v| v == "0" || v == "off"))
 }
 
-// The next position for checker `me` and whether it came from another checker's queue. With `last_victim` (the queue
-// `me` last took from, usize::MAX for none) a thief keeps its victim (steal_sticky).
-fn queues_next(queues: &[FileQueue], me: usize, steal: bool, mut last_victim: Option<&mut usize>) -> Option<(usize, bool)> {
+// tsrs-only (notes/perf-icount-assign.md): from 8 to 15 checkers, at most a quarter of the checkers steal from any one
+// queue at a time. A thief checks a stolen file without the types its owner built for the file's neighbourhood, and the
+// first stolen file of a region pays for building them, once per thief. When every idle thief converges on the last
+// queues with work, each pays for the same region: on t3code-server at 8 checkers five thieves each took one file of
+// one test directory near the end of the pass and each spent ~8 G instructions on it (0.01-0.05 G on its owner), 119 G
+// against 75 G without stealing. With two thieves per queue at a time at 8 checkers: t3code-server 95 G (check time
+// -4%), mui-docs 92 G against 92-98 G (-6%), cal-diy and the large private monorepo -0.3% to -0.6%, vscode and
+// supabase-studio unchanged. One thief at a time saves more (t3code-server 86 G, cal-diy -4%) but cost vscode 2% of
+// check time at 9 and 12 checkers. From 16 checkers on the sticky thief applies (steal_sticky) and this limit was not
+// measured. TSRS_STEAL_MAX_THIEVES=<m> sets the limit at every checker count, `0` for none.
+const THIEF_LIMIT_CHECKERS: std::ops::Range<usize> = 8..crate::affinity::MIN_CHECKERS;
+const CHECKERS_PER_THIEF: usize = 4;
+
+fn max_thieves_per_queue(checker_count: usize) -> u32 {
+    static VALUE: OnceLock<Option<u32>> = OnceLock::new();
+    let configured =
+        *VALUE.get_or_init(|| std::env::var("TSRS_STEAL_MAX_THIEVES").ok()?.parse().ok());
+    configured.unwrap_or(if THIEF_LIMIT_CHECKERS.contains(&checker_count) {
+        (checker_count / CHECKERS_PER_THIEF) as u32
+    } else {
+        0
+    })
+}
+
+// The next position for checker `me` and whether it came from another checker's queue. A thief takes only from queues
+// that admit it (`max_thieves`, max_thieves_per_queue); `slot` is the queue it steals from now (usize::MAX for none),
+// whose place it gives up when it moves to another. With `last_victim` (the queue `me` last took from, usize::MAX for
+// none) a thief keeps its victim (steal_sticky).
+fn queues_next(
+    queues: &[FileQueue],
+    me: usize,
+    steal: bool,
+    max_thieves: u32,
+    slot: &mut usize,
+    mut last_victim: Option<&mut usize>,
+) -> Option<(usize, bool)> {
     if let Some(i) = queues[me].take(true) {
         return Some((i, false));
     }
@@ -1307,16 +1641,43 @@ fn queues_next(queues: &[FileQueue], me: usize, steal: bool, mut last_victim: Op
         return None;
     }
     loop {
-        let (mut victim, left) = queues.iter().enumerate().map(|(c, q)| (c, q.remaining())).max_by_key(|&(c, left)| (left, std::cmp::Reverse(c)))?;
+        if queues.iter().all(|q| q.remaining() == 0) {
+            // Queues whose remaining files weigh 0 (unchecked declaration files) are still drained by their owners.
+            return queues
+                .iter()
+                .enumerate()
+                .find_map(|(c, q)| if c == me { None } else { q.take(false).map(|i| (i, true)) });
+        }
+        let (mut victim, left) = queues
+            .iter()
+            .enumerate()
+            .filter(|&(c, q)| c != me && q.admits(me, max_thieves))
+            .map(|(c, q)| (c, q.remaining()))
+            .max_by_key(|&(c, left)| (left, std::cmp::Reverse(c)))?;
+        if left == 0 {
+            // The queues with work left have their thieves; their owners finish them.
+            if *slot != usize::MAX {
+                queues[*slot].release(me);
+            }
+            return None;
+        }
         if let Some(last) = last_victim.as_deref_mut() {
-            if *last != usize::MAX && queues[*last].remaining() * 2 >= left && left > 0 {
+            if *last != usize::MAX
+                && queues[*last].admits(me, max_thieves)
+                && queues[*last].remaining() * 2 >= left
+            {
                 victim = *last;
             }
             *last = victim;
         }
-        if left == 0 {
-            // Queues whose remaining files weigh 0 (unchecked declaration files) are still drained by their owners.
-            return queues.iter().enumerate().find_map(|(c, q)| if c == me { None } else { q.take(false).map(|i| (i, true)) });
+        if victim != *slot {
+            if !queues[victim].admit(me, max_thieves) {
+                continue;
+            }
+            if *slot != usize::MAX {
+                queues[*slot].release(me);
+            }
+            *slot = victim;
         }
         if let Some(i) = queues[victim].take(false) {
             return Some((i, true));
@@ -1354,7 +1715,19 @@ fn splitmix64(state: &mut u64) -> u64 {
 }
 
 // Go `createCheckers`' association step (FENNEL over the import graph, see above).
-fn go_associations(program: &Program, checker_count: usize) -> Vec<usize> {
+fn go_associations(program: &Program, checker_count: usize, concurrent: bool) -> Vec<usize> {
+    go_associations_with_adjacency(
+        program,
+        checker_count,
+        &get_import_adjacency(program, concurrent),
+    )
+}
+
+fn go_associations_with_adjacency(
+    program: &Program,
+    checker_count: usize,
+    adjacent_files: &[Vec<usize>],
+) -> Vec<usize> {
     let files = &program.files;
     let mut base_weights = vec![0i64; files.len()];
     let mut import_counts = vec![0i64; files.len()];
@@ -1362,7 +1735,10 @@ fn go_associations(program: &Program, checker_count: usize) -> Vec<usize> {
     let mut total_base_weight = 0i64;
     let mut declaration_base_weight = 0i64;
     for (i, file) in files.iter().enumerate() {
-        let base_weight = get_checker_association_base_weight(file.node_count.get() as i64, file.text().len() as i64);
+        let base_weight = get_checker_association_base_weight(
+            file.node_count.get() as i64,
+            file.text().len() as i64,
+        );
         total_base_weight += base_weight;
         if file.is_declaration_file.get() {
             declaration_base_weight += base_weight;
@@ -1371,7 +1747,8 @@ fn go_associations(program: &Program, checker_count: usize) -> Vec<usize> {
         import_counts[i] = file.imports().len() as i64;
         is_declaration_file[i] = file.is_declaration_file.get();
     }
-    let policy = get_checker_association_policy(total_base_weight, declaration_base_weight, checker_count);
+    let policy =
+        get_checker_association_policy(total_base_weight, declaration_base_weight, checker_count);
     if policy.source_file_weight_multiplier != 1 {
         // Apply this before import normalization. The policy intentionally
         // increases both source-file work and the normalized import unit.
@@ -1382,11 +1759,14 @@ fn go_associations(program: &Program, checker_count: usize) -> Vec<usize> {
         }
     }
     let file_weights = get_checker_association_weights(&base_weights, &import_counts);
-    let adjacent_files = get_import_adjacency(program);
-    let file_order = get_checker_association_order(&file_weights, &is_declaration_file, policy.prioritize_source_files);
+    let file_order = get_checker_association_order(
+        &file_weights,
+        &is_declaration_file,
+        policy.prioritize_source_files,
+    );
     get_checker_associations_in_order(
         &file_weights,
-        &adjacent_files,
+        adjacent_files,
         file_order.as_deref(),
         checker_count,
         policy.balance_penalty_multiplier,
@@ -1394,21 +1774,76 @@ fn go_associations(program: &Program, checker_count: usize) -> Vec<usize> {
     )
 }
 
+// tsrs-only: the file assignment a program made by `reuse_program` takes over from `previous`, the pool of the
+// program it reuses, instead of computing its own: the files are the same, at the same indices, except for one
+// that was reparsed with the same imports. Computing the locality assignment of a large program takes longer than
+// the rest of a one-file watch cycle (12 ms of 80 on a 9.4k-file project), and its output is a function of the
+// program alone (see CheckerAssignment), so any assignment gives the same diagnostics and emit. The other
+// assignments are computed again: `go` keeps tsgo's assignment-dependent cache, and the debug ones should differ
+// per program.
+fn inherited_associations(
+    program: &Program,
+    checker_count: usize,
+    previous: &checkerPool,
+) -> Option<Vec<usize>> {
+    let state = previous.state.get()?;
+    let reusable = matches!(checker_assignment(), CheckerAssignment::Locality)
+        && previous.checker_count == checker_count
+        && state.associations.len() == program.files.len();
+    reusable.then(|| state.associations.clone())
+}
+
+// tsrs-only: where tsgo's compiler pool at its default checker count (`newCheckerPool`) type checks each file: the
+// checker's index and the file's index in the program, in whose order each checker visits its files
+// (`forEachCheckerGroupDo`). Files it does not type check are absent. Whatever tsrs's own checker count and assignment,
+// this is what tsgo's history-dependent checks saw (`Checker::reports_interface_check_errors`).
+pub(crate) fn tsgo_default_check_slots(program: &Program) -> FxHashMap<P<SourceFile>, (u32, u32)> {
+    let checker_count = GO_DEFAULT_CHECKERS.min(program.files.len() as i64).max(1) as usize;
+    // Called while holding a checker and initializing a OnceLock: nested worker-pool jobs could re-enter either.
+    // The import graph comes from the program this one reuses when there is one (`Program::tsgo_import_adjacency`):
+    // resolving every import again took 19 of the 21 ms this costs in each one-file watch cycle on a 9.4k-file
+    // project. The weights are computed again: an edit can change the reparsed file's text length.
+    let associations = if checker_count > 1 {
+        let adjacency = program
+            .tsgo_import_adjacency
+            .get_or_init(|| std::sync::Arc::from(get_import_adjacency(program, false)));
+        go_associations_with_adjacency(program, checker_count, adjacency)
+    } else {
+        vec![0; program.files.len()]
+    };
+    program
+        .files
+        .iter()
+        .enumerate()
+        .filter(|&(_, &file)| !program.skip_type_checking(file, false))
+        .map(|(i, &file)| (file, (associations[i] as u32, i as u32)))
+        .collect()
+}
+
 fn compute_associations(program: &Program, checker_count: usize) -> Vec<usize> {
     if checker_count <= 1 {
         return vec![0; program.files.len()];
     }
     let associations = match checker_assignment() {
-        CheckerAssignment::Go => go_associations(program, checker_count),
+        CheckerAssignment::Go => go_associations(program, checker_count, true),
         CheckerAssignment::Locality => locality_associations(program, checker_count),
         CheckerAssignment::Random(seed) => {
             let mut state = seed;
-            (0..program.files.len()).map(|_| (splitmix64(&mut state) % checker_count as u64) as usize).collect()
+            std::iter::repeat_with(|| (splitmix64(&mut state) % checker_count as u64) as usize)
+                .take(program.files.len())
+                .collect()
         }
         CheckerAssignment::File(path) => {
-            let text = std::fs::read_to_string(path).expect("TSRS_CHECKER_ASSIGNMENT file");
-            let associations: Vec<usize> = text.lines().map(|l| l.trim().parse::<usize>().unwrap().min(checker_count - 1)).collect();
-            assert_eq!(associations.len(), program.files.len(), "TSRS_CHECKER_ASSIGNMENT file length");
+            let text = tsrs_core::utf8::read_to_string(path).expect("TSRS_CHECKER_ASSIGNMENT file");
+            let associations: Vec<usize> = text
+                .lines()
+                .map(|l| l.trim().parse::<usize>().unwrap().min(checker_count - 1))
+                .collect();
+            assert_eq!(
+                associations.len(),
+                program.files.len(),
+                "TSRS_CHECKER_ASSIGNMENT file length"
+            );
             associations
         }
     };
@@ -1436,7 +1871,9 @@ fn checker_cost_cache_path() -> Option<&'static str> {
             .get()
             .cloned()
             .or_else(|| std::env::var("TSRS_CHECKER_COST_CACHE").ok())
-            .filter(|p| !p.is_empty() && matches!(checker_assignment(), CheckerAssignment::Locality))
+            .filter(|p| {
+                !p.is_empty() && matches!(checker_assignment(), CheckerAssignment::Locality)
+            })
     })
     .as_deref()
 }
@@ -1455,7 +1892,7 @@ struct CostEntry {
 // malformed lines are skipped.
 fn read_cost_cache(path: &str) -> (FxHashMap<String, CostEntry>, usize) {
     let mut entries = FxHashMap::default();
-    let Ok(text) = std::fs::read_to_string(path) else {
+    let Ok(text) = tsrs_core::utf8::read_to_string(path) else {
         return (entries, 0);
     };
     let mut lines = text.lines();
@@ -1467,18 +1904,22 @@ fn read_cost_cache(path: &str) -> (FxHashMap<String, CostEntry>, usize) {
     else {
         return (entries, 0);
     };
-    for line in lines {
+    entries.extend(lines.filter_map(|line| {
         let mut fields = line.splitn(3, '\t');
-        let (Some(seconds), Some(checker), Some(file)) = (fields.next(), fields.next(), fields.next()) else {
-            continue;
+        let (Some(seconds), Some(checker), Some(file)) =
+            (fields.next(), fields.next(), fields.next())
+        else {
+            return None;
         };
         let (Ok(seconds), Ok(checker)) = (seconds.parse::<f64>(), checker.parse::<usize>()) else {
-            continue;
+            return None;
         };
         if seconds.is_finite() && seconds >= 0.0 && checker < checker_count {
-            entries.insert(file.to_string(), CostEntry { seconds, checker });
+            Some((file.to_string(), CostEntry { seconds, checker }))
+        } else {
+            None
         }
-    }
+    }));
     (entries, checker_count)
 }
 
@@ -1487,13 +1928,17 @@ fn read_cost_cache(path: &str) -> (FxHashMap<String, CostEntry>, usize) {
 pub(crate) fn write_cost_cache(program: &'static Program) {
     use std::fmt::Write;
     // Programs with an external checker pool (language server / API projects) have no cost state to write.
-    let (Some(path), Some(state)) = (checker_cost_cache_path(), program.compiler_checker_pool().and_then(|pool| pool.state.get())) else {
+    let (Some(path), Some(state)) = (
+        checker_cost_cache_path(),
+        program.compiler_checker_pool().and_then(|pool| pool.state.get()),
+    ) else {
         return;
     };
     if state.checkers.len() <= 1 {
         return;
     }
-    let file_indices: FxHashMap<P<SourceFile>, usize> = program.files.iter().enumerate().map(|(i, &f)| (f, i)).collect();
+    let file_indices: FxHashMap<P<SourceFile>, usize> =
+        program.files.iter().enumerate().map(|(i, &f)| (f, i)).collect();
     let mut measured: Vec<f64> = vec![-1.0; program.files.len()];
     for &(file, seconds) in state.file_cpu.lock().unwrap().iter() {
         if let Some(&i) = file_indices.get(&file) {
@@ -1501,12 +1946,15 @@ pub(crate) fn write_cost_cache(program: &'static Program) {
         }
     }
     let mut entries: Vec<(&str, f64, usize)> = Vec::new();
-    for (i, file) in program.files.iter().enumerate() {
-        let skipped = (file.is_declaration_file.get() || ast::is_json_source_file(*file)) && program.skip_type_checking(*file, false);
+    entries.extend(program.files.iter().enumerate().filter_map(|(i, file)| {
+        let skipped = (file.is_declaration_file.get() || ast::is_json_source_file(*file))
+            && program.skip_type_checking(*file, false);
         if measured[i] >= 0.0 && !skipped {
-            entries.push((file.path(), measured[i], state.owner_at(i)));
+            Some((file.path().as_str(), measured[i], state.owner_at(i)))
+        } else {
+            None
         }
-    }
+    }));
     entries.sort_by(|a, b| a.0.cmp(b.0));
     let mut out = String::with_capacity(entries.len() * 100);
     let _ = writeln!(out, "{COST_CACHE_MAGIC} checkers={}", state.checkers.len());
@@ -1564,7 +2012,9 @@ fn checker_assignment() -> CheckerAssignment {
         Some(name) => name.clone(),
         None => std::env::var("TSRS_CHECKER_ASSIGNMENT").unwrap_or_default(),
     };
-    parse_checker_assignment(&name).unwrap_or_else(|| panic!("unknown checker assignment {name:?} (locality, go, file:<path>, random:<seed>)"))
+    parse_checker_assignment(&name).unwrap_or_else(|| {
+        panic!("unknown checker assignment {name:?} (locality, go, file:<path>, random:<seed>)")
+    })
 }
 
 // A directory subtree whose checked weight is at most 1/LOCALITY_GROUP_FRACTION of an average checker load is
@@ -1580,14 +2030,17 @@ const GO_DEFAULT_CHECKERS: i64 = 4;
 const MAX_DEFAULT_CHECKERS: i64 = 32;
 // A checker beyond Go's 4 needs at least this many type-checked files to be worth its creation and duplicated work.
 const MIN_CHECKED_FILES_PER_DEFAULT_CHECKER: i64 = 32;
-// Up to this many cores every core gets a checker: on the 8-vCPU README bench, 8 checkers instead of 4 cut vscode's wall
-// from 2.73 to 1.61 s, formbricks-web's from 1.41 to 0.96 and mikro-orm's from 2.16 to 1.26 for 8-28% more peak memory
-// (t3code-server alone is 6% slower, its Effect declarations being re-resolved by every checker;
-// notes/perf-default-checkers-small-machines.md). Above it, half the cores: the other half parse, and each checker's
-// memory and duplicated work grow with the program (notes/perf-checker-64.md).
-const SMALL_MACHINE_CHECKERS: i64 = 8;
+// Up to this many cores every core gets a checker. Parsing and checking are sequential phases, so a checker takes no
+// core from the parser; what it costs is memory and the library types it resolves again. On the 16-vCPU README bench,
+// 16 checkers instead of 8 cut vscode's wall from 1.38 to 0.85 s, supabase-studio's from 0.95 to 0.68 and t3code-server's
+// from 1.69 to 1.42 for 8-30% more peak memory (notes/perf-default-checkers-16.md); on the 8-vCPU bench, 8 instead of
+// 4 cut 14-42% (notes/perf-default-checkers-small-machines.md). Above it, half the cores: from 16 to 32 checkers the
+// app projects gain 6-23% wall (vscode 32%) for 24-34% more memory (notes/mem-round4.md section 3), and leaf freeing
+// stops at 16 (fileregions.rs `MAX_DEFAULT_CHECKERS`).
+const SMALL_MACHINE_CHECKERS: i64 = 16;
 
-static GO_DEFAULT_CHECKER_COUNT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static GO_DEFAULT_CHECKER_COUNT: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 /// Build mode runs up to 4 projects at once (Go's `--builders` default), each with its own pool, so it keeps Go's
 /// constant default instead of sizing every pool for the whole machine.
@@ -1598,7 +2051,7 @@ pub fn use_go_default_checker_count() {
 // tsrs-only: the checker count when neither --checkers nor --singleThreaded is given. Go always uses 4. Here: half the
 // available parallelism but every core up to SMALL_MACHINE_CHECKERS, at least Go's 4 and at most MAX_DEFAULT_CHECKERS,
 // and no more than one checker per MIN_CHECKED_FILES_PER_DEFAULT_CHECKER type-checked files, so small programs keep
-// Go's 4: 4 checkers on 4 cores, 8 on 8 and on 16, 9 on 18, 32 on 64 or more. Diagnostics do not depend on the count
+// Go's 4: 4 checkers on 4 cores, 8 on 8, 16 on 16 to 33, 32 on 64 or more. Diagnostics do not depend on the count
 // (except for the known file-order cases in README.md's capability table); the --extendedDiagnostics Types / Symbols /
 // Instantiations counters do (each checker counts what it creates), so they depend on the machine unless --checkers
 // is given.
@@ -1608,8 +2061,14 @@ fn default_checker_count(program: &Program) -> i64 {
         return GO_DEFAULT_CHECKERS;
     }
     // The files a checker does work for (the same rule as checked_file_weights).
-    let checked =
-        program.files.iter().filter(|&&f| !((f.is_declaration_file.get() || ast::is_json_source_file(f)) && program.skip_type_checking(f, false))).count();
+    let checked = program
+        .files
+        .iter()
+        .filter(|&&f| {
+            !((f.is_declaration_file.get() || ast::is_json_source_file(f))
+                && program.skip_type_checking(f, false))
+        })
+        .count();
     by_machine.min(checked as i64 / MIN_CHECKED_FILES_PER_DEFAULT_CHECKER).max(GO_DEFAULT_CHECKERS)
 }
 
@@ -1618,34 +2077,59 @@ fn default_checker_count_by_machine() -> i64 {
     if GO_DEFAULT_CHECKER_COUNT.load(std::sync::atomic::Ordering::Relaxed) {
         return GO_DEFAULT_CHECKERS;
     }
-    default_checkers_for_parallelism(std::thread::available_parallelism().map_or(1, |n| n.get()) as i64)
+    default_checkers_for_parallelism(
+        std::thread::available_parallelism().map_or(1, std::num::NonZero::get) as i64,
+    )
 }
 
 // The machine rule of `default_checker_count_by_machine` for a core count (bench/run.py `tsrs_default_checkers` mirrors
 // it for the results tables).
 fn default_checkers_for_parallelism(parallelism: i64) -> i64 {
-    (parallelism / 2).max(parallelism.min(SMALL_MACHINE_CHECKERS)).min(MAX_DEFAULT_CHECKERS).max(GO_DEFAULT_CHECKERS)
+    (parallelism / 2)
+        .max(parallelism.min(SMALL_MACHINE_CHECKERS))
+        .clamp(GO_DEFAULT_CHECKERS, MAX_DEFAULT_CHECKERS)
 }
 
 #[cfg(test)]
 mod default_checker_tests {
     use super::default_checkers_for_parallelism;
 
-    /// The default is every core up to 8, half the cores above that, never below Go's 4 or above 32: a 9-16 core
-    /// machine keeps 8 (half its cores rounds below the small-machine count), 18 cores get 9, 64 or more get 32.
+    /// The default is every core up to 16, half the cores above that, never below Go's 4 or above 32: a 17-33 core
+    /// machine keeps 16 (half its cores rounds below the small-machine count), 34 cores get 17, 64 or more get 32.
     #[test]
-    fn every_core_up_to_eight_then_half_the_cores() {
-        let table = [(1, 4), (2, 4), (4, 4), (6, 6), (8, 8), (9, 8), (12, 8), (16, 8), (18, 9), (32, 16), (64, 32), (128, 32)];
+    fn every_core_up_to_sixteen_then_half_the_cores() {
+        let table = [
+            (1, 4),
+            (2, 4),
+            (4, 4),
+            (6, 6),
+            (8, 8),
+            (9, 9),
+            (12, 12),
+            (16, 16),
+            (18, 16),
+            (32, 16),
+            (33, 16),
+            (34, 17),
+            (48, 24),
+            (64, 32),
+            (128, 32),
+        ];
         for (cores, checkers) in table {
             assert_eq!(default_checkers_for_parallelism(cores), checkers, "{cores} cores");
         }
     }
 }
 
-/// tsrs-only: the most checkers a program created with these options can get (`checkerPool::new`), known before its
-/// files are: `--checkers`, one when single-threaded, else the machine's default (fileregions.rs decides its default
-/// with it).
-pub fn checker_count_upper_bound(options: &tsrs_core::CompilerOptions, single_threaded: bool) -> usize {
+/// Determines the checker limit before program files are loaded.
+///
+/// tsrs-only: the most checkers a program created with these options can get (`checkerPool::new`), known
+/// before its files are: `--checkers`, one when single-threaded, else the machine's default (fileregions.rs
+/// decides its default with it).
+pub fn checker_count_upper_bound(
+    options: &tsrs_core::CompilerOptions,
+    single_threaded: bool,
+) -> usize {
     let count = if single_threaded || options.single_threaded.is_true() {
         1
     } else if let Some(c) = options.checkers {
@@ -1670,15 +2154,21 @@ fn locality_associations(program: &Program, checker_count: usize) -> Vec<usize> 
     // tsrs-only: the import graph (built on the worker pool) does not depend on the groups; it is built while they
     // are formed.
     if program.single_threaded() {
-        return locality_associations_with(program, checker_count, || get_import_targets(program));
+        return locality_associations_with(program, checker_count, || {
+            get_import_targets(program, true)
+        });
     }
     std::thread::scope(|s| {
-        let targets = s.spawn(|| get_import_targets(program));
+        let targets = s.spawn(|| get_import_targets(program, true));
         locality_associations_with(program, checker_count, || targets.join().unwrap())
     })
 }
 
-fn locality_associations_with(program: &Program, checker_count: usize, import_targets: impl FnOnce() -> Vec<Vec<usize>>) -> Vec<usize> {
+fn locality_associations_with(
+    program: &Program,
+    checker_count: usize,
+    import_targets: impl FnOnce() -> Vec<Vec<usize>>,
+) -> Vec<usize> {
     let files = &program.files;
     let weights = checked_file_weights(program);
     let mut order: Vec<usize> = (0..files.len()).filter(|&i| weights[i] > 0).collect();
@@ -1696,7 +2186,9 @@ fn locality_associations_with(program: &Program, checker_count: usize, import_ta
     }
 
     // With a cost cache, groups are formed and placed by measured cost (see measured_file_costs).
-    let measured = checker_cost_cache_path().and_then(|path| measured_file_costs(&read_cost_cache(path), checker_count, files, &order, &weights));
+    let measured = checker_cost_cache_path().and_then(|path| {
+        measured_file_costs(&read_cost_cache(path), checker_count, files, &order, &weights)
+    });
     let costs: &[i64] = measured.as_ref().map_or(&weights, |m| &m.costs);
 
     let total: i64 = order.iter().map(|&i| costs[i]).sum();
@@ -1715,7 +2207,11 @@ fn locality_associations_with(program: &Program, checker_count: usize, import_ta
     let mut group_weights: Vec<i64> = Vec::new();
     for &i in &order {
         let path: &str = files[i].path();
-        let key = path.match_indices('/').map(|(pos, _)| &path[..pos]).find(|dir| subtree_weights[dir] <= threshold).unwrap_or(path);
+        let key = path
+            .match_indices('/')
+            .map(|(pos, _)| &path[..pos])
+            .find(|dir| subtree_weights[dir] <= threshold)
+            .unwrap_or(path);
         let group = *group_ids.entry(key).or_insert_with(|| {
             group_weights.push(0);
             group_weights.len() - 1
@@ -1740,8 +2236,21 @@ fn locality_associations_with(program: &Program, checker_count: usize, import_ta
     let fennel = |group_weights: &[i64]| {
         let mut group_order: Vec<usize> = (0..group_weights.len()).collect();
         group_order.sort_by(|&a, &b| group_weights[b].cmp(&group_weights[a]).then(a.cmp(&b)));
-        let mut affinity = crate::affinity::ModuleAffinity::new(files, &import_targets, &group_of_file, &group_adjacency, checker_count);
-        let mut placed = get_checker_associations_in_order(group_weights, &group_adjacency, Some(&group_order), checker_count, LOCALITY_PENALTY_MULTIPLIER, affinity.as_mut());
+        let mut affinity = crate::affinity::ModuleAffinity::new(
+            files,
+            &import_targets,
+            &group_of_file,
+            &group_adjacency,
+            checker_count,
+        );
+        let mut placed = get_checker_associations_in_order(
+            group_weights,
+            &group_adjacency,
+            Some(&group_order),
+            checker_count,
+            LOCALITY_PENALTY_MULTIPLIER,
+            affinity.as_mut(),
+        );
         if let Some(affinity) = &affinity {
             affinity.refine(&mut placed, group_weights, checker_count);
         }
@@ -1768,18 +2277,23 @@ fn locality_associations_with(program: &Program, checker_count: usize, import_ta
                     }
                 }
             }
-            let mut result = if previous.iter().all(|p| p.0 == usize::MAX) { fennel(&group_weights) } else { vec![usize::MAX; group_weights.len()] };
+            let mut result = if previous.iter().all(|p| p.0 == usize::MAX) {
+                fennel(&group_weights)
+            } else {
+                vec![usize::MAX; group_weights.len()]
+            };
             let mut loads = vec![0i64; checker_count];
-            for g in 0..result.len() {
+            for (g, element) in result.iter_mut().enumerate() {
                 if previous[g].0 != usize::MAX {
-                    result[g] = previous[g].0;
+                    (*element) = previous[g].0;
                 }
-                if result[g] != usize::MAX {
-                    loads[result[g]] += group_weights[g];
+                if (*element) != usize::MAX {
+                    loads[*element] += group_weights[g];
                 }
             }
             // Groups without a previous checker (new files) go to the least loaded checker, largest first.
-            let mut unplaced: Vec<usize> = (0..result.len()).filter(|&g| result[g] == usize::MAX).collect();
+            let mut unplaced: Vec<usize> =
+                (0..result.len()).filter(|&g| result[g] == usize::MAX).collect();
             unplaced.sort_by(|&a, &b| group_weights[b].cmp(&group_weights[a]).then(a.cmp(&b)));
             for g in unplaced {
                 let c = (0..checker_count).min_by_key(|&c| (loads[c], c)).unwrap();
@@ -1834,7 +2348,8 @@ fn measured_file_costs(
             None => ((weights[i] as f64 * ns_per_weight) as i64).max(1),
         })
         .collect();
-    let checkers = (*cached_checker_count == checker_count).then(|| cached.iter().map(|e| e.map(|e| e.checker)).collect());
+    let checkers = (*cached_checker_count == checker_count)
+        .then(|| cached.iter().map(|e| e.map(|e| e.checker)).collect());
     Some(MeasuredCosts { costs, checkers })
 }
 
@@ -1849,7 +2364,16 @@ const REFINE_STOP_IMBALANCE: f64 = 0.01;
 // load by more than 0.25% of the mean. Starting from the previous run's placement, few moves keep most groups in
 // the context their costs were measured in, and later runs correct what a move mispredicted. Deterministic for a
 // given cache: ties go to the stronger import affinity to the destination, then to the lower group and checker.
-fn refine_group_associations(associations: &mut [usize], costs: &[i64], adjacency: &[Vec<usize>], checker_count: usize) {
+#[expect(
+    clippy::float_cmp,
+    reason = "Exact score ties preserve the deterministic scheduling tie-breaker."
+)]
+fn refine_group_associations(
+    associations: &mut [usize],
+    costs: &[i64],
+    adjacency: &[Vec<usize>],
+    checker_count: usize,
+) {
     let mut loads = vec![0f64; checker_count];
     for (g, &c) in associations.iter().enumerate() {
         loads[c] += costs[g] as f64;
@@ -1858,7 +2382,9 @@ fn refine_group_associations(associations: &mut [usize], costs: &[i64], adjacenc
     let min_gain = mean * 0.0025;
     let mut affinity = vec![0i64; checker_count];
     for moves in 0..MAX_REFINE_MOVES {
-        let heavy = (0..checker_count).max_by(|&a, &b| loads[a].total_cmp(&loads[b]).then(b.cmp(&a))).unwrap();
+        let heavy = (0..checker_count)
+            .max_by(|&a, &b| loads[a].total_cmp(&loads[b]).then(b.cmp(&a)))
+            .unwrap();
         // Measured loads vary by a few percent run to run: leave a placement alone unless its slowest checker is
         // REFINE_START_IMBALANCE above the mean, then move groups until it is within REFINE_STOP_IMBALANCE.
         let imbalance = loads[heavy] / mean - 1.0;
@@ -1866,37 +2392,42 @@ fn refine_group_associations(associations: &mut [usize], costs: &[i64], adjacenc
             break;
         }
         let mut best: Option<(f64, i64, usize, usize)> = None; // (new max, -affinity gain, group, destination)
-        for g in 0..costs.len() {
+        for (g, element) in costs.iter().enumerate() {
             if associations[g] != heavy {
                 continue;
             }
-            affinity.iter_mut().for_each(|a| *a = 0);
+            affinity.fill(0);
             for &n in &adjacency[g] {
                 affinity[associations[n]] += 1;
             }
-            let cost = costs[g] as f64;
+            let cost = (*element) as f64;
             for dest in 0..checker_count {
                 if dest == heavy {
                     continue;
                 }
-                let mut new_max = (loads[heavy] - cost).max(loads[dest] + cost * MOVE_COST_PREMIUM);
-                for c in 0..checker_count {
+                let mut new_max =
+                    (loads[heavy] - cost).max(cost.mul_add(MOVE_COST_PREMIUM, loads[dest]));
+                for (c, element) in loads[..checker_count].iter().enumerate() {
                     if c != heavy && c != dest {
-                        new_max = new_max.max(loads[c]);
+                        new_max = new_max.max(*element);
                     }
                 }
                 let key = (new_max, affinity[heavy] - affinity[dest], g, dest);
-                if best.is_none_or(|b| key.0 < b.0 || key.0 == b.0 && (key.1, key.2, key.3) < (b.1, b.2, b.3)) {
+                if best.is_none_or(|b| {
+                    key.0 < b.0 || key.0 == b.0 && (key.1, key.2, key.3) < (b.1, b.2, b.3)
+                }) {
                     best = Some(key);
                 }
             }
         }
-        let Some((new_max, _, g, dest)) = best else { break };
+        let Some((new_max, _, g, dest)) = best else {
+            break;
+        };
         if new_max > loads[heavy] - min_gain {
             break;
         }
         loads[heavy] -= costs[g] as f64;
-        loads[dest] += costs[g] as f64 * MOVE_COST_PREMIUM;
+        loads[dest] = (costs[g] as f64).mul_add(MOVE_COST_PREMIUM, loads[dest]);
         associations[g] = dest;
     }
 }
@@ -1913,7 +2444,10 @@ fn checked_file_weights(program: &Program) -> Vec<i64> {
     let files = &program.files;
     let checked: Vec<bool> = files
         .iter()
-        .map(|&f| !((f.is_declaration_file.get() || ast::is_json_source_file(f)) && program.skip_type_checking(f, false)))
+        .map(|&f| {
+            !((f.is_declaration_file.get() || ast::is_json_source_file(f))
+                && program.skip_type_checking(f, false))
+        })
         .collect();
     let base_weights: Vec<i64> = files
         .iter()
@@ -1922,11 +2456,18 @@ fn checked_file_weights(program: &Program) -> Vec<i64> {
             if !checked[i] {
                 return 0;
             }
-            let base = get_checker_association_base_weight(f.node_count.get() as i64, f.text().len() as i64);
+            let base = get_checker_association_base_weight(
+                f.node_count.get() as i64,
+                f.text().len() as i64,
+            );
             base * CHECKER_ASSOCIATION_SOURCE_FILE_WEIGHT_MULTIPLIER
         })
         .collect();
-    let import_counts: Vec<i64> = files.iter().enumerate().map(|(i, f)| if checked[i] { f.imports().len() as i64 } else { 0 }).collect();
+    let import_counts: Vec<i64> = files
+        .iter()
+        .enumerate()
+        .map(|(i, f)| if checked[i] { f.imports().len() as i64 } else { 0 })
+        .collect();
     get_checker_association_weights(&base_weights, &import_counts)
 }
 
@@ -1951,7 +2492,8 @@ fn dump_assignment_inputs(program: &Program, associations: &[usize], path: &str)
         );
     }
     std::fs::write(format!("{path}.files.tsv"), out).expect("TSRS_ASSIGNMENT_DUMP");
-    let file_indices: FxHashMap<P<SourceFile>, usize> = files.iter().enumerate().map(|(i, &f)| (f, i)).collect();
+    let file_indices: FxHashMap<P<SourceFile>, usize> =
+        files.iter().enumerate().map(|(i, &f)| (f, i)).collect();
     let mut out = String::new();
     for (file_index, file) in files.iter().enumerate() {
         let Some(resolved_modules) = program.resolved_modules.get(file.path()) else {
@@ -1960,7 +2502,7 @@ fn dump_assignment_inputs(program: &Program, associations: &[usize], path: &str)
         let mut targets: Vec<usize> = resolved_modules
             .values()
             .filter(|r| r.is_resolved())
-            .filter_map(|r| program.get_source_file_for_resolved_module(&r.resolved_file_name))
+            .filter_map(|r| program.get_source_file_for_resolved_module(r.resolved_file_name))
             .filter_map(|f| file_indices.get(&f).copied())
             .filter(|&t| t != file_index)
             .collect();
@@ -1973,17 +2515,15 @@ fn dump_assignment_inputs(program: &Program, associations: &[usize], path: &str)
 }
 
 // getImportAdjacency returns an undirected import graph represented by file index.
-fn get_import_adjacency(program: &Program) -> Vec<Vec<usize>> {
-    undirected(&get_import_targets(program))
+fn get_import_adjacency(program: &Program, concurrent: bool) -> Vec<Vec<usize>> {
+    undirected(&get_import_targets(program, concurrent))
 }
 
 // The in-program files each program file imports (resolved, other than itself), by file index.
-fn get_import_targets(program: &Program) -> Vec<Vec<usize>> {
+fn get_import_targets(program: &Program, concurrent: bool) -> Vec<Vec<usize>> {
     let files = &program.files;
     let mut file_indices: FxHashMap<P<SourceFile>, usize> = FxHashMap::default();
-    for (i, &file) in files.iter().enumerate() {
-        file_indices.insert(file, i);
-    }
+    file_indices.extend(files.iter().enumerate().map(|(i, &file)| (file, i)));
     // The in-program import targets of each file, in resolution-map order (looking a resolved file name up
     // normalizes it, so this part runs on the worker pool); the adjacency lists are then built in file order.
     let targets_of = |file_index: usize| -> Vec<usize> {
@@ -1995,16 +2535,19 @@ fn get_import_targets(program: &Program) -> Vec<Vec<usize>> {
         resolved_modules
             .values()
             .filter(|resolved| resolved.is_resolved())
-            .filter_map(|resolved| program.get_source_file_for_resolved_module(&resolved.resolved_file_name))
+            .filter_map(|resolved| {
+                program.get_source_file_for_resolved_module(resolved.resolved_file_name)
+            })
             .filter_map(|imported_file| file_indices.get(&imported_file).copied())
             .filter(|&imported_index| imported_index != file_index)
             .collect()
     };
-    let targets: Vec<Vec<usize>> = if program.single_threaded() {
+    let targets: Vec<Vec<usize>> = if !concurrent || program.single_threaded() {
         (0..files.len()).map(targets_of).collect()
     } else {
         use rayon::prelude::*;
-        crate::program::worker_pool().install(|| (0..files.len()).into_par_iter().map(targets_of).collect())
+        crate::program::worker_pool()
+            .install(|| (0..files.len()).into_par_iter().map(targets_of).collect())
     };
     targets
 }
@@ -2022,7 +2565,7 @@ fn undirected(targets: &[Vec<usize>]) -> Vec<Vec<usize>> {
 
 #[cfg(test)]
 mod stealing_tests {
-    use super::{heavy_files_first, queues_next, FileQueue};
+    use super::{FileQueue, heavy_files_first, queues_next};
     use std::sync::Mutex;
 
     /// Owners taking from the front and thieves from the back of the same queues must hand out every position exactly
@@ -2043,6 +2586,13 @@ mod stealing_tests {
 
     #[test]
     fn every_position_is_taken_exactly_once() {
+        // No limit on thieves per queue, and one or two thieves per queue (max_thieves_per_queue).
+        for max_thieves in [0, 1, 2] {
+            every_position_is_taken_exactly_once_with(max_thieves);
+        }
+    }
+
+    fn every_position_is_taken_exactly_once_with(max_thieves: u32) {
         let sizes = [5000usize, 0, 20000, 300, 1];
         let mut base = 0u32;
         let queues: Vec<FileQueue> = sizes
@@ -2061,8 +2611,15 @@ mod stealing_tests {
                 s.spawn(move || {
                     let mut mine = Vec::new();
                     // Every other thread keeps its victim (steal_sticky), so both rules are exercised.
-                    let mut last_victim = usize::MAX;
-                    while let Some(t) = queues_next(queues, me, true, (me % 2 == 0).then_some(&mut last_victim)) {
+                    let (mut slot, mut last_victim) = (usize::MAX, usize::MAX);
+                    while let Some(t) = queues_next(
+                        queues,
+                        me,
+                        true,
+                        max_thieves,
+                        &mut slot,
+                        (me % 2 == 0).then_some(&mut last_victim),
+                    ) {
                         mine.push(t);
                     }
                     taken.lock().unwrap().extend(mine);
@@ -2079,7 +2636,9 @@ mod stealing_tests {
     #[test]
     fn without_stealing_a_checker_keeps_its_own_files_in_order() {
         let queues = vec![FileQueue::new(vec![0, 2, 4], |_| 1), FileQueue::new(vec![1, 3], |_| 1)];
-        let order: Vec<(usize, bool)> = std::iter::from_fn(|| queues_next(&queues, 0, false, None)).collect();
+        let mut slot = usize::MAX;
+        let order: Vec<(usize, bool)> =
+            std::iter::from_fn(|| queues_next(&queues, 0, false, 0, &mut slot, None)).collect();
         assert_eq!(order, vec![(0, false), (2, false), (4, false)]);
         assert_eq!(queues[1].remaining(), 2);
     }

@@ -233,7 +233,7 @@ way. The cost is the second probe for all-frozen keys that the seed lacked; sect
 | 7 | diagnostics a checker files in files it does not check; deferred type-argument checks | checker.rs:977-980; checker_02.rs:1028-1050 | errors in other files | carried from the seed into every fork (spike a5d2a57), so the checker of the file reports them as one sequential checker would; a retired scratch checker's are dropped (section 3.1), as main drops a checker's copy when another checker checks the file (tsrs_compiler program.rs:1009-1010) |
 | 8 | budgets (TS2589, TS2859) | instantiation depth 100 and count 5M per expression count calls, so cached work decides whether they fire | whether the error fires | a fork sees the seed's cached instantiations and members. Same class as main's cache dependence: the audit in perf-order-independence.md says it can occur and was not observed |
 | 9 | base constraints cut by the depth guard | `get_resolved_base_constraint`; checker.rs:1089, types.rs:1950 | TS2536/TS2339 on TanStack/router | inherited from the seed if the seed cut one. Admitted: on router main already prints 5 or 7 errors depending on the assignment |
-| 10 | relation cache and elaboration | per-checker relations (checker.rs:1246-1250) | elaboration text (rxjs) | forks start with empty relation caches, as in the spike. Admitted, same class |
+| 10 | type-reference flags and elaboration depth | `createTypeReferenceEx` keeps first-creation `ObjectFlagsFromTypeNode`; recursion identity changes (open-history-dependence.md section 3) | elaboration text (rxjs) | references inherited from the seed retain its flags; references first created in a fork reflect that fork's history. Admitted, same class |
 | 11 | tsrs-only memos | union front cache (unioncache.rs:10-24, 210-216: stores only calls that created no type other than the result, judged by `type_count`); inference and flow memos (infermemo.rs:191, flowmemo.rs:460) | none, if their rules hold | their rules are stated per checker in terms of `type_count`, and a fork's count continues the seed's. Re-verify with `TSRS_UNION_CACHE=shadow` |
 | 12 | symbol and node ids | taken from process-wide counters, in per-thread blocks of 1,024 inside a checker group since #94, and stored by CAS (tsrs_ast utilities_1.rs:24-107); last resort of `compare_symbols_worker` (utilities.rs:457-459) | order of same-named symbols without declarations | the seed assigns ids before the freeze. Already timing-dependent in main: one hit on vscode, not history-dependent (perf-order-independence.md) |
 | 13 | identity relation key | swap by id (checker_09.rs:679) | none (a cache key) | ids stay unique in each fork's view (section 3.4) |
@@ -318,7 +318,7 @@ allocated so that every object is private:
 
 Go mode is not touched. This is 2-3 days of work (estimate), most of it ported from the spike branch.
 
-**The measurement.** `depot ci dispatch --repo maschwenk/tsrs --workflow pr-verify.yml --ref <branch> --input cpus=16
+**The measurement.** `depot ci dispatch --repo oxc-project/tsrs --workflow pr-verify.yml --ref <branch> --input cpus=16
 --input projects=t3code-server,formbricks-web,cal-diy,supabase-studio,mikro-orm,vscode,xstate-main --input
 checkers=1,8 --input reps=10 --input poison=false`. This gives:
 
@@ -591,7 +591,7 @@ The spike plan called this design B: "the only design that can hang".
 | Late freeze: the sample on checker 0, scratch-region checkers 1-7, the switch (finish the file, keep its files' diagnostics, retire, fork) | 1 week |
 | Tables: two-level interning maps, the instantiation-table split, link-store read-through, flag families at the freeze, `FrozenCell` swaps | 1 week |
 | A generated `Checker::fork` over the 347 fields of `Checker` (checker.rs:941-1340) instead of the spike's hand-written 345 | 0.5 week |
-| Memos keyed by `type_count`, Go mode off, `TSRS_CENSUS` / heap census and the `plain-ptrs` build made aware of the frozen region | 0.5-1 week |
+| Memos keyed by `type_count`, Go mode off, heap census and the `plain-ptrs` build made aware of the frozen region | 0.5-1 week |
 | Fidelity gates (stage 2) | 1-2 weeks, open-ended if a history-dependent difference appears |
 
 The fidelity gates are: conformance in the default mode, with `TSRS_LAZY_MEMBERS=0`, and canonical with 4 checkers per

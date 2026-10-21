@@ -13,12 +13,22 @@ pub struct MapBuilder<K, VBase, VBuilder> {
 }
 
 // mapbuilder.go:14
+#[expect(
+    clippy::implicit_hasher,
+    reason = "The API deliberately accepts only FxHashMap, as required by the workspace hashing policy."
+)]
 pub fn new_map_builder<K, VBase, VBuilder>(
     base: Arc<FxHashMap<K, VBase>>,
     to_builder: impl Fn(&VBase) -> VBuilder + Send + Sync + 'static,
     build: impl Fn(VBuilder) -> VBase + Send + Sync + 'static,
 ) -> MapBuilder<K, VBase, VBuilder> {
-    MapBuilder { base, dirty: FxHashMap::default(), deleted: None, to_builder: Box::new(to_builder), build: Box::new(build) }
+    MapBuilder {
+        base,
+        dirty: FxHashMap::default(),
+        deleted: None,
+        to_builder: Box::new(to_builder),
+        build: Box::new(build),
+    }
 }
 
 impl<K: Hash + Eq + Clone, VBase: Clone, VBuilder: Clone> MapBuilder<K, VBase, VBuilder> {
@@ -37,13 +47,12 @@ impl<K: Hash + Eq + Clone, VBase: Clone, VBuilder: Clone> MapBuilder<K, VBase, V
     }
 
     // mapbuilder.go:40
-    #[expect(clippy::iter_over_hash_type, reason = "copies the keys into a set")]
+    // copies the keys into a set
     pub fn clear(&mut self) {
         self.dirty = FxHashMap::default();
-        let mut deleted = FxHashSet::with_capacity_and_hasher(self.base.len(), Default::default());
-        for key in self.base.keys() {
-            deleted.insert(key.clone());
-        }
+        let mut deleted =
+            FxHashSet::with_capacity_and_hasher(self.base.len(), rustc_hash::FxBuildHasher);
+        deleted.extend(self.base.keys().map(std::clone::Clone::clone));
         self.deleted = Some(deleted);
     }
 
@@ -61,7 +70,7 @@ impl<K: Hash + Eq + Clone, VBase: Clone, VBuilder: Clone> MapBuilder<K, VBase, V
     // mapbuilder.go:59
     #[expect(clippy::iter_over_hash_type, reason = "removes, then inserts, distinct keys")]
     pub fn build(&self) -> Arc<FxHashMap<K, VBase>> {
-        if self.dirty.is_empty() && self.deleted.as_ref().is_none_or(|d| d.is_empty()) {
+        if self.dirty.is_empty() && self.deleted.as_ref().is_none_or(FxHashSet::is_empty) {
             return Arc::clone(&self.base);
         }
         let mut result: FxHashMap<K, VBase> = (*self.base).clone();
@@ -70,9 +79,9 @@ impl<K: Hash + Eq + Clone, VBase: Clone, VBuilder: Clone> MapBuilder<K, VBase, V
                 result.remove(key);
             }
         }
-        for (key, value) in &self.dirty {
-            result.insert(key.clone(), (self.build)(value.clone()));
-        }
+        result.extend(
+            self.dirty.iter().map(|(key, value)| (key.clone(), (self.build)(value.clone()))),
+        );
         Arc::new(result)
     }
 

@@ -71,7 +71,12 @@ macro_rules! forward_fs {
         fn remove(&self, path: &str) -> Result<(), String> {
             (**self).remove(path)
         }
-        fn chtimes(&self, path: &str, a_time: SystemTime, m_time: SystemTime) -> Result<(), String> {
+        fn chtimes(
+            &self,
+            path: &str,
+            a_time: SystemTime,
+            m_time: SystemTime,
+        ) -> Result<(), String> {
             (**self).chtimes(path, a_time, m_time)
         }
         fn directory_exists(&self, path: &str) -> bool {
@@ -148,10 +153,12 @@ impl FileMode {
         !self.intersects(FileMode::Type)
     }
 
+    #[must_use]
     pub fn perm(self) -> FileMode {
         self & FileMode::Perm
     }
 
+    #[must_use]
     pub fn type_(self) -> FileMode {
         self & FileMode::Type
     }
@@ -215,7 +222,7 @@ impl fmt::Display for FsError {
             FsError::Exist => f.write_str("file already exists"),
             FsError::NotExist => f.write_str("file does not exist"),
             FsError::Closed => f.write_str("file already closed"),
-            FsError::BrokenSymlink { from, to } => write!(f, "broken symlink {:?} -> {:?}", from, to),
+            FsError::BrokenSymlink { from, to } => write!(f, "broken symlink {from:?} -> {to:?}"),
             FsError::Other(s) => f.write_str(s),
         }
     }

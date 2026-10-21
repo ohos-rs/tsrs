@@ -84,7 +84,7 @@ impl Checker {
             let text = tsrs_scanner::get_text_of_node(argument);
             let text = text.trim();
             if !OH_DECIMAL_INTEGER_PATTERN.is_match(text) { return fail("Only decimal digits are allowed."); }
-            if !OH_CANONICAL_DECIMAL_INTEGER_PATTERN.is_match(text) || !text.parse::<f64>().is_ok_and(|v| v >= 1.0 && v < 26.0) {
+            if !OH_CANONICAL_DECIMAL_INTEGER_PATTERN.is_match(text) || !text.parse::<f64>().is_ok_and(|v| (1.0..26.0).contains(&v)) {
                 return fail(if self.oh_runtime_os() == OH_RUNTIME_OS { OH_API_AVAILABLE_OPEN_HARMONY_CONTENT_ERROR } else { OH_API_AVAILABLE_DISTRIBUTION_CONTENT_ERROR });
             }
             return result;
@@ -92,7 +92,7 @@ impl Checker {
         let content = argument.text();
         if self.oh_runtime_os() == OH_RUNTIME_OS {
             if !OH_OPEN_HARMONY_STRING_PATTERN.is_match(content) { return fail("Only digits and dots are allowed."); }
-            if !OH_MSF_PATTERN.captures(content).is_some_and(|m| parse_decimal(&m[1]) >= 26) {
+            if OH_MSF_PATTERN.captures(content).is_none_or(|m| parse_decimal(&m[1]) < 26) {
                 return fail(OH_API_AVAILABLE_OPEN_HARMONY_CONTENT_ERROR);
             }
             return result;
@@ -132,13 +132,13 @@ impl Checker {
         result
     }
     pub(crate) fn check_source_retention_annotation_content(&mut self, node: P<Node>, declaration: P<Node>) {
-        if !declaration.name().is_some_and(|n| n.text() == "Available")
+        if declaration.name().is_none_or(|n| n.text() != "Available")
             || !tspath::normalize_path(ast::get_source_file_of_node(declaration).unwrap().file_name()).ends_with(OH_AVAILABLE_FILE_NAME) { return; }
         let expression = node.expression().unwrap();
         if !ast::is_call_expression(expression) || expression.arguments().is_empty()
             || !ast::is_object_literal_expression(expression.arguments()[0]) { return; }
         for &property in expression.arguments()[0].properties() {
-            if !ast::is_property_assignment(property) || !property.name().is_some_and(|n| n.text() == "minApiVersion")
+            if !ast::is_property_assignment(property) || property.name().is_none_or(|n| n.text() != "minApiVersion")
                 || !property.initializer().is_some_and(ast::is_string_literal) { continue; }
             let current = parse_oh_available_version(property.initializer().unwrap().text());
             let result = self.validate_oh_available_version(&current);
@@ -166,7 +166,7 @@ impl Checker {
                 if !ast::is_call_expression(expr) || !expr.expression().is_some_and(|e| ast::is_identifier(e) && e.text() == "Available")
                     || expr.arguments().is_empty() || !ast::is_object_literal_expression(expr.arguments()[0]) { continue; }
                 for &property in expr.arguments()[0].properties() {
-                    if !ast::is_property_assignment(property) || !property.name().is_some_and(|n| n.text() == "minApiVersion") { continue; }
+                    if !ast::is_property_assignment(property) || property.name().is_none_or(|n| n.text() != "minApiVersion") { continue; }
                     if let Some(value) = property.initializer().filter(|v| ast::is_string_literal(*v) || ast::is_numeric_literal(*v)) {
                         let version = parse_oh_available_version(value.text());
                         if self.validate_oh_available_version(&version).valid { return Some(version); }

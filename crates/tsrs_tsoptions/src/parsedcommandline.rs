@@ -5,15 +5,17 @@ use tsrs_ast::Diagnostic;
 use tsrs_core::collections::OrderedMap;
 use tsrs_core::glob::{self, Glob};
 use tsrs_core::tspath::{self, ComparePathsOptions, Path};
-use tsrs_core::{resolve_project_reference_path, CompilerOptions, ProjectReference, TypeAcquisition, P};
-use tsrs_vfs::vfsmatch;
+use tsrs_core::{
+    CompilerOptions, P, ProjectReference, TypeAcquisition, resolve_project_reference_path,
+};
 use tsrs_vfs::FS;
+use tsrs_vfs::vfsmatch;
 
 use crate::commandlineoption::CompilerOptionsValue;
 use crate::contentmappers::Mapper;
 use crate::outputpaths::{self, OutputPathsHost};
 use crate::parsedoptions::ParsedOptions;
-use crate::tsconfigparsing::{get_file_names_from_config_specs, TsConfigSourceFile};
+use crate::tsconfigparsing::{TsConfigSourceFile, get_file_names_from_config_specs};
 use crate::wildcarddirectories::get_wildcard_directories;
 
 const FILE_GLOB_PATTERN: &str = "*.{js,jsx,mjs,cjs,ts,tsx,mts,cts,json}";
@@ -30,9 +32,11 @@ impl ParsedCommandLine {
         }
         let mut extensions: Vec<&str> = Vec::with_capacity(9 + mapper_extensions.len());
         extensions.extend(["js", "jsx", "mjs", "cjs", "ts", "tsx", "mts", "cts", "json"]);
-        for extension in &mapper_extensions {
-            extensions.push(extension.strip_prefix('.').unwrap_or(extension));
-        }
+        extensions.extend(
+            mapper_extensions
+                .iter()
+                .map(|extension| extension.strip_prefix('.').unwrap_or(extension)),
+        );
         let file_glob = format!("*.{{{}}}", extensions.join(","));
         let recursive = format!("**/{file_glob}");
         (file_glob, recursive)
@@ -72,7 +76,7 @@ impl ParsedCommandLine {
             errors: Vec::new(),
             raw: CompilerOptionsValue::Null,
             compile_on_save: None,
-            compare_paths_options: ComparePathsOptions::default(),
+            compare_paths_options: tsrs_core::tspath::ComparePathsOptions::default(),
             wildcard_directories: OnceLock::new(),
             include_globs: OnceLock::new(),
             source_and_output_maps: OnceLock::new(),
@@ -113,6 +117,7 @@ fn clone_once_lock<T: Clone>(lock: &OnceLock<T>) -> OnceLock<T> {
 }
 
 impl ParsedCommandLine {
+    #[must_use]
     pub fn with_file_names(&self, file_names: Vec<String>) -> ParsedCommandLine {
         let mut parsed_config = self.parsed_config.clone();
         parsed_config.file_names = file_names;
@@ -137,11 +142,15 @@ impl ParsedCommandLine {
         }
     }
 
-    pub fn source_to_project_reference(&self) -> Option<&FxHashMap<Path, P<SourceOutputAndProjectReference>>> {
+    pub fn source_to_project_reference(
+        &self,
+    ) -> Option<&FxHashMap<Path, P<SourceOutputAndProjectReference>>> {
         self.source_and_output_maps.get().map(|m| &m.source_to_project_reference)
     }
 
-    pub fn output_dts_to_project_reference(&self) -> Option<&FxHashMap<Path, P<SourceOutputAndProjectReference>>> {
+    pub fn output_dts_to_project_reference(
+        &self,
+    ) -> Option<&FxHashMap<Path, P<SourceOutputAndProjectReference>>> {
         self.source_and_output_maps.get().map(|m| &m.output_dts_to_project_reference)
     }
 
@@ -155,19 +164,38 @@ impl ParsedCommandLine {
         let _region = tsrs_core::arena::enter_owner(this.addr());
         this.get().source_and_output_maps.get_or_init(|| {
             let p = this.get();
-            let mut source_to_output: FxHashMap<Path, P<SourceOutputAndProjectReference>> = FxHashMap::default();
-            let mut output_dts_to_source: FxHashMap<Path, P<SourceOutputAndProjectReference>> = FxHashMap::default();
+            let mut source_to_output: FxHashMap<Path, P<SourceOutputAndProjectReference>> =
+                FxHashMap::default();
+            let mut output_dts_to_source: FxHashMap<Path, P<SourceOutputAndProjectReference>> =
+                FxHashMap::default();
 
             for (output_dts, source) in p.get_output_declaration_and_source_file_names() {
-                let path = tspath::to_path(&source, p.get_current_directory(), p.use_case_sensitive_file_names());
-                let project_reference = P::new(SourceOutputAndProjectReference { source, output_dts: output_dts.clone(), resolved: this });
+                let path = tspath::to_path(
+                    &source,
+                    p.get_current_directory(),
+                    p.use_case_sensitive_file_names(),
+                );
+                let project_reference = P::new(SourceOutputAndProjectReference {
+                    source,
+                    output_dts: output_dts.clone(),
+                    resolved: this,
+                });
                 if !output_dts.is_empty() {
-                    output_dts_to_source
-                        .insert(tspath::to_path(&output_dts, p.get_current_directory(), p.use_case_sensitive_file_names()), project_reference);
+                    output_dts_to_source.insert(
+                        tspath::to_path(
+                            &output_dts,
+                            p.get_current_directory(),
+                            p.use_case_sensitive_file_names(),
+                        ),
+                        project_reference,
+                    );
                 }
                 source_to_output.insert(path, project_reference);
             }
-            SourceAndOutputMaps { source_to_project_reference: source_to_output, output_dts_to_project_reference: output_dts_to_source }
+            SourceAndOutputMaps {
+                source_to_project_reference: source_to_output,
+                output_dts_to_project_reference: output_dts_to_source,
+            }
         });
     }
 
@@ -179,14 +207,21 @@ impl ParsedCommandLine {
                         .file_names
                         .iter()
                         .filter(|file| {
-                            !(self.compiler_options().unwrap().no_emit_for_js_files.is_true() && tspath::has_js_file_extension(file))
-                                && !tspath::is_declaration_file_name(file)
+                            !(tspath::is_declaration_file_name(file)
+                                || (self
+                                    .compiler_options()
+                                    .unwrap()
+                                    .no_emit_for_js_files
+                                    .is_true()
+                                    && tspath::has_js_file_extension(file)))
                         })
                         .cloned()
                         .collect()
                 };
 
-                let mut check = |source_files: &[String], root_directory: &str| self.check_source_files_belong_to_path(source_files, root_directory);
+                let mut check = |source_files: &[String], root_directory: &str| {
+                    self.check_source_files_belong_to_path(source_files, root_directory)
+                };
                 outputpaths::get_common_source_directory(
                     &self.compiler_options().unwrap(),
                     files,
@@ -198,7 +233,11 @@ impl ParsedCommandLine {
             .clone()
     }
 
-    pub(crate) fn check_source_files_belong_to_path(&self, source_files: &[String], root_directory: &str) -> bool {
+    pub(crate) fn check_source_files_belong_to_path(
+        &self,
+        source_files: &[String],
+        root_directory: &str,
+    ) -> bool {
         let mut all_files_belong_to_path = true;
         for file in source_files {
             let absolute_source_file_path = tspath::get_canonical_file_name(
@@ -206,6 +245,9 @@ impl ParsedCommandLine {
                 self.use_case_sensitive_file_names(),
             );
             if !tspath::contains_path(root_directory, file, &self.compare_paths_options) {
+                // Kept with the command line, not in the region of whoever asks first (a checker resolving a
+                // `rewriteRelativeImportExtensions` import into a referenced project; docs/LSP.md "Memory management").
+                let _region = tsrs_core::arena::enter_owner(std::ptr::from_ref(self) as usize);
                 self.common_source_directory_errors.lock().unwrap().push(tsrs_ast::new_compiler_diagnostic(
                     &tsrs_diagnostics::File_0_is_not_under_rootDir_1_rootDir_is_expected_to_contain_all_source_files,
                     &[&absolute_source_file_path, &root_directory],
@@ -228,22 +270,25 @@ impl ParsedCommandLine {
     pub(crate) fn get_output_declaration_and_source_file_names(&self) -> Vec<(String, String)> {
         let options = self.compiler_options().unwrap();
         let mut result = Vec::with_capacity(self.parsed_config.file_names.len());
-        for file_name in &self.parsed_config.file_names {
+        result.extend(self.parsed_config.file_names.iter().map(|file_name| {
             let mut output_dts = String::new();
-            if !tspath::is_declaration_file_name(file_name) && !tspath::file_extension_is(file_name, tspath::EXTENSION_JSON) {
-                output_dts = outputpaths::get_output_declaration_file_name_worker(file_name, &options, self);
+            if !tspath::is_declaration_file_name(file_name)
+                && !tspath::file_extension_is(file_name, tspath::EXTENSION_JSON)
+            {
+                output_dts =
+                    outputpaths::get_output_declaration_file_name_worker(file_name, &options, self);
             }
-            result.push((output_dts, file_name.clone()));
-        }
+            (output_dts, file_name.clone())
+        }));
         result
     }
 
     pub fn get_output_file_names(&self) -> Vec<String> {
         let options = self.compiler_options().unwrap();
         let mut result = Vec::new();
-        for file_name in &self.parsed_config.file_names {
+        result = self.parsed_config.file_names.iter().fold(result, |mut result, file_name| {
             if tspath::is_declaration_file_name(file_name) {
-                continue;
+                return result;
             }
             let js_file_name = outputpaths::get_output_js_file_name(file_name, &options, self);
             let is_json = tspath::file_extension_is(file_name, tspath::EXTENSION_JSON);
@@ -259,24 +304,32 @@ impl ParsedCommandLine {
                 }
             }
             if is_json {
-                continue;
+                return result;
             }
             if options.get_emit_declarations() {
-                let dts_file_name = outputpaths::get_output_declaration_file_name_worker(file_name, &options, self);
+                let dts_file_name =
+                    outputpaths::get_output_declaration_file_name_worker(file_name, &options, self);
                 if !dts_file_name.is_empty() {
                     let declaration_map = format!("{dts_file_name}.map");
                     result.push(dts_file_name);
-                    if self.get_content_mapper_for_file_name(file_name).is_none() && options.get_are_declaration_maps_enabled() {
+                    if self.get_content_mapper_for_file_name(file_name).is_none()
+                        && options.get_are_declaration_maps_enabled()
+                    {
                         result.push(declaration_map);
                     }
                 }
             }
-        }
+
+            result
+        });
         result
     }
 
     pub fn get_build_info_file_name(&self) -> String {
-        outputpaths::get_build_info_file_name(&self.compiler_options().unwrap(), &self.compare_paths_options)
+        outputpaths::get_build_info_file_name(
+            &self.compiler_options().unwrap(),
+            &self.compare_paths_options,
+        )
     }
 
     // WildcardDirectories returns the cached wildcard directories, initializing them if needed
@@ -286,7 +339,11 @@ impl ParsedCommandLine {
                 let config_file = self.config_file.unwrap();
                 let specs = config_file.config_file_specs.borrow();
                 let specs = specs.as_ref().unwrap();
-                get_wildcard_directories(&specs.validated_include_specs, &specs.validated_exclude_specs, &self.compare_paths_options)
+                get_wildcard_directories(
+                    &specs.validated_include_specs,
+                    &specs.validated_exclude_specs,
+                    &self.compare_paths_options,
+                )
             })
             .as_ref()
     }
@@ -299,16 +356,14 @@ impl ParsedCommandLine {
         self.include_globs.get_or_init(|| {
             let (file_glob, recursive_file_glob) = self.file_glob_patterns();
             let mut globs: Vec<Glob> = Vec::with_capacity(wildcard_directories.len());
-            for (dir, recursive) in wildcard_directories.iter() {
+            globs.extend(wildcard_directories.iter().filter_map(|(dir, recursive)| {
                 let pattern = format!(
                     "{}/{}",
                     tspath::normalize_path(dir),
                     if *recursive { &recursive_file_glob } else { &file_glob }
                 );
-                if let Ok(parsed) = glob::parse(&pattern) {
-                    globs.push(parsed);
-                }
-            }
+                glob::parse(&pattern).ok()
+            }));
             globs
         })
     }
@@ -348,11 +403,18 @@ impl ParsedCommandLine {
 
     pub fn file_names_by_path(&self) -> &FxHashMap<Path, String> {
         self.file_names_by_path.get_or_init(|| {
-            let mut file_names_by_path = FxHashMap::with_capacity_and_hasher(self.parsed_config.file_names.len(), Default::default());
-            for file_name in &self.parsed_config.file_names {
-                let path = tspath::to_path(file_name, self.get_current_directory(), self.use_case_sensitive_file_names());
-                file_names_by_path.insert(path, file_name.clone());
-            }
+            let mut file_names_by_path = FxHashMap::with_capacity_and_hasher(
+                self.parsed_config.file_names.len(),
+                rustc_hash::FxBuildHasher,
+            );
+            file_names_by_path.extend(self.parsed_config.file_names.iter().map(|file_name| {
+                let path = tspath::to_path(
+                    file_name,
+                    self.get_current_directory(),
+                    self.use_case_sensitive_file_names(),
+                );
+                (path, file_name.clone())
+            }));
             file_names_by_path
         })
     }
@@ -373,7 +435,10 @@ impl ParsedCommandLine {
     // ContentMapperExtensions returns the flattened list of file extensions registered by the
     // config's content mappers.
     pub fn content_mapper_extensions(&self) -> Vec<String> {
-        self.content_mappers().iter().flat_map(|m| m.definition.extensions.iter().cloned()).collect()
+        self.content_mappers()
+            .iter()
+            .flat_map(|m| m.definition.extensions.iter().cloned())
+            .collect()
     }
 
     // GetContentMapperForFileName returns the configured content mapper whose extensions include fileName,
@@ -381,18 +446,27 @@ impl ParsedCommandLine {
     pub fn get_content_mapper_for_file_name(&self, file_name: &str) -> Option<&Mapper> {
         let ignore_case = !self.use_case_sensitive_file_names();
         let extensions = self.content_mapper_extensions();
-        let extension_refs: Vec<&str> = extensions.iter().map(|s| s.as_str()).collect();
-        let extension = tspath::get_longest_extension_from_path(file_name, &extension_refs, ignore_case);
+        let extension_refs: Vec<&str> =
+            extensions.iter().map(std::string::String::as_str).collect();
+        let extension =
+            tspath::get_longest_extension_from_path(file_name, &extension_refs, ignore_case);
         self.content_mappers().iter().find(|mapper| {
             mapper.definition.extensions.iter().any(|mapper_extension| {
-                extension == *mapper_extension || ignore_case && tsrs_core::stringutil::equal_fold(&extension, mapper_extension)
+                extension == *mapper_extension
+                    || ignore_case
+                        && tsrs_core::stringutil::equal_fold(&extension, mapper_extension)
             })
         })
     }
 
     pub fn resolved_project_reference_paths(&self) -> &[String] {
-        self.resolved_project_reference_paths
-            .get_or_init(|| self.parsed_config.project_references.iter().map(resolve_project_reference_path).collect())
+        self.resolved_project_reference_paths.get_or_init(|| {
+            self.parsed_config
+                .project_references
+                .iter()
+                .map(resolve_project_reference_path)
+                .collect()
+        })
     }
 
     pub fn extended_source_files(&self) -> Vec<String> {
@@ -418,7 +492,11 @@ impl ParsedCommandLine {
     // PossiblyMatchesFileName is a fast check to see if a file is currently included by a config
     // or would be included if the file were to be created. It may return false positives.
     pub fn possibly_matches_file_name(&self, file_name: &str) -> bool {
-        let path = tspath::to_path(file_name, self.get_current_directory(), self.use_case_sensitive_file_names());
+        let path = tspath::to_path(
+            file_name,
+            self.get_current_directory(),
+            self.use_case_sensitive_file_names(),
+        );
         if self.file_names_by_path().contains_key(&path) {
             return true;
         }
@@ -426,13 +504,21 @@ impl ParsedCommandLine {
         {
             let config_file = self.config_file.unwrap();
             let specs = config_file.config_file_specs.borrow();
-            for include in &specs.as_ref().unwrap().validated_include_specs {
+            if specs.as_ref().unwrap().validated_include_specs.iter().any(|include| {
                 if !include.contains(['*', '?']) && !vfsmatch::is_implicit_glob(include) {
-                    let include_path = tspath::to_path(include, self.get_current_directory(), self.use_case_sensitive_file_names());
+                    let include_path = tspath::to_path(
+                        include,
+                        self.get_current_directory(),
+                        self.use_case_sensitive_file_names(),
+                    );
                     if include_path == path {
                         return true;
                     }
                 }
+
+                false
+            }) {
+                return true;
             }
         }
         if self.get_content_mapper_for_file_name(file_name).is_some() {
@@ -443,10 +529,8 @@ impl ParsedCommandLine {
         }
         let wildcard_directory_globs = self.wildcard_directory_globs();
         if !wildcard_directory_globs.is_empty() {
-            for glob in wildcard_directory_globs {
-                if glob.match_(file_name) {
-                    return true;
-                }
+            if wildcard_directory_globs.iter().any(|glob| glob.match_(file_name)) {
+                return true;
             }
         }
         false
@@ -456,8 +540,12 @@ impl ParsedCommandLine {
         let Some(wildcard_directories) = self.wildcard_directories() else {
             return false;
         };
-        for (wildcard_dir, recursive) in wildcard_directories.iter() {
-            let wildcard_dir_path = tspath::to_path(wildcard_dir, self.get_current_directory(), self.use_case_sensitive_file_names());
+        if wildcard_directories.iter().any(|(wildcard_dir, recursive)| {
+            let wildcard_dir_path = tspath::to_path(
+                wildcard_dir,
+                self.get_current_directory(),
+                self.use_case_sensitive_file_names(),
+            );
             if *recursive {
                 if wildcard_dir_path.contains_path(directory_path) {
                     return true;
@@ -465,6 +553,10 @@ impl ParsedCommandLine {
             } else if wildcard_dir_path == *directory_path {
                 return true;
             }
+
+            false
+        }) {
+            return true;
         }
         false
     }
@@ -490,6 +582,7 @@ impl ParsedCommandLine {
         (specs.get_matched_include_spec(file_name, &self.compare_paths_options), false)
     }
 
+    #[must_use]
     pub fn reload_file_names_of_parsed_command_line(&self, fs: &dyn FS) -> ParsedCommandLine {
         let mut parsed_config = self.parsed_config.clone();
         let config_file = self.config_file.unwrap();
@@ -556,5 +649,44 @@ impl OutputPathsHost for ParsedCommandLine {
 
     fn use_case_sensitive_file_names(&self) -> bool {
         ParsedCommandLine::use_case_sensitive_file_names(self)
+    }
+}
+
+#[cfg(test)]
+mod common_source_directory_region_test {
+    use tsrs_core::arena::Region;
+    use tsrs_core::tspath::ComparePathsOptions;
+    use tsrs_core::{CompilerOptions, P};
+
+    use super::new_parsed_command_line;
+
+    // The first `common_source_directory` call can come from a checker (a `rewriteRelativeImportExtensions` import into
+    // a referenced project) while its region is the allocation target; the rootDir errors it records are read later
+    // from the command line, which outlives that region.
+    #[test]
+    fn root_dir_errors_are_not_kept_in_the_asking_region() {
+        let options =
+            P::new(CompilerOptions { root_dir: "/lib".to_string(), ..Default::default() });
+        let compare = ComparePathsOptions {
+            use_case_sensitive_file_names: true,
+            current_directory: "/".to_string(),
+        };
+        let config = P::new(new_parsed_command_line(
+            options,
+            vec!["/lib/a.ts".to_string(), "/shared/s.ts".to_string()],
+            Vec::new(),
+            compare,
+        ));
+        let region = Region::new(1 << 20);
+        {
+            let _scope = region.enter();
+            assert_eq!(config.common_source_directory(), "/lib/");
+        }
+        let diagnostics = config.get_config_file_parsing_diagnostics();
+        assert_eq!(diagnostics.len(), 1);
+        assert!(
+            Region::containing(diagnostics[0].addr()).is_none_or(|r| !r.ptr_eq(&region)),
+            "rootDir error allocated in the region"
+        );
     }
 }

@@ -178,6 +178,14 @@ Native `--singleThreaded` against the module at the same absolute paths: exit co
 | emit on Compiler and Compiler-Unions (`--declaration --sourceMap --declarationMap`) | 2/2 same, 300 files |
 | fixtures (`tools/wasm/fixtures`: `-b` graph with up-to-date/verbose/edit/clean/force, incremental edits, maps + BOM + UTF-16 input, symlinked package, case-mismatched imports, write errors, `--checkers 4` cross-check, deep expressions to 50k terms) | 12/12 same |
 
+Run time (2026-10-13; M3 Max, 14 cores): the gate took 583 s, 540 s of it the sample run twice (node fs, then
+in memory) with an rsync restore per case. A 200-case profile at one job put 61% in the module, 22% in the restore
+(rsync spawns) and 17% in native tsrs. Now native runs once per case for both file systems, the restore is in-process
+(`fs.cpSync`), each slot keeps one worker (instead of one per run, ~25 ms each), `--jobs` defaults to the CPU count, and
+the sets run concurrently: 164 s, the same results. In CI the native reference is the `ci` profile
+(release without LTO: 53-59 s against 144 s cold here), built beside the module and `cargo test -p tsrs_wasm` in
+separate target directories, on a 32-vCPU runner (was 8, ~15 min in all).
+
 138 of the 1,998 materialized cases carry an option the command line cannot express (the harness-only
 `noTypesAndSymbols`, `fullEmitPaths`, tsconfig-only options); the case still runs, with that option dropped on both
 sides.
@@ -196,7 +204,7 @@ programs over 4 GiB of linear memory.
   only 4-aligned. Use `u64` words, as `TypeMapper` and `P::pack` do.
 - A new thread spawn needs a `tsrs_core::NO_THREADS` (or `single_threaded`) path: on `wasm32-wasip1`
   `std::thread::spawn` returns `Unsupported`, and a panic cannot be caught.
-- `cargo check -p tsrs_wasm --target wasm32-wasip1 --locked` (with `-D warnings`) is in CI.
+- `cargo check -p tsrs_wasm --target wasm32-wasip1 --locked` (with `build.warnings=deny`) is in CI.
 
 ## Reproduce
 

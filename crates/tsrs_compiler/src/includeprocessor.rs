@@ -1,13 +1,15 @@
 use std::sync::{Mutex, OnceLock};
 
 use rustc_hash::FxHashMap;
-use tsrs_ast::{self as ast, new_compiler_diagnostic, Diagnostic, DiagnosticsCollection, Node};
+use tsrs_ast::{self as ast, Diagnostic, DiagnosticsCollection, Node, new_compiler_diagnostic};
 use tsrs_core::tspath::Path;
 use tsrs_core::{ModuleKind, P};
 use tsrs_diagnostics as diagnostics;
 use tsrs_tsoptions as tsoptions;
 
-use crate::file_include::{self, get_referenced_location, is_referenced_file, referenceFileLocation, FileIncludeReason};
+use crate::file_include::{
+    self, FileIncludeReason, get_referenced_location, is_referenced_file, referenceFileLocation,
+};
 use crate::processing_diagnostic::{includeExplainingDiagnostic, processingDiagnostic};
 use crate::program::Program;
 
@@ -20,7 +22,8 @@ pub(crate) struct fileIncludeData {
 #[derive(Default)]
 pub(crate) struct includeProcessor {
     pub(crate) reason_diagnostics: Mutex<FxHashMap<(P<FileIncludeReason>, bool), P<Diagnostic>>>,
-    reason_to_reference_location: Mutex<FxHashMap<P<FileIncludeReason>, &'static referenceFileLocation>>,
+    reason_to_reference_location:
+        Mutex<FxHashMap<P<FileIncludeReason>, &'static referenceFileLocation>>,
     include_reason_to_related_info: Mutex<FxHashMap<P<FileIncludeReason>, Option<P<Diagnostic>>>>,
     redirect_and_file_format: Mutex<FxHashMap<Path, Option<Vec<P<Diagnostic>>>>>,
     computed_diagnostics: OnceLock<Mutex<DiagnosticsCollection>>,
@@ -31,16 +34,26 @@ impl includeProcessor {
     pub(crate) fn get_diagnostics(&self, p: &Program) -> &Mutex<DiagnosticsCollection> {
         self.computed_diagnostics.get_or_init(|| {
             let mut computed = DiagnosticsCollection::default();
-            for d in p.processing_diagnostics().iter() {
+            let processing_diagnostics = p.processing_diagnostics();
+            if !processing_diagnostics.is_empty() {
+                // What this makes (diagnostics, the include processor's caches) goes to the current allocation target,
+                // a checker's region when semantic diagnostics ask first: the language server's pool keeps it while
+                // the program lives.
+                if let Some(region) = tsrs_core::arena::current_region() {
+                    region.mark_escaped();
+                }
+            }
+            for d in processing_diagnostics.iter() {
                 computed.add(d.to_diagnostic(p));
             }
+            drop(processing_diagnostics);
             // Go ranges over both maps too. The collection drops a diagnostic equal to one it has (equal in
             // everything compare_diagnostics looks at) and sorts on read, and that comparator only ties on equal
             // diagnostics, so the order of the adds cannot be seen.
             #[expect(clippy::iter_over_hash_type, reason = "see the comment above")]
             for resolutions in p.resolved_modules.values() {
                 for resolved_module in resolutions.values() {
-                    for &diag in resolved_module.resolution_diagnostics.iter() {
+                    for &diag in resolved_module.resolution_diagnostics {
                         computed.add(diag);
                     }
                 }
@@ -48,7 +61,7 @@ impl includeProcessor {
             #[expect(clippy::iter_over_hash_type, reason = "see the comment above")]
             for type_resolutions in p.type_resolutions_in_file.values() {
                 for resolved_type_ref in type_resolutions.values() {
-                    for &diag in resolved_type_ref.resolution_diagnostics.iter() {
+                    for &diag in resolved_type_ref.resolution_diagnostics {
                         computed.add(diag);
                     }
                 }
@@ -57,29 +70,40 @@ impl includeProcessor {
         })
     }
 
-    pub(crate) fn get_reference_location(&self, r: P<FileIncludeReason>, program: &Program) -> &'static referenceFileLocation {
+    pub(crate) fn get_reference_location(
+        &self,
+        r: P<FileIncludeReason>,
+        program: &Program,
+    ) -> &'static referenceFileLocation {
         if let Some(existing) = self.reason_to_reference_location.lock().unwrap().get(&r) {
             return existing;
         }
-        let loc: &'static referenceFileLocation = Box::leak(Box::new(get_referenced_location(r, program)));
-        *self.reason_to_reference_location.lock().unwrap().entry(r).or_insert(loc)
+        let loc: &'static referenceFileLocation =
+            Box::leak(Box::new(get_referenced_location(r, program)));
+        self.reason_to_reference_location.lock().unwrap().entry(r).or_insert(loc)
     }
 
-    pub(crate) fn get_compiler_options_object_literal_syntax(&self, program: &Program) -> Option<P<Node>> {
+    pub(crate) fn get_compiler_options_object_literal_syntax(
+        &self,
+        program: &Program,
+    ) -> Option<P<Node>> {
         *self.compiler_options_syntax.get_or_init(|| {
             let config_file = program.opts.config.config_file.as_ref()?;
-            let compiler_options_property =
-                tsoptions::for_each_ts_config_prop_array(Some(config_file.source_file), "compilerOptions", |p| Some(p))?;
+            let compiler_options_property = tsoptions::for_each_ts_config_prop_array(
+                Some(config_file.source_file),
+                "compilerOptions",
+                Some,
+            )?;
             let initializer = compiler_options_property.initializer()?;
-            if ast::is_object_literal_expression(initializer) {
-                Some(initializer)
-            } else {
-                None
-            }
+            if ast::is_object_literal_expression(initializer) { Some(initializer) } else { None }
         })
     }
 
-    pub(crate) fn get_related_info(&self, r: P<FileIncludeReason>, program: &Program) -> Option<P<Diagnostic>> {
+    pub(crate) fn get_related_info(
+        &self,
+        r: P<FileIncludeReason>,
+        program: &Program,
+    ) -> Option<P<Diagnostic>> {
         if let Some(existing) = self.include_reason_to_related_info.lock().unwrap().get(&r) {
             return *existing;
         }
@@ -158,7 +182,12 @@ impl includeProcessor {
             }
         }
 
-        self.redirect_and_file_format.lock().unwrap().entry(file_path.clone()).or_insert(result).clone()
+        self.redirect_and_file_format
+            .lock()
+            .unwrap()
+            .entry(file_path.clone())
+            .or_insert(result)
+            .clone()
     }
 }
 
@@ -174,8 +203,10 @@ impl fileIncludeData {
         current_casing: &str,
         reason: Option<P<FileIncludeReason>>,
     ) {
-        let already_referenced =
-            self.file_include_reasons.get(&file).is_some_and(|reasons| reasons.iter().any(|r| r.is_referenced_file()));
+        let already_referenced = self
+            .file_include_reasons
+            .get(&file)
+            .is_some_and(|reasons| reasons.iter().any(|r| r.is_referenced_file()));
         if !is_referenced_file(reason) && already_referenced {
             self.add_processing_diagnostic(processingDiagnostic::explaining(includeExplainingDiagnostic {
                 file: Some(file),

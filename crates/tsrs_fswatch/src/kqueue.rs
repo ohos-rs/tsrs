@@ -32,7 +32,9 @@ use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 
 use crate::walkdir_unix::walk_dir;
-use crate::watcher::{dirWatch, dwKey, err_watched_directory_removed, watcher, watcherBase, watcherImpl, Error};
+use crate::watcher::{
+    Error, dirWatch, dwKey, err_watched_directory_removed, watcher, watcherBase, watcherImpl,
+};
 
 // kqueue.go:85
 // openForEvents opens a path for kqueue event monitoring. On darwin, O_EVTONLY
@@ -52,12 +54,72 @@ fn open_for_events(path: &str) -> Result<i32, Error> {
     Ok(fd)
 }
 
+// tsrs-only: kqueue needs a descriptor per watched file and directory, and macOS starts a process with a soft limit of
+// 256. Go's runtime raises the soft RLIMIT_NOFILE to the hard limit at startup (capped at kern.maxfilesperproc on
+// macOS), so tsgo has room; a Rust process does not, and the watch ran out after 256 files. Raised the same way when
+// the backend starts.
+fn raise_open_file_limit() {
+    static RAISED: std::sync::Once = std::sync::Once::new();
+    RAISED.call_once(|| {
+        let mut lim = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+        // SAFETY: `lim` is a live, writable rlimit out-parameter.
+        if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &raw mut lim) } != 0 {
+            return;
+        }
+        let mut target = lim.rlim_max;
+        #[cfg(target_os = "macos")]
+        {
+            let mut max_files: libc::c_int = 0;
+            let mut len = std::mem::size_of::<libc::c_int>();
+            let name = c"kern.maxfilesperproc";
+            // SAFETY: `name` is NUL-terminated; `max_files` and `len` are live out-parameters of the sizes given.
+            if unsafe {
+                libc::sysctlbyname(
+                    name.as_ptr(),
+                    (&raw mut max_files).cast(),
+                    &raw mut len,
+                    std::ptr::null_mut(),
+                    0,
+                )
+            } == 0
+                && max_files > 0
+            {
+                target = target.min(max_files as libc::rlim_t);
+            }
+        }
+        if target > lim.rlim_cur {
+            lim.rlim_cur = target;
+            // SAFETY: `lim` is a valid rlimit; failure leaves the old limit.
+            unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &raw const lim) };
+        }
+    });
+}
+
+// tsrs-only: out of descriptors. Go skips a file it cannot open, which here would stop watching it without a word.
+fn is_out_of_descriptors(err: &Error) -> bool {
+    err.is_errno(libc::EMFILE) || err.is_errno(libc::ENFILE)
+}
+
+fn err_out_of_descriptors(path: &str, err: &Error) -> Error {
+    Error::wrap(
+        format!(
+            "fswatch: kqueue: cannot watch {path}: {err} (each watched file needs a descriptor; raise the limit with `ulimit -n`)"
+        ),
+        err,
+    )
+}
+
 fn close_fd(fd: i32) {
     // SAFETY: closing an fd this backend opened and still tracks.
     unsafe { libc::close(fd) };
 }
 
-const vnodeFflags: u32 = libc::NOTE_DELETE | libc::NOTE_WRITE | libc::NOTE_EXTEND | libc::NOTE_ATTRIB | libc::NOTE_RENAME | libc::NOTE_REVOKE;
+const vnodeFflags: u32 = libc::NOTE_DELETE
+    | libc::NOTE_WRITE
+    | libc::NOTE_EXTEND
+    | libc::NOTE_ATTRIB
+    | libc::NOTE_RENAME
+    | libc::NOTE_REVOKE;
 
 fn new_kevent(fd: i32, filter: i16, flags: u16, fflags: u32) -> libc::kevent {
     // SAFETY: `kevent` is a plain C struct; all-zero is a valid value.
@@ -150,14 +212,20 @@ impl kqueueBackend {
         // SAFETY: plain syscall.
         let kq = unsafe { libc::kqueue() };
         if kq < 0 {
-            return Err(Error::new(format!("unable to open kqueue: {}", std::io::Error::last_os_error())));
+            return Err(Error::new(format!(
+                "unable to open kqueue: {}",
+                std::io::Error::last_os_error()
+            )));
         }
         self.kq.store(kq, Ordering::SeqCst);
 
         let mut pipe_fds = [-1i32; 2];
         // SAFETY: `pipe_fds` has room for two fds.
         if unsafe { libc::pipe(pipe_fds.as_mut_ptr()) } < 0 {
-            return Err(Error::new(format!("unable to open pipe: {}", std::io::Error::last_os_error())));
+            return Err(Error::new(format!(
+                "unable to open pipe: {}",
+                std::io::Error::last_os_error()
+            )));
         }
         self.pipe_read_fd.store(pipe_fds[0], Ordering::SeqCst);
         self.pipe_write_fd.store(pipe_fds[1], Ordering::SeqCst);
@@ -165,7 +233,7 @@ impl kqueueBackend {
         // Watch the read side of the pipe so we can break the loop on shutdown.
         let pipe_ev = new_kevent(pipe_fds[0], libc::EVFILT_READ, libc::EV_ADD | libc::EV_CLEAR, 0);
         if let Err(err) = kevent_register(kq, &pipe_ev) {
-            return Err(Error::new(format!("unable to watch pipe: {}", err)));
+            return Err(Error::new(format!("unable to watch pipe: {err}")));
         }
 
         self.base.notify_started();
@@ -175,19 +243,28 @@ impl kqueueBackend {
         let mut watchers_touched: Vec<Arc<dirWatch>> = Vec::new();
         loop {
             // SAFETY: `events` has room for `events.len()` results.
-            let n = unsafe { libc::kevent(kq, std::ptr::null(), 0, events.as_mut_ptr(), events.len() as i32, std::ptr::null()) };
+            let n = unsafe {
+                libc::kevent(
+                    kq,
+                    std::ptr::null(),
+                    0,
+                    events.as_mut_ptr(),
+                    events.len() as i32,
+                    std::ptr::null(),
+                )
+            };
             if n < 0 {
                 let err = std::io::Error::last_os_error();
                 if err.raw_os_error() == Some(libc::EINTR) {
                     continue;
                 }
-                return Err(Error::new(format!("kevent error: {}", err)));
+                return Err(Error::new(format!("kevent error: {err}")));
             }
 
             let mut stop = false;
             for ev in &events[..n as usize] {
-                let mut fflags = ev.fflags as u32;
-                let flags = ev.flags as u16;
+                let mut fflags = ev.fflags;
+                let flags = ev.flags;
                 let fd = ev.ident as i32;
                 if fd == pipe_fds[0] {
                     stop = true;
@@ -201,7 +278,9 @@ impl kqueueBackend {
                 }
 
                 let st = self.mu.lock().unwrap();
-                let entry = st.fd_to_entry.get(&fd).and_then(|(map, path)| st.entry_maps.get(map).and_then(|m| m.get(path)).map(|e| (*map, e.clone())));
+                let entry = st.fd_to_entry.get(&fd).and_then(|(map, path)| {
+                    st.entry_maps.get(map).and_then(|m| m.get(path)).map(|e| (*map, e.clone()))
+                });
                 drop(st);
                 let Some((map_id, entry)) = entry else {
                     continue;
@@ -223,6 +302,10 @@ impl kqueueBackend {
                 }
             }
 
+            #[expect(
+                clippy::iter_with_drain,
+                reason = "the vector is reused by the long-running event loop so draining retains its allocation"
+            )]
             for w in watchers_touched.drain(..) {
                 w.notify();
             }
@@ -253,7 +336,10 @@ impl kqueueBackend {
     fn close_subscriptions(&self) {
         let mut st = self.mu.lock().unwrap();
         let mut seen_fds = rustc_hash::FxHashSet::default();
-        #[expect(clippy::iter_over_hash_type, reason = "closes each distinct fd once, then clears the maps; Go ranges the map too")]
+        #[expect(
+            clippy::iter_over_hash_type,
+            reason = "closes each distinct fd once, then clears the maps; Go ranges the map too"
+        )]
         for list in st.subs_by_path.values() {
             for sub in list {
                 if sub.fd < 0 {
@@ -270,10 +356,17 @@ impl kqueueBackend {
     }
 
     // kqueue.go:266
-    fn handle_file_event(&self, fflags: u32, map_id: entriesID, entry_path: &str, touched: &mut Vec<Arc<dirWatch>>) {
+    fn handle_file_event(
+        &self,
+        fflags: u32,
+        map_id: entriesID,
+        entry_path: &str,
+        touched: &mut Vec<Arc<dirWatch>>,
+    ) {
         let mut st = self.mu.lock().unwrap();
         let subs = st.find_subscriptions_locked(entry_path);
-        let Some(entry) = st.entry_maps.get(&map_id).and_then(|m| m.get(entry_path)).cloned() else {
+        let Some(entry) = st.entry_maps.get(&map_id).and_then(|m| m.get(entry_path)).cloned()
+        else {
             return;
         };
 
@@ -286,7 +379,10 @@ impl kqueueBackend {
             }
 
             let mut recreated = false;
-            if fflags & libc::NOTE_DELETE != 0 && fflags & (libc::NOTE_RENAME | libc::NOTE_REVOKE) == 0 && !entry.is_dir {
+            if fflags & libc::NOTE_DELETE != 0
+                && fflags & (libc::NOTE_RENAME | libc::NOTE_REVOKE) == 0
+                && !entry.is_dir
+            {
                 recreated = self.try_rewatch_locked(&mut st, map_id, &entry);
             }
 
@@ -325,9 +421,24 @@ impl kqueueBackend {
             return;
         }
 
+        // tsrs-only (`set_write_settling`): kqueue reports a save's truncation at once, before its data; an empty file
+        // holds the callbacks until an event shows it written (see fsevents_darwin.rs).
+        #[cfg(target_os = "macos")]
+        let being_written = (crate::watcher::write_settling()
+            && !entry.is_dir
+            && fflags & (libc::NOTE_WRITE | libc::NOTE_ATTRIB | libc::NOTE_EXTEND) != 0)
+            .then(|| {
+                std::fs::metadata(&entry.watch_path).is_ok_and(|m| m.is_file() && m.len() == 0)
+            });
         for sub in &subs {
             touch(touched, &sub.dir_watch);
             if fflags & (libc::NOTE_WRITE | libc::NOTE_ATTRIB | libc::NOTE_EXTEND) != 0 {
+                #[cfg(target_os = "macos")]
+                match being_written {
+                    Some(true) => sub.dir_watch.write_started(&sub.path),
+                    Some(false) => sub.dir_watch.write_finished(&sub.path),
+                    None => {}
+                }
                 sub.dir_watch.events.update(&sub.path);
             }
         }
@@ -353,7 +464,12 @@ impl kqueueBackend {
             return false;
         };
 
-        let ev = new_kevent(fd, libc::EVFILT_VNODE, libc::EV_ADD | libc::EV_CLEAR | libc::EV_ENABLE, vnodeFflags);
+        let ev = new_kevent(
+            fd,
+            libc::EVFILT_VNODE,
+            libc::EV_ADD | libc::EV_CLEAR | libc::EV_ENABLE,
+            vnodeFflags,
+        );
         if kevent_register(self.kq.load(Ordering::SeqCst), &ev).is_err() {
             close_fd(fd);
             return false;
@@ -366,28 +482,50 @@ impl kqueueBackend {
 
     // kqueue.go:479
     // watchPath corresponds to `kqueueBackend::watchDir`.
-    fn watch_path_locked(&self, st: &mut kqState, w: &Arc<dirWatch>, path: &str, map_id: entriesID) -> bool {
+    fn watch_path_locked(
+        &self,
+        st: &mut kqState,
+        w: &Arc<dirWatch>,
+        path: &str,
+        map_id: entriesID,
+    ) -> bool {
         let Some(entry) = st.entry_maps.get(&map_id).and_then(|m| m.get(path)).cloned() else {
             return false;
         };
 
-        let fd = match entry.state {
-            Some(fd) => fd,
-            None => {
-                let Ok(fd) = open_for_events(&entry.watch_path) else {
-                    return false;
-                };
-                let ev = new_kevent(fd, libc::EVFILT_VNODE, libc::EV_ADD | libc::EV_CLEAR | libc::EV_ENABLE, vnodeFflags);
-                if kevent_register(self.kq.load(Ordering::SeqCst), &ev).is_err() {
-                    close_fd(fd);
+        let fd = if let Some(fd) = entry.state {
+            fd
+        } else {
+            let fd = match open_for_events(&entry.watch_path) {
+                Ok(fd) => fd,
+                Err(err) => {
+                    if is_out_of_descriptors(&err) {
+                        w.events.set_error(err_out_of_descriptors(&entry.watch_path, &err));
+                    }
                     return false;
                 }
-                st.set_entry_state(map_id, path, Some(fd));
-                st.fd_to_entry.insert(fd, (map_id, path.to_string()));
-                fd
+            };
+            let ev = new_kevent(
+                fd,
+                libc::EVFILT_VNODE,
+                libc::EV_ADD | libc::EV_CLEAR | libc::EV_ENABLE,
+                vnodeFflags,
+            );
+            if kevent_register(self.kq.load(Ordering::SeqCst), &ev).is_err() {
+                close_fd(fd);
+                return false;
             }
+            st.set_entry_state(map_id, path, Some(fd));
+            st.fd_to_entry.insert(fd, (map_id, path.to_string()));
+            fd
         };
-        let sub = kqueueSubscription { id: self.next_id(), dir_watch: Arc::clone(w), path: path.to_string(), entries: map_id, fd };
+        let sub = kqueueSubscription {
+            id: self.next_id(),
+            dir_watch: Arc::clone(w),
+            path: path.to_string(),
+            entries: map_id,
+            fd,
+        };
         st.subs_by_path.entry(path.to_string()).or_default().push(sub);
         true
     }
@@ -418,7 +556,7 @@ impl kqueueBackend {
         }
         let subs = filtered_subs;
 
-        let dir_start = format!("{}/", path);
+        let dir_start = format!("{path}/");
         struct diskSnapshot {
             entries: Vec<(String, bool)>,
             current_display_paths: rustc_hash::FxHashSet<String>,
@@ -430,29 +568,31 @@ impl kqueueBackend {
         // covering overlapping subtrees; their maps are always distinct, so
         // we iterate subs directly rather than trying to dedup by map identity.
         for sub in &subs {
-            let Some(base_entry) = st.entry_maps.get(&sub.entries).and_then(|m| m.get(path)).cloned() else {
+            let Some(base_entry) =
+                st.entry_maps.get(&sub.entries).and_then(|m| m.get(path)).cloned()
+            else {
                 continue;
             };
             let watch_path = base_entry.watch_path.clone();
-            let watch_dir_start = format!("{}/", watch_path);
+            let watch_dir_start = format!("{watch_path}/");
 
-            let snapshot = match snapshots.get(&watch_path) {
-                Some(s) => Arc::clone(s),
-                None => {
-                    let Ok(disk_entries) = read_entries(&watch_path) else {
-                        continue;
-                    };
-                    let current_display_paths = disk_entries.iter().map(|(name, _)| format!("{}{}", dir_start, name)).collect();
-                    let s = Arc::new(diskSnapshot { entries: disk_entries, current_display_paths });
-                    snapshots.insert(watch_path.clone(), Arc::clone(&s));
-                    s
-                }
+            let snapshot = if let Some(s) = snapshots.get(&watch_path) {
+                Arc::clone(s)
+            } else {
+                let Ok(disk_entries) = read_entries(&watch_path) else {
+                    continue;
+                };
+                let current_display_paths =
+                    disk_entries.iter().map(|(name, _)| format!("{dir_start}{name}")).collect();
+                let s = Arc::new(diskSnapshot { entries: disk_entries, current_display_paths });
+                snapshots.insert(watch_path.clone(), Arc::clone(&s));
+                s
             };
 
             let map_id = sub.entries;
             for (name, ent_is_dir) in &snapshot.entries {
-                let full_path = format!("{}{}", dir_start, name);
-                let full_watch_path = format!("{}{}", watch_dir_start, name);
+                let full_path = format!("{dir_start}{name}");
+                let full_watch_path = format!("{watch_dir_start}{name}");
 
                 let existing = st.entry_maps.get(&map_id).and_then(|m| m.get(&full_path)).cloned();
                 if let Some(existing) = existing {
@@ -463,16 +603,24 @@ impl kqueueBackend {
                         // doesn't fire NOTE_DELETE on the replaced file's fd,
                         // leaving a stale entry whose fd points to the old
                         // (now unlinked) inode.
-                        if let (Some(fd_st), Ok(path_st)) = (fstat(fd), std::fs::symlink_metadata(&full_watch_path)) {
+                        if let (Some(fd_st), Ok(path_st)) =
+                            (fstat(fd), std::fs::symlink_metadata(&full_watch_path))
+                        {
                             use std::os::unix::fs::MetadataExt;
                             if fd_st.0 != path_st.dev() || fd_st.1 != path_st.ino() {
                                 // Inode changed: path was replaced.
                                 st.close_entry_locked(map_id, &full_path);
                                 st.remove_subs_for_entries_locked(&full_path, sub.id);
                                 if existing.is_dir {
-                                    st.remove_entry_and_descendants_locked(map_id, &full_path, false, sub.id);
+                                    st.remove_entry_and_descendants_locked(
+                                        map_id, &full_path, false, sub.id,
+                                    );
                                 }
-                                if let Some(e) = st.entry_maps.get_mut(&map_id).and_then(|m| m.get_mut(&full_path)) {
+                                if let Some(e) = st
+                                    .entry_maps
+                                    .get_mut(&map_id)
+                                    .and_then(|m| m.get_mut(&full_path))
+                                {
                                     e.is_dir = *ent_is_dir;
                                 }
                                 existing_state = None;
@@ -494,7 +642,12 @@ impl kqueueBackend {
                     }
                     continue;
                 }
-                let e = dirEntry { path: full_path.clone(), watch_path: full_watch_path.clone(), is_dir: *ent_is_dir, state: None };
+                let e = dirEntry {
+                    path: full_path.clone(),
+                    watch_path: full_watch_path.clone(),
+                    is_dir: *ent_is_dir,
+                    state: None,
+                };
                 st.entry_maps.entry(map_id).or_default().insert(full_path.clone(), e);
                 if !self.watch_path_locked(&mut st, &sub.dir_watch, &full_path, map_id) {
                     if let Some(m) = st.entry_maps.get_mut(&map_id) {
@@ -517,19 +670,17 @@ impl kqueueBackend {
             // exist on disk.
             let mut to_remove = Vec::new();
             if let Some(m) = st.entry_maps.get(&map_id) {
-                #[expect(clippy::iter_over_hash_type, reason = "stale children are removed from disjoint subtrees and from per-path event entries; Go ranges the map too")]
-                for p in m.keys() {
-                    let Some(rest) = p.strip_prefix(&dir_start) else {
-                        continue;
-                    };
+                // stale children are removed from disjoint subtrees and from per-path event entries; Go ranges the map too
+                to_remove.extend(m.keys().filter_map(|p| {
+                    let rest = p.strip_prefix(&dir_start)?;
                     if rest.contains('/') {
-                        continue;
+                        return None;
                     }
                     if snapshot.current_display_paths.contains(p) {
-                        continue;
+                        return None;
                     }
-                    to_remove.push(p.clone());
-                }
+                    Some(p.clone())
+                }));
             }
             for p in to_remove {
                 sub.dir_watch.events.remove(&p);
@@ -537,7 +688,12 @@ impl kqueueBackend {
                 let descendants: Vec<(String, Option<i32>)> = st
                     .entry_maps
                     .get(&map_id)
-                    .map(|m| m.iter().filter(|(d, _)| *d == &p || is_descendant(d, &p)).map(|(d, e)| (d.clone(), e.state)).collect())
+                    .map(|m| {
+                        m.iter()
+                            .filter(|(d, _)| *d == &p || is_descendant(d, &p))
+                            .map(|(d, e)| (d.clone(), e.state))
+                            .collect()
+                    })
                     .unwrap_or_default();
                 for (descendant, fd) in descendants {
                     if let Some(fd) = fd {
@@ -555,7 +711,13 @@ impl kqueueBackend {
     }
 
     // The `walkDir(fullWatchPath, true, ...)` closures of compareDir.
-    fn walk_new_subtree_locked(&self, st: &mut kqState, sub: &kqueueSubscription, map_id: entriesID, full_watch_path: &str) {
+    fn walk_new_subtree_locked(
+        &self,
+        st: &mut kqState,
+        sub: &kqueueSubscription,
+        map_id: entriesID,
+        full_watch_path: &str,
+    ) {
         let mut found = Vec::new();
         let _ = walk_dir(full_watch_path, true, &mut |p, p_is_dir| {
             if p == full_watch_path {
@@ -566,7 +728,12 @@ impl kqueueBackend {
         });
         for (p, p_is_dir) in found {
             let display_path = sub.dir_watch.display_path(&p);
-            let e = dirEntry { path: display_path.clone(), watch_path: p, is_dir: p_is_dir, state: None };
+            let e = dirEntry {
+                path: display_path.clone(),
+                watch_path: p,
+                is_dir: p_is_dir,
+                state: None,
+            };
             st.entry_maps.entry(map_id).or_default().insert(display_path.clone(), e);
             sub.dir_watch.events.create(&display_path);
             self.watch_path_locked(st, &sub.dir_watch, &display_path, map_id);
@@ -581,7 +748,9 @@ fn touch(touched: &mut Vec<Arc<dirWatch>>, w: &Arc<dirWatch>) {
 }
 
 fn is_descendant(descendant: &str, path: &str) -> bool {
-    descendant.len() > path.len() && descendant.as_bytes()[path.len()] == b'/' && descendant.starts_with(path)
+    descendant.len() > path.len()
+        && descendant.as_bytes()[path.len()] == b'/'
+        && descendant.starts_with(path)
 }
 
 // (dev, ino) of an open fd (Go `unix.Fstat`).
@@ -608,12 +777,15 @@ impl kqState {
     // the corresponding b.subsByPath / b.fdToEntry bookkeeping, and emits a
     // delete event for each.
     fn close_descendant_fds_locked(&mut self, w: &Arc<dirWatch>, map_id: entriesID, root: &str) {
-        let prefix = format!("{}/", root);
+        let prefix = format!("{root}/");
         let Some(m) = self.entry_maps.get_mut(&map_id) else {
             return;
         };
         let mut closed = Vec::new();
-        #[expect(clippy::iter_over_hash_type, reason = "each matching entry is closed and removed once; event entries are per path; Go ranges the map too")]
+        #[expect(
+            clippy::iter_over_hash_type,
+            reason = "each matching entry is closed and removed once; event entries are per path; Go ranges the map too"
+        )]
         for (path, e) in m.iter_mut() {
             if !path.starts_with(&prefix) {
                 continue;
@@ -657,11 +829,22 @@ impl kqState {
     }
 
     // kqueue.go:432
-    fn remove_entry_and_descendants_locked(&mut self, map_id: entriesID, path: &str, include_root: bool, sub_id: u64) {
+    fn remove_entry_and_descendants_locked(
+        &mut self,
+        map_id: entriesID,
+        path: &str,
+        include_root: bool,
+        sub_id: u64,
+    ) {
         let paths: Vec<String> = self
             .entry_maps
             .get(&map_id)
-            .map(|m| m.keys().filter(|d| if *d == path { include_root } else { is_descendant(d, path) }).cloned().collect())
+            .map(|m| {
+                m.keys()
+                    .filter(|d| if *d == path { include_root } else { is_descendant(d, path) })
+                    .cloned()
+                    .collect()
+            })
             .unwrap_or_default();
         for descendant in paths {
             self.close_entry_locked(map_id, &descendant);
@@ -681,7 +864,10 @@ impl kqState {
     // cleanupEntriesLocked closes fds for all entries that have been opened.
     // Called on subscribe failure to avoid fd leaks. Must be called under b.mu.
     fn cleanup_entries_locked(&mut self, entries: &mut FxHashMap<String, dirEntry>) {
-        #[expect(clippy::iter_over_hash_type, reason = "closes every opened fd and drops its fd_to_entry key; Go ranges the map too")]
+        #[expect(
+            clippy::iter_over_hash_type,
+            reason = "closes every opened fd and drops its fd_to_entry key; Go ranges the map too"
+        )]
         for e in entries.values_mut() {
             if let Some(fd) = e.state.take() {
                 close_fd(fd);
@@ -695,11 +881,12 @@ impl kqState {
 // readEntries lists directory entries (excluding "." and "..") at path. (Go `os.ReadDir` sorts by name.)
 fn read_entries(path: &str) -> Result<Vec<(String, bool)>, Error> {
     let mut out = Vec::new();
-    for ent in std::fs::read_dir(path).map_err(Error::from_io)? {
+    out = (std::fs::read_dir(path).map_err(Error::from_io)?).try_fold(out, |mut out, ent| {
         let ent = ent.map_err(Error::from_io)?;
-        let is_dir = ent.file_type().map(|t| t.is_dir()).unwrap_or(false);
+        let is_dir = ent.file_type().is_ok_and(|t| t.is_dir());
         out.push((ent.file_name().to_string_lossy().into_owned(), is_dir));
-    }
+        Ok::<_, Error>(out)
+    })?;
     out.sort();
     Ok(out)
 }
@@ -719,6 +906,7 @@ impl watcherImpl for kqueueBackend {
 
     // kqueue.go:146
     fn start(self: Arc<Self>) -> Result<(), Error> {
+        raise_open_file_limit();
         let result = self.run_loop();
         self.close_subscriptions();
         self.close_fds();
@@ -748,7 +936,10 @@ impl watcherImpl for kqueueBackend {
         let mut entries: FxHashMap<String, dirEntry> = FxHashMap::default();
         walk_dir(&w.physical_dir, w.recursive, &mut |watch_path, is_dir| {
             let path = w.display_path(watch_path);
-            entries.insert(path.clone(), dirEntry { path, watch_path: watch_path.to_string(), is_dir, state: None });
+            entries.insert(
+                path.clone(),
+                dirEntry { path, watch_path: watch_path.to_string(), is_dir, state: None },
+            );
             Ok(())
         })?;
 
@@ -765,13 +956,25 @@ impl watcherImpl for kqueueBackend {
                 Err(err) => {
                     if path == w.dir {
                         st.cleanup_entries_locked(&mut entries);
-                        return Err(Error::wrap(format!("error watching {}: {}", w.dir, err), &err));
+                        return Err(Error::wrap(
+                            format!("error watching {}: {}", w.dir, err),
+                            &err,
+                        ));
+                    }
+                    if is_out_of_descriptors(&err) {
+                        st.cleanup_entries_locked(&mut entries);
+                        return Err(err_out_of_descriptors(&watch_path, &err));
                     }
                     entries.remove(&path);
                     continue;
                 }
             };
-            let ev = new_kevent(fd, libc::EVFILT_VNODE, libc::EV_ADD | libc::EV_CLEAR | libc::EV_ENABLE, vnodeFflags);
+            let ev = new_kevent(
+                fd,
+                libc::EVFILT_VNODE,
+                libc::EV_ADD | libc::EV_CLEAR | libc::EV_ENABLE,
+                vnodeFflags,
+            );
             if let Err(err) = kevent_register(kq, &ev) {
                 close_fd(fd);
                 if path == w.dir {
@@ -785,10 +988,19 @@ impl watcherImpl for kqueueBackend {
             st.fd_to_entry.insert(fd, (map_id, path));
         }
 
-        #[expect(clippy::iter_over_hash_type, reason = "one subscription per distinct path; subscription ids are only compared for equality; Go ranges the map too")]
+        #[expect(
+            clippy::iter_over_hash_type,
+            reason = "one subscription per distinct path; subscription ids are only compared for equality; Go ranges the map too"
+        )]
         for (path, entry) in &entries {
             let fd = entry.state.unwrap();
-            let sub = kqueueSubscription { id: self.next_id(), dir_watch: Arc::clone(w), path: path.clone(), entries: map_id, fd };
+            let sub = kqueueSubscription {
+                id: self.next_id(),
+                dir_watch: Arc::clone(w),
+                path: path.clone(),
+                entries: map_id,
+                fd,
+            };
             st.subs_by_path.entry(path.clone()).or_default().push(sub);
         }
         st.entry_maps.insert(map_id, entries);
@@ -803,16 +1015,17 @@ impl watcherImpl for kqueueBackend {
         let mut maps_of_watch = rustc_hash::FxHashSet::default();
         let paths: Vec<String> = st.subs_by_path.keys().cloned().collect();
         for path in paths {
-            let list = st.subs_by_path.get(&path).unwrap();
+            let list = &st.subs_by_path[&path];
             let removed_any = list.iter().any(|s| dwKey(Arc::clone(&s.dir_watch)) == key);
             if !removed_any {
                 continue;
             }
-            for s in list.iter().filter(|s| dwKey(Arc::clone(&s.dir_watch)) == key) {
-                maps_of_watch.insert(s.entries);
-            }
+            maps_of_watch.extend(
+                list.iter().filter(|s| dwKey(Arc::clone(&s.dir_watch)) == key).map(|s| s.entries),
+            );
             let first_fd = list[0].fd;
-            let kept: Vec<kqueueSubscription> = list.iter().filter(|s| dwKey(Arc::clone(&s.dir_watch)) != key).cloned().collect();
+            let kept: Vec<kqueueSubscription> =
+                list.iter().filter(|s| dwKey(Arc::clone(&s.dir_watch)) != key).cloned().collect();
             if kept.is_empty() {
                 // Closing the file descriptor automatically unwatches it in kqueue.
                 close_fd(first_fd);
@@ -823,9 +1036,13 @@ impl watcherImpl for kqueueBackend {
             }
         }
         // Go drops the entries map with its last subscription (GC).
-        #[expect(clippy::iter_over_hash_type, reason = "drops each entry map that no subscription references; the removals are independent")]
+        #[expect(
+            clippy::iter_over_hash_type,
+            reason = "drops each entry map that no subscription references; the removals are independent"
+        )]
         for map_id in maps_of_watch {
-            let still_used = st.subs_by_path.values().any(|l| l.iter().any(|s| s.entries == map_id));
+            let still_used =
+                st.subs_by_path.values().any(|l| l.iter().any(|s| s.entries == map_id));
             if !still_used {
                 st.entry_maps.remove(&map_id);
             }

@@ -17,7 +17,14 @@ fn valid(text: &str) -> P<ast::SourceFile> {
     let errors: Vec<_> = file
         .diagnostics()
         .iter()
-        .map(|d| format!("{} at {}: {}", d.code(), d.pos(), d.localize()))
+        .map(|d| {
+            format!(
+                "{} at {}: {}",
+                d.code(),
+                d.pos().unwrap_or(0),
+                d.localize()
+            )
+        })
         .collect();
     assert!(errors.is_empty(), "{errors:?}\n{text}");
     file
@@ -107,6 +114,13 @@ fn annotation_keyword_in_member_recovers_without_panicking() {
     let file = parse(include_str!("fixtures/annotation-member-error.ets"), ScriptKind::ETS);
     // OH parser scanClassMemberStart rejects @interface before parseClassElement.
     // Exact diagnostics from the pinned OH Go parser for the OXC negative fixture.
-    let diagnostics: Vec<_> = file.diagnostics().iter().map(|d| (d.code(), d.pos(), d.pos() + d.len())).collect();
+    let diagnostics: Vec<_> = file
+        .diagnostics()
+        .iter()
+        .map(|d| {
+            let pos = d.pos().unwrap_or(0);
+            (d.code(), pos, pos + d.len().unwrap_or(0))
+        })
+        .collect();
     assert_eq!(diagnostics, [(1068, 96, 97), (1003, 109, 110), (1146, 115, 115), (1128, 136, 137)]);
 }

@@ -20,12 +20,15 @@ use std::fmt;
 use std::ops::{Deref, DerefMut};
 
 #[cfg(any(debug_assertions, feature = "checked-cells"))]
-use std::sync::atomic::{AtomicIsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+#[cfg(any(debug_assertions, feature = "checked-cells"))]
+const EXCLUSIVE_BORROW: usize = usize::MAX;
 
 pub struct FrozenCell<T> {
     value: UnsafeCell<T>,
     #[cfg(any(debug_assertions, feature = "checked-cells"))]
-    state: AtomicIsize, // > 0: shared borrows, -1: exclusive borrow
+    state: AtomicUsize, // 1..EXCLUSIVE_BORROW: shared borrow count; EXCLUSIVE_BORROW: exclusive borrow
 }
 
 // SAFETY: shared access is read-only except through `borrow_mut`, whose callers follow the ownership
@@ -40,7 +43,7 @@ impl<T> FrozenCell<T> {
         FrozenCell {
             value: UnsafeCell::new(value),
             #[cfg(any(debug_assertions, feature = "checked-cells"))]
-            state: AtomicIsize::new(0),
+            state: AtomicUsize::new(0),
         }
     }
 
@@ -48,10 +51,20 @@ impl<T> FrozenCell<T> {
     pub fn borrow(&self) -> FrozenRef<'_, T> {
         #[cfg(any(debug_assertions, feature = "checked-cells"))]
         {
-            let prev = self.state.fetch_add(1, Ordering::Acquire);
-            if prev < 0 {
-                self.state.fetch_sub(1, Ordering::Release);
-                panic!("FrozenCell already mutably borrowed");
+            let mut state = self.state.load(Ordering::Acquire);
+            loop {
+                assert!(state != EXCLUSIVE_BORROW, "FrozenCell already mutably borrowed");
+                assert!(state < EXCLUSIVE_BORROW - 1, "FrozenCell shared borrow count overflow");
+                state = match self.state.compare_exchange_weak(
+                    state,
+                    state + 1,
+                    Ordering::Acquire,
+                    // A failed comparison only supplies the next borrow-state value to retry.
+                    Ordering::Relaxed,
+                ) {
+                    Ok(_) => break,
+                    Err(current) => current,
+                };
             }
         }
         FrozenRef {
@@ -67,7 +80,12 @@ impl<T> FrozenCell<T> {
         #[cfg(any(debug_assertions, feature = "checked-cells"))]
         {
             crate::ptr::shared_check::assert_not_shared(self, "FrozenCell");
-            if self.state.compare_exchange(0, -1, Ordering::Acquire, Ordering::Relaxed).is_err() {
+            if self
+                .state
+                // Failure only reports that another borrow is active; it does not expose the value.
+                .compare_exchange(0, EXCLUSIVE_BORROW, Ordering::Acquire, Ordering::Relaxed)
+                .is_err()
+            {
                 panic!("FrozenCell already borrowed");
             }
         }
@@ -86,7 +104,12 @@ impl<T> FrozenCell<T> {
     pub fn borrow_mut_locked(&self) -> FrozenRefMut<'_, T> {
         #[cfg(any(debug_assertions, feature = "checked-cells"))]
         {
-            if self.state.compare_exchange(0, -1, Ordering::Acquire, Ordering::Relaxed).is_err() {
+            if self
+                .state
+                // Failure only reports that another borrow is active; it does not expose the value.
+                .compare_exchange(0, EXCLUSIVE_BORROW, Ordering::Acquire, Ordering::Relaxed)
+                .is_err()
+            {
                 panic!("FrozenCell already borrowed");
             }
         }
@@ -131,7 +154,7 @@ impl<T: fmt::Debug> fmt::Debug for FrozenCell<T> {
 pub struct FrozenRef<'a, T> {
     value: &'a T,
     #[cfg(any(debug_assertions, feature = "checked-cells"))]
-    state: &'a AtomicIsize,
+    state: &'a AtomicUsize,
 }
 
 impl<T> Deref for FrozenRef<'_, T> {
@@ -153,7 +176,7 @@ impl<T> Drop for FrozenRef<'_, T> {
 pub struct FrozenRefMut<'a, T> {
     value: &'a mut T,
     #[cfg(any(debug_assertions, feature = "checked-cells"))]
-    state: &'a AtomicIsize,
+    state: &'a AtomicUsize,
 }
 
 impl<T> Deref for FrozenRefMut<'_, T> {
@@ -180,8 +203,9 @@ impl<T> Drop for FrozenRefMut<'_, T> {
 }
 
 /// `Cell<T>` for fields of shared arena objects (binder symbols) that only their owner writes: after binding,
-/// checkers write these fields only on objects they created themselves (transient symbols). Checked builds
-/// verify that with `shared_check` (`TSRS_CHECK_SHARED=1`); otherwise it is a plain `Cell`.
+/// checkers write these fields only on objects they created themselves (transient symbols).
+///
+/// Checked builds verify that with `shared_check` (`TSRS_CHECK_SHARED=1`); otherwise it is a plain `Cell`.
 #[repr(transparent)]
 #[derive(Default)]
 pub struct OwnedCell<T>(Cell<T>);
@@ -191,21 +215,28 @@ impl<T> OwnedCell<T> {
     pub const fn new(value: T) -> OwnedCell<T> {
         OwnedCell(Cell::new(value))
     }
+}
 
+// Shared graph (`sharedgraph`): a checker-created symbol or node of the frozen seed is read through the
+// current checker's overlay, and its writes go there.
+impl<T: Copy> OwnedCell<T> {
     #[inline]
     pub fn set(&self, value: T) {
         crate::ptr::shared_check::assert_not_shared(self, "OwnedCell");
-        self.0.set(value)
+        if crate::sharedgraph::any_frozen() && crate::sharedgraph::owned_set_if_frozen(self, value)
+        {
+            return;
+        }
+        self.0.set(value);
     }
 
     #[inline]
     pub fn replace(&self, value: T) -> T {
-        crate::ptr::shared_check::assert_not_shared(self, "OwnedCell");
-        self.0.replace(value)
+        let old = self.get();
+        self.set(value);
+        old
     }
-}
 
-impl<T: Copy> OwnedCell<T> {
     #[inline]
     pub fn get(&self) -> T {
         self.0.get()
@@ -251,7 +282,7 @@ impl<T> OwnedSliceCell<T> {
     #[inline]
     pub fn set(&self, value: &'static [T]) {
         crate::ptr::shared_check::assert_not_shared(self, "OwnedSliceCell");
-        self.0.set(value)
+        self.0.set(value);
     }
 }
 
@@ -272,7 +303,7 @@ impl OwnedStrCell {
     #[inline]
     pub fn set(&self, value: &'static str) {
         crate::ptr::shared_check::assert_not_shared(self, "OwnedStrCell");
-        self.0.set(crate::ptr::PackedStr::new(value))
+        self.0.set(crate::ptr::PackedStr::new(value));
     }
 }
 
@@ -282,9 +313,11 @@ impl Default for OwnedStrCell {
     }
 }
 
-/// `OwnedCell<&'static str>` in 8 bytes with two tag bits for the owner (`tags` / `set_tags`; `set` keeps them): the
-/// address in the low 48 bits, the length in the next 14, the tags in the top 2. A string of `0x3FFF` bytes or more
-/// (or at an address above 2^48) is copied into the arena after a `u32` length (`PackedStr`'s long form).
+/// `OwnedCell<&'static str>` in 8 bytes with two tag bits for the owner (`tags` / `set_tags`; `set` keeps
+/// them): the address in the low 48 bits, the length in the next 14, the tags in the top 2.
+///
+/// A string of `0x3FFF` bytes or more (or at an address above 2^48) is copied into the arena after a `u32`
+/// length (`PackedStr`'s long form).
 pub struct OwnedTaggedStrCell(Cell<u64>);
 
 const TAGGED_LEN_SHIFT: u32 = 48;
@@ -294,23 +327,20 @@ const TAGGED_ADDR: u64 = (1 << TAGGED_LEN_SHIFT) - 1;
 
 impl OwnedTaggedStrCell {
     #[inline]
-    #[cfg_attr(feature = "alloc-profile", track_caller)]
     pub fn new(value: &'static str) -> OwnedTaggedStrCell {
         OwnedTaggedStrCell(Cell::new(Self::pack(value)))
     }
 
     #[inline]
-    #[cfg_attr(feature = "alloc-profile", track_caller)]
     fn pack(s: &'static str) -> u64 {
         let a = s.as_ptr().expose_provenance() as u64;
         if (s.len() as u64) < TAGGED_LEN_MASK && a >> TAGGED_LEN_SHIFT == 0 {
-            return a | (s.len() as u64) << TAGGED_LEN_SHIFT;
+            return a | ((s.len() as u64) << TAGGED_LEN_SHIFT);
         }
         Self::pack_long(s)
     }
 
     #[cold]
-    #[cfg_attr(feature = "alloc-profile", track_caller)]
     fn pack_long(s: &str) -> u64 {
         let len = u32::try_from(s.len()).expect("string longer than u32::MAX");
         let mut bytes = Vec::with_capacity(4 + s.len());
@@ -319,7 +349,7 @@ impl OwnedTaggedStrCell {
         let copy = crate::alloc_slice_aligned4(&bytes);
         let a = copy.as_ptr().expose_provenance() as u64;
         assert!(a >> TAGGED_LEN_SHIFT == 0, "arena address above 2^48");
-        a | TAGGED_LEN_MASK << TAGGED_LEN_SHIFT
+        a | (TAGGED_LEN_MASK << TAGGED_LEN_SHIFT)
     }
 
     #[inline]
@@ -333,16 +363,22 @@ impl OwnedTaggedStrCell {
         let len = (w >> TAGGED_LEN_SHIFT) & TAGGED_LEN_MASK;
         // SAFETY: built by `pack` from a `&'static str` of this length, or by `pack_long` (length prefix + bytes).
         unsafe {
-            let (p, len) = if len == TAGGED_LEN_MASK { (p.add(4), p.cast::<u32>().read_unaligned() as usize) } else { (p, len as usize) };
+            let (p, len) = if len == TAGGED_LEN_MASK {
+                (p.add(4), p.cast::<u32>().read_unaligned() as usize)
+            } else {
+                (p, len as usize)
+            };
             std::str::from_utf8_unchecked(std::slice::from_raw_parts(p, len))
         }
     }
 
     #[inline]
-    #[cfg_attr(feature = "alloc-profile", track_caller)]
     pub fn set(&self, value: &'static str) {
         crate::ptr::shared_check::assert_not_shared(self, "OwnedTaggedStrCell");
-        self.0.set(Self::pack(value) | self.0.get() & !(TAGGED_ADDR | TAGGED_LEN_MASK << TAGGED_LEN_SHIFT))
+        self.0.set(
+            Self::pack(value)
+                | self.0.get() & !(TAGGED_ADDR | (TAGGED_LEN_MASK << TAGGED_LEN_SHIFT)),
+        );
     }
 
     /// The two tag bits.
@@ -355,7 +391,7 @@ impl OwnedTaggedStrCell {
     pub fn set_tags(&self, tags: u8) {
         crate::ptr::shared_check::assert_not_shared(self, "OwnedTaggedStrCell");
         debug_assert!(tags < 4);
-        self.0.set(self.0.get() & !(3 << TAGGED_TAG_SHIFT) | (tags as u64) << TAGGED_TAG_SHIFT)
+        self.0.set(self.0.get() & !(3 << TAGGED_TAG_SHIFT) | ((tags as u64) << TAGGED_TAG_SHIFT));
     }
 }
 
@@ -365,9 +401,10 @@ impl Default for OwnedTaggedStrCell {
     }
 }
 
-/// `OwnedCell<&'static [T]>` for slices of handles in arena objects: a `SliceCell` (12 bytes, 4-aligned), or with
-/// compressed pointers, where a struct of handles packs tighter, a `ThinSliceCell` (8 bytes). `get` returns exactly
-/// the slice last `set`.
+/// `OwnedCell<&'static [T]>` for slices of handles in arena objects: a `SliceCell` (12 bytes, 4-aligned), or
+/// with compressed pointers, where a struct of handles packs tighter, a `ThinSliceCell` (8 bytes).
+///
+/// `get` returns exactly the slice last `set`.
 pub struct OwnedPSliceCell<T: 'static>(
     #[cfg(not(compressed_ptrs))] crate::ptr::SliceCell<T>,
     #[cfg(compressed_ptrs)] crate::ptr::ThinSliceCell<T>,
@@ -381,7 +418,6 @@ impl<T> Default for OwnedPSliceCell<T> {
 
 impl<T> OwnedPSliceCell<T> {
     #[inline]
-    #[cfg_attr(feature = "alloc-profile", track_caller)]
     pub fn new(value: &'static [T]) -> OwnedPSliceCell<T> {
         #[cfg(not(compressed_ptrs))]
         return OwnedPSliceCell(crate::ptr::SliceCell::new(value));
@@ -395,10 +431,9 @@ impl<T> OwnedPSliceCell<T> {
     }
 
     #[inline]
-    #[cfg_attr(feature = "alloc-profile", track_caller)]
     pub fn set(&self, value: &'static [T]) {
         crate::ptr::shared_check::assert_not_shared(self, "OwnedPSliceCell");
-        self.0.set(value)
+        self.0.set(value);
     }
 }
 
@@ -418,7 +453,7 @@ mod tests {
 
     #[cfg(debug_assertions)]
     #[test]
-    #[should_panic]
+    #[should_panic(expected = "FrozenCell already borrowed")]
     fn aliasing_is_detected() {
         let c = FrozenCell::new(vec![1]);
         let _r = c.borrow();

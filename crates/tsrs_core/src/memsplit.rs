@@ -1,11 +1,13 @@
-//! `TSRS_MEM_SPLIT=1` (debug stat, any build): splits the resident memory at three points of a run into the thread
-//! arenas' used bytes, the resident but never used parts of their chunks, the allocator heap's live blocks and the
-//! rest it keeps resident, thread stacks and file-backed pages, and prints one block per point on stderr
-//! (notes/mem-linux-residency-32.md). The points: `parse end` (the program is parsed and bound, before checker
-//! creation), `check end` (every checker of the type-check pass has finished its files and its thread is still
-//! alive: the moment memory peaks) and `exit`. `TSRS_MEM_SPLIT=purge` also makes the allocator purge its freed memory
-//! after `check end` and prints the split again. Linux reads `/proc/self/smaps` and `/proc/self/status`; elsewhere only
-//! the arena and heap lines print.
+//! Reports how resident memory is divided between arenas and the allocator.
+//!
+//! `TSRS_MEM_SPLIT=1` (debug stat, any build): splits the resident memory at three points of a run into the thread arenas' used bytes, the resident but never used parts of their chunks, the allocator heap's live blocks and the rest it keeps resident, thread stacks and file-backed pages, and prints one block per point on stderr (notes/mem-linux-residency-32.md).
+//!
+//!
+//! The points: `parse end` (the program is parsed and bound, before checker creation), `check end` (every
+//! checker of the type-check pass has finished its files and its thread is still alive: the moment memory
+//! peaks) and `exit`. `TSRS_MEM_SPLIT=purge` also makes the allocator purge its freed memory after `check
+//! end` and prints the split again. Linux reads `/proc/self/smaps` and `/proc/self/status`; elsewhere
+//! only the arena and heap lines print.
 
 use std::fmt::Write;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -27,9 +29,11 @@ pub fn enabled() -> bool {
     mode() != 0
 }
 
+/// Distinguishes reusable allocator pages from live heap storage.
+///
 /// `TSRS_MEM_SPLIT=purge`: after the `check end` report, the allocator purges every arena's freed memory
-/// (`mi_collect(true)`) and the split is printed again, which shows how much of the heap's resident rest is freed
-/// memory not yet given back.
+/// (`mi_collect(true)`) and the split is printed again, which shows how much of the heap's resident rest is
+/// freed memory not yet given back.
 pub fn purge_after_check() -> bool {
     mode() == 2
 }
@@ -124,7 +128,9 @@ pub fn resident(start: usize, len: usize) -> usize {
     }
     let mut vec = vec![0u8; (e - s) / page];
     // SAFETY: mincore only reads the page tables of the range and writes one byte per page into `vec`.
-    let rc = unsafe { libc::mincore(std::ptr::without_provenance_mut(s), e - s, vec.as_mut_ptr().cast()) };
+    let rc = unsafe {
+        libc::mincore(std::ptr::without_provenance_mut(s), e - s, vec.as_mut_ptr().cast())
+    };
     if rc != 0 {
         return 0;
     }
@@ -168,7 +174,8 @@ pub fn report(what: &str) {
         arenas.capacity += r.capacity;
         arenas.used += r.used;
         arenas.tail_resident += r.current_unused.map_or(0, |(s, l)| resident(s, l));
-        arenas.retired_resident += r.retired_unused.iter().map(|&(s, l)| resident(s, l)).sum::<usize>();
+        arenas.retired_resident +=
+            r.retired_unused.iter().map(|&(s, l)| resident(s, l)).sum::<usize>();
         arenas.huge_current += usize::from(r.current_huge);
     }
     let _ = writeln!(
@@ -182,7 +189,8 @@ pub fn report(what: &str) {
         arenas.huge_current
     );
     #[cfg(compressed_ptrs)]
-    let _ = writeln!(out, "  reservation: {} MiB in chunks", mib(crate::reserve::reserved_in_use()));
+    let _ =
+        writeln!(out, "  reservation: {} MiB in chunks", mib(crate::reserve::reserved_in_use()));
     let heap = HEAP_STATS.get().map(|f| f());
     if let Some(h) = heap {
         let _ = writeln!(
@@ -198,7 +206,11 @@ pub fn report(what: &str) {
     let stacks = CHECKER_STACKS.swap(0, Ordering::Relaxed);
     let stack_threads = CHECKER_STACK_THREADS.swap(0, Ordering::Relaxed);
     if stack_threads > 0 {
-        let _ = writeln!(out, "  checker stacks (own mincore): {stack_threads} threads, {} MiB resident", mib(stacks));
+        let _ = writeln!(
+            out,
+            "  checker stacks (own mincore): {stack_threads} threads, {} MiB resident",
+            mib(stacks)
+        );
     }
     #[cfg(target_os = "linux")]
     linux::append(&mut out, &arenas, heap);
@@ -207,7 +219,7 @@ pub fn report(what: &str) {
 
 #[cfg(target_os = "linux")]
 mod linux {
-    use super::{mib, ArenaTotals, HeapStats};
+    use super::{ArenaTotals, HeapStats, mib};
     use std::fmt::Write;
 
     #[derive(Default)]
@@ -222,9 +234,13 @@ mod linux {
     }
 
     pub(super) fn append(out: &mut String, arenas: &ArenaTotals, heap: Option<HeapStats>) {
-        let status = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
+        let status = crate::utf8::read_to_string("/proc/self/status").unwrap_or_default();
         let field = |name: &str| status.lines().find(|l| l.starts_with(name)).map_or(0, kb);
-        let threads = status.lines().find(|l| l.starts_with("Threads:")).and_then(|l| l.split_whitespace().nth(1)).unwrap_or("?");
+        let threads = status
+            .lines()
+            .find(|l| l.starts_with("Threads:"))
+            .and_then(|l| l.split_whitespace().nth(1))
+            .unwrap_or("?");
         let _ = writeln!(
             out,
             "  status: VmRSS {} MiB, VmHWM {} MiB, RssAnon {} MiB, RssFile {} MiB, threads {threads}",
@@ -233,20 +249,28 @@ mod linux {
             mib(field("RssAnon:")),
             mib(field("RssFile:"))
         );
-        let smaps = std::fs::read_to_string("/proc/self/smaps").unwrap_or_default();
+        let smaps = crate::utf8::read_to_string("/proc/self/smaps").unwrap_or_default();
         #[cfg(compressed_ptrs)]
-        let arena_range = (crate::reserve::BASE_ADDR, crate::reserve::BASE_ADDR + crate::reserve::RESERVE);
+        let arena_range =
+            (crate::reserve::BASE_ADDR, crate::reserve::BASE_ADDR + crate::reserve::RESERVE);
         #[cfg(not(compressed_ptrs))]
         let arena_range = (0usize, 0usize);
-        let names = ["arena reservation", "thread stacks", "heap and other anonymous", "file-backed"];
+        let names =
+            ["arena reservation", "thread stacks", "heap and other anonymous", "file-backed"];
         let mut buckets: [Bucket; 4] = Default::default();
-        let mut stacks_by_size: std::collections::BTreeMap<usize, (usize, usize)> = std::collections::BTreeMap::new();
+        let mut stacks_by_size: std::collections::BTreeMap<usize, (usize, usize)> =
+            std::collections::BTreeMap::new();
         let mut cur: Option<(usize, usize)> = None;
         for line in smaps.lines() {
             let mut words = line.split_whitespace();
             let first = words.next().unwrap_or("");
-            if let Some((a, b)) = first.split_once('-').filter(|(a, _)| a.chars().all(|c| c.is_ascii_hexdigit()) && !a.is_empty()) {
-                let (Ok(start), Ok(end)) = (usize::from_str_radix(a, 16), usize::from_str_radix(b, 16)) else {
+            if let Some((a, b)) = first
+                .split_once('-')
+                .filter(|(a, _)| a.chars().all(|c| c.is_ascii_hexdigit()) && !a.is_empty())
+            {
+                let (Ok(start), Ok(end)) =
+                    (usize::from_str_radix(a, 16), usize::from_str_radix(b, 16))
+                else {
                     continue;
                 };
                 let perms = words.next().unwrap_or("");
@@ -256,7 +280,11 @@ mod linux {
                 // (nothing else maps anonymous memory of that size).
                 let class = if start >= arena_range.0 && end <= arena_range.1 {
                     0
-                } else if path == "[stack]" || (path.is_empty() && perms.starts_with("rw") && (200 << 20..=600 << 20).contains(&size)) {
+                } else if path == "[stack]"
+                    || (path.is_empty()
+                        && perms.starts_with("rw")
+                        && (200 << 20..=600 << 20).contains(&size))
+                {
                     1
                 } else if path.starts_with('/') {
                     3
@@ -308,12 +336,16 @@ mod linux {
     }
 }
 
-/// tsrs-only (`--maxMemory`, notes/mem-recycle-checkers.md): the process's memory in bytes as the system accounts it
-/// for limits: the physical footprint on macOS (what `/usr/bin/time -l` reports as peak memory footprint), the resident
-/// set on Linux (`/proc/self/statm`). Re-read at most every 5 ms; callers between two checked files share the value.
+/// Reads the memory usage that the operating system charges to the process.
+///
+/// tsrs-only (`--maxMemory`, notes/mem-recycle-checkers.md): the process's memory in bytes as the system
+/// accounts it for limits: the physical footprint on macOS (what `/usr/bin/time -l` reports as peak memory
+/// footprint), the resident set on Linux (`/proc/self/statm`).
+///
+/// Re-read at most every 5 ms; callers between two checked files share the value.
 pub fn process_memory() -> usize {
-    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
     use std::sync::OnceLock;
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
     static START: OnceLock<std::time::Instant> = OnceLock::new();
     static LAST_NS: AtomicU64 = AtomicU64::new(0);
     static VALUE: AtomicUsize = AtomicUsize::new(0);
@@ -335,7 +367,12 @@ pub fn process_memory() -> usize {
 fn read_process_memory() -> usize {
     unsafe extern "C" {
         static mach_task_self_: u32;
-        fn task_info(target_task: u32, flavor: i32, task_info_out: *mut u32, count: *mut u32) -> i32;
+        fn task_info(
+            target_task: u32,
+            flavor: i32,
+            task_info_out: *mut u32,
+            count: *mut u32,
+        ) -> i32;
     }
     const TASK_VM_INFO: i32 = 22;
     // `task_vm_info_data_t`: `phys_footprint` is the u64 at byte 144 (revision 1 and later).
@@ -346,12 +383,12 @@ fn read_process_memory() -> usize {
     if kr != 0 || count < 38 {
         return 0;
     }
-    (u64::from(info[36]) | u64::from(info[37]) << 32) as usize
+    (u64::from(info[36]) | (u64::from(info[37]) << 32)) as usize
 }
 
 #[cfg(target_os = "linux")]
 fn read_process_memory() -> usize {
-    let statm = std::fs::read_to_string("/proc/self/statm").unwrap_or_default();
+    let statm = crate::utf8::read_to_string("/proc/self/statm").unwrap_or_default();
     let pages: usize = statm.split_whitespace().nth(1).and_then(|v| v.parse().ok()).unwrap_or(0);
     // SAFETY: sysconf has no preconditions.
     pages * unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize

@@ -1,109 +1,52 @@
-# tsrs
+# `tsrs`
 
-[![npm](https://img.shields.io/npm/v/@maschwenk/tsrs)](https://www.npmjs.com/package/@maschwenk/tsrs)
-[![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+[![npm](https://img.shields.io/npm/v/tsrs)](https://www.npmjs.com/package/tsrs)
+[![license](https://img.shields.io/badge/license-Apache--2.0-blue)](https://github.com/oxc-project/tsrs/blob/main/LICENSE)
 
-tsrs is a Rust port of the TypeScript 7 compiler and language server. It's a drop-in replacement for `tsc`: same
-flags, same tsconfig, same errors.
+`tsrs` is a drop-in replacement for the TypeScript 7 compiler and language server, written in Rust.
+Our goal is 100% conformance, with much lower memory use and faster type checking. [Read the announcement](https://blog.cloudflare.com/typescript-rust-port/).
 
 This branch also supports the dynamic ArkTS (`.ets` / `.d.ets`), ArkUI checking, the restrictions linter, SDK policies,
 Kit imports, OHPM resolution and native snapshot APIs. Build it from source and use your project's SDK declarations and `ets` options; see
 [ArkTS configuration and boundaries](docs/ARKTS.md). ArkTS static syntax is excluded.
 Rust hosts can embed `tsrs_api::embedded` directly; Arkdown links these crates into its N-API binding.
 
-On the vscode codebase it type-checks **18x faster than tsc 7** using about a third of the memory, and 1.6x faster than
-`bun check`. The current TypeScript regression run matches all 13,462 error baselines without failures or timeouts.
-
-## Quick start
+## Get started
 
 ```sh
-npx -y @maschwenk/tsrs -p path/to/project            # compile, like tsc
-npx -y @maschwenk/tsrs -p path/to/project --noEmit   # type check only
+pnpm add -D tsrs
+pnpm exec tsrs --noEmit
 ```
 
-Or install it with `pnpm add -D @maschwenk/tsrs` and run `tsrs` in place of `tsc`. Prebuilt binaries are available for
-macOS arm64 and Linux x64/arm64. There is also a [WebAssembly build](#webassembly) for Node and browsers.
+You can try `tsrs` today and give us feedback on performance, memory usage, and conformance.
+Try checking and emitting code in the [browser playground](https://tsrs-playground.void.app).
 
-## Performance
+## Conformance
 
-Type-checking vscode (10,427 files) on a 64-core Linux machine, each tool with its default settings, averaged over 20
-runs ([source](bench/results/compare/2026-10-07-ae33f10b1b8b-64t.md)):
+`tsrs` currently targets the main branch of [microsoft/TypeScript](https://github.com/microsoft/typescript).
+We aim to release a stable version against TypeScript 7.1 with 100% conformance. In our testing on existing projects,
+we have yet to find a correctness bug in `tsrs`.
 
-| | time | peak memory |
-| --- | ---: | ---: |
-| tsc 7 (tsgo 7.0.2) | 9.79 s | 7.52 GiB |
-| `bun check` (Bun 1.4.3 canary) | 0.87 s | 2.86 GiB |
-| **tsrs** | **0.53 s** | **2.64 GiB** |
+There are known order issues: the pinned Go compiler can produce different diagnostics and traces depending on
+parallel parse, resolution, and check order, while `tsrs` canonicalizes some checker history by default. For the
+closest comparison, use `--checkerAssignment go --noLazyMembers`; tsgo parser and resolver races can still vary
+between runs.
 
-The table below covers seventeen projects on a 16-core machine. CI regenerates it on every push to `main`, so expect
-the numbers to move by a few percent between runs.
+`--init` and `--showConfig` are not supported. See [compatibility and evidence](https://github.com/oxc-project/tsrs/blob/main/docs/COMPATIBILITY.md)
+for supported features and known gaps.
 
-<!-- bench:start -->
-## Benchmark: tsrs vs tsgo 7.0.2 vs bun check
+<a href="https://github.com/oxc-project/tsrs/blob/main/bench/RESULTS.md">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/oxc-project/tsrs/main/bench/large-projects-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/oxc-project/tsrs/main/bench/large-projects.svg">
+    <img alt="tsrs vs the TypeScript nightly: times faster against times less peak memory on seven projects at 1, 2, 4 and 8 parallel checker threads" src="https://raw.githubusercontent.com/oxc-project/tsrs/main/bench/large-projects.svg">
+  </picture>
+</a>
 
-tsrs is a Rust port of the TypeScript 7 type checker (the Go compiler, "tsgo"). Each row type-checks one project from [microsoft/typescript-benchmarking](https://github.com/microsoft/typescript-benchmarking), the suite the TypeScript team benchmarks tsgo on (vscode, xstate-main, webpack, mui-docs, Compiler, Compiler-Unions), or from a set of large open-source applications (cal-diy, formbricks-web, supabase-studio, t3code-server, mikro-orm, next-packages-next, next-root, storybook, nuxt, playwright, drizzle-orm), with tsgo 7.0.2 (npm `typescript@7.0.2`), with tsrs at commit `dc3637274f0f` (the PGO-optimized `dist` build, built like the npm release binaries) and with `bun check` from Bun 1.4.3-canary.1+e555359cc (one thread per core unless a `--threads` flag is named): `tsc -p <project> --noEmit`, median of 10 interleaved runs (3 for tsgo), on Depot CI `depot-ubuntu-24.04-16` (16 vCPU, 63 GB RAM, Linux x86_64, AMD EPYC 9R45 96-Core Processor). Walls on this shared machine move by a few percent between runs of the same code; the single-threaded instruction counts are the deterministic measure.
+## ArkTS / OpenHarmony support
 
-**Default mode on a 16-vCPU machine: no thread flag; tsgo uses 4 checker threads, tsrs half the cores, at least min(cores, 8), at most 32 (8 here; tsrs also resolves members lazily, its default), bun all 16 cores**
-
-| project | errors, tsgo / tsrs / bun | tsgo wall (s) | tsrs wall (s) | bun check wall (s) | speedup vs tsgo | speedup vs bun | tsgo peak memory | tsrs peak memory | bun check peak memory | memory efficiency vs tsgo | memory efficiency vs bun |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| mui-docs | 0 / 0 / 0 | 11.79 | 1.05 | 7.29 | **11.22x** | 6.94x | 7.55 GiB | 1.30 GiB | 11.71 GiB | **5.81x** | 9.00x |
-| mikro-orm | 43651 / 43651 / 43651 | 12.04 | 1.22 | 2.00 | **9.85x** | 1.63x | 6.95 GiB | 1.62 GiB | 1.40 GiB | **4.29x** | 0.86x |
-| next-packages-next | 6 / 5 (ref 5) / 6 | 2.85 | 0.31 | 0.37 | **9.31x** | 1.21x | 1.78 GiB | 621 MiB | 747 MiB | 2.94x | 1.20x |
-| drizzle-orm | 10845 / 10846 (ref 10846) / 10845 | 1.71 | 0.21 | 0.40 | **7.95x** | 1.87x | 1.76 GiB | 593 MiB | 732 MiB | 3.04x | 1.23x |
-| formbricks-web | 0 / 0 / 0 | 6.61 | 0.83 | 1.00 | **7.94x** | 1.20x | 5.49 GiB | 1.68 GiB | 1.62 GiB | 3.27x | 0.97x |
-| t3code-server | 5 / 6 (ref 6) / 5 | 12.99 | 1.68 | 2.70 | **7.72x** | 1.61x | 6.21 GiB | 1.77 GiB | 1.12 GiB | 3.51x | 0.63x |
-| vscode | 359 / 371 (ref 371) / 359 | 10.46 | 1.37 | 1.52 | **7.63x** | 1.11x | 7.49 GiB | 1.93 GiB | 1.87 GiB | 3.89x | 0.97x |
-| storybook | 93 / 93 / 93 | 1.55 | 0.21 | 0.27 | **7.39x** | 1.30x | 1.41 GiB | 461 MiB | 605 MiB | 3.14x | 1.31x |
-| next-root | 441 / 438 (ref 438) / 441 | 1.48 | 0.21 | 0.28 | **7.05x** | 1.34x | 1.28 GiB | 434 MiB | 565 MiB | 3.02x | 1.30x |
-| supabase-studio | 0 / 9 (ref 9) / 0 | 6.47 | 0.93 | 1.58 | **6.98x** | 1.70x | 4.88 GiB | 1.38 GiB | 1.22 GiB | 3.53x | 0.88x |
-| webpack | 848 / 840 (ref 840) / 837 | 1.29 | 0.19 | 0.27 | **6.73x** | 1.42x | 1.16 GiB | 455 MiB | 496 MiB | 2.61x | 1.09x |
-| playwright | 13 / 13 / 13 | 1.08 | 0.17 | 0.22 | **6.46x** | 1.31x | 1.05 GiB | 413 MiB | 476 MiB | 2.60x | 1.15x |
-| cal-diy | 136 / 136 / 136 | 5.36 | 0.83 | 1.46 | **6.42x** | 1.75x | 4.32 GiB | 1.44 GiB | 1.31 GiB | 3.00x | 0.91x |
-| xstate-main | 0 / 0 / 0 | 0.79 | 0.13 | 0.16 | **6.25x** | 1.25x | 743 MiB | 280 MiB | 392 MiB | 2.65x | 1.40x |
-| nuxt | 3 / 4 (ref 4) / 3 | 1.23 | 0.21 | 0.42 | **5.98x** | 2.05x | 1.13 GiB | 444 MiB | 543 MiB | 2.62x | 1.22x |
-| Compiler-Unions | 41 / 41 / 41 | 0.51 | 0.13 | 0.20 | 3.95x | 1.57x | 239 MiB | 100 MiB | 232 MiB | 2.40x | 2.33x |
-| Compiler | 43 / 43 / 43 | 0.26 | 0.07 | 0.11 | 3.83x | 1.59x | 218 MiB | 98 MiB | 222 MiB | 2.22x | 2.26x |
-
-errors: the number of type errors each compiler reports on the project; tsgo's and tsrs's must be equal (a bold errors cell is a disagreement, i.e. a correctness bug). wall: process wall-clock time. speedup: tsgo wall / tsrs wall (above 1 = tsrs faster; bold from 5x). peak memory: maximum resident set size. memory efficiency vs tsgo: tsgo peak memory / tsrs peak memory (2x = tsrs uses half the memory; below 1 = tsrs uses more; bold from 4x). speedup vs bun: bun check wall / tsrs wall; memory efficiency vs bun: bun check peak memory / tsrs peak memory. bun check follows TypeScript 7.0, tsrs the 7.1-dev commit it ports, so their error counts can differ where the two TypeScript versions do.
-
-(ref N): tsgo 7.0.2 and tsrs disagree, but `typescript@7.1.0-dev.20260930.4`, built from the TypeScript commit tsrs ports (`b85298b6`), reports exactly tsrs's errors: a TypeScript 7.0 vs 7.1-dev difference, not a tsrs bug.
-
-Runner: Depot CI `depot-ubuntu-24.04-16` (16 vCPU, 63 GB RAM, Linux x86_64, AMD EPYC 9R45 96-Core Processor). Date: 2026-10-10 06:14 UTC. tsrs commit: `dc3637274f0f`. Numbers from shared CI machines are noisy; compare trends, not single runs. How it is measured: [`bench/README.md`](bench/README.md).
-<!-- bench:end -->
-
-### Against bun check at equal thread counts
-
-The tools pick different thread counts by default, so here each one gets the same number (vscode, 64-core machine, 20
-runs each):
-
-| threads | tsgo 7.0.2 | tsrs | `bun check` |
-| ---: | ---: | ---: | ---: |
-| 4 | 9.75 s, 7.43 GiB | 2.43 s, 1.83 GiB | 4.57 s, 1.46 GiB |
-| 8 | 6.13 s, 7.99 GiB | 1.35 s, 1.97 GiB | 2.47 s, 1.60 GiB |
-| 16 | 4.54 s, 8.67 GiB | 0.81 s, 2.13 GiB | 1.49 s, 1.85 GiB |
-| 64 | 4.01 s, 11.58 GiB | 0.44 s, 3.06 GiB | 0.87 s, 2.86 GiB |
-
-tsrs is about 1.9x faster at every thread count; tsrs uses 7-25% more memory. `bun check` follows TypeScript
-7.0 and tsrs follows 7.1-dev, so their error counts can differ slightly; each matches its own reference exactly.
-
-[`bench/README.md`](bench/README.md) explains how everything is measured and how to rerun it. The published numbers
-use the PGO-optimized release build, which is 7-14% faster than a plain `cargo build --release`.
-
-## Correctness
-
-tsrs is a function-by-function port of the Go implementation of TypeScript (`microsoft/TypeScript`, commit
-`b85298b6a81f`, TypeScript 7.1.0-dev). The Go code is the spec: any difference from it in diagnostics, their order,
-message text or exit code is a tsrs bug, even when tsrs's output looks better.
-
-The current conformance run matches 13,462 error baselines and 12,779 `.types` / `.symbols` baselines, with no
-failures, crashes or timeouts. The ArkTS port loses no previously passing cases
-([validation](notes/arkts-port.md)). Earlier validation on the 38k-file codebase found the same diagnostics and
-9,257 byte-identical output files. [`docs/STATUS.md`](docs/STATUS.md) has the details.
-
-## What it does and doesn't do
-
-"Identical" below means identical to tsgo built from the same pinned commit.
+This branch carries the dynamic ArkTS and OpenHarmony port on top of the upstream compiler. Capabilities, evidence
+and known limits:
 
 | feature | status | evidence and notes |
 | --- | --- | --- |
@@ -116,117 +59,65 @@ failures, crashes or timeouts. The ArkTS port loses no previously passing cases
 | ArkTS binary AST and Node SDK | yes | protocol 10; virtual nodes, parse identity, lazy imports, UI bodies, sync/async snapshots and annotation/type facts ([API](docs/NODE_API.md)) |
 | ArkUI/annotation JavaScript lowering | no | TS100069 in direct tsrs emit; Arkdown's Rust/OXC/Rolldown pipeline owns lowering |
 | ArkTS static syntax | no | deliberately excluded from this dynamic-language port |
-| Type checking (`--noEmit`) | yes | 13,462 error baselines and 12,779 `.types` / `.symbols` baselines match, zero failures/timeouts ([validation](notes/arkts-port.md)); previously verified on the 38k-file codebase |
-| Multithreaded checking, `--singleThreaded`, `--pretty`, `--extendedDiagnostics`, `--listFiles`, `--listFilesOnly` | yes | |
-| Memory target (`--maxMemory <size>`) | `--noEmit` checks, opt-in | the 38k-file codebase at 8 checkers: peak 18.0 GB without it; `--maxMemory 12G` 12.9 GB (+11% instructions), `10G` 10.8 GB (+16%), `8G` 8.7 GB (+35%), same diagnostics; testdata/regressions identical with a checker retired after nearly every file, also in poison mode (notes/mem-recycle-checkers.md) |
-| Same output regardless of thread count | yes, with known exceptions (tsgo: no) | a few projects still depend on file order through tsgo's own logic (notes/open-history-dependence.md); `--checkerAssignment go` reproduces tsgo exactly |
-| JavaScript emit | yes | all of tsgo's TypeScript transforms; 13,392 `.js` baselines pass, 0 fail, 0 timeouts |
-| Declaration emit (`.d.ts`) | yes | part of the `.js` baselines |
-| Source maps, declaration maps | yes | 149 `.js.map` and 156 `.sourcemap.txt` baselines pass, 0 fail |
-| Incremental builds (`.tsbuildinfo`) | yes | identical tsbuildinfo files |
-| `--build` (project references) | yes | 189 of 192 `tsbuild` and 191 of 223 `tsc` scenario baselines pass; the failures are CLI commands tsrs doesn't port (`--help`, `--init`, …). Uses more memory than tsgo on large graphs |
-| Emit on the 38k-file codebase | yes | all 96 packages: 9,257 output files byte-identical, same diagnostics and exit codes |
-| Content mappers (`.vue`, `.svelte`, `.astro` via `contentMappers`) | CLI and `-b`: yes. Language server: no | all 9 content-mapper scenario baselines identical; the 15 content-mapper conformance cases are not run yet (notes/contentmappers.md) |
-| Language server (`--lsp -stdio`) | yes | 4,066 of 4,546 fourslash tests pass; 13,869 of 13,869 responses identical in a recorded editor session |
-| Automatic type acquisition, telemetry, profiling (language server) | no | not ported |
-| Node API server (`--api`) | yes, with gaps | upstream client test suites pass; no profiling requests, no Windows named pipes ([`docs/NODE_API.md`](docs/NODE_API.md)) |
-| WebAssembly (`@maschwenk/tsrs-wasm`) | yes, single-threaded | byte-identical to native `--singleThreaded` on a 2,000-case conformance sample (notes/wasm-build.md) |
-| Options TypeScript 7 removed (ES5 target, AMD/UMD/System, `baseUrl`, …) | rejected, as in tsgo | same TS5102 / TS5108 errors |
-| `--watch` | no | exits with "not supported" |
-| `--init`, `--showConfig` | no | exits with "not supported"; `--help` prints a short usage |
-| `--locale` | ignored | messages are English only |
-| `--generateTrace` | no | warns "Failed to start tracing" (tsgo's message when it can't write a trace) and type-checks as without the flag |
-| Prebuilt binaries | macOS arm64, Linux x64/arm64 (glibc) | no Windows or Intel macOS |
 
-## Options
+The current ArkTS branch also matches all 13,462 TypeScript error baselines and 12,779 `.types` / `.symbols`
+baselines without failures or timeouts; the ArkTS port loses no previously passing case
+([validation](notes/arkts-port.md)).
 
-tsrs accepts every `tsc` flag it supports. A few extra ones control performance:
+## Extra features
 
-- `--checkers N` sets the number of checker threads. By default tsrs uses one per core up to 8 cores, then half the
-  cores, from 4 to 32; a program with fewer than 32 type-checked files per checker gets fewer, down to 4, and never
-  more checkers than files. `--build` uses 4 per project. More threads are faster but use more memory. The thread
-  count doesn't change the diagnostics, apart from the known exceptions in the table above.
-- `--singleThreaded` uses one thread, for the lowest memory use.
-- `--checkerCostCache <file>` remembers how long each file took to check and uses that to balance threads on the next
-  run (up to ~15% faster on repeated runs).
-- `--maxMemory <size>` (for example `12G`; `--noEmit` checks only) keeps the process near that much memory: above it,
-  tsrs replaces its largest checker with a fresh one, trading CPU for memory. Useful on very large programs (the
-  38k-file codebase: 18.0 GB without it, 10.8 GB at `10G` for 16% more instructions). The diagnostics are the same.
-- `--checkerAssignment go` splits files across threads the way tsgo does, for byte-identical output with tsgo.
-- `--noLazyMembers` turns off a set of checker optimizations that are not yet merged upstream. They never change
-  diagnostics; the patches are in [`upstream/`](upstream/).
+[`@tsrs/wasm`](https://github.com/oxc-project/tsrs/blob/main/npm/tsrs-wasm/README.md) provides WebAssembly support
+targeting `wasm32-wasip1` (WASI Preview 1).
 
-## Language server
+## Learn more
 
-`tsrs --lsp -stdio` is a port of the TypeScript 7 language server, with diagnostics, hover, go to definition,
-references, rename, completions with auto-imports, code fixes, formatting and the rest. It passes 4,066 of 4,546 of
-TypeScript's fourslash tests (most of the rest are skipped by the Go implementation too). Over a 200-edit session on
-the 38k-file codebase it stays flat at 2.9 GiB, where the Go server grows from 4.9 to 7.4 GiB.
-
-Neovim 0.11+:
-
-```lua
-vim.lsp.config('tsrs', {
-  cmd = { 'tsrs', '--lsp', '-stdio' },
-  filetypes = { 'typescript', 'typescriptreact', 'javascript', 'javascriptreact' },
-  root_markers = { 'tsconfig.json', 'jsconfig.json', 'package.json', '.git' },
-})
-vim.lsp.enable('tsrs')
-```
-
-VS Code: the TypeScript 7 extension runs whatever `tsgo` executable it finds in `js/ts.tsdk.path`. Point that setting
-at a directory containing a `tsgo` symlink to the tsrs binary. [`docs/LSP.md`](docs/LSP.md) has the full setup and the
-known gaps.
-
-## WebAssembly
-
-`@maschwenk/tsrs-wasm` runs tsrs in Node 22+ or in a browser. It is single-threaded and its output matches native
-`tsrs --singleThreaded` byte for byte.
-
-```sh
-npx -y @maschwenk/tsrs-wasm -p .
-```
-
-```js
-import { tsc } from "@maschwenk/tsrs-wasm";
-const { exitCode, diagnostics } = await tsc(["-p", "."], { files: { "/tsconfig.json": "{}", "/a.ts": "let x: string = 1;" }, diagnostics: "json" });
-```
-
-It runs at about half the speed of native single-threaded tsrs, and the module is 2.58 MB gzipped. In a one-off
-comparison it was 2.7x to 7x faster than [ts-rust](https://github.com/pingdotgg/ts-rust)'s WebAssembly build and used
-1.2x to 2.6x less memory ([notes/wasm-build.md](notes/wasm-build.md#nine-projects-2026-10-08)). It doesn't support
-`--watch`, `--lsp`, `--api` or multiple threads. See [`npm/tsrs-wasm/README.md`](npm/tsrs-wasm/README.md) for the API.
-
-## Build from source
-
-```sh
-cargo build --release -p tsrs_cli -p tsrs_testrunner
-./target/release/tsrs -p path/to/project
-./target/release/tsrs-test run --suite all --baselines types,symbols   # conformance suite, ~20 s
-cargo build --release -p tsrs_fourslash && ./target/release/tsrs-fourslash run   # language server tests, ~5 s
-tools/wasm/build.sh                                                     # WebAssembly build (needs wasm32-wasip1, wasm-opt)
-```
-
-## Docs
-
-- [`CONTRIBUTING.md`](CONTRIBUTING.md): the development workflow and porting rules.
-- [`docs/STATUS.md`](docs/STATUS.md): status log and release notes.
-- [`docs/EMIT.md`](docs/EMIT.md): JavaScript, declaration and source map emit.
-- [`docs/LSP.md`](docs/LSP.md): the language server.
-- [`docs/NODE_API.md`](docs/NODE_API.md): the Node API.
-- [`docs/DEBUGGING.md`](docs/DEBUGGING.md): tracking down a difference from tsgo.
-- [`bench/README.md`](bench/README.md): how the benchmarks work.
-- `notes/`: one note per performance experiment, with numbers.
+- [CLI usage and memory tuning](https://github.com/oxc-project/tsrs/blob/main/docs/USAGE.md)
+- [Editor setup](https://github.com/oxc-project/tsrs/blob/main/docs/LSP.md#editor-setup)
+- [Node API (unstable)](https://github.com/oxc-project/tsrs/blob/main/docs/NODE_API.md)
+- [WebAssembly for Node and browsers](https://github.com/oxc-project/tsrs/blob/main/npm/tsrs-wasm/README.md)
+- [Benchmarks and methodology](https://github.com/oxc-project/tsrs/blob/main/bench/README.md)
+- [Release notes](https://github.com/oxc-project/tsrs/blob/main/docs/STATUS.md)
+- [Engineering notes](https://github.com/oxc-project/tsrs/blob/main/notes/README.md)
 
 ## Contributing
 
-Bug reports with a small reproduction are the most useful contribution, and fixes are welcome. Any difference from tsgo
-counts as a bug. See [`CONTRIBUTING.md`](CONTRIBUTING.md), [`SECURITY.md`](SECURITY.md) for reporting vulnerabilities,
-and the [Code of Conduct](CODE_OF_CONDUCT.md).
+The [issue tracker](https://github.com/oxc-project/tsrs/issues) is open for bug reports. Please include a minimal reproduction.
+Pull requests remain closed because we don't have the bandwidth to review them.
+
+See the [contributing guide](https://github.com/oxc-project/tsrs/blob/main/CONTRIBUTING.md)
+for building from source and running the suites, the [Code of Conduct](https://github.com/oxc-project/tsrs/blob/main/CODE_OF_CONDUCT.md), and
+[security policy](https://github.com/oxc-project/tsrs/blob/main/SECURITY.md) for reporting vulnerabilities.
+
+## Acknowledgments
+
+We thank the following organizations and contributors:
+
+<p>
+  <a href="https://depot.dev">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/oxc-project/tsrs/main/assets/sponsors/depot-dark.svg">
+      <img alt="Depot" src="https://raw.githubusercontent.com/oxc-project/tsrs/main/assets/sponsors/depot-light.svg" height="32">
+    </picture>
+  </a>
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="https://www.owner.com">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/oxc-project/tsrs/main/assets/sponsors/owner-dark.svg">
+      <img alt="Owner.com" src="https://raw.githubusercontent.com/oxc-project/tsrs/main/assets/sponsors/owner-light.svg" height="32">
+    </picture>
+  </a>
+</p>
+
+- [Depot CI](https://depot.dev) for sponsoring our continuous integration.
+- [Owner.com](https://www.owner.com) for sponsoring the initial work.
+- [Max Schwenk](https://github.com/maschwenk) for the port.
+- [@walkerdb](https://github.com/walkerdb) for improvements to the project.
+- [@JiangWeixian](https://github.com/JiangWeixian) for transferring the `tsrs` npm package name.
+
+We extend special thanks to the [TypeScript team](https://www.typescriptlang.org/) for their support.
 
 ## License
 
-A derivative of microsoft/TypeScript (Copyright Microsoft Corporation), licensed Apache-2.0 like the original
-([`LICENSE`](LICENSE), [`NOTICE`](NOTICE)). The bundled `lib.*.d.ts` files are TypeScript's. Not affiliated with or
-endorsed by Microsoft. The port was written largely by AI coding agents, directed and reviewed by Max Schwenk; its
-correctness rests on the test results above rather than on review alone.
+`tsrs` is a derivative of TypeScript (Copyright Microsoft Corporation), licensed under [Apache-2.0](https://github.com/oxc-project/tsrs/blob/main/LICENSE).
+The bundled `lib.*.d.ts` files are TypeScript's. See [NOTICE](https://github.com/oxc-project/tsrs/blob/main/NOTICE) for attribution.
+Not affiliated with or endorsed by Microsoft.

@@ -1,8 +1,7 @@
-use std::fmt::Write as _;
 use std::io::{BufRead, BufReader, Read, Write};
 
-use crate::error::eof;
 use crate::Error;
+use crate::error::eof;
 
 // Base protocol for JSON-RPC with Content-Length headers (as used by LSP).
 // https://microsoft.github.io/language-server-protocol/specifications/base/0.9/specification/
@@ -59,10 +58,16 @@ impl<R: Read> Reader<R> {
             if key == b"Content-Length" {
                 content_length = match parse_int(trim_space(value)) {
                     Ok(n) => n,
-                    Err(err) => return Err(Error::new(format!("{ERR_INVALID_CONTENT_LENGTH}: parse error: {err}"))),
+                    Err(err) => {
+                        return Err(Error::new(format!(
+                            "{ERR_INVALID_CONTENT_LENGTH}: parse error: {err}"
+                        )));
+                    }
                 };
                 if content_length < 0 {
-                    return Err(Error::new(format!("{ERR_INVALID_CONTENT_LENGTH}: negative value {content_length}")));
+                    return Err(Error::new(format!(
+                        "{ERR_INVALID_CONTENT_LENGTH}: negative value {content_length}"
+                    )));
                 }
             }
         }
@@ -73,7 +78,8 @@ impl<R: Read> Reader<R> {
 
         // io.ReadFull: io.EOF when no byte arrives, io.ErrUnexpectedEOF when some do.
         let content_length = content_length as u64;
-        let mut data = Vec::with_capacity(content_length.min(MAX_INITIAL_CONTENT_CAPACITY) as usize);
+        let mut data =
+            Vec::with_capacity(content_length.min(MAX_INITIAL_CONTENT_CAPACITY) as usize);
         match (&mut self.r).take(content_length).read_to_end(&mut data) {
             Ok(n) if n as u64 == content_length => Ok(data),
             Ok(0) => Err(Error::wrap("jsonrpc: read content: ", eof())),
@@ -128,74 +134,26 @@ impl<W: Write> Writer<W> {
 
 // bytes.TrimSpace: Unicode white space at both ends.
 fn trim_space(b: &[u8]) -> &[u8] {
-    match std::str::from_utf8(b) {
-        Ok(s) => s.trim().as_bytes(),
+    if let Ok(s) = tsrs_core::utf8::basic::from_utf8(b) {
+        s.trim().as_bytes()
+    } else {
         // Invalid UTF-8 fails strconv.ParseInt below anyway; trim the ASCII white space Go would.
-        Err(_) => {
-            let is_space = |c: &u8| matches!(c, b' ' | b'\t' | b'\n' | b'\x0b' | b'\x0c' | b'\r');
-            let start = b.iter().position(|c| !is_space(c)).unwrap_or(b.len());
-            let end = b.iter().rposition(|c| !is_space(c)).map_or(start, |i| i + 1);
-            &b[start..end]
-        }
+
+        let is_space = |c: &u8| matches!(c, b' ' | b'\t' | b'\n' | b'\x0b' | b'\x0c' | b'\r');
+        let start = b.iter().position(|c| !is_space(c)).unwrap_or(b.len());
+        let end = b.iter().rposition(|c| !is_space(c)).map_or(start, |i| i + 1);
+        &b[start..end]
     }
 }
 
 // strconv.ParseInt(string(s), 10, 64), with its error text.
 fn parse_int(s: &[u8]) -> Result<i64, String> {
-    let digits = s.strip_prefix(b"+").or_else(|| s.strip_prefix(b"-")).unwrap_or(s);
-    if digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) {
-        return Err(format!("strconv.ParseInt: parsing {}: invalid syntax", go_quote(s)));
-    }
-    // Only ASCII was accepted above.
-    std::str::from_utf8(s)
-        .ok()
-        .and_then(|s| s.parse::<i64>().ok())
-        .ok_or_else(|| format!("strconv.ParseInt: parsing {}: value out of range", go_quote(s)))
+    tsrs_core::gocompat::parse_int64(s, tsrs_core::gocompat::QuoteStyle::Header)
 }
 
 // Go's `%q` of a byte slice (strconv.Quote): printable runes as they are, the usual backslash escapes, `\x` for
 // invalid UTF-8 and ASCII controls, `\u` / `\U` for other non-printable runes. Go's unicode.IsPrint is
 // approximated: controls, white space other than ' ', and the format characters a header is likely to contain.
 pub(crate) fn go_quote(b: &[u8]) -> String {
-    let mut out = String::with_capacity(b.len() + 2);
-    out.push('"');
-    for chunk in b.utf8_chunks() {
-        for c in chunk.valid().chars() {
-            match c {
-                '\x07' => out.push_str("\\a"),
-                '\x08' => out.push_str("\\b"),
-                '\x0c' => out.push_str("\\f"),
-                '\n' => out.push_str("\\n"),
-                '\r' => out.push_str("\\r"),
-                '\t' => out.push_str("\\t"),
-                '\x0b' => out.push_str("\\v"),
-                '"' => out.push_str("\\\""),
-                '\\' => out.push_str("\\\\"),
-                c if (c as u32) < 0x20 || c == '\x7f' => {
-                    let _ = write!(out, "\\x{:02x}", c as u32);
-                }
-                c if is_print(c) => out.push(c),
-                c if (c as u32) < 0x10000 => {
-                    let _ = write!(out, "\\u{:04x}", c as u32);
-                }
-                c => {
-                    let _ = write!(out, "\\U{:08x}", c as u32);
-                }
-            }
-        }
-        for byte in chunk.invalid() {
-            let _ = write!(out, "\\x{byte:02x}");
-        }
-    }
-    out.push('"');
-    out
-}
-
-fn is_print(c: char) -> bool {
-    if c == ' ' {
-        return true;
-    }
-    !(c.is_control()
-        || c.is_whitespace()
-        || matches!(c, '\u{ad}' | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{2064}' | '\u{feff}'))
+    tsrs_core::gocompat::quote(b, tsrs_core::gocompat::QuoteStyle::Header)
 }

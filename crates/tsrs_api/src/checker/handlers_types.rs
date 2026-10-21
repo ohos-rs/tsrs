@@ -1,14 +1,17 @@
 // Type-, signature- and display-centric handlers (Go tsc/internal/api/session.go).
 
 use tsrs_ast::Kind;
-use tsrs_checker::{ContextFlags, Flags as NodeBuilderFlags, IndexKind, SignatureKind, Type, TypeDataTag, TypeFlags, TypeFormatFlags};
-use tsrs_core::json::Value;
+use tsrs_checker::{
+    ContextFlags, Flags as NodeBuilderFlags, IndexKind, SignatureKind, Type, TypeDataTag,
+    TypeFlags, TypeFormatFlags,
+};
 use tsrs_core::P;
+use tsrs_core::json::Value;
 
 use super::host::{CheckerError, CheckerErrorKind, CheckerHost, CheckerResponse, CheckerResult};
 use super::json::obj;
 use super::params::Params;
-use super::setup::{touching_property_name_at_utf16, Setup, SnapshotCtx};
+use super::setup::{Setup, SnapshotCtx, touching_property_name_at_utf16};
 
 fn setup<'h>(host: &'h dyn CheckerHost, p: &Params) -> CheckerResult<Setup<'h>> {
     Setup::new(host, p.u64("snapshot")?, p.project()?)
@@ -55,7 +58,11 @@ fn tagged(t: P<Type>, tag: TypeDataTag) -> CheckerResult<P<Type>> {
     if t.data_tag() == tag {
         Ok(t)
     } else {
-        Err(go_panic(format!("interface conversion: checker.TypeData is *checker.{}, not *checker.{}", go_type_data_name(t.data_tag()), go_type_data_name(tag))))
+        Err(go_panic(format!(
+            "interface conversion: checker.TypeData is *checker.{}, not *checker.{}",
+            go_type_data_name(t.data_tag()),
+            go_type_data_name(tag)
+        )))
     }
 }
 
@@ -77,11 +84,13 @@ pub(crate) fn get_type_at_locations(host: &dyn CheckerHost, p: &Params) -> Check
     let mut s = setup(host, p)?;
     let locations = p.string_array("locations")?;
     let mut out = Vec::with_capacity(locations.len());
-    for loc in locations {
+    out = locations.into_iter().try_fold(out, |mut out, loc| {
         let node = s.resolve_node(loc)?;
         let t = s.c().get_type_at_location(node);
         out.push(s.type_response(t)?);
-    }
+
+        Ok::<_, CheckerError>(out)
+    })?;
     Ok(Value::Array(out))
 }
 
@@ -98,11 +107,13 @@ pub(crate) fn get_types_at_positions(host: &dyn CheckerHost, p: &Params) -> Chec
     let file = s.source_file(&p.document("file")?)?;
     let positions = p.u32_array("positions")?;
     let mut out = Vec::with_capacity(positions.len());
-    for pos in positions {
+    out = positions.into_iter().try_fold(out, |mut out, pos| {
         let node = touching_property_name_at_utf16(file, pos);
         let t = s.c().get_type_at_location(node);
         out.push(s.type_response(t)?);
-    }
+
+        Ok::<_, CheckerError>(out)
+    })?;
     Ok(Value::Array(out))
 }
 
@@ -129,29 +140,60 @@ pub(crate) enum TypeProperty {
 fn type_property(t: P<Type>, property: TypeProperty) -> CheckerResult<Option<P<Type>>> {
     Ok(match property {
         TypeProperty::Target => {
-            if !t.flags().intersects(TypeFlags::Object | TypeFlags::TypeParameter | TypeFlags::Index | TypeFlags::StringMapping) {
+            if !t.flags().intersects(
+                TypeFlags::Object
+                    | TypeFlags::TypeParameter
+                    | TypeFlags::Index
+                    | TypeFlags::StringMapping,
+            ) {
                 return Err(go_panic("Unhandled case in Type.Target"));
             }
             t.target()
         }
         TypeProperty::FreshType => tagged(t, TypeDataTag::Literal)?.as_literal_type().fresh_type(),
-        TypeProperty::RegularType => tagged(t, TypeDataTag::Literal)?.as_literal_type().regular_type(),
+        TypeProperty::RegularType => {
+            tagged(t, TypeDataTag::Literal)?.as_literal_type().regular_type()
+        }
         TypeProperty::ThisType => interface_of(t)?.this_type(),
-        TypeProperty::ObjectType => tagged(t, TypeDataTag::IndexedAccess)?.as_indexed_access_type().object_type(),
-        TypeProperty::IndexType => tagged(t, TypeDataTag::IndexedAccess)?.as_indexed_access_type().index_type(),
-        TypeProperty::CheckType => tagged(t, TypeDataTag::Conditional)?.as_conditional_type().check_type(),
-        TypeProperty::ExtendsType => tagged(t, TypeDataTag::Conditional)?.as_conditional_type().extends_type(),
-        TypeProperty::BaseType => tagged(t, TypeDataTag::Substitution)?.as_substitution_type().base_type(),
-        TypeProperty::SubstConstraint => tagged(t, TypeDataTag::Substitution)?.as_substitution_type().subst_constraint(),
-        TypeProperty::MappedTypeParameter => tagged(t, TypeDataTag::Mapped)?.as_mapped_type().type_parameter(),
-        TypeProperty::MappedConstraintType => tagged(t, TypeDataTag::Mapped)?.as_mapped_type().constraint_type(),
-        TypeProperty::MappedNameType => tagged(t, TypeDataTag::Mapped)?.as_mapped_type().name_type(),
-        TypeProperty::MappedTemplateType => tagged(t, TypeDataTag::Mapped)?.as_mapped_type().template_type(),
+        TypeProperty::ObjectType => {
+            tagged(t, TypeDataTag::IndexedAccess)?.as_indexed_access_type().object_type()
+        }
+        TypeProperty::IndexType => {
+            tagged(t, TypeDataTag::IndexedAccess)?.as_indexed_access_type().index_type()
+        }
+        TypeProperty::CheckType => {
+            tagged(t, TypeDataTag::Conditional)?.as_conditional_type().check_type()
+        }
+        TypeProperty::ExtendsType => {
+            tagged(t, TypeDataTag::Conditional)?.as_conditional_type().extends_type()
+        }
+        TypeProperty::BaseType => {
+            tagged(t, TypeDataTag::Substitution)?.as_substitution_type().base_type()
+        }
+        TypeProperty::SubstConstraint => {
+            tagged(t, TypeDataTag::Substitution)?.as_substitution_type().subst_constraint()
+        }
+        TypeProperty::MappedTypeParameter => {
+            tagged(t, TypeDataTag::Mapped)?.as_mapped_type().type_parameter()
+        }
+        TypeProperty::MappedConstraintType => {
+            tagged(t, TypeDataTag::Mapped)?.as_mapped_type().constraint_type()
+        }
+        TypeProperty::MappedNameType => {
+            tagged(t, TypeDataTag::Mapped)?.as_mapped_type().name_type()
+        }
+        TypeProperty::MappedTemplateType => {
+            tagged(t, TypeDataTag::Mapped)?.as_mapped_type().template_type()
+        }
     })
 }
 
 /// Go `resolveTypePropertyOfType`.
-pub(crate) fn resolve_type_property(host: &dyn CheckerHost, p: &Params, property: TypeProperty) -> CheckerResult<Value> {
+pub(crate) fn resolve_type_property(
+    host: &dyn CheckerHost,
+    p: &Params,
+    property: TypeProperty,
+) -> CheckerResult<Value> {
     let mut s = setup(host, p)?;
     let t = s.resolve_type(p.u32("objectId")?)?;
     let result = type_property(t, property)?;
@@ -168,7 +210,11 @@ pub(crate) enum TypeArrayProperty {
 }
 
 /// Go `resolveTypeArrayPropertyOfType` (nil/empty → `[]`, json/v2's encoding of a nil slice).
-pub(crate) fn resolve_type_array_property(host: &dyn CheckerHost, p: &Params, property: TypeArrayProperty) -> CheckerResult<Value> {
+pub(crate) fn resolve_type_array_property(
+    host: &dyn CheckerHost,
+    p: &Params,
+    property: TypeArrayProperty,
+) -> CheckerResult<Value> {
     let mut s = setup(host, p)?;
     let t = s.resolve_type(p.u32("objectId")?)?;
     let types: &[P<Type>] = match property {
@@ -196,7 +242,11 @@ pub(crate) enum TypeSymbolProperty {
 }
 
 /// Go `resolveSymbolPropertyOfType` (no checker).
-pub(crate) fn resolve_type_symbol_property(host: &dyn CheckerHost, p: &Params, property: TypeSymbolProperty) -> CheckerResult<Value> {
+pub(crate) fn resolve_type_symbol_property(
+    host: &dyn CheckerHost,
+    p: &Params,
+    property: TypeSymbolProperty,
+) -> CheckerResult<Value> {
     let sd = SnapshotCtx::new(host, p.u64("snapshot")?, p.project()?)?;
     let t = sd.resolve_type(p.u32("objectId")?, None)?;
     let result = match property {
@@ -227,7 +277,12 @@ pub(crate) enum TypeOp {
 }
 
 /// `field` is the param name holding the type id ("type" or "objectId", per the pinned params struct).
-pub(crate) fn type_op(host: &dyn CheckerHost, p: &Params, field: &str, op: TypeOp) -> CheckerResult<Value> {
+pub(crate) fn type_op(
+    host: &dyn CheckerHost,
+    p: &Params,
+    field: &str,
+    op: TypeOp,
+) -> CheckerResult<Value> {
     let mut s = setup(host, p)?;
     let t = s.resolve_type(p.u32(field)?)?;
     let c = s.c();
@@ -242,8 +297,12 @@ pub(crate) fn type_op(host: &dyn CheckerHost, p: &Params, field: &str, op: TypeO
         TypeOp::ConstraintOfTypeParameter => c.get_constraint_of_type_parameter_exported(t),
         TypeOp::DefaultFromTypeParameter => c.get_default_from_type_parameter_exported(t),
         TypeOp::BaseConstraint => c.get_base_constraint_of_type_exported(t),
-        TypeOp::TrueTypeOfConditional => Some(c.get_true_type_of_conditional_type(tagged(t, TypeDataTag::Conditional)?)),
-        TypeOp::FalseTypeOfConditional => Some(c.get_false_type_of_conditional_type(tagged(t, TypeDataTag::Conditional)?)),
+        TypeOp::TrueTypeOfConditional => {
+            Some(c.get_true_type_of_conditional_type(tagged(t, TypeDataTag::Conditional)?))
+        }
+        TypeOp::FalseTypeOfConditional => {
+            Some(c.get_false_type_of_conditional_type(tagged(t, TypeDataTag::Conditional)?))
+        }
     };
     s.opt_type_response(result)
 }
@@ -254,7 +313,11 @@ pub(crate) enum TypeListOp {
     TypeArguments,
 }
 
-pub(crate) fn type_list_op(host: &dyn CheckerHost, p: &Params, op: TypeListOp) -> CheckerResult<Value> {
+pub(crate) fn type_list_op(
+    host: &dyn CheckerHost,
+    p: &Params,
+    op: TypeListOp,
+) -> CheckerResult<Value> {
     let mut s = setup(host, p)?;
     let t = s.resolve_type(p.u32("type")?)?;
     let types = match op {
@@ -280,7 +343,11 @@ pub(crate) enum TypePredicateOp {
     IsArrayLike,
 }
 
-pub(crate) fn type_predicate_op(host: &dyn CheckerHost, p: &Params, op: TypePredicateOp) -> CheckerResult<Value> {
+pub(crate) fn type_predicate_op(
+    host: &dyn CheckerHost,
+    p: &Params,
+    op: TypePredicateOp,
+) -> CheckerResult<Value> {
     let mut s = setup(host, p)?;
     let t = s.resolve_type(p.u32("type")?)?;
     Ok(Value::Bool(match op {
@@ -306,7 +373,10 @@ pub(crate) fn get_properties_of_type(host: &dyn CheckerHost, p: &Params) -> Chec
     s.symbols_response(props)
 }
 
-pub(crate) fn get_apparent_properties_of_type(host: &dyn CheckerHost, p: &Params) -> CheckerResult<Value> {
+pub(crate) fn get_apparent_properties_of_type(
+    host: &dyn CheckerHost,
+    p: &Params,
+) -> CheckerResult<Value> {
     let mut s = setup(host, p)?;
     let t = s.resolve_type(p.u32("objectId")?)?;
     let props = s.c().get_apparent_properties(t);
@@ -320,7 +390,10 @@ pub(crate) fn get_property_of_type(host: &dyn CheckerHost, p: &Params) -> Checke
     s.opt_symbol_response(prop)
 }
 
-pub(crate) fn get_type_of_property_of_type(host: &dyn CheckerHost, p: &Params) -> CheckerResult<Value> {
+pub(crate) fn get_type_of_property_of_type(
+    host: &dyn CheckerHost,
+    p: &Params,
+) -> CheckerResult<Value> {
     let mut s = setup(host, p)?;
     let t = s.resolve_type(p.u32("type")?)?;
     let prop_type = s.c().get_type_of_property_of_type_exported(t, p.string("name")?);
@@ -335,9 +408,11 @@ pub(crate) fn get_index_infos_of_type(host: &dyn CheckerHost, p: &Params) -> Che
         return Ok(Value::Array(Vec::new())); // Go nil slice: json/v2 encodes []
     }
     let mut out = Vec::with_capacity(infos.len());
-    for info in infos {
+    out = infos.iter().try_fold(out, |mut out, info| {
         out.push(s.index_info_response(*info)?);
-    }
+
+        Ok::<_, CheckerError>(out)
+    })?;
     Ok(Value::Array(out))
 }
 
@@ -368,7 +443,9 @@ pub(crate) fn get_signatures_of_type(host: &dyn CheckerHost, p: &Params) -> Chec
         _ => return Ok(Value::Array(Vec::new())),
     };
     let sigs = s.c().get_signatures_of_type_exported(t, kind);
-    Ok(Value::Array(sigs.iter().map(|sig| s.signature_response(*sig)).collect::<CheckerResult<_>>()?))
+    Ok(Value::Array(
+        sigs.iter().map(|sig| s.signature_response(*sig)).collect::<CheckerResult<_>>()?,
+    ))
 }
 
 // --- Node-based checker queries ---
@@ -379,7 +456,11 @@ pub(crate) enum NodeTypeOp {
     FromTypeNode,
 }
 
-pub(crate) fn node_type_op(host: &dyn CheckerHost, p: &Params, op: NodeTypeOp) -> CheckerResult<Value> {
+pub(crate) fn node_type_op(
+    host: &dyn CheckerHost,
+    p: &Params,
+    op: NodeTypeOp,
+) -> CheckerResult<Value> {
     let mut s = setup(host, p)?;
     let node = s.resolve_node(p.string("location")?)?;
     let t = match op {
@@ -389,11 +470,16 @@ pub(crate) fn node_type_op(host: &dyn CheckerHost, p: &Params, op: NodeTypeOp) -
     s.opt_type_response(t)
 }
 
-pub(crate) fn get_contextual_type_for_argument(host: &dyn CheckerHost, p: &Params) -> CheckerResult<Value> {
+pub(crate) fn get_contextual_type_for_argument(
+    host: &dyn CheckerHost,
+    p: &Params,
+) -> CheckerResult<Value> {
     let mut s = setup(host, p)?;
     let node = s.resolve_node(p.string("location")?)?;
-    let t = s.c().get_contextual_type_for_argument_at_index_exported(node, p.i32("index")?);
-    s.opt_type_response(t)
+    let index = usize::try_from(p.i32("index")?)
+        .map_err(|_| CheckerError::client("invalid parameter index"))?;
+    let t = s.c().get_contextual_type_for_argument_at_index_exported(node, index);
+    s.opt_type_response(Some(t))
 }
 
 pub(crate) fn is_context_sensitive(host: &dyn CheckerHost, p: &Params) -> CheckerResult<Value> {
@@ -402,7 +488,10 @@ pub(crate) fn is_context_sensitive(host: &dyn CheckerHost, p: &Params) -> Checke
     Ok(Value::Bool(s.c().is_context_sensitive_exported(node)))
 }
 
-pub(crate) fn get_type_of_symbol_at_location(host: &dyn CheckerHost, p: &Params) -> CheckerResult<Value> {
+pub(crate) fn get_type_of_symbol_at_location(
+    host: &dyn CheckerHost,
+    p: &Params,
+) -> CheckerResult<Value> {
     let mut s = setup(host, p)?;
     let symbol = s.resolve_symbol(&p.symbol_ref("symbol")?)?;
     let node = s.resolve_node(p.string("location")?)?;
@@ -428,7 +517,10 @@ pub(crate) fn get_resolved_signature(host: &dyn CheckerHost, p: &Params) -> Chec
     s.signature_response(sig)
 }
 
-pub(crate) fn get_signature_from_declaration(host: &dyn CheckerHost, p: &Params) -> CheckerResult<Value> {
+pub(crate) fn get_signature_from_declaration(
+    host: &dyn CheckerHost,
+    p: &Params,
+) -> CheckerResult<Value> {
     let mut s = setup(host, p)?;
     let node = s.resolve_node(p.string("location")?)?;
     let sig = s.c().get_signature_from_declaration_exported(node);
@@ -438,7 +530,10 @@ pub(crate) fn get_signature_from_declaration(host: &dyn CheckerHost, p: &Params)
 // --- Signatures ---
 
 /// Go `resolveTypeArrayPropertyOfSignature` (typeParameters; nil/empty → `[]`).
-pub(crate) fn get_type_parameters_of_signature(host: &dyn CheckerHost, p: &Params) -> CheckerResult<Value> {
+pub(crate) fn get_type_parameters_of_signature(
+    host: &dyn CheckerHost,
+    p: &Params,
+) -> CheckerResult<Value> {
     let mut s = setup(host, p)?;
     let sig = s.resolve_signature(p.u64("objectId")?)?;
     let types = sig.type_parameters();
@@ -457,7 +552,11 @@ pub(crate) enum SignatureProperty {
     Target,
 }
 
-pub(crate) fn signature_property(host: &dyn CheckerHost, p: &Params, property: SignatureProperty) -> CheckerResult<Value> {
+pub(crate) fn signature_property(
+    host: &dyn CheckerHost,
+    p: &Params,
+    property: SignatureProperty,
+) -> CheckerResult<Value> {
     let sd = SnapshotCtx::new(host, p.u64("snapshot")?, p.project()?)?;
     let sig = sd.resolve_signature(p.u64("objectId")?, None)?;
     match property {
@@ -466,7 +565,12 @@ pub(crate) fn signature_property(host: &dyn CheckerHost, p: &Params, property: S
             if params.is_empty() {
                 return Ok(Value::Array(Vec::new())); // Go nil slice: json/v2 encodes []
             }
-            Ok(Value::Array(params.iter().map(|sym| sd.symbol_response(*sym, &sd.project)).collect::<CheckerResult<_>>()?))
+            Ok(Value::Array(
+                params
+                    .iter()
+                    .map(|sym| sd.symbol_response(*sym, &sd.project))
+                    .collect::<CheckerResult<_>>()?,
+            ))
         }
         SignatureProperty::ThisParameter => match sig.this_parameter() {
             Some(sym) => sd.symbol_response(sym, &sd.project),
@@ -485,9 +589,14 @@ pub(crate) enum SignatureTypeOp {
     RestType,
 }
 
-/// `field`: "objectId" for getReturnTypeOfSignature (GetSignaturePropertyParams), "signature" for
-/// getRestTypeOfSignature (CheckerSignatureParams).
-pub(crate) fn signature_type_op(host: &dyn CheckerHost, p: &Params, field: &str, op: SignatureTypeOp) -> CheckerResult<Value> {
+/// `field`: "objectId" for getReturnTypeOfSignature (`GetSignaturePropertyParams`), "signature" for
+/// getRestTypeOfSignature (`CheckerSignatureParams`).
+pub(crate) fn signature_type_op(
+    host: &dyn CheckerHost,
+    p: &Params,
+    field: &str,
+    op: SignatureTypeOp,
+) -> CheckerResult<Value> {
     let mut s = setup(host, p)?;
     let sig = s.resolve_signature(p.u64(field)?)?;
     let t = match op {
@@ -503,13 +612,15 @@ pub(crate) enum ParameterAt {
     TypeParameter,
 }
 
-pub(crate) fn signature_parameter_at(host: &dyn CheckerHost, p: &Params, op: ParameterAt) -> CheckerResult<Value> {
+pub(crate) fn signature_parameter_at(
+    host: &dyn CheckerHost,
+    p: &Params,
+    op: ParameterAt,
+) -> CheckerResult<Value> {
     let mut s = setup(host, p)?;
     let sig = s.resolve_signature(p.u64("signature")?)?;
-    let index = p.i32("index")?;
-    if index < 0 {
-        return Err(CheckerError::client("invalid parameter index"));
-    }
+    let index = usize::try_from(p.i32("index")?)
+        .map_err(|_| CheckerError::client("invalid parameter index"))?;
     let t = match op {
         ParameterAt::ParameterType => s.c().get_type_at_position_exported(sig, index),
         ParameterAt::TypeParameter => s.c().get_type_parameter_at_position(sig, index),
@@ -517,7 +628,10 @@ pub(crate) fn signature_parameter_at(host: &dyn CheckerHost, p: &Params, op: Par
     s.type_response(t)
 }
 
-pub(crate) fn get_type_predicate_of_signature(host: &dyn CheckerHost, p: &Params) -> CheckerResult<Value> {
+pub(crate) fn get_type_predicate_of_signature(
+    host: &dyn CheckerHost,
+    p: &Params,
+) -> CheckerResult<Value> {
     let mut s = setup(host, p)?;
     let sig = s.resolve_signature(p.u64("signature")?)?;
     let Some(pred) = s.c().get_type_predicate_of_signature_exported(sig) else {
@@ -525,7 +639,7 @@ pub(crate) fn get_type_predicate_of_signature(host: &dyn CheckerHost, p: &Params
     };
     let mut o = obj();
     o.num("kind", pred.kind() as i32 as f64);
-    o.num("parameterIndex", pred.parameter_index() as f64);
+    o.num("parameterIndex", pred.parameter_index().map_or(-1.0, |index| index as f64));
     o.str_nonempty("parameterName", pred.parameter_name());
     if let Some(t) = pred.type_() {
         o.set("type", s.type_response(t)?);
@@ -551,7 +665,11 @@ pub(crate) enum Intrinsic {
     NonPrimitive,
 }
 
-pub(crate) fn get_intrinsic_type(host: &dyn CheckerHost, p: &Params, which: Intrinsic) -> CheckerResult<Value> {
+pub(crate) fn get_intrinsic_type(
+    host: &dyn CheckerHost,
+    p: &Params,
+    which: Intrinsic,
+) -> CheckerResult<Value> {
     let mut s = setup(host, p)?;
     let c = s.c();
     let t = match which {
@@ -578,14 +696,18 @@ pub(crate) fn get_well_known_symbols(host: &dyn CheckerHost, p: &Params) -> Chec
     let arguments = s.c().get_arguments_symbol();
     let registry = &s.sd.scope.registry;
     let mut o = obj();
-    for (name, symbol) in [("unknown", unknown), ("undefined", undefined), ("arguments", arguments)] {
+    for (name, symbol) in [("unknown", unknown), ("undefined", undefined), ("arguments", arguments)]
+    {
         let (id, _) = registry.register_symbol(symbol, &s.sd.project)?;
         o.num(name, id as f64);
     }
     Ok(o.build())
 }
 
-pub(crate) fn get_well_known_signatures(host: &dyn CheckerHost, p: &Params) -> CheckerResult<Value> {
+pub(crate) fn get_well_known_signatures(
+    host: &dyn CheckerHost,
+    p: &Params,
+) -> CheckerResult<Value> {
     let mut s = setup(host, p)?;
     let unknown = s.c().get_unknown_signature();
     let id = s.sd.scope.registry.register_signature(&s.sd.project, s.checker_id, unknown)?;
@@ -612,12 +734,16 @@ pub(crate) fn type_to_string(host: &dyn CheckerHost, p: &Params) -> CheckerResul
     let flags = if flags != 0 {
         TypeFormatFlags::from_bits_retain(flags as u32)
     } else {
-        TypeFormatFlags::AllowUniqueESSymbolType | TypeFormatFlags::UseAliasDefinedOutsideCurrentScope
+        TypeFormatFlags::AllowUniqueESSymbolType
+            | TypeFormatFlags::UseAliasDefinedOutsideCurrentScope
     };
     Ok(Value::String(s.c().type_to_string_ex_exported(t, enclosing, flags, None)))
 }
 
-pub(crate) fn type_to_type_node(host: &dyn CheckerHost, p: &Params) -> CheckerResult<CheckerResponse> {
+pub(crate) fn type_to_type_node(
+    host: &dyn CheckerHost,
+    p: &Params,
+) -> CheckerResult<CheckerResponse> {
     let mut s = setup(host, p)?;
     let t = s.resolve_type(p.u32("type")?)?;
     let enclosing = enclosing(&s, p)?;
@@ -628,7 +754,10 @@ pub(crate) fn type_to_type_node(host: &dyn CheckerHost, p: &Params) -> CheckerRe
     }
 }
 
-pub(crate) fn signature_to_signature_declaration(host: &dyn CheckerHost, p: &Params) -> CheckerResult<CheckerResponse> {
+pub(crate) fn signature_to_signature_declaration(
+    host: &dyn CheckerHost,
+    p: &Params,
+) -> CheckerResult<CheckerResponse> {
     let mut s = setup(host, p)?;
     let sig = s.resolve_signature(p.u64("signature")?)?;
     let enclosing = enclosing(&s, p)?;
@@ -644,4 +773,3 @@ pub(crate) fn signature_to_signature_declaration(host: &dyn CheckerHost, p: &Par
         None => Ok(CheckerResponse::Json(Value::Null)),
     }
 }
-

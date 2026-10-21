@@ -1,7 +1,7 @@
 use std::fmt;
 use std::ops::Deref;
 
-use tsrs_core::collections::{new_ordered_map_with_size_hint, OrderedMap};
+use tsrs_core::collections::{OrderedMap, new_ordered_map_with_size_hint};
 
 use super::json::Json;
 
@@ -27,7 +27,7 @@ impl fmt::Display for JSONValueType {
             JSONValueType::Boolean => f.write_str("boolean"),
             JSONValueType::Array => f.write_str("array"),
             JSONValueType::Object => f.write_str("object"),
-            _ => write!(f, "unknown({})", *self as i8),
+            JSONValueType::NotPresent => write!(f, "unknown({})", *self as i8),
         }
     }
 }
@@ -103,10 +103,10 @@ impl<T> JSONData<T> {
             Json::Array(elements) => JSONData::Array(elements.iter().map(element).collect()),
             Json::Object(members) => {
                 let mut object = new_ordered_map_with_size_hint(members.len());
-                for (name, member) in members {
+                object.extend(members.iter().map(|(name, member)| {
                     // OrderedMap.Set keeps the first position of a repeated name and takes the last value.
-                    object.insert(name.clone(), element(member));
-                }
+                    (name.clone(), element(member))
+                }));
                 JSONData::Object(object)
             }
             Json::Bool(b) => JSONData::Boolean(*b),

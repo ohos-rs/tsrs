@@ -2,7 +2,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use tsrs_ast::{Kind, Node, SourceFile};
-use tsrs_core::{TextRange, Tristate, P};
+use tsrs_core::{P, TextRange, Tristate};
 use tsrs_scanner as scanner;
 
 use super::*;
@@ -29,7 +29,11 @@ pub struct FormattingContext {
 }
 
 // context.go:29
-pub fn new_formatting_context(file: P<SourceFile>, kind: FormatRequestKind, options: Rc<FormatCodeSettings>) -> FormattingContext {
+pub fn new_formatting_context(
+    file: P<SourceFile>,
+    kind: FormatRequestKind,
+    options: Rc<FormatCodeSettings>,
+) -> FormattingContext {
     FormattingContext {
         current_token_span: TextRangeWithKind::default(),
         next_token_span: TextRangeWithKind::default(),
@@ -70,15 +74,9 @@ impl FormattingContext {
         next_parent: Option<P<Node>>,
         common_parent: Option<P<Node>>,
     ) {
-        if cur_parent.is_none() {
-            panic!("nil current range node parent in update context");
-        }
-        if next_parent.is_none() {
-            panic!("nil next range node parent in update context");
-        }
-        if common_parent.is_none() {
-            panic!("nil common parent node in update context");
-        }
+        assert!(cur_parent.is_some(), "nil current range node parent in update context");
+        assert!(next_parent.is_some(), "nil next range node parent in update context");
+        assert!(common_parent.is_some(), "nil common parent node in update context");
         self.current_token_span = cur;
         self.current_token_parent = cur_parent;
         self.next_token_span = next;
@@ -111,8 +109,12 @@ impl FormattingContext {
         let open_brace = astnav::find_child_of_kind(node, Kind::OpenBraceToken, self.source_file);
         let close_brace = astnav::find_child_of_kind(node, Kind::CloseBraceToken, self.source_file);
         if let (Some(open_brace), Some(close_brace)) = (open_brace, close_brace) {
-            let close_brace_start = scanner::get_token_pos_of_node(close_brace, self.source_file, false);
-            return self.range_is_on_one_line(TextRange::new(open_brace.end(), close_brace_start));
+            let close_brace_start =
+                scanner::get_token_pos_of_node(close_brace, self.source_file, false);
+            return self.range_is_on_one_line(TextRange::new(
+                open_brace.end().expect_source("parsed tokens have source positions"),
+                close_brace_start,
+            ));
         }
         Tristate::False
     }
@@ -136,8 +138,10 @@ impl FormattingContext {
     // context.go:102
     pub fn tokens_are_on_same_line(&self) -> bool {
         if self.tokens_are_on_same_line.get() == Tristate::Unknown {
-            self.tokens_are_on_same_line
-                .set(self.range_is_on_one_line(TextRange::new(self.current_token_span.loc.pos(), self.next_token_span.loc.end())));
+            self.tokens_are_on_same_line.set(self.range_is_on_one_line(TextRange::from_text_pos(
+                self.current_token_span.loc.pos(),
+                self.next_token_span.loc.end(),
+            )));
         }
         self.tokens_are_on_same_line.get() == Tristate::True
     }
@@ -145,7 +149,8 @@ impl FormattingContext {
     // context.go:109
     pub fn context_node_block_is_on_one_line(&self) -> bool {
         if self.context_node_block_is_on_one_line.get() == Tristate::Unknown {
-            self.context_node_block_is_on_one_line.set(self.block_is_on_one_line(self.context_node()));
+            self.context_node_block_is_on_one_line
+                .set(self.block_is_on_one_line(self.context_node()));
         }
         self.context_node_block_is_on_one_line.get() == Tristate::True
     }
@@ -153,7 +158,8 @@ impl FormattingContext {
     // context.go:116
     pub fn next_node_block_is_on_one_line(&self) -> bool {
         if self.next_node_block_is_on_one_line.get() == Tristate::Unknown {
-            self.next_node_block_is_on_one_line.set(self.block_is_on_one_line(self.next_token_parent()));
+            self.next_node_block_is_on_one_line
+                .set(self.block_is_on_one_line(self.next_token_parent()));
         }
         self.next_node_block_is_on_one_line.get() == Tristate::True
     }
@@ -162,5 +168,5 @@ impl FormattingContext {
 // context.go:73
 pub(crate) fn with_token_start(loc: P<Node>, file: P<SourceFile>) -> TextRange {
     let start_pos = scanner::get_token_pos_of_node(loc, file, false);
-    TextRange::new(start_pos, loc.end())
+    TextRange::new(start_pos, loc.end().expect_source("parsed nodes have source positions"))
 }

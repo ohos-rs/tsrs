@@ -2,7 +2,9 @@
 name = "tsrs_transformers"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
+publish.workspace = true
 
 [lints]
 workspace = true
@@ -20,4 +22,8 @@ bitflags.workspace = true
 
 [dev-dependencies]
 tsrs_compiler.workspace = true
+tsrs_parser.workspace = true
 tsrs_vfs.workspace = true
+
+[lib]
+doctest = false

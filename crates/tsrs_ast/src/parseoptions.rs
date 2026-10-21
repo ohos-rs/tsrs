@@ -1,5 +1,5 @@
 use tsrs_core::tspath::{self, Path};
-use tsrs_core::{CompilerOptions, JsxEmit, ModuleDetectionKind, ModuleKind, ScriptKind, P};
+use tsrs_core::{CompilerOptions, JsxEmit, ModuleDetectionKind, ModuleKind, P, ScriptKind};
 
 use crate::*;
 
@@ -31,14 +31,16 @@ pub fn get_external_module_indicator_options(
     metadata: &SourceFileMetaData,
 ) -> ExternalModuleIndicatorOptions {
     if tspath::is_declaration_file_name(file_name) {
-        return ExternalModuleIndicatorOptions::default();
+        return crate::parseoptions::ExternalModuleIndicatorOptions::default();
     }
 
     match options.get_emit_module_detection_kind() {
         // All non-declaration files are modules, declaration files still do the usual isFileProbablyExternalModule
         ModuleDetectionKind::Force => ExternalModuleIndicatorOptions { jsx: false, force: true },
         // Files are modules if they have imports, exports, or import.meta
-        ModuleDetectionKind::Legacy => ExternalModuleIndicatorOptions::default(),
+        ModuleDetectionKind::Legacy => {
+            crate::parseoptions::ExternalModuleIndicatorOptions::default()
+        }
         // If module is nodenext or node16, all esm format files are modules
         // If jsx is react-jsx or react-jsxdev then jsx tags force module-ness
         // otherwise, the presence of import or export statments (or import.meta) implies module-ness
@@ -46,26 +48,37 @@ pub fn get_external_module_indicator_options(
             jsx: options.jsx == JsxEmit::ReactJSX || options.jsx == JsxEmit::ReactJSXDev,
             force: is_file_forced_to_be_module_by_format(file_name, options, metadata),
         },
-        _ => ExternalModuleIndicatorOptions::default(),
+        ModuleDetectionKind::None => crate::parseoptions::ExternalModuleIndicatorOptions::default(),
     }
 }
 
 static IS_FILE_FORCED_TO_BE_MODULE_BY_FORMAT_EXTENSIONS: &[&str] =
     &[tspath::EXTENSION_CJS, tspath::EXTENSION_CTS, tspath::EXTENSION_MJS, tspath::EXTENSION_MTS];
 
-fn is_file_forced_to_be_module_by_format(file_name: &str, options: &CompilerOptions, metadata: &SourceFileMetaData) -> bool {
+fn is_file_forced_to_be_module_by_format(
+    file_name: &str,
+    options: &CompilerOptions,
+    metadata: &SourceFileMetaData,
+) -> bool {
     // Excludes declaration files - they still require an explicit `export {}` or the like
     // for back compat purposes. The only non-declaration files _not_ forced to be a module are `.js` files
     // that aren't esm-mode (meaning not in a `type: module` scope).
-    get_implied_node_format_for_emit_worker(file_name, options.get_emit_module_kind(), metadata) == ModuleKind::ESNext
-        || tspath::file_extension_is_one_of(file_name, IS_FILE_FORCED_TO_BE_MODULE_BY_FORMAT_EXTENSIONS)
+    get_implied_node_format_for_emit_worker(file_name, options.get_emit_module_kind(), metadata)
+        == ModuleKind::ESNext
+        || tspath::file_extension_is_one_of(
+            file_name,
+            IS_FILE_FORCED_TO_BE_MODULE_BY_FORMAT_EXTENSIONS,
+        )
 }
 
 pub fn set_external_module_indicator(file: &SourceFile, opts: ExternalModuleIndicatorOptions) {
     file.external_module_indicator.set(get_external_module_indicator(file, opts));
 }
 
-fn get_external_module_indicator(file: &SourceFile, opts: ExternalModuleIndicatorOptions) -> Option<P<Node>> {
+fn get_external_module_indicator(
+    file: &SourceFile,
+    opts: ExternalModuleIndicatorOptions,
+) -> Option<P<Node>> {
     if file.script_kind.get() == ScriptKind::JSON {
         return None;
     }
@@ -92,17 +105,18 @@ fn get_external_module_indicator(file: &SourceFile, opts: ExternalModuleIndicato
 }
 
 fn is_file_probably_external_module(source_file: &SourceFile) -> Option<P<Node>> {
-    for &statement in source_file.statements().nodes() {
-        if is_an_external_module_indicator_node(statement) {
-            return Some(statement);
-        }
+    if let Some(result) = source_file.statements().nodes().iter().find_map(|&statement| {
+        if is_an_external_module_indicator_node(statement) { Some(Some(statement)) } else { None }
+    }) {
+        return result;
     }
     get_import_meta_if_necessary(source_file)
 }
 
 fn is_an_external_module_indicator_node(node: P<Node>) -> bool {
     has_syntactic_modifier(node, ModifierFlags::Export)
-        || is_import_equals_declaration(node) && is_external_module_reference(node.as_import_equals_declaration().module_reference)
+        || is_import_equals_declaration(node)
+            && is_external_module_reference(node.as_import_equals_declaration().module_reference)
         || is_import_declaration(node)
         || is_export_assignment(node)
         || is_export_declaration(node)

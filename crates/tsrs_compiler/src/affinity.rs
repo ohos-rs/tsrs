@@ -24,7 +24,7 @@
 // pass lengthens the assignment (vscode at 32 checkers: 17 ms with 3 passes, 24 ms with 10, against 6 ms to create the
 // checkers it overlaps).
 //
-// Only from MIN_CHECKERS checkers on. With fewer, each checker already holds most of the modules, so there is little to
+// Only from MIN_CHECKERS checkers on (LARGE_MIN_CHECKERS on large programs, `applies`). With fewer, each checker already holds most of the modules, so there is little to
 // save, while concentrating the costly files makes the checkers' real costs uneven and stealing moves more files: with
 // stealing, at 4 checkers t3code-server took 10.8% more instructions and cal-diy 4.5% (Mac), and at 8 on the 64-vCPU
 // runner mui-docs took 5.9% longer and cal-diy 3.8% more CPU, while 16 and 32 checkers were lower or equal on all but
@@ -43,6 +43,18 @@ const MU: f64 = 1.0;
 const GAMMA: f64 = 0.5;
 const MAX_PASSES: usize = 3;
 pub(crate) const MIN_CHECKERS: usize = 16;
+/// From `LARGE_MIN_CHECKERS` checkers on when at least `LARGE_PROGRAM_FILES` files are checked. On the
+/// 38k-file codebase at 8 checkers each checker holds a smaller share of the modules than on the ~10k-file
+/// projects the 8-checker regressions above were measured on: there the term lowers user-space instructions
+/// by 3.3%, CPU time by 4%, wall time by 4% and peak RSS by 3.6%.
+pub(crate) const LARGE_MIN_CHECKERS: usize = 8;
+pub(crate) const LARGE_PROGRAM_FILES: usize = 24_000;
+
+/// Whether the module affinity and the sticky thieves apply to `checker_count` checkers checking `files` files.
+pub(crate) fn applies(checker_count: usize, files: usize) -> bool {
+    checker_count >= MIN_CHECKERS
+        || checker_count >= LARGE_MIN_CHECKERS && files >= LARGE_PROGRAM_FILES
+}
 
 struct Config {
     mu: f64,
@@ -56,10 +68,21 @@ fn config() -> &'static Config {
         let mu = match std::env::var("TSRS_MODULE_AFFINITY").ok().as_deref().map(str::trim) {
             None | Some("") => MU,
             Some("0" | "off") => 0.0,
-            Some(v) => v.parse::<f64>().ok().filter(|m| m.is_finite() && *m >= 0.0).unwrap_or_else(|| panic!("TSRS_MODULE_AFFINITY: expected a number >= 0 or off, got {v:?}")),
+            Some(v) => {
+                v.parse::<f64>().ok().filter(|m| m.is_finite() && *m >= 0.0).unwrap_or_else(|| {
+                    panic!("TSRS_MODULE_AFFINITY: expected a number >= 0 or off, got {v:?}")
+                })
+            }
         };
-        let gamma = std::env::var("TSRS_MODULE_AFFINITY_GAMMA").ok().and_then(|v| v.parse::<f64>().ok()).filter(|g| g.is_finite()).unwrap_or(GAMMA);
-        let passes = std::env::var("TSRS_MODULE_AFFINITY_PASSES").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or(MAX_PASSES);
+        let gamma = std::env::var("TSRS_MODULE_AFFINITY_GAMMA")
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+            .filter(|g| g.is_finite())
+            .unwrap_or(GAMMA);
+        let passes = std::env::var("TSRS_MODULE_AFFINITY_PASSES")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(MAX_PASSES);
         Config { mu, gamma, passes }
     })
 }
@@ -81,7 +104,7 @@ pub(crate) struct ModuleAffinity {
 }
 
 impl ModuleAffinity {
-    // None when the term is off or there are fewer than MIN_CHECKERS checkers. `targets[i]` are the files program file `i` imports (resolved, in the program);
+    // None when the term is off or does not apply (`applies`). `targets[i]` are the files program file `i` imports (resolved, in the program);
     // `group_of_file[i]` is its locality group, usize::MAX for files outside the groups (unchecked ones);
     // `group_adjacency` is FENNEL's group graph.
     pub(crate) fn new(
@@ -92,10 +115,13 @@ impl ModuleAffinity {
         checker_count: usize,
     ) -> Option<ModuleAffinity> {
         let config = config();
-        if config.mu <= 0.0 || checker_count < MIN_CHECKERS {
+        if config.mu <= 0.0
+            || !applies(checker_count, group_of_file.iter().filter(|&&g| g != usize::MAX).count())
+        {
             return None;
         }
-        let worth: Vec<f64> = files.iter().map(|f| (f.node_count.get().max(1) as f64).powf(config.gamma)).collect();
+        let worth: Vec<f64> =
+            files.iter().map(|f| (f.node_count.get().max(1) as f64).powf(config.gamma)).collect();
         let group_count = group_adjacency.len();
         // Group members by counting sort, in file order.
         let mut starts = vec![0usize; group_count + 1];
@@ -120,19 +146,29 @@ impl ModuleAffinity {
         for g in 0..group_count {
             let start = modules.len();
             for &i in &members[starts[g]..starts[g + 1]] {
-                for m in std::iter::once(i as usize).chain(targets[i as usize].iter().copied()) {
-                    if stamp[m] != g {
-                        stamp[m] = g;
-                        modules.push(m as u32);
-                    }
-                }
+                modules.extend(
+                    std::iter::once(i as usize)
+                        .chain(targets[i as usize].iter().copied())
+                        .filter_map(|m| {
+                            if stamp[m] != g {
+                                stamp[m] = g;
+                                Some(m as u32)
+                            } else {
+                                None
+                            }
+                        }),
+                );
             }
             // In file order, so that the sums below do not depend on the order of the import lists.
             modules[start..].sort_unstable();
             let total: f64 = modules[start..].iter().map(|&m| worth[m as usize]).sum();
             module_starts.push(modules.len());
             totals.push(total);
-            scale.push(if total > 0.0 { config.mu * (group_adjacency[g].len() + 1) as f64 / total } else { 0.0 });
+            scale.push(if total > 0.0 {
+                config.mu * (group_adjacency[g].len() + 1) as f64 / total
+            } else {
+                0.0
+            });
         }
         let words = checker_count.div_ceil(64);
         Some(ModuleAffinity {
@@ -154,7 +190,9 @@ impl ModuleAffinity {
         if scale > 0.0 {
             for &m in &self.modules[self.starts[group]..self.starts[group + 1]] {
                 let m = m as usize;
-                for (w, &bits) in self.holders[m * self.words..(m + 1) * self.words].iter().enumerate() {
+                for (w, &bits) in
+                    self.holders[m * self.words..(m + 1) * self.words].iter().enumerate()
+                {
                     let mut bits = bits;
                     while bits != 0 {
                         let c = w * 64 + bits.trailing_zeros() as usize;
@@ -176,7 +214,12 @@ impl ModuleAffinity {
 
     // Moves groups between checkers while that lowers the worth of the modules held per checker (see above).
     // `group_checkers` is FENNEL's placement of the groups, `group_weights` their loads.
-    pub(crate) fn refine(&self, group_checkers: &mut [usize], group_weights: &[i64], checker_count: usize) {
+    pub(crate) fn refine(
+        &self,
+        group_checkers: &mut [usize],
+        group_weights: &[i64],
+        checker_count: usize,
+    ) {
         let passes = config().passes;
         if passes == 0 || checker_count < 2 {
             return;
@@ -212,7 +255,7 @@ impl ModuleAffinity {
             let mut moved = false;
             for &g in &order {
                 let from = group_checkers[g];
-                held.iter_mut().for_each(|h| *h = 0.0);
+                held.fill(0.0);
                 let (mut only_here, mut held_everywhere) = (0.0, 0.0);
                 for &m in self.group_modules(g) {
                     let m = m as usize;

@@ -29,7 +29,7 @@ fn arkts_binary_tree_retains_virtual_nodes_and_parser_identity() {
     let file = tsrs_parser::parse_source_file(opts.clone(),
         "/*😀*/ import lazy { value } from 'mod'; @interface Mark { value: string = 'x' } struct Page { build() { Column() { Text('value') } } }", ScriptKind::ETS);
     assert!(file.diagnostics().is_empty());
-    let import_end = file.statements().nodes()[0].end();
+    let import_end = file.statements().nodes()[0].end().source_offset().unwrap_or(0);
     file.marked_kit_import_ranges.set(tsrs_core::alloc_slice(&[TextRange::new(0, import_end)]));
     let utf16_end = file.text()[..import_end as usize].encode_utf16().count() as i32;
     let metadata: serde_json::Value = serde_json::from_str(&tsrs_api_codec::encoder::source_file_arkts_options_json(file.get())).unwrap();
@@ -38,7 +38,10 @@ fn arkts_binary_tree_retains_virtual_nodes_and_parser_identity() {
     let decoded = decode_source_file(&bytes).unwrap();
     let result = decoded.root().as_source_file();
     assert_eq!(result.parse_options(), &opts);
-    assert_eq!(result.marked_kit_import_ranges.get(), &[TextRange::new(0, utf16_end)]);
+    assert_eq!(
+        result.marked_kit_import_ranges.get(),
+        &[TextRange::new(0, utf16_end as u32)]
+    );
     let (mut before, mut after) = (Vec::new(), Vec::new());
     shape(file.as_node(), &mut before);
     shape(decoded.root(), &mut after);

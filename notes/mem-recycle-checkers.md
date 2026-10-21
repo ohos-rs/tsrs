@@ -29,7 +29,7 @@ release build (fat LTO, no PGO). Peak = `/usr/bin/time -l` peak memory footprint
 
 ## 1. Where the memory is (8 checkers, base)
 
-`TSRS_MEM_SPLIT=1` and the alloc-profile heap sampler (`TSRS_HEAP_PROFILE=1`):
+Measured using `TSRS_MEM_SPLIT=1` and the now-removed heap sampler:
 
 | | GB |
 | --- | ---: |
@@ -134,19 +134,20 @@ treats the identity caches as weak (section 5); a retirement drops all of it at 
 - **Mapping source files instead of reading them** (`mmap` for files of at least 16 KiB: 10.5k files, 465 MB): -0.61
   GB footprint (-3.4%), RSS unchanged (mapped pages are counted there), +1% instructions and +4% wall (page faults:
   +6-10 s system time). Below the 5% bar, and RSS-based limits (Linux) see nothing. The patch is not kept.
-- **Sharing a seed between lifetimes** (spike/shared-graph's frozen seed + forks) would remove most of the rebuild
-  cost; not tried here (2,770 lines, 55 commits behind main).
+- **Sharing a seed between lifetimes** (frozen seed + forks): done since, in #281 (opt-in, `--features tsrs_core/shared-graph`
+  and `TSRS_SHARED_GRAPH=1`). A retired checker becomes a fork of the seed; at 8G it removes most of the rebuild
+  cost (3.17 T -> 2.76 T instructions, 32.9 -> 28.6 s; notes/spike-shared-graph.md section 10).
 
 ## 5. What is left
 
 - A collector for checker data (measured since: notes/mem-checker-gc.md, below the bar): identity caches weak, link stores and declared-symbol state strong, run between two
   files. The epoch census bounds what it could free (about 3/4 of a checker's arena at mid-life) without the 14-25%
-  rebuild cost of retirements. Next step before building it: run the reachability census (`TSRS_CENSUS=1`, which
-  already traces the checker) with the identity caches removed from its roots, to measure what such a collector
-  would actually free (some dead objects stay reachable from live ones).
+  rebuild cost of retirements. Any revisit needs new reachability instrumentation to measure what such a collector
+  would actually free with identity caches excluded from its roots (some dead objects stay reachable from live
+  ones). The old census used for this investigation has been removed.
 
-- The ~1.2M types a fresh checker rebuilds are the cost floor of a retirement; a seed shared by the lifetimes
-  (spike/shared-graph) is the way to lower it.
+- The ~1.2M types a fresh checker rebuilds are the cost floor of a retirement; the shared seed of #281 lowers it
+  (above).
 - At 512 MiB the front end is half of the peak: 2.9 GB of trees and binder output of non-leaf files, 0.8 GB of source
   text, 0.8 GB of other front-end heap.
 - Not measured: Linux (THP: checker regions are carved from slabs without huge pages, unlike thread-arena chunks), the

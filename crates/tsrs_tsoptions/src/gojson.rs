@@ -6,8 +6,8 @@
 use tsrs_core::collections::OrderedMap;
 use tsrs_core::json::Value;
 use tsrs_core::{
-    BuildOptions, CompilerOptions, JsxEmit, ModuleDetectionKind, ModuleKind, ModuleResolutionKind, NewLineKind, PluginImport,
-    ProjectReference, ScriptTarget, Tristate, TypeAcquisition,
+    BuildOptions, CompilerOptions, JsxEmit, ModuleDetectionKind, ModuleKind, ModuleResolutionKind,
+    NewLineKind, PluginImport, ProjectReference, ScriptTarget, Tristate, TypeAcquisition,
 };
 
 use crate::parsinghelpers::for_each_compiler_options_field;
@@ -20,7 +20,10 @@ pub trait GoJson: Sized {
     const INTEGER_BITS: u32 = 0;
     /// Like `from_go_json`, but an integer with no Rust enum variant (Go keeps any int32) is returned beside the
     /// default value instead of being an error.
-    fn from_go_json_keeping_unknown(value: &Value, field: &str) -> Result<(Self, Option<i32>), String> {
+    fn from_go_json_keeping_unknown(
+        value: &Value,
+        field: &str,
+    ) -> Result<(Self, Option<i32>), String> {
         Self::from_go_json(value, field).map(|v| (v, None))
     }
 }
@@ -60,11 +63,7 @@ impl GoJson for Tristate {
 
 impl GoJson for bool {
     fn to_go_json(&self) -> Option<Value> {
-        if *self {
-            Some(Value::Bool(true))
-        } else {
-            None
-        }
+        if *self { Some(Value::Bool(true)) } else { None }
     }
     fn from_go_json(value: &Value, field: &str) -> Result<Self, String> {
         match value {
@@ -77,11 +76,7 @@ impl GoJson for bool {
 
 impl GoJson for String {
     fn to_go_json(&self) -> Option<Value> {
-        if self.is_empty() {
-            None
-        } else {
-            Some(Value::String(self.clone()))
-        }
+        if self.is_empty() { None } else { Some(Value::String(self.clone())) }
     }
     fn from_go_json(value: &Value, field: &str) -> Result<Self, String> {
         match value {
@@ -94,7 +89,9 @@ impl GoJson for String {
 
 fn int_from(value: &Value, field: &str) -> Result<i32, String> {
     match value {
-        Value::Number(n) if n.fract() == 0.0 && *n >= i32::MIN as f64 && *n <= i32::MAX as f64 => Ok(*n as i32),
+        Value::Number(n) if n.fract() == 0.0 && *n >= i32::MIN as f64 && *n <= i32::MAX as f64 => {
+            Ok(*n as i32)
+        }
         v => Err(type_error(field, "int", v)),
     }
 }
@@ -116,14 +113,22 @@ impl GoJson for Option<i64> {
     const INTEGER_BITS: u32 = 64;
     fn to_go_json(&self) -> Option<Value> {
         // Exactly: f64 cannot hold every Go int.
-        self.map(|v| if v.unsigned_abs() <= 1 << 53 { Value::Number(v as f64) } else { Value::Integer(v) })
+        self.map(|v| {
+            if v.unsigned_abs() <= 1 << 53 { Value::Number(v as f64) } else { Value::Integer(v) }
+        })
     }
     fn from_go_json(value: &Value, field: &str) -> Result<Self, String> {
         // The API checks the literal's int64 range and replaces this with the exact literal (`predecode`); i64::MAX
         // itself parses as the f64 2^63, which saturates back to i64::MAX here.
         match value {
             Value::Null => Ok(None),
-            Value::Number(n) if n.fract() == 0.0 && *n >= -9223372036854775808.0 && *n <= 9223372036854775808.0 => Ok(Some(*n as i64)),
+            Value::Number(n)
+                if n.fract() == 0.0
+                    && *n >= -9_223_372_036_854_775_808.0
+                    && *n <= 9_223_372_036_854_775_808.0 =>
+            {
+                Ok(Some(*n as i64))
+            }
             Value::Integer(n) => Ok(Some(*n)),
             v => Err(type_error(field, "int", v)),
         }
@@ -153,11 +158,38 @@ impl GoJson for Option<Vec<String>> {
     }
 }
 
+impl GoJson for Option<OrderedMap<String, Option<Vec<String>>>> {
+    fn to_go_json(&self) -> Option<Value> {
+        self.as_ref().map(|m| {
+            let mut o = OrderedMap::default();
+            // encoding/json/v2 marshals a nil slice as `[]` (and unmarshals `null` to nil).
+            o.extend(
+                m.iter().map(|(k, v)| (k.clone(), strings_to(v.as_deref().unwrap_or_default()))),
+            );
+            Value::Object(o)
+        })
+    }
+    fn from_go_json(value: &Value, field: &str) -> Result<Self, String> {
+        match value {
+            Value::Null => Ok(None),
+            Value::Object(entries) => {
+                let mut m = OrderedMap::default();
+                m = entries.iter().try_fold(m, |mut m, (k, v)| {
+                    m.insert(k.clone(), Option::<Vec<String>>::from_go_json(v, field)?);
+                    Ok::<_, String>(m)
+                })?;
+                Ok(Some(m))
+            }
+            v => Err(type_error(field, "map[string][]string", v)),
+        }
+    }
+}
+
 impl GoJson for Option<OrderedMap<String, Vec<String>>> {
     fn to_go_json(&self) -> Option<Value> {
         self.as_ref().map(|m| {
             let mut o = OrderedMap::default();
-            for (k, v) in m.iter() {
+            for (k, v) in m {
                 o.insert(k.clone(), strings_to(v));
             }
             Value::Object(o)
@@ -168,7 +200,7 @@ impl GoJson for Option<OrderedMap<String, Vec<String>>> {
             Value::Null => Ok(None),
             Value::Object(entries) => {
                 let mut m = OrderedMap::default();
-                for (k, v) in entries.iter() {
+                for (k, v) in entries {
                     m.insert(k.clone(), strings_from(v, field)?);
                 }
                 Ok(Some(m))
@@ -198,7 +230,9 @@ impl GoJson for Option<Vec<PluginImport>> {
             Value::Array(items) => items
                 .iter()
                 .map(|item| match item {
-                    Value::Object(o) => Ok(PluginImport { name: String::from_go_json(o.get("name").unwrap_or(&Value::Null), field)? }),
+                    Value::Object(o) => Ok(PluginImport {
+                        name: String::from_go_json(o.get("name").unwrap_or(&Value::Null), field)?,
+                    }),
                     v => Err(type_error(field, "PluginImport", v)),
                 })
                 .collect::<Result<Vec<_>, _>>()
@@ -261,7 +295,10 @@ macro_rules! int32_go_json {
 
 int32_go_json! { ModuleKind ScriptTarget JsxEmit ModuleResolutionKind }
 
-fn object<'a>(value: &'a Value, what: &str) -> Result<Option<&'a OrderedMap<String, Value>>, String> {
+fn object<'a>(
+    value: &'a Value,
+    what: &str,
+) -> Result<Option<&'a OrderedMap<String, Value>>, String> {
     match value {
         Value::Null => Ok(None),
         Value::Object(o) => Ok(Some(o)),
@@ -271,7 +308,13 @@ fn object<'a>(value: &'a Value, what: &str) -> Result<Option<&'a OrderedMap<Stri
 
 pub fn compiler_options_to_go_json(options: &CompilerOptions) -> Value {
     let mut o = OrderedMap::default();
-    let unknown = |json: &str| options.api_unknown_enum_values.iter().find(|(k, _)| *k == json).map(|(_, n)| Value::Number(*n as f64));
+    let unknown = |json: &str| {
+        options
+            .api_unknown_enum_values
+            .iter()
+            .find(|(k, _)| *k == json)
+            .map(|(_, n)| Value::Number(*n as f64))
+    };
     macro_rules! fields {
         ($($field:ident: $json:literal,)*) => {
             $(if let Some(v) = unknown($json).or_else(|| options.$field.to_go_json()) { o.insert($json.to_string(), v); })*
@@ -281,11 +324,23 @@ pub fn compiler_options_to_go_json(options: &CompilerOptions) -> Value {
     Value::Object(o)
 }
 
+/// Distinguishes an unknown compiler-option name from a zero-valued option.
+///
 /// Go `json.Marshal` of the one core.CompilerOptions field whose json tag is `name`, as
-/// `contentmapper.MarshalDeclaredOptions` finds it by reflection: `None` when no field has that tag, `Some(None)` when
-/// the field is zero (`reflect.Value.IsZero`, the same values `omitzero` omits).
+/// `contentmapper.MarshalDeclaredOptions` finds it by reflection: `None` when no field has that tag,
+/// `Some(None)` when the field is zero (`reflect.Value.IsZero`, the same values `omitzero` omits).
+#[expect(
+    clippy::option_option,
+    reason = "Distinguishes no matching serializer or field from a matching nil value, as in Go."
+)]
 pub fn compiler_option_to_go_json(options: &CompilerOptions, name: &str) -> Option<Option<Value>> {
-    let unknown = |json: &str| options.api_unknown_enum_values.iter().find(|(k, _)| *k == json).map(|(_, n)| Value::Number(*n as f64));
+    let unknown = |json: &str| {
+        options
+            .api_unknown_enum_values
+            .iter()
+            .find(|(k, _)| *k == json)
+            .map(|(_, n)| Value::Number(*n as f64))
+    };
     macro_rules! fields {
         ($($field:ident: $json:literal,)*) => {
             match name {
@@ -300,7 +355,7 @@ pub fn compiler_option_to_go_json(options: &CompilerOptions, name: &str) -> Opti
 /// JSON names and Go integer widths of the core.CompilerOptions fields Go decodes from JSON integers.
 pub fn compiler_options_integer_fields() -> Vec<(&'static str, u32)> {
     let mut out = Vec::new();
-    let options = CompilerOptions::default();
+    let options = tsrs_core::CompilerOptions::default();
     fn bits<T: GoJson>(_: &T) -> u32 {
         T::INTEGER_BITS
     }
@@ -317,8 +372,10 @@ pub fn compiler_options_integer_fields() -> Vec<(&'static str, u32)> {
 pub const BUILD_OPTIONS_INTEGER_FIELDS: &[(&str, u32)] = &[("builders", 64)];
 
 pub fn compiler_options_from_go_json(value: &Value) -> Result<CompilerOptions, String> {
-    let mut options = CompilerOptions::default();
-    let Some(o) = object(value, "core.CompilerOptions")? else { return Ok(options) };
+    let mut options = tsrs_core::CompilerOptions::default();
+    let Some(o) = object(value, "core.CompilerOptions")? else {
+        return Ok(options);
+    };
     macro_rules! fields {
         ($($field:ident: $json:literal,)*) => {
             $(if let Some(v) = o.get($json) {
@@ -344,7 +401,10 @@ pub fn type_acquisition_to_go_json(t: &TypeAcquisition) -> Value {
     add("enable", t.enable.to_go_json());
     add("include", t.include.to_go_json());
     add("exclude", t.exclude.to_go_json());
-    add("disableFilenameBasedTypeAcquisition", t.disable_filename_based_type_acquisition.to_go_json());
+    add(
+        "disableFilenameBasedTypeAcquisition",
+        t.disable_filename_based_type_acquisition.to_go_json(),
+    );
     Value::Object(o)
 }
 
@@ -366,7 +426,9 @@ pub fn build_options_to_go_json(b: &BuildOptions) -> Value {
 
 pub fn build_options_from_go_json(value: &Value) -> Result<BuildOptions, String> {
     let mut b = BuildOptions::default();
-    let Some(o) = object(value, "core.BuildOptions")? else { return Ok(b) };
+    let Some(o) = object(value, "core.BuildOptions")? else {
+        return Ok(b);
+    };
     let null = Value::Null;
     let get = |k: &str| o.get(k).unwrap_or(&null);
     b.dry = GoJson::from_go_json(get("dry"), "dry")?;
@@ -390,11 +452,43 @@ pub fn project_reference_to_go_json(r: &ProjectReference) -> Value {
 }
 
 pub fn project_reference_from_go_json(value: &Value) -> Result<ProjectReference, String> {
-    let Some(o) = object(value, "core.ProjectReference")? else { return Ok(ProjectReference::default()) };
+    let Some(o) = object(value, "core.ProjectReference")? else {
+        return Ok(ProjectReference::default());
+    };
     let null = Value::Null;
     Ok(ProjectReference {
         path: String::from_go_json(o.get("path").unwrap_or(&null), "path")?,
-        original_path: String::from_go_json(o.get("originalPath").unwrap_or(&null), "originalPath")?,
+        original_path: String::from_go_json(
+            o.get("originalPath").unwrap_or(&null),
+            "originalPath",
+        )?,
         circular: bool::from_go_json(o.get("circular").unwrap_or(&null), "circular")?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A `paths` substitution that is not an array parses to Go's nil slice (TS5063, program.go:1153), which Go's
+    // encoding/json/v2 still marshals as `[]`; `null` unmarshals back to nil.
+    #[test]
+    fn nil_paths_substitutions_round_trip_like_go() {
+        let mut paths = OrderedMap::default();
+        paths.insert("@nil/*".to_string(), None);
+        paths.insert("@empty/*".to_string(), Some(Vec::new()));
+        let options = CompilerOptions { paths: Some(paths), ..Default::default() };
+        assert_eq!(
+            tsrs_core::json::marshal(&compiler_options_to_go_json(&options)).unwrap(),
+            r#"{"paths":{"@nil/*":[],"@empty/*":[]}}"#
+        );
+
+        let back = compiler_options_from_go_json(
+            &tsrs_core::json::unmarshal(r#"{"paths":{"@n/*":null,"@e/*":[]}}"#).unwrap(),
+        )
+        .unwrap();
+        let paths = back.paths.unwrap();
+        assert_eq!(paths.get("@n/*"), Some(&None));
+        assert_eq!(paths.get("@e/*"), Some(&Some(Vec::new())));
+    }
 }

@@ -1,5 +1,5 @@
 use tsrs_ast::{Kind, Symbol, SymbolFlags};
-use tsrs_core::{stringutil, UTF16Offset, P};
+use tsrs_core::{P, UTF16Offset, stringutil};
 use tsrs_lsproto as lsproto;
 use tsrs_printer::EmitTextWriter;
 
@@ -16,7 +16,12 @@ pub(crate) struct DisplayPartsWriter {
 
 // displaypartswriter.go:26
 pub(crate) fn new_display_parts_writer(vs_capability: bool) -> DisplayPartsWriter {
-    DisplayPartsWriter { builder: String::new(), runs: Vec::new(), vs_capability, last_written: String::new() }
+    DisplayPartsWriter {
+        builder: String::new(),
+        runs: Vec::new(),
+        vs_capability,
+        last_written: String::new(),
+    }
 }
 
 impl DisplayPartsWriter {
@@ -38,7 +43,11 @@ impl DisplayPartsWriter {
 
     // WriteClassified writes text with an explicit classification type.
     // displaypartswriter.go:45
-    pub(crate) fn write_classified(&mut self, text: &str, classification: lsproto::ClassificationTypeName) {
+    pub(crate) fn write_classified(
+        &mut self,
+        text: &str,
+        classification: lsproto::ClassificationTypeName,
+    ) {
         self.add_run(classification, text);
     }
 
@@ -87,18 +96,18 @@ impl EmitTextWriter for DisplayPartsWriter {
     }
 
     // displaypartswriter.go:78
-    fn get_indent(&self) -> i32 {
+    fn get_indent(&self) -> u32 {
         0
     }
 
     // displaypartswriter.go:80
-    fn get_line(&self) -> i32 {
+    fn get_line(&self) -> u32 {
         0
     }
 
     // displaypartswriter.go:82
-    fn get_text_pos(&self) -> i32 {
-        self.builder.len() as i32
+    fn get_text_pos(&self) -> u32 {
+        self.builder.len() as u32
     }
 
     // displaypartswriter.go:86
@@ -112,7 +121,9 @@ impl EmitTextWriter for DisplayPartsWriter {
             return false;
         }
         let (ch, _) = stringutil::decode_last_rune(self.last_written.as_bytes());
-        if ch == 0xFFFD /* utf8.RuneError */ {
+        if ch == 0xFFFD
+        /* utf8.RuneError */
+        {
             return false;
         }
         stringutil::is_white_space_like(ch)
@@ -218,11 +229,10 @@ fn classification_for_symbol(symbol: Option<P<Symbol>>) -> lsproto::Classificati
             return lsproto::ClassificationTypeName::ParameterName;
         }
         lsproto::ClassificationTypeName::LocalName
-    } else if flags.intersects(SymbolFlags::Property) {
-        lsproto::ClassificationTypeName::PropertyName
-    } else if flags.intersects(SymbolFlags::GetAccessor) {
-        lsproto::ClassificationTypeName::PropertyName
-    } else if flags.intersects(SymbolFlags::SetAccessor) {
+    } else if (flags.intersects(SymbolFlags::Property))
+        || (flags.intersects(SymbolFlags::GetAccessor))
+        || (flags.intersects(SymbolFlags::SetAccessor))
+    {
         lsproto::ClassificationTypeName::PropertyName
     } else if flags.intersects(SymbolFlags::EnumMember) {
         lsproto::ClassificationTypeName::FieldName
@@ -240,9 +250,7 @@ fn classification_for_symbol(symbol: Option<P<Symbol>>) -> lsproto::Classificati
         lsproto::ClassificationTypeName::MethodName
     } else if flags.intersects(SymbolFlags::TypeParameter) {
         lsproto::ClassificationTypeName::TypeParameterName
-    } else if flags.intersects(SymbolFlags::TypeAlias) {
-        lsproto::ClassificationTypeName::Identifier
-    } else if flags.intersects(SymbolFlags::Alias) {
+    } else if (flags.intersects(SymbolFlags::TypeAlias)) || (flags.intersects(SymbolFlags::Alias)) {
         lsproto::ClassificationTypeName::Identifier
     } else {
         lsproto::ClassificationTypeName::Text

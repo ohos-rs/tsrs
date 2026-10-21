@@ -1,9 +1,15 @@
-use tsrs_contentmapper::{MappedOutput, ProtocolJson, SupplementalOutput, TransformParams, TransformResult, METHOD_INITIALIZE, METHOD_TRANSFORM};
+use tsrs_contentmapper::{
+    METHOD_INITIALIZE, METHOD_TRANSFORM, MappedOutput, ProtocolJson, SupplementalOutput,
+    TransformParams, TransformResult,
+};
 use tsrs_core::json::Value;
 use tsrs_ipc as ipc;
 use tsrs_spanmap::{Feature, Kind, Segment};
 
-use crate::protocol::{initialize_result, marshal_span_map, no_notifications, testHandler, unexpected_method, unmarshal_params};
+use crate::protocol::{
+    initialize_result, marshal_span_map, no_notifications, testHandler, unexpected_method,
+    unmarshal_params,
+};
 
 // supplemental_diagnostics.go:13
 pub(crate) struct supplementalDiagnosticsHandler;
@@ -19,15 +25,19 @@ impl ipc::Handler for supplementalDiagnosticsHandler {
                 let p: TransformParams = unmarshal_params(params)?;
                 const PREFIX: &str = "missingSupplementalGlobal;\n";
                 let mappings = marshal_span_map(&[Segment {
-                    virtual_start: PREFIX.len() as i32,
-                    virtual_end: (PREFIX.len() + p.content.len()) as i32,
-                    original_end: p.content.len() as i32,
+                    virtual_start: PREFIX.len() as u32,
+                    virtual_end: (PREFIX.len() + p.content.len()) as u32,
+                    original_end: p.content.len() as u32,
                     kind: Kind::Verbatim,
                     features: Feature::All,
                     ..Default::default()
                 }])?;
                 Ok(TransformResult {
-                    mapped_output: MappedOutput { text: "export {};".to_string(), extension: ".ts".to_string(), ..Default::default() },
+                    mapped_output: MappedOutput {
+                        text: "export {};".to_string(),
+                        extension: ".ts".to_string(),
+                        ..Default::default()
+                    },
                     supplemental: vec![SupplementalOutput {
                         mapped_output: MappedOutput {
                             text: format!("{PREFIX}{}", p.content),
@@ -44,7 +54,11 @@ impl ipc::Handler for supplementalDiagnosticsHandler {
         }
     }
 
-    fn handle_notification(&self, _method: &str, _params: Option<&Value>) -> Result<(), ipc::Error> {
+    fn handle_notification(
+        &self,
+        _method: &str,
+        _params: Option<&Value>,
+    ) -> Result<(), ipc::Error> {
         no_notifications()
     }
 }

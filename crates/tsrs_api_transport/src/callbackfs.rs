@@ -12,7 +12,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use rustc_hash::FxHashSet;
 use serde::Deserialize;
 use serde_json::value::RawValue;
-use tsrs_vfs::{Entries, FileInfo, FileMode, FS};
+use tsrs_vfs::{Entries, FS, FileInfo, FileMode};
 
 use crate::handler::Caller;
 
@@ -118,7 +118,8 @@ struct Decoded {
 impl Decoded {
     fn value<'a, T: Deserialize<'a>>(&'a self, name: &str) -> T {
         let raw = self.value.as_deref().unwrap_or("null");
-        serde_json::from_str(raw).unwrap_or_else(|e| fail(format!("invalid {name} callback value: {e}")))
+        serde_json::from_str(raw)
+            .unwrap_or_else(|e| fail(format!("invalid {name} callback value: {e}")))
     }
 
     /// json.Unmarshal(value, &string) as callbackfs.go does: an absent value is `unexpected EOF`, `null`
@@ -163,8 +164,8 @@ fn decode_callback_response(name: &str, result: &[u8]) -> Decoded {
     if let Err(e) = crate::strictjson::validate(result) {
         fail(e);
     }
-    let response: CallbackResponse<'_> =
-        serde_json::from_slice(result).unwrap_or_else(|e| fail(format!("invalid {name} callback response: {e}")));
+    let response: CallbackResponse<'_> = serde_json::from_slice(result)
+        .unwrap_or_else(|e| fail(format!("invalid {name} callback response: {e}")));
     let kind = response.kind.unwrap_or_default();
     if kind.is_empty() {
         fail("filesystem callback response is missing a kind");
@@ -180,7 +181,11 @@ fn invalid_kind(name: &str, response: &Decoded) -> ! {
 }
 
 impl CallbackFs {
-    pub fn new(base: Arc<dyn FS>, config: &CallbackConfig, case_sensitive: Option<bool>) -> CallbackFs {
+    pub fn new(
+        base: Arc<dyn FS>,
+        config: &CallbackConfig,
+        case_sensitive: Option<bool>,
+    ) -> CallbackFs {
         CallbackFs {
             base,
             enabled: config.enabled.iter().cloned().collect(),
@@ -194,8 +199,8 @@ impl CallbackFs {
         }
     }
 
-    /// SetConnection: must be called once the transport connection exists, before any filesystem
-    /// operation that needs a callback. Later calls are ignored.
+    /// `SetConnection`: must be called once the transport connection exists, before any filesystem operation
+    /// that needs a callback. Later calls are ignored.
     pub fn set_connection(&self, conn: Arc<dyn Caller>) {
         let _ = self.conn.set(conn);
     }
@@ -226,10 +231,20 @@ impl CallbackFs {
     fn fake_stat_for_path(&self, path: &str) -> Option<FileInfo> {
         let name = base_file_name(path);
         if self.directory_exists(path) {
-            return Some(FileInfo { name, size: 0, mode: FileMode::Dir | FileMode::from_bits_retain(0o555), mod_time: None });
+            return Some(FileInfo {
+                name,
+                size: 0,
+                mode: FileMode::Dir | FileMode::from_bits_retain(0o555),
+                mod_time: None,
+            });
         }
         if self.file_exists(path) {
-            return Some(FileInfo { name, size: 0, mode: FileMode::from_bits_retain(0o444), mod_time: None });
+            return Some(FileInfo {
+                name,
+                size: 0,
+                mode: FileMode::from_bits_retain(0o444),
+                mod_time: None,
+            });
         }
         None
     }
@@ -295,7 +310,9 @@ impl FS for CallbackFs {
                         #[serde(default)]
                         symlinks: Option<Vec<String>>,
                     }
-                    let Some(raw) = response.value::<Option<RawEntries>>(CALLBACK_GET_ACCESSIBLE_ENTRIES) else {
+                    let Some(raw) =
+                        response.value::<Option<RawEntries>>(CALLBACK_GET_ACCESSIBLE_ENTRIES)
+                    else {
                         fail("invalid getAccessibleEntries callback value: null");
                     };
                     Entries {
@@ -344,8 +361,9 @@ impl FS for CallbackFs {
                         mtime: String,
                     }
                     let stat = response.value::<RawStat>(CALLBACK_STAT);
-                    let mod_time = parse_rfc3339(&stat.mtime)
-                        .unwrap_or_else(|e| fail(format!("parsing time {:?} as RFC3339: {e}", stat.mtime)));
+                    let mod_time = parse_rfc3339(&stat.mtime).unwrap_or_else(|e| {
+                        fail(format!("parsing time {:?} as RFC3339: {e}", stat.mtime))
+                    });
                     Some(FileInfo {
                         name: base_file_name(path),
                         size: stat.size,
@@ -439,14 +457,14 @@ pub fn node_file_mode_to_go_file_mode(mode: u32) -> FileMode {
     if mode & 0o1000 != 0 {
         result |= FileMode::Sticky;
     }
-    match mode & 0o170000 {
-        0o010000 => result |= FileMode::NamedPipe,
-        0o020000 => result |= FileMode::Device | FileMode::CharDevice,
-        0o040000 => result |= FileMode::Dir,
-        0o060000 => result |= FileMode::Device,
-        0o100000 => {}
-        0o120000 => result |= FileMode::Symlink,
-        0o140000 => result |= FileMode::Socket,
+    match mode & 0o170_000 {
+        0o010_000 => result |= FileMode::NamedPipe,
+        0o020_000 => result |= FileMode::Device | FileMode::CharDevice,
+        0o040_000 => result |= FileMode::Dir,
+        0o060_000 => result |= FileMode::Device,
+        0o100_000 => {}
+        0o120_000 => result |= FileMode::Symlink,
+        0o140_000 => result |= FileMode::Socket,
         _ => result |= FileMode::Irregular,
     }
     result
@@ -462,12 +480,24 @@ pub fn parse_rfc3339(s: &str) -> Result<SystemTime, String> {
         }
         Ok(std::str::from_utf8(part).unwrap().parse::<i64>().unwrap())
     };
-    if b.len() < 20 || b[4] != b'-' || b[7] != b'-' || !(b[10] == b'T' || b[10] == b't') || b[13] != b':' || b[16] != b':' {
+    if b.len() < 20
+        || b[4] != b'-'
+        || b[7] != b'-'
+        || !(b[10] == b'T' || b[10] == b't')
+        || b[13] != b':'
+        || b[16] != b':'
+    {
         return Err("cannot parse".to_string());
     }
     let (year, month, day) = (num(0..4)?, num(5..7)?, num(8..10)?);
     let (hour, min, sec) = (num(11..13)?, num(14..16)?, num(17..19)?);
-    if !(1..=12).contains(&month) || day < 1 || day > days_in_month(year, month) || hour > 23 || min > 59 || sec > 59 {
+    if !(1..=12).contains(&month)
+        || day < 1
+        || day > days_in_month(year, month)
+        || hour > 23
+        || min > 59
+        || sec > 59
+    {
         return Err("value out of range".to_string());
     }
     let mut i = 19;
@@ -475,9 +505,7 @@ pub fn parse_rfc3339(s: &str) -> Result<SystemTime, String> {
     if b[i] == b'.' || b[i] == b',' {
         i += 1;
         let start = i;
-        while i < b.len() && b[i].is_ascii_digit() {
-            i += 1;
-        }
+        i += (i..b.len()).take_while(|&index| b[index].is_ascii_digit()).count();
         if i == start || i - start > 9 {
             return Err("bad fractional second".to_string());
         }
@@ -485,18 +513,14 @@ pub fn parse_rfc3339(s: &str) -> Result<SystemTime, String> {
         nanos = format!("{digits:0<9}").parse::<u32>().unwrap();
     }
     let offset_secs: i64 = match b.get(i) {
-        Some(b'Z') | Some(b'z') if i + 1 == b.len() => 0,
+        Some(b'Z' | b'z') if i + 1 == b.len() => 0,
         Some(&sign @ (b'+' | b'-')) if b.len() == i + 6 && b[i + 3] == b':' => {
             let (oh, om) = (num(i + 1..i + 3)?, num(i + 4..i + 6)?);
             if oh > 23 || om > 59 {
                 return Err("time zone offset out of range".to_string());
             }
             let off = oh * 3600 + om * 60;
-            if sign == b'-' {
-                -off
-            } else {
-                off
-            }
+            if sign == b'-' { -off } else { off }
         }
         _ => return Err("bad time zone".to_string()),
     };
@@ -526,5 +550,5 @@ fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     let mp = (m + 9) % 12;
     let doy = (153 * mp + 2) / 5 + d - 1;
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146097 + doe - 719468
+    era * 146_097 + doe - 719_468
 }

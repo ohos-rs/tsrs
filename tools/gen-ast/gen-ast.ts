@@ -395,13 +395,13 @@ function genGetters(l: Layout) {
         const fnName = f.rust;
         w(`    #[inline]`);
         w(`    pub fn ${fnName}(&self) -> ${f.ty} {`);
-        if (f.rare) w(`        rare_tail(self).and_then(|r| r.${f.rust})`);
+        if (f.rare) w(`        rare_tail(self)?.${f.rust}`);
         else w(`        self.${f.path}${f.cell ? ".get()" : isPackedStr(f) ? ".as_str()" : ""}`);
         w(`    }`);
         if (f.cell) {
             w(`    #[inline]`);
             w(`    pub fn set_${f.rust.replace(/_$/, "")}(&self, value: ${f.ty}) {`);
-            w(`        self.${f.path}.set(value)`);
+            w(`        self.${f.path}.set(value);`);
             w(`    }`);
         }
     }
@@ -447,7 +447,8 @@ function structLiteral(l: Layout, values: Map<string, string>, indent: string): 
     for (const f of l.fields) {
         if (f.rare) continue;
         const v = values.get(f.name) ?? defaultValue(f.ty);
-        lines.push(`${indent}    ${f.rust}: ${f.cell ? `OwnedCell::new(${v})` : isPackedStr(f) ? `PackedStr::new(${v})` : v},`);
+        const value = f.cell ? `OwnedCell::new(${v})` : isPackedStr(f) ? `PackedStr::new(${v})` : v;
+        lines.push(value === f.rust ? `${indent}    ${f.rust},` : `${indent}    ${f.rust}: ${value},`);
     }
     lines.push(`${indent}}`);
     return lines.join("\n");
@@ -458,7 +459,7 @@ function rareLiteral(l: Layout, values: Map<string, string>, indent: string): { 
     const rare = l.fields.filter(f => f.rare);
     if (rare.length === 0) return undefined;
     const value = (f: Field) => values.get(f.name) ?? defaultValue(f.ty);
-    const lines = [`${l.name}Rare {`, ...rare.map(f => `${indent}    ${f.rust}: ${value(f)},`), `${indent}}`];
+    const lines = [`${l.name}Rare {`, ...rare.map(f => value(f) === f.rust ? `${indent}    ${f.rust},` : `${indent}    ${f.rust}: ${value(f)},`), `${indent}}`];
     return { cond: rare.map(f => `${value(f)}.is_some()`).join(" || "), lit: lines.join("\n") };
 }
 
@@ -644,6 +645,9 @@ function genClone(node: NodeType) {
     const params = factoryParams(node);
     const args = params.map(p => memberValue(l, p.m, "self", "node")).join(", ");
     w(`impl ${node.name} {`);
+    if (!args.includes("self.")) {
+        w(`    #[expect(clippy::unused_self, reason = "Empty node data uses the same cloning interface as nodes with stored fields.")]`);
+    }
     w(`    pub fn clone_node(&self, node: P<Node>, f: &NodeFactory) -> P<Node> {`);
     if (node.kindAliases.length > 0) {
         w(`        let updated = match node.kind() {`);
@@ -755,9 +759,7 @@ function genNodeImpl() {
         const empty = isEmptyLayout(layouts.get(n.name)!);
         w(`    #[inline]`);
         w(`    pub fn ${fn}(&self) -> &'static ${n.name} {`);
-        w(`        if self.data_tag() != NodeDataTag::${n.name} {`);
-        w(`            panic!("${fn} called on {:?}", self.kind());`);
-        w(`        }`);
+        w(`        assert!(self.data_tag() == NodeDataTag::${n.name}, "${fn} called on {:?}", self.kind());`);
         w(empty ? `        &${n.name}` : `        self.payload()`);
         w(`    }`);
     }
@@ -765,9 +767,7 @@ function genNodeImpl() {
         const fn = `as_${snake(e)}`;
         w(`    #[inline]`);
         w(`    pub fn ${fn}(&self) -> &'static ${e} {`);
-        w(`        if self.data_tag() != NodeDataTag::${e} {`);
-        w(`            panic!("${fn} called on {:?}", self.kind());`);
-        w(`        }`);
+        w(`        assert!(self.data_tag() == NodeDataTag::${e}, "${fn} called on {:?}", self.kind());`);
         w(`        self.payload()`);
         w(`    }`);
     }
@@ -820,26 +820,50 @@ function genNodeImpl() {
     // Name() / Modifiers()
     const withField = (fieldName: string) =>
         nodes.filter(n => n.name !== "SourceFile" && promoted(layouts.get(n.name)!).some(f => f.name === fieldName));
+    // A match of constant offsets is lowered back to a jump table by LLVM. An explicit constant array
+    // keeps dispatch a data lookup; Rust computes each offset for the target's actual field layout.
+    const offsetTable = (entries: [string, string][], tuple = false) => {
+        w(`        const OFFSETS: [${tuple ? "(usize, bool)" : "usize"}; ${nodes.length + EXTRA_DATA.length}] = {`);
+        w(`            let mut offsets = [${tuple ? "(0, false)" : "0"}; ${nodes.length + EXTRA_DATA.length}];`);
+        for (const [name, value] of entries) w(`            offsets[NodeDataTag::${name} as usize] = ${value};`);
+        w(`            offsets`);
+        w(`        };`);
+        w(`        let ${tuple ? "(offset, optional)" : "offset"} = OFFSETS[self.data_tag() as usize];`);
+    };
     w(`    pub fn name(&self) -> Option<P<Node>> {`);
-    w(`        match self.data_tag() {`);
-    for (const n of withField("name")) {
+    offsetTable(withField("name").map(n => {
         const f = findFlat(layouts.get(n.name)!, "name");
-        w(arm(n.name, f.ty.startsWith("Option") ? `d.${f.rust}()` : `Some(d.${f.rust}())`));
-    }
-    w(`            _ => None,`);
+        if (f.cell || f.rare || !["P<Node>", "Option<P<Node>>"].includes(f.ty)) {
+            throw new Error(`name offset needs an immutable inline node field: ${n.name}`);
+        }
+        return [n.name, `(std::mem::offset_of!(NodeAlloc<${n.name}>, data.${f.path}), ${f.ty.startsWith("Option")})`];
+    }), true);
+    w(`        if offset == 0 { return None; }`);
+    w(`        if optional {`);
+    w(`            // SAFETY: the tag selects this allocation's optional name field. Both allocation forms`);
+    w(`            // have the same data offset, and the arena keeps the field alive.`);
+    w(`            unsafe { *tsrs_core::ptr::arena_neighbor::<_, Option<P<Node>>>(self, offset as isize) }`);
+    w(`        } else {`);
+    w(`            // SAFETY: as above, but the selected field is a required name, stored as P<Node>.`);
+    w(`            Some(unsafe { *tsrs_core::ptr::arena_neighbor::<_, P<Node>>(self, offset as isize) })`);
     w(`        }`);
     w(`    }`);
     w();
     w(`    pub fn modifiers(&self) -> Option<P<ModifierList>> {`);
-    w(`        match self.data_tag() {`);
-    for (const n of withField("modifiers")) w(arm(n.name, `d.modifiers()`));
-    w(`            _ => None,`);
-    w(`        }`);
+    offsetTable(withField("modifiers").map(n => {
+        const f = findFlat(layouts.get(n.name)!, "modifiers");
+        if (!f.cell || f.rare || f.ty !== "Option<P<ModifierList>>") throw new Error(`unexpected modifiers field: ${n.name}`);
+        return [n.name, `std::mem::offset_of!(NodeAlloc<${n.name}>, data.${f.path})`];
+    }));
+    w(`        if offset == 0 { return None; }`);
+    w(`        // SAFETY: the tag selects the concrete allocation and its modifiers cell. Both allocation`);
+    w(`        // forms have the same data offset; read through OwnedCell to preserve its access checks.`);
+    w(`        unsafe { tsrs_core::ptr::arena_neighbor::<_, OwnedCell<Option<P<ModifierList>>>>(self, offset as isize) }.get()`);
     w(`    }`);
     w();
     w(`    pub(crate) fn set_modifiers_data(&self, modifiers: Option<P<ModifierList>>) {`);
     w(`        match self.data_tag() {`);
-    for (const n of withField("modifiers")) w(arm(n.name, `d.set_modifiers(modifiers)`));
+    for (const n of withField("modifiers")) w(arm(n.name, `{ d.set_modifiers(modifiers); }`));
     w(`            _ => {}`);
     w(`        }`);
     w(`    }`);
@@ -860,14 +884,17 @@ function genNodeImpl() {
     ];
     for (const [fn, base] of baseAccessors) {
         w(`    ${fn === "flow_node_base" ? "pub(crate)" : "pub"} fn ${fn}(&self) -> Option<&'static ${base}> {`);
-        w(`        match self.data_tag() {`);
+        const entries: [string, string][] = [];
         for (const n of nodes) {
             if (HAND_WRITTEN_DATA.has(n.name)) continue;
             const p = basePath(layouts.get(n.name)!, base);
-            if (p) w(arm(n.name, `Some(&d.${p})`));
+            if (p) entries.push([n.name, `std::mem::offset_of!(NodeAlloc<${n.name}>, data.${p})`]);
         }
-        w(`            _ => None,`);
-        w(`        }`);
+        offsetTable(entries);
+        w(`        if offset == 0 { return None; }`);
+        w(`        // SAFETY: the tag selects the concrete allocation and its embedded ${base}. Both`);
+        w(`        // allocation forms have the same data offset, and the arena keeps the field alive.`);
+        w(`        Some(unsafe { tsrs_core::ptr::arena_neighbor(self, offset as isize) })`);
         w(`    }`);
         w();
     }

@@ -36,7 +36,10 @@ pub(crate) fn match_numeric_component(text: &str) -> Option<usize> {
 // Every group is deterministic and anything a skipped optional group would have consumed
 // must then be matched by `$`, so a greedy parse followed by an end check is equivalent.
 // Non-participating groups are "", as in Go's FindStringSubmatch.
-pub(crate) fn find_version_like_submatch(text: &str, component: fn(&str) -> Option<usize>) -> Option<[&str; 6]> {
+pub(crate) fn find_version_like_submatch(
+    text: &str,
+    component: fn(&str) -> Option<usize>,
+) -> Option<[&str; 6]> {
     let mut m: [&str; 6] = [""; 6];
     let n = component(text)?;
     m[1] = &text[..n];
@@ -90,7 +93,9 @@ fn is_prerelease_part(part: &str) -> bool {
     let mut chars = part.chars();
     match chars.next() {
         Some('1'..='9') => chars.all(is_digit),
-        Some(c) if is_letter_fold(c) || c == '-' => chars.all(|c| is_letter_fold(c) || is_digit(c) || c == '-'),
+        Some(c) if is_letter_fold(c) || c == '-' => {
+            chars.all(|c| is_letter_fold(c) || is_digit(c) || c == '-')
+        }
         _ => false,
     }
 }
@@ -135,10 +140,8 @@ pub struct Version {
     pub(crate) build: Vec<String>,
 }
 
-pub(crate) static VERSION_ZERO: LazyLock<Version> = LazyLock::new(|| Version {
-    prerelease: vec!["0".to_string()],
-    ..Default::default()
-});
+pub(crate) static VERSION_ZERO: LazyLock<Version> =
+    LazyLock::new(|| Version { prerelease: vec!["0".to_string()], ..Default::default() });
 
 impl Version {
     pub(crate) fn increment_major(&self) -> Version {
@@ -150,24 +153,25 @@ impl Version {
     }
 
     pub(crate) fn increment_patch(&self) -> Version {
-        Version { major: self.major, minor: self.minor, patch: self.patch + 1, ..Default::default() }
+        Version {
+            major: self.major,
+            minor: self.minor,
+            patch: self.patch + 1,
+            ..Default::default()
+        }
     }
 }
 
-pub(crate) const COMPARISON_LESS_THAN: i32 = -1;
-pub(crate) const COMPARISON_EQUAL_TO: i32 = 0;
-pub(crate) const COMPARISON_GREATER_THAN: i32 = 1;
+pub(crate) const COMPARISON_LESS_THAN: Ordering = Ordering::Less;
+pub(crate) const COMPARISON_EQUAL_TO: Ordering = Ordering::Equal;
+pub(crate) const COMPARISON_GREATER_THAN: Ordering = Ordering::Greater;
 
-fn cmp_compare<T: Ord + Copy>(a: T, b: T) -> i32 {
-    match a.cmp(&b) {
-        Ordering::Less => COMPARISON_LESS_THAN,
-        Ordering::Equal => COMPARISON_EQUAL_TO,
-        Ordering::Greater => COMPARISON_GREATER_THAN,
-    }
+fn cmp_compare<T: Ord + Copy>(a: T, b: T) -> Ordering {
+    a.cmp(&b)
 }
 
 impl Version {
-    pub fn compare(&self, b: &Version) -> i32 {
+    pub fn compare(&self, b: &Version) -> Ordering {
         // https://semver.org/#spec-item-11
         // > Precedence is determined by the first difference when comparing each of these
         // > identifiers from left to right as follows: Major, minor, and patch versions are
@@ -186,17 +190,17 @@ impl Version {
         }
 
         let r = cmp_compare(a.major, b.major);
-        if r != 0 {
+        if r != Ordering::Equal {
             return r;
         }
 
         let r = cmp_compare(a.minor, b.minor);
-        if r != 0 {
+        if r != Ordering::Equal {
             return r;
         }
 
         let r = cmp_compare(a.patch, b.patch);
-        if r != 0 {
+        if r != Ordering::Equal {
             return r;
         }
 
@@ -204,7 +208,7 @@ impl Version {
     }
 }
 
-pub(crate) fn compare_pre_release_identifiers(left: &[String], right: &[String]) -> i32 {
+pub(crate) fn compare_pre_release_identifiers(left: &[String], right: &[String]) -> Ordering {
     // https://semver.org/#spec-item-11
     // > When major, minor, and patch are equal, a pre-release version has lower precedence
     // > than a normal version.
@@ -221,22 +225,26 @@ pub(crate) fn compare_pre_release_identifiers(left: &[String], right: &[String])
     // > Precedence for two pre-release versions with the same major, minor, and patch version
     // > MUST be determined by comparing each dot separated identifier from left to right until
     // > a difference is found [...]
-    for (l, r) in left.iter().zip(right.iter()) {
+    if let Some(result) = left.iter().zip(right.iter()).into_iter().find_map(|(l, r)| {
         let c = compare_pre_release_identifier(l, r);
-        if c != 0 {
-            return c;
+        if c != Ordering::Equal {
+            return Some(c);
         }
+
+        None
+    }) {
+        return result;
     }
     cmp_compare(left.len(), right.len())
 }
 
-pub(crate) fn compare_pre_release_identifier(left: &str, right: &str) -> i32 {
+pub(crate) fn compare_pre_release_identifier(left: &str, right: &str) -> Ordering {
     // https://semver.org/#spec-item-11
     // > Precedence for two pre-release versions with the same major, minor, and patch version
     // > MUST be determined by comparing each dot separated identifier from left to right until
     // > a difference is found [...]
     let compare_result = cmp_compare(left, right);
-    if compare_result == 0 {
+    if compare_result == Ordering::Equal {
         return compare_result;
     }
 
@@ -257,21 +265,18 @@ pub(crate) fn compare_pre_release_identifier(left: &str, right: &str) -> i32 {
         // > identifiers consisting of only digits are compared numerically
         let left_as_number = get_uint_component(left);
         let right_as_number = get_uint_component(right);
-        match (left_as_number, right_as_number) {
-            (Ok(l), Ok(r)) => return cmp_compare(l, r),
-            _ => {
-                // This should only happen in the event of an overflow.
-                // If so, use the lengths or fall back to string comparison.
-                let left_len = left.len();
-                let right_len = right.len();
-                let len_compare = cmp_compare(left_len, right_len);
-                if len_compare == 0 {
-                    return compare_result;
-                } else {
-                    return len_compare;
-                }
-            }
+        if let (Ok(l), Ok(r)) = (left_as_number, right_as_number) {
+            return cmp_compare(l, r);
         }
+        // This should only happen in the event of an overflow.
+        // If so, use the lengths or fall back to string comparison.
+        let left_len = left.len();
+        let right_len = right.len();
+        let len_compare = cmp_compare(left_len, right_len);
+        if len_compare == Ordering::Equal {
+            return compare_result;
+        }
+        return len_compare;
     }
 
     // https://semver.org/#spec-item-11
@@ -357,27 +362,37 @@ pub(crate) fn get_uint_component(text: &str) -> Result<u32, String> {
     if text.is_empty() || !text.bytes().all(|b| b.is_ascii_digit()) {
         return Err(format!("strconv.ParseUint: parsing {text:?}: invalid syntax"));
     }
-    let mut r: u32 = 0;
-    for b in text.bytes() {
-        match r.checked_mul(10).and_then(|v| v.checked_add((b - b'0') as u32)) {
-            Some(v) => r = v,
-            None => return Err(format!("strconv.ParseUint: parsing {text:?}: value out of range")),
-        }
-    }
-    Ok(r)
+    text.parse::<u32>()
+        .map_err(|_| format!("strconv.ParseUint: parsing {text:?}: value out of range"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    #[test]
+    fn decimal_components_keep_syntax_and_range_errors() {
+        assert_eq!(get_uint_component("4294967295"), Ok(u32::MAX));
+        assert_eq!(get_uint_component("00042"), Ok(42));
+        for text in ["", "+1", "-1", "1_0", "١", "999999999999x"] {
+            assert_eq!(
+                get_uint_component(text),
+                Err(format!("strconv.ParseUint: parsing {text:?}: invalid syntax"))
+            );
+        }
+        assert_eq!(
+            get_uint_component("4294967296"),
+            Err("strconv.ParseUint: parsing \"4294967296\": value out of range".to_string())
+        );
+    }
+
     fn v(major: u32, minor: u32, patch: u32, prerelease: &[&str], build: &[&str]) -> Version {
         Version {
             major,
             minor,
             patch,
-            prerelease: prerelease.iter().map(|s| s.to_string()).collect(),
-            build: build.iter().map(|s| s.to_string()).collect(),
+            prerelease: prerelease.iter().map(std::string::ToString::to_string).collect(),
+            build: build.iter().map(std::string::ToString::to_string).collect(),
         }
     }
 
@@ -487,9 +502,18 @@ mod tests {
 
     #[test]
     fn test_parse_errors() {
-        assert_eq!(try_parse_version("1.02").unwrap_err(), "Could not parse version string from \"1.02\"");
-        assert_eq!(try_parse_version("1.2.3-").unwrap_err(), "Could not parse version string from \"1.2.3-\"");
-        assert_eq!(try_parse_version("1.2.3-a..b").unwrap_err(), "Could not parse version string from \"1.2.3-a..b\"");
+        assert_eq!(
+            try_parse_version("1.02").unwrap_err(),
+            "Could not parse version string from \"1.02\""
+        );
+        assert_eq!(
+            try_parse_version("1.2.3-").unwrap_err(),
+            "Could not parse version string from \"1.2.3-\""
+        );
+        assert_eq!(
+            try_parse_version("1.2.3-a..b").unwrap_err(),
+            "Could not parse version string from \"1.2.3-a..b\""
+        );
         assert_eq!(
             try_parse_version("99999999999").unwrap_err(),
             "strconv.ParseUint: parsing \"99999999999\": value out of range"

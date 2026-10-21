@@ -1,10 +1,11 @@
 use std::borrow::Cow;
 use std::cmp::Ordering;
+use std::collections::hash_map::Entry;
 use std::fmt;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsrs_core::tspath::Path;
-use tsrs_core::{alloc_slice, alloc_str, undefined_text_range, OwnedCell, ResolutionMode, TextPos, TextRange, P};
+use tsrs_core::{OwnedCell, P, ResolutionMode, TextRange, alloc_slice, alloc_str};
 use tsrs_diagnostics::{self as diagnostics, Category, Key, Message};
 
 use crate::SourceFile;
@@ -31,7 +32,7 @@ pub struct RepopulateDiagnosticInfo {
 
 pub struct Diagnostic {
     file: OwnedCell<Option<P<SourceFile>>>,
-    loc: OwnedCell<TextRange>,
+    loc: OwnedCell<Option<TextRange>>,
     code: i32,
     category: OwnedCell<Category>,
     // source, when non-empty, is a custom prefix (e.g. a content mapper's name) shown instead of "TS"
@@ -54,55 +55,24 @@ pub struct Diagnostic {
     repopulate_info: OwnedCell<Option<&'static RepopulateDiagnosticInfo>>,
 }
 
-/// Census builds: the scalar fields and the padding after them (`crate::census_layouts`).
-pub(crate) fn census_layout() {
-    use std::mem::{offset_of, size_of};
-    let offsets = [
-        offset_of!(Diagnostic, file),
-        offset_of!(Diagnostic, loc),
-        offset_of!(Diagnostic, code),
-        offset_of!(Diagnostic, category),
-        offset_of!(Diagnostic, source),
-        offset_of!(Diagnostic, message),
-        offset_of!(Diagnostic, message_text),
-        offset_of!(Diagnostic, message_key),
-        offset_of!(Diagnostic, message_args),
-        offset_of!(Diagnostic, message_chain),
-        offset_of!(Diagnostic, related_information),
-        offset_of!(Diagnostic, reports_unnecessary),
-        offset_of!(Diagnostic, reports_deprecated),
-        offset_of!(Diagnostic, filter_flag),
-        offset_of!(Diagnostic, skipped_on_no_emit),
-        offset_of!(Diagnostic, repopulate_info),
-    ];
-    let size = size_of::<Diagnostic>();
-    let scalars = [
-        offset_of!(Diagnostic, loc),
-        offset_of!(Diagnostic, code),
-        offset_of!(Diagnostic, category),
-        offset_of!(Diagnostic, reports_unnecessary),
-        offset_of!(Diagnostic, reports_deprecated),
-        offset_of!(Diagnostic, filter_flag),
-        offset_of!(Diagnostic, skipped_on_no_emit),
-    ];
-    let fields: Vec<_> = scalars.iter().map(|&o| tsrs_core::CensusField::scalar(0, o, &offsets, size)).collect();
-    tsrs_core::census_layout(std::any::type_name::<Diagnostic>(), &fields);
-}
-
 impl Diagnostic {
     pub fn file(&self) -> Option<P<SourceFile>> {
         self.file.get()
     }
-    pub fn pos(&self) -> i32 {
-        self.loc.get().pos()
+    pub fn pos(&self) -> Option<u32> {
+        self.loc.get()?.source_pos()
     }
-    pub fn end(&self) -> i32 {
-        self.loc.get().end()
+    pub fn end(&self) -> Option<u32> {
+        self.loc.get()?.source_end()
     }
-    pub fn len(&self) -> i32 {
-        self.loc.get().len()
+    #[expect(
+        clippy::len_without_is_empty,
+        reason = "This accessor reports a position or optional diagnostic length, not a container size."
+    )]
+    pub fn len(&self) -> Option<u32> {
+        self.loc.get()?.len()
     }
-    pub fn loc(&self) -> TextRange {
+    pub fn loc(&self) -> Option<TextRange> {
         self.loc.get()
     }
     pub fn code(&self) -> i32 {
@@ -148,19 +118,19 @@ impl Diagnostic {
     }
 
     pub fn set_file(&self, file: Option<P<SourceFile>>) {
-        self.file.set(file)
+        self.file.set(file);
     }
     pub fn set_location(&self, loc: TextRange) {
-        self.loc.set(loc)
+        self.loc.set(loc.is_valid().then_some(loc));
     }
     pub fn set_category(&self, category: Category) {
-        self.category.set(category)
+        self.category.set(category);
     }
     pub fn set_skipped_on_no_emit(&self) {
-        self.skipped_on_no_emit.set(true)
+        self.skipped_on_no_emit.set(true);
     }
     pub fn set_repopulate_info(&self, info: RepopulateDiagnosticInfo) {
-        self.repopulate_info.set(Some(tsrs_core::alloc(info)))
+        self.repopulate_info.set(Some(tsrs_core::alloc(info)));
     }
 }
 
@@ -170,14 +140,18 @@ pub trait DiagnosticExt {
     fn set_message_chain(self, message_chain: &[P<Diagnostic>]) -> P<Diagnostic>;
     fn add_message_chain(self, message_chain: impl Into<Option<P<Diagnostic>>>) -> P<Diagnostic>;
     fn set_related_info(self, related_information: &[P<Diagnostic>]) -> P<Diagnostic>;
-    fn add_related_info(self, related_information: impl Into<Option<P<Diagnostic>>>) -> P<Diagnostic>;
+    fn add_related_info(
+        self,
+        related_information: impl Into<Option<P<Diagnostic>>>,
+    ) -> P<Diagnostic>;
     fn clone_diagnostic(self) -> P<Diagnostic>;
+    fn copy_deep(self) -> P<Diagnostic>;
 }
 
 impl DiagnosticExt for P<Diagnostic> {
     fn set_external_data(self, source: &str, message_text: &str) -> P<Diagnostic> {
         // Diagnostics outlive a scratch region (one file's emit) they are reported in.
-        let _outer = tsrs_core::arena::escape_scratch();
+        let _outer = tsrs_core::arena::escape_for_diagnostic();
         self.source.set(alloc_str(source));
         self.message_text.set(alloc_str(message_text));
         self
@@ -185,14 +159,14 @@ impl DiagnosticExt for P<Diagnostic> {
 
     fn set_message_chain(self, message_chain: &[P<Diagnostic>]) -> P<Diagnostic> {
         // Diagnostics outlive a scratch region (one file's emit) they are reported in.
-        let _outer = tsrs_core::arena::escape_scratch();
+        let _outer = tsrs_core::arena::escape_for_diagnostic();
         self.message_chain.set(alloc_slice(message_chain));
         self
     }
 
     fn add_message_chain(self, message_chain: impl Into<Option<P<Diagnostic>>>) -> P<Diagnostic> {
         // Diagnostics outlive a scratch region (one file's emit) they are reported in.
-        let _outer = tsrs_core::arena::escape_scratch();
+        let _outer = tsrs_core::arena::escape_for_diagnostic();
         if let Some(message_chain) = message_chain.into() {
             let mut chain = self.message_chain.get().to_vec();
             chain.push(message_chain);
@@ -203,14 +177,17 @@ impl DiagnosticExt for P<Diagnostic> {
 
     fn set_related_info(self, related_information: &[P<Diagnostic>]) -> P<Diagnostic> {
         // Diagnostics outlive a scratch region (one file's emit) they are reported in.
-        let _outer = tsrs_core::arena::escape_scratch();
+        let _outer = tsrs_core::arena::escape_for_diagnostic();
         self.related_information.set(alloc_slice(related_information));
         self
     }
 
-    fn add_related_info(self, related_information: impl Into<Option<P<Diagnostic>>>) -> P<Diagnostic> {
+    fn add_related_info(
+        self,
+        related_information: impl Into<Option<P<Diagnostic>>>,
+    ) -> P<Diagnostic> {
         // Diagnostics outlive a scratch region (one file's emit) they are reported in.
-        let _outer = tsrs_core::arena::escape_scratch();
+        let _outer = tsrs_core::arena::escape_for_diagnostic();
         if let Some(related_information) = related_information.into() {
             let mut related = self.related_information.get().to_vec();
             related.push(related_information);
@@ -221,7 +198,7 @@ impl DiagnosticExt for P<Diagnostic> {
 
     fn clone_diagnostic(self) -> P<Diagnostic> {
         // Diagnostics outlive a scratch region (one file's emit) they are reported in.
-        let _outer = tsrs_core::arena::escape_scratch();
+        let _outer = tsrs_core::arena::escape_for_diagnostic();
         P::new(Diagnostic {
             file: OwnedCell::new(self.file.get()),
             loc: OwnedCell::new(self.loc.get()),
@@ -239,6 +216,36 @@ impl DiagnosticExt for P<Diagnostic> {
             filter_flag: OwnedCell::new(self.filter_flag.get()),
             skipped_on_no_emit: OwnedCell::new(self.skipped_on_no_emit.get()),
             repopulate_info: OwnedCell::new(self.repopulate_info.get()),
+        })
+    }
+
+    /// tsrs-only (watch mode): a copy of the diagnostic, its message chain and related information that holds
+    /// nothing of the original but the file, in the current allocation target: what a session keeps of
+    /// diagnostics whose region it frees (`tsrs_incremental` `Program::copy_diagnostics`).
+    fn copy_deep(self) -> P<Diagnostic> {
+        let message_chain: Vec<P<Diagnostic>> =
+            self.message_chain.get().iter().map(|d| d.copy_deep()).collect();
+        let related_information: Vec<P<Diagnostic>> =
+            self.related_information.get().iter().map(|d| d.copy_deep()).collect();
+        P::new(Diagnostic {
+            file: OwnedCell::new(self.file.get()),
+            loc: OwnedCell::new(self.loc.get()),
+            code: self.code,
+            category: OwnedCell::new(self.category.get()),
+            source: OwnedCell::new(alloc_str(self.source.get())),
+            message: self.message,
+            message_text: OwnedCell::new(alloc_str(self.message_text.get())),
+            message_key: self.message_key,
+            message_args: self.message_args.clone(),
+            message_chain: OwnedCell::new(alloc_slice(&message_chain)),
+            related_information: OwnedCell::new(alloc_slice(&related_information)),
+            reports_unnecessary: self.reports_unnecessary,
+            reports_deprecated: self.reports_deprecated,
+            filter_flag: OwnedCell::new(self.filter_flag.get()),
+            skipped_on_no_emit: OwnedCell::new(self.skipped_on_no_emit.get()),
+            repopulate_info: OwnedCell::new(
+                self.repopulate_info.get().map(|info| tsrs_core::alloc(info.clone())),
+            ),
         })
     }
 }
@@ -262,29 +269,33 @@ impl Diagnostic {
         if !self.source.get().is_empty() {
             return Cow::Borrowed(&self.message_args);
         }
-        let Some(segment) = tsrs_spanmap::alias_for_virtual_span(file.span_map().as_deref(), self.loc.get()) else {
+        let Some(loc) = self.loc.get() else {
+            return Cow::Borrowed(&self.message_args);
+        };
+        let Some(segment) = tsrs_spanmap::alias_for_virtual_span(file.span_map().as_deref(), loc)
+        else {
             return Cow::Borrowed(&self.message_args);
         };
         let virtual_text = file.text();
         let original_text = file.original_text();
-        if segment.virtual_start < 0
-            || segment.virtual_end > virtual_text.len() as TextPos
-            || segment.original_start < 0
-            || segment.original_end > original_text.len() as TextPos
+        if segment.virtual_end > virtual_text.len() as u32
+            || segment.original_end > original_text.len() as u32
         {
             return Cow::Borrowed(&self.message_args);
         }
         // Go slices at byte offsets, which need not fall on character boundaries (the original name is then
         // converted lossily).
-        let virtual_name = &virtual_text.as_bytes()[segment.virtual_start as usize..segment.virtual_end as usize];
-        let original_name = &original_text.as_bytes()[segment.original_start as usize..segment.original_end as usize];
+        let virtual_name =
+            &virtual_text.as_bytes()[segment.virtual_start as usize..segment.virtual_end as usize];
+        let original_name = &original_text.as_bytes()
+            [segment.original_start as usize..segment.original_end as usize];
         let mut result: Option<Vec<String>> = None;
         for (i, arg) in self.message_args.iter().enumerate() {
             if arg.as_bytes() != virtual_name {
                 continue;
             }
             let result = result.get_or_insert_with(|| self.message_args.clone());
-            result[i] = String::from_utf8_lossy(original_name).into_owned();
+            result[i] = tsrs_core::utf8::from_utf8_lossy(original_name).into_owned();
         }
         match result {
             Some(result) => Cow::Owned(result),
@@ -306,12 +317,17 @@ impl fmt::Debug for Diagnostic {
     }
 }
 
-pub fn new_diagnostic(file: Option<P<SourceFile>>, loc: TextRange, message: &'static Message, args: &[&dyn fmt::Display]) -> P<Diagnostic> {
+pub fn new_diagnostic(
+    file: Option<P<SourceFile>>,
+    loc: impl Into<Option<TextRange>>,
+    message: &'static Message,
+    args: &[&dyn fmt::Display],
+) -> P<Diagnostic> {
     // Diagnostics outlive a scratch region (one file's emit) they are reported in.
-    let _outer = tsrs_core::arena::escape_scratch();
+    let _outer = tsrs_core::arena::escape_for_diagnostic();
     P::new(Diagnostic {
         file: OwnedCell::new(file),
-        loc: OwnedCell::new(loc),
+        loc: OwnedCell::new(loc.into().filter(|loc| loc.is_valid())),
         code: message.code(),
         category: OwnedCell::new(message.category()),
         source: OwnedCell::new(""),
@@ -344,10 +360,10 @@ pub fn new_diagnostic_from_serialized(
     skipped_on_no_emit: bool,
 ) -> P<Diagnostic> {
     // Diagnostics outlive a scratch region (one file's emit) they are reported in.
-    let _outer = tsrs_core::arena::escape_scratch();
+    let _outer = tsrs_core::arena::escape_for_diagnostic();
     P::new(Diagnostic {
         file: OwnedCell::new(file),
-        loc: OwnedCell::new(loc),
+        loc: OwnedCell::new(loc.is_valid().then_some(loc)),
         code,
         category: OwnedCell::new(category),
         source: OwnedCell::new(""),
@@ -365,17 +381,24 @@ pub fn new_diagnostic_from_serialized(
     })
 }
 
-pub fn new_diagnostic_chain(chain: impl Into<Option<P<Diagnostic>>>, message: &'static Message, args: &[&dyn fmt::Display]) -> P<Diagnostic> {
+pub fn new_diagnostic_chain(
+    chain: impl Into<Option<P<Diagnostic>>>,
+    message: &'static Message,
+    args: &[&dyn fmt::Display],
+) -> P<Diagnostic> {
     if let Some(chain) = chain.into() {
         return new_diagnostic(chain.file.get(), chain.loc.get(), message, args)
             .add_message_chain(chain)
             .set_related_info(chain.related_information.get());
     }
-    new_diagnostic(None, TextRange::default(), message, args)
+    new_diagnostic(None, None, message, args)
 }
 
-pub fn new_compiler_diagnostic(message: &'static Message, args: &[&dyn fmt::Display]) -> P<Diagnostic> {
-    new_diagnostic(None, undefined_text_range(), message, args)
+pub fn new_compiler_diagnostic(
+    message: &'static Message,
+    args: &[&dyn fmt::Display],
+) -> P<Diagnostic> {
+    new_diagnostic(None, None, message, args)
 }
 
 // NewExternalDiagnostic creates a diagnostic reported by an external source such as a content mapper.
@@ -391,10 +414,10 @@ pub fn new_external_diagnostic(
     message_text: &str,
 ) -> P<Diagnostic> {
     // Diagnostics outlive a scratch region (one file's emit) they are reported in.
-    let _outer = tsrs_core::arena::escape_scratch();
+    let _outer = tsrs_core::arena::escape_for_diagnostic();
     P::new(Diagnostic {
         file: OwnedCell::new(file),
-        loc: OwnedCell::new(loc),
+        loc: OwnedCell::new(loc.is_valid().then_some(loc)),
         code,
         category: OwnedCell::new(category),
         source: OwnedCell::new(alloc_str(source)),
@@ -413,7 +436,7 @@ pub fn new_external_diagnostic(
 }
 
 // Go guards this with a mutex; in the port each owner holds the collection mutably.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct DiagnosticsCollection {
     count: usize,
     file_diagnostics: FxHashMap<Path, Vec<P<Diagnostic>>>,
@@ -425,25 +448,30 @@ pub struct DiagnosticsCollection {
 }
 
 impl DiagnosticsCollection {
+    /// The number of distinct diagnostics added so far.
+    pub fn count(&self) -> usize {
+        self.count
+    }
+
     pub fn add(&mut self, diagnostic: P<Diagnostic>) -> P<Diagnostic> {
         let key = get_diagnostic_location_key(diagnostic);
-        if let Some(&existing) = self.diagnostic_index.get(&key) {
-            if equal_diagnostics(existing, diagnostic) {
-                return existing;
-            }
-            if let Some(collisions) = self.diagnostic_collisions.get(&key) {
-                for &collision in collisions {
-                    if equal_diagnostics(collision, diagnostic) {
-                        return collision;
-                    }
-                }
-            }
-        }
         match self.diagnostic_index.entry(key) {
-            std::collections::hash_map::Entry::Vacant(e) => {
+            Entry::Vacant(e) => {
                 e.insert(diagnostic);
             }
-            std::collections::hash_map::Entry::Occupied(e) => self.diagnostic_collisions.entry(e.key().clone()).or_default().push(diagnostic),
+            Entry::Occupied(e) => {
+                let existing = *e.get();
+                if equal_diagnostics(existing, diagnostic) {
+                    return existing;
+                }
+                let collisions = self.diagnostic_collisions.entry(e.key().clone()).or_default();
+                if let Some(result) = collisions.iter().find_map(|&collision| {
+                    if equal_diagnostics(collision, diagnostic) { Some(collision) } else { None }
+                }) {
+                    return result;
+                }
+                collisions.push(diagnostic);
+            }
         }
 
         self.count += 1;
@@ -485,7 +513,7 @@ impl DiagnosticsCollection {
 
     fn get_global_diagnostics_locked(&mut self) -> Vec<P<Diagnostic>> {
         if !self.non_file_diagnostics_sorted {
-            self.non_file_diagnostics.sort_by(|a, b| compare_diagnostics(*a, *b).cmp(&0));
+            self.non_file_diagnostics.sort_by(|a, b| compare_diagnostics(*a, *b));
             self.non_file_diagnostics_sorted = true;
         }
         self.non_file_diagnostics.clone()
@@ -499,7 +527,7 @@ impl DiagnosticsCollection {
         let path = file.path().clone();
         if !self.file_diagnostics_sorted.contains(&path) {
             if let Some(diagnostics) = self.file_diagnostics.get_mut(&path) {
-                diagnostics.sort_by(|a, b| compare_diagnostics(*a, *b).cmp(&0));
+                diagnostics.sort_by(|a, b| compare_diagnostics(*a, *b));
             }
             self.file_diagnostics_sorted.insert(path.clone());
         }
@@ -509,14 +537,9 @@ impl DiagnosticsCollection {
     pub fn get_diagnostics(&self) -> Vec<P<Diagnostic>> {
         let mut diagnostics = Vec::with_capacity(self.count);
         diagnostics.extend_from_slice(&self.non_file_diagnostics);
-        #[expect(
-            clippy::iter_over_hash_type,
-            reason = "sorted by compare_diagnostics below, which orders by file first; the stable sort keeps each file's own order"
-        )]
-        for diags in self.file_diagnostics.values() {
-            diagnostics.extend_from_slice(diags);
-        }
-        diagnostics.sort_by(|a, b| compare_diagnostics(*a, *b).cmp(&0));
+        // sorted by compare_diagnostics below, which orders by file first; the stable sort keeps each file's own order
+        diagnostics.extend(self.file_diagnostics.values().flat_map(|diags| diags.iter().copied()));
+        diagnostics.sort_by(|a, b| compare_diagnostics(*a, *b));
         diagnostics
     }
 }
@@ -527,13 +550,15 @@ impl DiagnosticsCollection {
 #[derive(Clone)]
 struct DiagnosticLocationKey {
     file: Option<P<SourceFile>>,
-    loc: TextRange,
+    loc: Option<TextRange>,
     code: i32,
 }
 
 impl PartialEq for DiagnosticLocationKey {
     fn eq(&self, other: &Self) -> bool {
-        self.loc == other.loc && self.code == other.code && self.file.map(|f| f.get().path()) == other.file.map(|f| f.get().path())
+        self.loc == other.loc
+            && self.code == other.code
+            && self.file.map(|f| f.get().path()) == other.file.map(|f| f.get().path())
     }
 }
 
@@ -548,7 +573,11 @@ impl std::hash::Hash for DiagnosticLocationKey {
 }
 
 fn get_diagnostic_location_key(diagnostic: P<Diagnostic>) -> DiagnosticLocationKey {
-    DiagnosticLocationKey { file: diagnostic.file(), loc: diagnostic.loc(), code: diagnostic.code() }
+    DiagnosticLocationKey {
+        file: diagnostic.file(),
+        loc: diagnostic.loc(),
+        code: diagnostic.code(),
+    }
 }
 
 fn get_diagnostic_path(d: P<Diagnostic>) -> &'static str {
@@ -558,11 +587,39 @@ fn get_diagnostic_path(d: P<Diagnostic>) -> &'static str {
     }
 }
 
+/// tsrs-only (memory regions): `tsrs_core::arena::note_escape` for the diagnostic and everything it refers to
+/// (its text, message chain and related information, recursively).
+///
+/// A diagnostic can share those with one made elsewhere: `clone_diagnostic` copies the references, so a
+/// merged copy in another region (or the thread arena) still points into the region of the diagnostic it was
+/// cloned from.
+pub fn note_diagnostic_escape(d: P<Diagnostic>) {
+    use tsrs_core::arena::note_escape;
+    note_escape(d.addr());
+    for s in [d.source(), d.message_text()] {
+        if !s.is_empty() {
+            note_escape(s.as_ptr().addr());
+        }
+    }
+    if let Some(info) = d.repopulate_info() {
+        note_escape(std::ptr::from_ref(info).addr());
+    }
+    for list in [d.message_chain(), d.related_information()] {
+        if !list.is_empty() {
+            note_escape(list.as_ptr().addr());
+        }
+        for &item in list {
+            note_diagnostic_escape(item);
+        }
+    }
+}
+
 pub fn equal_diagnostics(d1: P<Diagnostic>, d2: P<Diagnostic>) -> bool {
     if d1 == d2 {
         return true;
     }
-    equal_diagnostics_no_related_info(d1, d2) && slices_equal_func(d1.related_information(), d2.related_information(), equal_diagnostics)
+    equal_diagnostics_no_related_info(d1, d2)
+        && slices_equal_func(d1.related_information(), d2.related_information(), equal_diagnostics)
 }
 
 pub fn equal_diagnostics_no_related_info(d1: P<Diagnostic>, d2: P<Diagnostic>) -> bool {
@@ -579,7 +636,11 @@ pub fn equal_diagnostics_no_related_info(d1: P<Diagnostic>, d2: P<Diagnostic>) -
         && slices_equal_func(d1.message_chain(), d2.message_chain(), equal_message_chain)
 }
 
-fn slices_equal_func(a: &[P<Diagnostic>], b: &[P<Diagnostic>], eq: fn(P<Diagnostic>, P<Diagnostic>) -> bool) -> bool {
+fn slices_equal_func(
+    a: &[P<Diagnostic>],
+    b: &[P<Diagnostic>],
+    eq: fn(P<Diagnostic>, P<Diagnostic>) -> bool,
+) -> bool {
     a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| eq(*x, *y))
 }
 
@@ -604,112 +665,134 @@ fn equal_message_chain(c1: P<Diagnostic>, c2: P<Diagnostic>) -> bool {
         && slices_equal_func(c1.message_chain(), c2.message_chain(), equal_message_chain)
 }
 
-fn compare_strings(a: &str, b: &str) -> i32 {
-    match a.cmp(b) {
-        Ordering::Less => -1,
-        Ordering::Equal => 0,
-        Ordering::Greater => 1,
-    }
+fn compare_strings(a: &str, b: &str) -> Ordering {
+    a.cmp(b)
 }
 
 // Go `slices.Compare` over []string.
-fn compare_string_slices(a: &[String], b: &[String]) -> i32 {
-    match a.cmp(b) {
-        Ordering::Less => -1,
-        Ordering::Equal => 0,
-        Ordering::Greater => 1,
-    }
+fn compare_string_slices(a: &[String], b: &[String]) -> Ordering {
+    a.cmp(b)
 }
 
-fn compare_message_chain_size(c1: &[P<Diagnostic>], c2: &[P<Diagnostic>]) -> i32 {
-    let c = c2.len() as i32 - c1.len() as i32;
-    if c != 0 {
+fn compare_message_chain_size(c1: &[P<Diagnostic>], c2: &[P<Diagnostic>]) -> Ordering {
+    let c = c2.len().cmp(&c1.len());
+    if c != Ordering::Equal {
         return c;
     }
-    for i in 0..c1.len() {
-        let c = compare_message_chain_size(c1[i].message_chain(), c2[i].message_chain());
-        if c != 0 {
+    for (i, element) in c1.iter().enumerate() {
+        let c = compare_message_chain_size((*element).message_chain(), c2[i].message_chain());
+        if c != Ordering::Equal {
             return c;
         }
     }
-    0
+    Ordering::Equal
 }
 
-fn compare_message_chain_content(c1: &[P<Diagnostic>], c2: &[P<Diagnostic>]) -> i32 {
-    for i in 0..c1.len() {
-        let c = compare_string_slices(c1[i].message_args(), c2[i].message_args());
-        if c != 0 {
+fn compare_message_chain_content(c1: &[P<Diagnostic>], c2: &[P<Diagnostic>]) -> Ordering {
+    for (i, element) in c1.iter().enumerate() {
+        let c = compare_string_slices((*element).message_args(), c2[i].message_args());
+        if c != Ordering::Equal {
             return c;
         }
-        if !c1[i].message_chain().is_empty() {
-            let c = compare_message_chain_content(c1[i].message_chain(), c2[i].message_chain());
-            if c != 0 {
+        if !(*element).message_chain().is_empty() {
+            let c =
+                compare_message_chain_content((*element).message_chain(), c2[i].message_chain());
+            if c != Ordering::Equal {
                 return c;
             }
         }
     }
-    0
+    Ordering::Equal
 }
 
-fn compare_related_info(r1: &[P<Diagnostic>], r2: &[P<Diagnostic>]) -> i32 {
-    let c = r2.len() as i32 - r1.len() as i32;
-    if c != 0 {
+fn compare_related_info(r1: &[P<Diagnostic>], r2: &[P<Diagnostic>]) -> Ordering {
+    let c = r2.len().cmp(&r1.len());
+    if c != Ordering::Equal {
         return c;
     }
-    for i in 0..r1.len() {
-        let c = compare_diagnostics(r1[i], r2[i]);
-        if c != 0 {
+    for (i, element) in r1.iter().enumerate() {
+        let c = compare_diagnostics(*element, r2[i]);
+        if c != Ordering::Equal {
             return c;
         }
     }
-    0
+    Ordering::Equal
 }
 
-pub fn compare_diagnostics(d1: P<Diagnostic>, d2: P<Diagnostic>) -> i32 {
+pub fn compare_diagnostics(d1: P<Diagnostic>, d2: P<Diagnostic>) -> Ordering {
     if d1 == d2 {
-        return 0;
+        return Ordering::Equal;
     }
     let mut c = compare_strings(get_diagnostic_path(d1), get_diagnostic_path(d2));
-    if c != 0 {
+    if c != Ordering::Equal {
         return c;
     }
-    c = d1.loc().pos() - d2.loc().pos();
-    if c != 0 {
+    c = d1.loc().cmp(&d2.loc());
+    if c != Ordering::Equal {
         return c;
     }
-    c = d1.loc().end() - d2.loc().end();
-    if c != 0 {
+    c = d1.code().cmp(&d2.code());
+    if c != Ordering::Equal {
         return c;
     }
-    c = d1.code() - d2.code();
-    if c != 0 {
-        return c;
-    }
-    c = d1.category() as i32 - d2.category() as i32;
-    if c != 0 {
+    c = d1.category().cmp(&d2.category());
+    if c != Ordering::Equal {
         return c;
     }
     c = compare_strings(d1.source(), d2.source());
-    if c != 0 {
+    if c != Ordering::Equal {
         return c;
     }
     c = compare_strings(get_diagnostic_message_identity(d1), get_diagnostic_message_identity(d2));
-    if c != 0 {
+    if c != Ordering::Equal {
         return c;
     }
     c = compare_string_slices(d1.message_args(), d2.message_args());
-    if c != 0 {
+    if c != Ordering::Equal {
         return c;
     }
     c = compare_message_chain_size(d1.message_chain(), d2.message_chain());
-    if c != 0 {
+    if c != Ordering::Equal {
         return c;
     }
     c = compare_message_chain_content(d1.message_chain(), d2.message_chain());
-    if c != 0 {
+    if c != Ordering::Equal {
         return c;
     }
     compare_related_info(d1.related_information(), d2.related_information())
+}
+
+// diagnostic.go NewDiagnosticFromText: a diagnostic whose message is already-localized text (the native API
+// receives these from clients, e.g. `configFileParsingDiagnostics`).
+pub fn new_diagnostic_from_text(
+    file: Option<P<SourceFile>>,
+    loc: TextRange,
+    code: i32,
+    category: Category,
+    message_text: &str,
+    message_chain: &[P<Diagnostic>],
+    related_information: &[P<Diagnostic>],
+    reports_unnecessary: bool,
+    reports_deprecated: bool,
+) -> P<Diagnostic> {
+    P::new(Diagnostic {
+        file: OwnedCell::new(file),
+        loc: OwnedCell::new(loc.is_valid().then_some(loc)),
+        code,
+        category: OwnedCell::new(category),
+        source: OwnedCell::new(""),
+        message: None,
+        message_text: OwnedCell::new(alloc_str(message_text)),
+        message_key: Key::default(),
+        message_args: Vec::new(),
+        message_chain: OwnedCell::new(alloc_slice(message_chain)),
+        related_information: OwnedCell::new(alloc_slice(related_information)),
+        reports_unnecessary,
+        reports_deprecated,
+        filter_flag: OwnedCell::new(false),
+        skipped_on_no_emit: OwnedCell::new(false),
+        repopulate_info: OwnedCell::new(None),
+    })
 }
 
 #[cfg(test)]
@@ -719,19 +802,28 @@ mod tests {
     #[test]
     fn diagnostics_collection_deduplicates_exact_diagnostics_on_add() {
         let mut collection = DiagnosticsCollection::default();
-        let first = new_compiler_diagnostic(&diagnostics::Cannot_find_name_0, &[&"x"])
-            .add_related_info(Some(new_compiler_diagnostic(&diagnostics::X_0_is_declared_here, &[&"first"])));
-        let second = new_compiler_diagnostic(&diagnostics::Cannot_find_name_0, &[&"x"])
-            .add_related_info(Some(new_compiler_diagnostic(&diagnostics::X_0_is_declared_here, &[&"first"])));
-        let different = new_compiler_diagnostic(&diagnostics::Cannot_find_name_0, &[&"x"])
-            .add_related_info(Some(new_compiler_diagnostic(&diagnostics::X_0_is_declared_here, &[&"second"])));
+        let first =
+            new_compiler_diagnostic(&diagnostics::Cannot_find_name_0, &[&"x"]).add_related_info(
+                Some(new_compiler_diagnostic(&diagnostics::X_0_is_declared_here, &[&"first"])),
+            );
+        let second =
+            new_compiler_diagnostic(&diagnostics::Cannot_find_name_0, &[&"x"]).add_related_info(
+                Some(new_compiler_diagnostic(&diagnostics::X_0_is_declared_here, &[&"first"])),
+            );
+        let different =
+            new_compiler_diagnostic(&diagnostics::Cannot_find_name_0, &[&"x"]).add_related_info(
+                Some(new_compiler_diagnostic(&diagnostics::X_0_is_declared_here, &[&"second"])),
+            );
 
         assert_eq!(collection.add(first), first);
         let canonical = collection.add(second);
         assert_eq!(canonical, first);
         assert_eq!(collection.add(different), different);
 
-        canonical.add_related_info(Some(new_compiler_diagnostic(&diagnostics::X_0_is_declared_here, &[&"third"])));
+        canonical.add_related_info(Some(new_compiler_diagnostic(
+            &diagnostics::X_0_is_declared_here,
+            &[&"third"],
+        )));
         let collected = collection.get_global_diagnostics();
         assert_eq!(collected.len(), 2);
         assert_eq!(first.related_information().len(), 2);
@@ -760,7 +852,9 @@ mod tests {
         let mut collection = DiagnosticsCollection::default();
         for &diagnostic in &all {
             assert!(!equal_diagnostics_no_related_info(first, diagnostic) || diagnostic == first);
-            assert!(compare_diagnostics(first, diagnostic) != 0 || diagnostic == first);
+            assert!(
+                compare_diagnostics(first, diagnostic) != Ordering::Equal || diagnostic == first
+            );
             collection.add(diagnostic);
         }
         assert_eq!(collection.get_diagnostics().len(), all.len());
@@ -773,8 +867,10 @@ mod tests {
         let f = crate::NodeFactory::default();
         let statements = f.new_node_list(vec![]);
         let eof = f.new_token(crate::Kind::EndOfFile);
-        let opts = crate::SourceFileParseOptions { file_name: "/a.vue".to_string(), ..Default::default() };
-        let file = f.new_source_file(opts.clone(), "let __alias = 1;", statements, eof).as_source_file_p();
+        let opts =
+            crate::SourceFileParseOptions { file_name: "/a.vue".to_string(), ..Default::default() };
+        let file =
+            f.new_source_file(opts.clone(), "let __alias = 1;", statements, eof).as_source_file_p();
         let span_map = tsrs_spanmap::new(&[tsrs_spanmap::Segment {
             virtual_start: 4,
             virtual_end: 11,
@@ -791,46 +887,28 @@ mod tests {
             ..Default::default()
         });
 
-        let alias = new_diagnostic(Some(file), TextRange::new(4, 11), &diagnostics::Cannot_find_name_0, &[&"__alias"]);
+        let alias = new_diagnostic(
+            Some(file),
+            TextRange::new(4, 11),
+            &diagnostics::Cannot_find_name_0,
+            &[&"__alias"],
+        );
         assert_eq!(alias.localize(), "Cannot find name 'x'.");
         assert_eq!(alias.message_args(), ["__alias"]);
-        let partial = new_diagnostic(Some(file), TextRange::new(5, 11), &diagnostics::Cannot_find_name_0, &[&"__alias"]);
+        let partial = new_diagnostic(
+            Some(file),
+            TextRange::new(5, 11),
+            &diagnostics::Cannot_find_name_0,
+            &[&"__alias"],
+        );
         assert_eq!(partial.localize(), "Cannot find name '__alias'.");
-        let external = new_diagnostic(Some(file), TextRange::new(4, 11), &diagnostics::Cannot_find_name_0, &[&"__alias"])
-            .set_external_data("mapper", "");
+        let external = new_diagnostic(
+            Some(file),
+            TextRange::new(4, 11),
+            &diagnostics::Cannot_find_name_0,
+            &[&"__alias"],
+        )
+        .set_external_data("mapper", "");
         assert_eq!(external.localize(), "Cannot find name '__alias'.");
     }
-}
-
-// diagnostic.go NewDiagnosticFromText: a diagnostic whose message is already-localized text (the native API
-// receives these from clients, e.g. `configFileParsingDiagnostics`).
-pub fn new_diagnostic_from_text(
-    file: Option<P<SourceFile>>,
-    loc: TextRange,
-    code: i32,
-    category: Category,
-    message_text: &str,
-    message_chain: &[P<Diagnostic>],
-    related_information: &[P<Diagnostic>],
-    reports_unnecessary: bool,
-    reports_deprecated: bool,
-) -> P<Diagnostic> {
-    P::new(Diagnostic {
-        file: OwnedCell::new(file),
-        loc: OwnedCell::new(loc),
-        code,
-        category: OwnedCell::new(category),
-        source: OwnedCell::new(""),
-        message: None,
-        message_text: OwnedCell::new(alloc_str(message_text)),
-        message_key: Key::default(),
-        message_args: Vec::new(),
-        message_chain: OwnedCell::new(alloc_slice(message_chain)),
-        related_information: OwnedCell::new(alloc_slice(related_information)),
-        reports_unnecessary,
-        reports_deprecated,
-        filter_flag: OwnedCell::new(false),
-        skipped_on_no_emit: OwnedCell::new(false),
-        repopulate_info: OwnedCell::new(None),
-    })
 }

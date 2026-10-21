@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -6,10 +7,14 @@ use tsrs_ast::{self as ast, Kind, Node, NodeFlags, SourceFile, TokenFlags};
 use tsrs_compiler::Program;
 use tsrs_core::context::Context;
 use tsrs_core::tspath;
-use tsrs_core::{alloc_str, CompilerOptions, ModuleDetectionKind, ModuleKind, TextRange, Tristate, P};
+use tsrs_core::{
+    CompilerOptions, ModuleDetectionKind, ModuleKind, P, TextRange, Tristate, alloc_str,
+};
 use tsrs_diagnostics as diagnostics;
 use tsrs_lsproto as lsproto;
-use tsrs_modulespecifiers::{self as modulespecifiers, ImportModuleSpecifierPreference, ResultKind};
+use tsrs_modulespecifiers::{
+    self as modulespecifiers, ImportModuleSpecifierPreference, ResultKind,
+};
 use tsrs_scanner as scanner;
 
 use super::export::{Export, ExportSyntax, ModuleID};
@@ -55,6 +60,14 @@ pub(crate) struct addToExistingImportFix {
     pub(crate) named_import: Option<newImportBinding>,
 }
 
+fn import_index_from_protocol(import_index: i32) -> usize {
+    usize::try_from(import_index).expect("auto-import protocol index must be nonnegative")
+}
+
+fn import_index_to_protocol(import_index: usize) -> i32 {
+    i32::try_from(import_index).expect("auto-import index exceeds the protocol integer range")
+}
+
 impl Fix {
     // fix.go:55
     // Edits produces the text edits and a human-readable description for the fix. The returned bool is false
@@ -69,7 +82,8 @@ impl Fix {
         converters: &Arc<Converters>,
         preferences: &UserPreferences,
     ) -> (Vec<lsproto::TextEdit>, String, bool) {
-        let mut tracker = change::new_tracker(ctx, &compiler_options, format_options, Arc::clone(converters));
+        let mut tracker =
+            change::new_tracker(ctx, &compiler_options, format_options, Arc::clone(converters));
         match self.kind {
             lsproto::AutoImportFixKind::UseNamespace => {
                 let description = add_namespace_qualifier(self, &mut tracker, file);
@@ -77,9 +91,8 @@ impl Fix {
                 (edits, description, safe)
             }
             lsproto::AutoImportFixKind::AddToExisting => {
-                if file.imports().len() <= self.import_index as usize {
-                    panic!("import index out of range");
-                }
+                let import_index = import_index_from_protocol(self.import_index);
+                assert!(file.imports().len() > import_index, "import index out of range");
                 let existing_fix = get_add_to_existing_import_fix(file, self);
                 add_to_existing_import(
                     &mut tracker,
@@ -94,19 +107,33 @@ impl Fix {
             }
             lsproto::AutoImportFixKind::AddNew => {
                 let default_import = if self.import_kind == lsproto::ImportKind::Default {
-                    Some(newImportBinding { name: self.name.clone(), add_as_type_only: self.add_as_type_only, ..Default::default() })
+                    Some(newImportBinding {
+                        name: self.name.clone(),
+                        add_as_type_only: self.add_as_type_only,
+                        ..Default::default()
+                    })
                 } else {
                     None
                 };
                 let named_imports = if self.import_kind == lsproto::ImportKind::Named {
-                    vec![newImportBinding { name: self.name.clone(), add_as_type_only: self.add_as_type_only, ..Default::default() }]
+                    vec![newImportBinding {
+                        name: self.name.clone(),
+                        add_as_type_only: self.add_as_type_only,
+                        ..Default::default()
+                    }]
                 } else {
                     Vec::new()
                 };
                 let mut namespace_like_import: Option<newImportBinding> = None;
                 // qualification := f.qualification()
-                if self.import_kind == lsproto::ImportKind::Namespace || self.import_kind == lsproto::ImportKind::CommonJS {
-                    namespace_like_import = Some(newImportBinding { kind: self.import_kind, name: self.name.clone(), ..Default::default() });
+                if self.import_kind == lsproto::ImportKind::Namespace
+                    || self.import_kind == lsproto::ImportKind::CommonJS
+                {
+                    namespace_like_import = Some(newImportBinding {
+                        kind: self.import_kind,
+                        name: self.name.clone(),
+                        ..Default::default()
+                    });
                     // if qualification != nil && qualification.namespacePref != "" {
                     // 	namespaceLikeImport.name = qualification.namespacePref
                     // }
@@ -114,7 +141,15 @@ impl Fix {
 
                 let quote_preference = lsutil::get_quote_preference(file, preferences);
                 let declarations = if self.use_require {
-                    get_new_requires(&tracker, &self.module_specifier, quote_preference, default_import.as_ref(), &named_imports, namespace_like_import.as_ref(), &compiler_options)
+                    get_new_requires(
+                        &tracker,
+                        &self.module_specifier,
+                        quote_preference,
+                        default_import.as_ref(),
+                        &named_imports,
+                        namespace_like_import.as_ref(),
+                        &compiler_options,
+                    )
                 } else {
                     get_new_imports(
                         &tracker,
@@ -128,7 +163,13 @@ impl Fix {
                     )
                 };
 
-                insert_imports(&mut tracker, file, &declarations, true /*blankLineBetween*/, preferences);
+                insert_imports(
+                    &mut tracker,
+                    file,
+                    &declarations,
+                    true, /*blankLineBetween*/
+                    preferences,
+                );
                 // if qualification != nil {
                 // 	addNamespaceQualifier(tracker, file, qualification)
                 // }
@@ -136,15 +177,33 @@ impl Fix {
                 (edits, diagnostics::Add_import_from_0.localize(&[&self.module_specifier]), safe)
             }
             lsproto::AutoImportFixKind::PromoteTypeOnly => {
-                let promoted_declaration = promote_from_type_only(&mut tracker, self.type_only_alias_declaration.unwrap(), &compiler_options, file, preferences);
+                let promoted_declaration = promote_from_type_only(
+                    &mut tracker,
+                    self.type_only_alias_declaration.unwrap(),
+                    &compiler_options,
+                    file,
+                    preferences,
+                );
                 if promoted_declaration.kind() == Kind::ImportSpecifier {
-                    let module_spec = get_module_specifier_text(promoted_declaration.parent().unwrap().parent().unwrap());
+                    let module_spec = get_module_specifier_text(
+                        promoted_declaration.parent().unwrap().parent().unwrap(),
+                    );
                     let (edits, safe) = file_edits(&mut tracker, file);
-                    return (edits, diagnostics::Remove_type_from_import_of_0_from_1.localize(&[&self.name, &module_spec]), safe);
+                    return (
+                        edits,
+                        diagnostics::Remove_type_from_import_of_0_from_1
+                            .localize(&[&self.name, &module_spec]),
+                        safe,
+                    );
                 }
                 let module_spec = get_module_specifier_text(promoted_declaration);
                 let (edits, safe) = file_edits(&mut tracker, file);
-                (edits, diagnostics::Remove_type_from_import_declaration_from_0.localize(&[&module_spec]), safe)
+                (
+                    edits,
+                    diagnostics::Remove_type_from_import_declaration_from_0
+                        .localize(&[&module_spec]),
+                    safe,
+                )
             }
             lsproto::AutoImportFixKind::JsdocTypeImport => {
                 let description = add_import_type(self, file, preferences, &mut tracker);
@@ -160,13 +219,24 @@ impl Fix {
 // fileEdits returns the edits recorded for file, along with whether they are safe to apply. GetChanges
 // drops the edits of any content-mapped file that cannot be faithfully mapped back to the original text,
 // so an empty result with safe == false means the fix could not be represented and must be discarded.
-fn file_edits(tracker: &mut change::Tracker, file: P<SourceFile>) -> (Vec<lsproto::TextEdit>, bool) {
+fn file_edits(
+    tracker: &mut change::Tracker,
+    file: P<SourceFile>,
+) -> (Vec<lsproto::TextEdit>, bool) {
     let (mut changes, unmappable) = tracker.get_changes();
-    (changes.shift_remove(crate::lsconv::Script::original_file_name(&file)).unwrap_or_default(), unmappable.is_empty())
+    (
+        changes.shift_remove(crate::lsconv::Script::original_file_name(&file)).unwrap_or_default(),
+        unmappable.is_empty(),
+    )
 }
 
 // fix.go:137
-pub(crate) fn add_import_type(f: &Fix, file: P<SourceFile>, preferences: &UserPreferences, tracker: &mut change::Tracker) -> String {
+pub(crate) fn add_import_type(
+    f: &Fix,
+    file: P<SourceFile>,
+    preferences: &UserPreferences,
+    tracker: &mut change::Tracker,
+) -> String {
     let Some(usage_position) = f.usage_position else {
         panic!("UsagePosition must be set for JSDoc type import fix");
     };
@@ -181,7 +251,11 @@ pub(crate) fn add_import_type(f: &Fix, file: P<SourceFile>, preferences: &UserPr
 }
 
 // fix.go:151
-pub(crate) fn add_namespace_qualifier(f: &Fix, tracker: &mut change::Tracker, file: P<SourceFile>) -> String {
+pub(crate) fn add_namespace_qualifier(
+    f: &Fix,
+    tracker: &mut change::Tracker,
+    file: P<SourceFile>,
+) -> String {
     let Some(usage_position) = f.usage_position.filter(|_| !f.namespace_prefix.is_empty()) else {
         panic!("namespace fix requires usage position and prefix");
     };
@@ -191,11 +265,15 @@ pub(crate) fn add_namespace_qualifier(f: &Fix, tracker: &mut change::Tracker, fi
 }
 
 // fix.go:160
-pub(crate) fn get_add_to_existing_import_fix(file: P<SourceFile>, fix: &Fix) -> addToExistingImportFix {
-    if fix.kind != lsproto::AutoImportFixKind::AddToExisting {
-        panic!("expected add to existing import fix");
-    }
-    let module_specifier = file.imports()[fix.import_index as usize];
+pub(crate) fn get_add_to_existing_import_fix(
+    file: P<SourceFile>,
+    fix: &Fix,
+) -> addToExistingImportFix {
+    assert!(
+        fix.kind == lsproto::AutoImportFixKind::AddToExisting,
+        "expected add to existing import fix"
+    );
+    let module_specifier = file.imports()[import_index_from_protocol(fix.import_index)];
     let Some(import_node) = ast::try_get_import_from_module_specifier(module_specifier) else {
         panic!("expected import declaration");
     };
@@ -205,9 +283,10 @@ pub(crate) fn get_add_to_existing_import_fix(file: P<SourceFile>, fix: &Fix) -> 
             None => panic!("expected import clause"),
         },
         Kind::CallExpression => {
-            if !ast::is_variable_declaration_initialized_to_require(import_node.parent().unwrap()) {
-                panic!("expected require call expression to be in variable declaration");
-            }
+            assert!(
+                ast::is_variable_declaration_initialized_to_require(import_node.parent().unwrap()),
+                "expected require call expression to be in variable declaration"
+            );
             match import_node.parent().unwrap().name() {
                 Some(n) if ast::is_object_binding_pattern(n) => n,
                 _ => panic!("expected object binding pattern in variable declaration"),
@@ -217,16 +296,30 @@ pub(crate) fn get_add_to_existing_import_fix(file: P<SourceFile>, fix: &Fix) -> 
     };
 
     let default_import = if fix.import_kind == lsproto::ImportKind::Default {
-        Some(newImportBinding { kind: lsproto::ImportKind::Default, name: fix.name.clone(), add_as_type_only: fix.add_as_type_only, ..Default::default() })
+        Some(newImportBinding {
+            kind: lsproto::ImportKind::Default,
+            name: fix.name.clone(),
+            add_as_type_only: fix.add_as_type_only,
+            ..Default::default()
+        })
     } else {
         None
     };
     let named_imports = if fix.import_kind == lsproto::ImportKind::Named {
-        Some(newImportBinding { kind: lsproto::ImportKind::Named, name: fix.name.clone(), add_as_type_only: fix.add_as_type_only, ..Default::default() })
+        Some(newImportBinding {
+            kind: lsproto::ImportKind::Named,
+            name: fix.name.clone(),
+            add_as_type_only: fix.add_as_type_only,
+            ..Default::default()
+        })
     } else {
         None
     };
-    addToExistingImportFix { import_clause_or_binding_pattern, default_import, named_import: named_imports }
+    addToExistingImportFix {
+        import_clause_or_binding_pattern,
+        default_import,
+        named_import: named_imports,
+    }
 }
 
 // fix.go:200
@@ -241,10 +334,22 @@ pub(crate) fn add_to_existing_import(
     match import_clause_or_binding_pattern.kind() {
         Kind::ObjectBindingPattern => {
             if let Some(default_import) = default_import {
-                add_element_to_binding_pattern(ct, file, import_clause_or_binding_pattern, &default_import.name, "default");
+                add_element_to_binding_pattern(
+                    ct,
+                    file,
+                    import_clause_or_binding_pattern,
+                    &default_import.name,
+                    "default",
+                );
             }
             for named_import in named_imports {
-                add_element_to_binding_pattern(ct, file, import_clause_or_binding_pattern, &named_import.name, "");
+                add_element_to_binding_pattern(
+                    ct,
+                    file,
+                    import_clause_or_binding_pattern,
+                    &named_import.name,
+                    "",
+                );
             }
         }
         Kind::ImportClause => {
@@ -253,8 +358,11 @@ pub(crate) fn add_to_existing_import(
 
             // promoteFromTypeOnly = true if we need to promote the entire original clause from type only
             let promote_from_type_only = clause_is_type_only
-                && (named_imports.iter().any(|i| i.add_as_type_only == lsproto::AddAsTypeOnly::NotAllowed)
-                    || default_import.is_some_and(|i| i.add_as_type_only == lsproto::AddAsTypeOnly::NotAllowed));
+                && (named_imports
+                    .iter()
+                    .any(|i| i.add_as_type_only == lsproto::AddAsTypeOnly::NotAllowed)
+                    || default_import
+                        .is_some_and(|i| i.add_as_type_only == lsproto::AddAsTypeOnly::NotAllowed));
 
             let mut existing_specifiers: Vec<P<Node>> = Vec::new();
             if let Some(nb) = import_clause.named_bindings {
@@ -264,7 +372,10 @@ pub(crate) fn add_to_existing_import(
             }
 
             if let Some(default_import) = default_import {
-                assert!(import_clause.name().is_none(), "Cannot add a default import to an import clause that already has one");
+                assert!(
+                    import_clause.name().is_none(),
+                    "Cannot add a default import to an import clause that already has one"
+                );
                 let id = ct.node_factory.new_identifier(alloc_str(&default_import.name));
                 ct.insert_node_at(
                     file,
@@ -276,22 +387,32 @@ pub(crate) fn add_to_existing_import(
 
             if !named_imports.is_empty() {
                 let (specifier_comparer, is_sorted) =
-                    lsutil::get_named_import_specifier_comparer_with_detection(import_clause_or_binding_pattern.parent().unwrap(), Some(file), preferences);
+                    lsutil::get_named_import_specifier_comparer_with_detection(
+                        import_clause_or_binding_pattern.parent().unwrap(),
+                        Some(file),
+                        preferences,
+                    );
                 let mut new_specifiers: Vec<P<Node>> = named_imports
                     .iter()
                     .map(|named_import| {
                         let mut identifier: Option<P<Node>> = None;
                         if !named_import.property_name.is_empty() {
-                            identifier = Some(ct.node_factory.new_identifier(alloc_str(&named_import.property_name)));
+                            identifier = Some(
+                                ct.node_factory
+                                    .new_identifier(alloc_str(&named_import.property_name)),
+                            );
                         }
                         ct.node_factory.new_import_specifier(
-                            (!clause_is_type_only || promote_from_type_only) && should_use_type_only(named_import.add_as_type_only, preferences),
+                            (!clause_is_type_only || promote_from_type_only)
+                                && should_use_type_only(named_import.add_as_type_only, preferences),
                             identifier,
                             ct.node_factory.new_identifier(alloc_str(&named_import.name)),
                         )
                     })
                     .collect();
-                tsrs_core::goslices::sort_func(&mut new_specifiers, |&a, &b| specifier_comparer(a, b));
+                tsrs_core::goslices::sort_func(&mut new_specifiers, |&a, &b| {
+                    specifier_comparer(a, b)
+                });
                 if !existing_specifiers.is_empty() && is_sorted != Tristate::False {
                     // The sorting preference computed earlier may or may not have validated that these particular
                     // import specifiers are sorted. If they aren't, `getImportSpecifierInsertionIndex` will return
@@ -318,20 +439,38 @@ pub(crate) fn add_to_existing_import(
                     }
 
                     for spec in new_specifiers {
-                        let insertion_index = lsutil::get_import_specifier_insertion_index(&specs_to_compare_against, spec, &*specifier_comparer);
-                        ct.insert_import_specifier_at_index(file, spec, import_clause.named_bindings.unwrap(), insertion_index);
+                        let insertion_index = lsutil::get_import_specifier_insertion_index(
+                            &specs_to_compare_against,
+                            spec,
+                            &*specifier_comparer,
+                        );
+                        ct.insert_import_specifier_at_index(
+                            file,
+                            spec,
+                            import_clause.named_bindings.unwrap(),
+                            insertion_index,
+                        );
                     }
                 } else if !existing_specifiers.is_empty() {
                     for spec in new_specifiers {
-                        ct.insert_node_in_list_after(file, existing_specifiers[existing_specifiers.len() - 1], spec, None);
+                        ct.insert_node_in_list_after(
+                            file,
+                            existing_specifiers[existing_specifiers.len() - 1],
+                            spec,
+                            None,
+                        );
                     }
                 } else if !new_specifiers.is_empty() {
-                    let named_imports = ct.node_factory.new_named_imports(ct.node_factory.new_node_list(new_specifiers));
+                    let named_imports = ct
+                        .node_factory
+                        .new_named_imports(ct.node_factory.new_node_list(new_specifiers));
                     if let Some(nb) = import_clause.named_bindings {
                         ct.replace_node(file, nb, named_imports, None);
                     } else {
                         let Some(name) = import_clause.name() else {
-                            panic!("Import clause must have either named imports or a default import");
+                            panic!(
+                                "Import clause must have either named imports or a default import"
+                            );
                         };
                         ct.insert_node_after(file, name, named_imports);
                     }
@@ -340,7 +479,8 @@ pub(crate) fn add_to_existing_import(
 
             if promote_from_type_only {
                 // Delete the 'type' keyword from the import clause
-                let type_keyword = get_type_keyword_of_type_only_import(import_clause_or_binding_pattern, file);
+                let type_keyword =
+                    get_type_keyword_of_type_only_import(import_clause_or_binding_pattern, file);
                 ct.delete(file, type_keyword);
 
                 // Add 'type' modifier to existing specifiers (not newly added ones)
@@ -353,12 +493,18 @@ pub(crate) fn add_to_existing_import(
                 }
             }
         }
-        _ => panic!("Unsupported clause kind: {:?} for addToExistingImport", import_clause_or_binding_pattern.kind()),
+        _ => panic!(
+            "Unsupported clause kind: {:?} for addToExistingImport",
+            import_clause_or_binding_pattern.kind()
+        ),
     }
 }
 
 // fix.go:328
-fn get_type_keyword_of_type_only_import(import_clause: P<Node>, source_file: P<SourceFile>) -> P<Node> {
+fn get_type_keyword_of_type_only_import(
+    import_clause: P<Node>,
+    source_file: P<SourceFile>,
+) -> P<Node> {
     assert!(import_clause.is_type_only(), "import clause must be type-only");
     // The first child of a type-only import clause is the 'type' keyword
     // import type { foo } from './bar'
@@ -369,14 +515,37 @@ fn get_type_keyword_of_type_only_import(import_clause: P<Node>, source_file: P<S
 }
 
 // fix.go:338
-fn add_element_to_binding_pattern(ct: &mut change::Tracker, file: P<SourceFile>, binding_pattern: P<Node>, name: &str, property_name: &str) {
-    let property = if property_name.is_empty() { None } else { Some(ct.node_factory.new_identifier(alloc_str(property_name))) };
-    let element = ct.node_factory.new_binding_element(None, None, Some(ct.node_factory.new_identifier(alloc_str(name))), property);
+fn add_element_to_binding_pattern(
+    ct: &mut change::Tracker,
+    file: P<SourceFile>,
+    binding_pattern: P<Node>,
+    name: &str,
+    property_name: &str,
+) {
+    let property = if property_name.is_empty() {
+        None
+    } else {
+        Some(ct.node_factory.new_identifier(alloc_str(property_name)))
+    };
+    let element = ct.node_factory.new_binding_element(
+        None,
+        None,
+        Some(ct.node_factory.new_identifier(alloc_str(name))),
+        property,
+    );
     let elements = binding_pattern.as_binding_pattern().elements;
     if !elements.nodes().is_empty() {
-        ct.insert_node_in_list_after(file, elements.nodes()[elements.nodes().len() - 1], element, Some(elements));
+        ct.insert_node_in_list_after(
+            file,
+            elements.nodes()[elements.nodes().len() - 1],
+            element,
+            Some(elements),
+        );
     } else {
-        let pattern = ct.node_factory.new_binding_pattern(Kind::ObjectBindingPattern, ct.node_factory.new_node_list(vec![element]));
+        let pattern = ct.node_factory.new_binding_pattern(
+            Kind::ObjectBindingPattern,
+            ct.node_factory.new_node_list(vec![element]),
+        );
         ct.replace_node(file, binding_pattern, pattern, None);
     }
 }
@@ -392,33 +561,54 @@ pub(crate) fn get_new_imports(
     compiler_options: &CompilerOptions,
     preferences: &UserPreferences,
 ) -> Vec<P<Node>> {
-    let token_flags = if quote_preference == QuotePreference::Single { TokenFlags::SingleQuote } else { TokenFlags::None };
-    let module_specifier_string_literal = ct.node_factory.new_string_literal(alloc_str(module_specifier), token_flags);
+    let token_flags = if quote_preference == QuotePreference::Single {
+        TokenFlags::SingleQuote
+    } else {
+        TokenFlags::None
+    };
+    let module_specifier_string_literal =
+        ct.node_factory.new_string_literal(alloc_str(module_specifier), token_flags);
     let mut statements: Vec<P<Node>> = Vec::new();
     if default_import.is_some() || !named_imports.is_empty() {
         // `verbatimModuleSyntax` should prefer top-level `import type` -
         // even though it's not an error, it would add unnecessary runtime emit.
-        let top_level_type_only = default_import.is_none_or(|d| needs_type_only(d.add_as_type_only))
+        let top_level_type_only = default_import
+            .is_none_or(|d| needs_type_only(d.add_as_type_only))
             && named_imports.iter().all(|i| needs_type_only(i.add_as_type_only))
-            || (compiler_options.verbatim_module_syntax.is_true() || preferences.prefer_type_only_auto_imports.is_true())
-                && default_import.is_none_or(|d| d.add_as_type_only != lsproto::AddAsTypeOnly::NotAllowed)
-                && !named_imports.iter().any(|i| i.add_as_type_only == lsproto::AddAsTypeOnly::NotAllowed);
+            || (compiler_options.verbatim_module_syntax.is_true()
+                || preferences.prefer_type_only_auto_imports.is_true())
+                && default_import
+                    .is_none_or(|d| d.add_as_type_only != lsproto::AddAsTypeOnly::NotAllowed)
+                && !named_imports
+                    .iter()
+                    .any(|i| i.add_as_type_only == lsproto::AddAsTypeOnly::NotAllowed);
 
-        let default_import_node = default_import.map(|d| ct.node_factory.new_identifier(alloc_str(&d.name)));
+        let default_import_node =
+            default_import.map(|d| ct.node_factory.new_identifier(alloc_str(&d.name)));
 
         let specifiers: Vec<P<Node>> = named_imports
             .iter()
             .map(|named_import| {
-                let named_import_property_name =
-                    if named_import.property_name.is_empty() { None } else { Some(ct.node_factory.new_identifier(alloc_str(&named_import.property_name))) };
+                let named_import_property_name = if named_import.property_name.is_empty() {
+                    None
+                } else {
+                    Some(ct.node_factory.new_identifier(alloc_str(&named_import.property_name)))
+                };
                 ct.node_factory.new_import_specifier(
-                    !top_level_type_only && should_use_type_only(named_import.add_as_type_only, preferences),
+                    !top_level_type_only
+                        && should_use_type_only(named_import.add_as_type_only, preferences),
                     named_import_property_name,
                     ct.node_factory.new_identifier(alloc_str(&named_import.name)),
                 )
             })
             .collect();
-        statements.push(make_import(ct, default_import_node, specifiers, module_specifier_string_literal, top_level_type_only));
+        statements.push(make_import(
+            ct,
+            default_import_node,
+            specifiers,
+            module_specifier_string_literal,
+            top_level_type_only,
+        ));
     }
 
     if let Some(namespace_like_import) = namespace_like_import {
@@ -433,9 +623,17 @@ pub(crate) fn get_new_imports(
             ct.node_factory.new_import_declaration(
                 None, /*modifiers*/
                 Some(ct.node_factory.new_import_clause(
-                    /*phaseModifier*/ if should_use_type_only(namespace_like_import.add_as_type_only, preferences) { Kind::TypeKeyword } else { Kind::Unknown }, false,
+                    /*phaseModifier*/
+                    if should_use_type_only(namespace_like_import.add_as_type_only, preferences) {
+                        Kind::TypeKeyword
+                    } else {
+                        Kind::Unknown
+                    },
+                    false,
                     None, /*name*/
-                    Some(ct.node_factory.new_namespace_import(ct.node_factory.new_identifier(alloc_str(&namespace_like_import.name)))),
+                    Some(ct.node_factory.new_namespace_import(
+                        ct.node_factory.new_identifier(alloc_str(&namespace_like_import.name)),
+                    )),
                 )),
                 module_specifier_string_literal,
                 None, /*attributes*/
@@ -443,9 +641,7 @@ pub(crate) fn get_new_imports(
         };
         statements.push(declaration);
     }
-    if statements.is_empty() {
-        panic!("No statements to insert for new imports");
-    }
+    assert!(!statements.is_empty(), "No statements to insert for new imports");
     statements
 }
 
@@ -462,22 +658,30 @@ pub(crate) fn get_new_requires(
     let f = &change_tracker.node_factory;
     let quoted_module_specifier = f.new_string_literal(
         alloc_str(module_specifier),
-        if quote_preference == QuotePreference::Single { TokenFlags::SingleQuote } else { TokenFlags::None },
+        if quote_preference == QuotePreference::Single {
+            TokenFlags::SingleQuote
+        } else {
+            TokenFlags::None
+        },
     );
     let mut statements: Vec<P<Node>> = Vec::new();
 
     // const { default: foo, bar, etc } = require('./mod');
     if default_import.is_some() || !named_imports.is_empty() {
         let mut binding_elements: Vec<P<Node>> = Vec::new();
-        for named_import in named_imports {
-            let property_name = if named_import.property_name.is_empty() { None } else { Some(f.new_identifier(alloc_str(&named_import.property_name))) };
-            binding_elements.push(f.new_binding_element(
+        binding_elements.extend(named_imports.iter().map(|named_import| {
+            let property_name = if named_import.property_name.is_empty() {
+                None
+            } else {
+                Some(f.new_identifier(alloc_str(&named_import.property_name)))
+            };
+            f.new_binding_element(
                 None, /*dotDotDotToken*/
                 property_name,
                 Some(f.new_identifier(alloc_str(&named_import.name))),
                 None, /*initializer*/
-            ));
-        }
+            )
+        }));
         if let Some(default_import) = default_import {
             binding_elements.insert(
                 0,
@@ -499,16 +703,24 @@ pub(crate) fn get_new_requires(
 
     // const foo = require('./mod');
     if let Some(namespace_like_import) = namespace_like_import {
-        let declaration = create_const_equals_require_declaration(change_tracker, f.new_identifier(alloc_str(&namespace_like_import.name)), quoted_module_specifier);
+        let declaration = create_const_equals_require_declaration(
+            change_tracker,
+            f.new_identifier(alloc_str(&namespace_like_import.name)),
+            quoted_module_specifier,
+        );
         statements.push(declaration);
     }
 
-    assert!(!statements.is_empty());
+    assert_ne!(statements, [] as [tsrs_core::P<tsrs_ast::Node>; 0]);
     statements
 }
 
 // fix.go:480
-fn create_const_equals_require_declaration(change_tracker: &change::Tracker, name: P<Node>, quoted_module_specifier: P<Node>) -> P<Node> {
+fn create_const_equals_require_declaration(
+    change_tracker: &change::Tracker,
+    name: P<Node>,
+    quoted_module_specifier: P<Node>,
+) -> P<Node> {
     let f = &change_tracker.node_factory;
     f.new_variable_statement(
         None, /*modifiers*/
@@ -531,44 +743,85 @@ fn create_const_equals_require_declaration(change_tracker: &change::Tracker, nam
 }
 
 // fix.go:503
-pub(crate) fn insert_imports(ct: &mut change::Tracker, source_file: P<SourceFile>, imports: &[P<Node>], blank_line_between: bool, preferences: &UserPreferences) {
+pub(crate) fn insert_imports(
+    ct: &mut change::Tracker,
+    source_file: P<SourceFile>,
+    imports: &[P<Node>],
+    blank_line_between: bool,
+    preferences: &UserPreferences,
+) {
     let existing_import_statements: Vec<P<Node>> = if imports[0].kind() == Kind::VariableStatement {
-        source_file.statements().nodes().iter().copied().filter(|&s| ast::is_require_variable_statement(s)).collect()
+        source_file
+            .statements()
+            .nodes()
+            .iter()
+            .copied()
+            .filter(|&s| ast::is_require_variable_statement(s))
+            .collect()
     } else {
-        source_file.statements().nodes().iter().copied().filter(|&s| ast::is_any_import_syntax(s)).collect()
+        source_file
+            .statements()
+            .nodes()
+            .iter()
+            .copied()
+            .filter(|&s| ast::is_any_import_syntax(s))
+            .collect()
     };
-    let (comparer, is_sorted) = lsutil::get_organize_imports_string_comparer_with_detection(&existing_import_statements, preferences);
+    let (comparer, is_sorted) = lsutil::get_organize_imports_string_comparer_with_detection(
+        &existing_import_statements,
+        preferences,
+    );
     let comparer = comparer.expect("nil comparer");
     let mut sorted_new_imports = imports.to_vec();
-    tsrs_core::goslices::sort_func(&mut sorted_new_imports, |&a, &b| lsutil::compare_imports_or_require_statements(a, b, &*comparer));
+    tsrs_core::goslices::sort_func(&mut sorted_new_imports, |&a, &b| {
+        lsutil::compare_imports_or_require_statements(a, b, &*comparer)
+    });
 
     if !existing_import_statements.is_empty() && is_sorted {
         // Existing imports are sorted, insert each new import at the correct position
         for &new_import in &sorted_new_imports {
-            let insertion_index = lsutil::get_import_declaration_insert_index(&existing_import_statements, new_import, &|a, b| {
-                lsutil::compare_imports_or_require_statements(a, b, &*comparer)
-            });
+            let insertion_index = lsutil::get_import_declaration_insert_index(
+                &existing_import_statements,
+                new_import,
+                &|a, b| lsutil::compare_imports_or_require_statements(a, b, &*comparer),
+            );
             if insertion_index == 0 {
                 // If the first import is top-of-file, insert after the leading comment which is likely the header.
                 let mut leading_trivia_option = change::LeadingTriviaOption::None;
                 if existing_import_statements[0] == source_file.statements().nodes()[0] {
                     leading_trivia_option = change::LeadingTriviaOption::Exclude;
                 }
-                ct.insert_node_before(source_file, existing_import_statements[0], new_import, false /*blankLineBetween*/, leading_trivia_option);
+                ct.insert_node_before(
+                    source_file,
+                    existing_import_statements[0],
+                    new_import,
+                    false, /*blankLineBetween*/
+                    leading_trivia_option,
+                );
             } else {
                 let prev_import = existing_import_statements[insertion_index - 1];
                 ct.insert_node_after(source_file, prev_import, new_import);
             }
         }
     } else if !existing_import_statements.is_empty() {
-        ct.insert_nodes_after(source_file, existing_import_statements[existing_import_statements.len() - 1], sorted_new_imports);
+        ct.insert_nodes_after(
+            source_file,
+            existing_import_statements[existing_import_statements.len() - 1],
+            sorted_new_imports,
+        );
     } else {
         ct.insert_at_top_of_file(source_file, &sorted_new_imports, blank_line_between);
     }
 }
 
 // fix.go:541
-fn make_import(ct: &change::Tracker, default_import: Option<P<Node>>, named_imports: Vec<P<Node>>, module_specifier: P<Node>, is_type_only: bool) -> P<Node> {
+fn make_import(
+    ct: &change::Tracker,
+    default_import: Option<P<Node>>,
+    named_imports: Vec<P<Node>>,
+    module_specifier: P<Node>,
+    is_type_only: bool,
+) -> P<Node> {
     let f = &ct.node_factory;
     let mut new_named_imports: Option<P<Node>> = None;
     if !named_imports.is_empty() {
@@ -576,16 +829,33 @@ fn make_import(ct: &change::Tracker, default_import: Option<P<Node>>, named_impo
     }
     let mut import_clause: Option<P<Node>> = None;
     if default_import.is_some() || new_named_imports.is_some() {
-        import_clause = Some(f.new_import_clause(if is_type_only { Kind::TypeKeyword } else { Kind::Unknown }, false, default_import, new_named_imports));
+        import_clause = Some(f.new_import_clause(
+            if is_type_only { Kind::TypeKeyword } else { Kind::Unknown },
+            false,
+            default_import,
+            new_named_imports,
+        ));
     }
-    f.new_import_declaration(None /*modifiers*/, import_clause, module_specifier, None /*attributes*/)
+    f.new_import_declaration(
+        None, /*modifiers*/
+        import_clause,
+        module_specifier,
+        None, /*attributes*/
+    )
 }
 
 impl View {
     // fix.go:554
-    pub fn get_fixes(&self, export: &Export, for_jsx: bool, is_valid_type_only_use_site: bool, usage_position: Option<lsproto::Position>) -> Vec<Arc<Fix>> {
+    pub fn get_fixes(
+        &self,
+        export: &Export,
+        for_jsx: bool,
+        is_valid_type_only_use_site: bool,
+        usage_position: Option<lsproto::Position>,
+    ) -> Vec<Arc<Fix>> {
         let mut fixes: Vec<Arc<Fix>> = Vec::new();
-        if let Some(namespace_fix) = self.try_use_existing_namespace_import(export, usage_position) {
+        if let Some(namespace_fix) = self.try_use_existing_namespace_import(export, usage_position)
+        {
             fixes.push(Arc::new(namespace_fix));
         }
 
@@ -596,14 +866,16 @@ impl View {
 
         // !!! getNewImportFromExistingSpecifier - even worth it?
 
-        let (module_specifier, module_specifier_kind) = self.get_module_specifier(export, &self.preferences);
+        let (module_specifier, module_specifier_kind) =
+            self.get_module_specifier(export, &self.preferences);
         if module_specifier.is_empty() {
             return fixes;
         }
 
         // Check if we need a JSDoc import type fix (for JS files with type-only imports)
         let is_js = tspath::has_js_file_extension(self.importing_file.file_name());
-        let imported_symbol_has_value_meaning = export.flags.intersects(ast::SymbolFlags::Value) || export.is_unresolved_alias();
+        let imported_symbol_has_value_meaning =
+            export.flags.intersects(ast::SymbolFlags::Value) || export.is_unresolved_alias();
         if !imported_symbol_has_value_meaning && is_js && usage_position.is_some() {
             // For pure types in JS files, use JSDoc import type syntax
             return vec![Arc::new(Fix {
@@ -621,15 +893,22 @@ impl View {
             })];
         }
 
-        let import_kind = get_import_kind(self.importing_file, export, self.program, false /*forceImportKeyword*/);
-        let add_as_type_only = get_add_as_type_only(is_valid_type_only_use_site, export, &self.program.options());
+        let import_kind = get_import_kind(
+            self.importing_file,
+            export,
+            self.program,
+            false, /*forceImportKeyword*/
+        );
+        let add_as_type_only =
+            get_add_as_type_only(is_valid_type_only_use_site, export, &self.program.options());
 
         let mut name = export.name().to_string();
-        let starts_with_upper = tsrs_core::stringutil::unicode_is_upper(name.as_bytes()[0] as i32);
+        let starts_with_upper =
+            tsrs_core::stringutil::unicode_is_upper(u32::from(name.as_bytes()[0]));
         if for_jsx && !starts_with_upper {
             if export.is_renameable() {
-                let first = name.as_bytes()[0] as i32;
-                let upper = char::from_u32(tsrs_core::stringutil::unicode_to_upper(first) as u32).unwrap();
+                let first = u32::from(name.as_bytes()[0]);
+                let upper = char::from_u32(tsrs_core::stringutil::unicode_to_upper(first)).unwrap();
                 name = format!("{}{}", upper, &name[1..]);
             } else {
                 return Vec::new();
@@ -657,12 +936,17 @@ impl View {
 
 // fix.go:621
 // getAddAsTypeOnly determines if an import should be type-only based on usage context
-fn get_add_as_type_only(is_valid_type_only_use_site: bool, export: &Export, compiler_options: &CompilerOptions) -> lsproto::AddAsTypeOnly {
+fn get_add_as_type_only(
+    is_valid_type_only_use_site: bool,
+    export: &Export,
+    compiler_options: &CompilerOptions,
+) -> lsproto::AddAsTypeOnly {
     if !is_valid_type_only_use_site {
         // Can't use a type-only import if the usage is an emitting position
         return lsproto::AddAsTypeOnly::NotAllowed;
     }
-    if compiler_options.verbatim_module_syntax.is_true() && (export.is_type_only || !export.flags.intersects(ast::SymbolFlags::Value))
+    if compiler_options.verbatim_module_syntax.is_true()
+        && (export.is_type_only || !export.flags.intersects(ast::SymbolFlags::Value))
         || export.is_type_only && export.flags.intersects(ast::SymbolFlags::Value)
     {
         // A type-only import is required for this symbol if under verbatimModuleSyntax and it's purely a type
@@ -673,34 +957,48 @@ fn get_add_as_type_only(is_valid_type_only_use_site: bool, export: &Export, comp
 
 impl View {
     // fix.go:635
-    fn try_use_existing_namespace_import(&self, export: &Export, usage_position: Option<lsproto::Position>) -> Option<Fix> {
+    fn try_use_existing_namespace_import(
+        &self,
+        export: &Export,
+        usage_position: Option<lsproto::Position>,
+    ) -> Option<Fix> {
         let usage_position = usage_position?;
 
-        if get_import_kind(self.importing_file, export, self.program, false /*forceImportKeyword*/) != lsproto::ImportKind::Named {
+        if get_import_kind(
+            self.importing_file,
+            export,
+            self.program,
+            false, /*forceImportKeyword*/
+        ) != lsproto::ImportKind::Named
+        {
             return None;
         }
 
         let existing_imports = self.get_existing_imports();
-        let matching_declarations = existing_imports.get(&export.module_id).map(|v| v.as_slice()).unwrap_or(&[]);
-        for existing_import in matching_declarations {
+        let matching_declarations = existing_imports
+            .get(&export.module_id)
+            .map_or(&[] as &[existingImport], std::vec::Vec::as_slice);
+        if let Some(result) = matching_declarations.iter().find_map(|existing_import| {
             let namespace_prefix = get_namespace_like_import_text(existing_import.node);
             if namespace_prefix.is_empty() || existing_import.module_specifier.is_empty() {
-                continue;
+                return None;
             }
-            return Some(Fix {
+            Some(Some(Fix {
                 auto_import_fix: lsproto::AutoImportFix {
                     kind: lsproto::AutoImportFixKind::UseNamespace,
                     name: export.name().to_string(),
                     module_specifier: existing_import.module_specifier.clone(),
                     import_kind: lsproto::ImportKind::Namespace,
                     add_as_type_only: lsproto::AddAsTypeOnly::Allowed,
-                    import_index: existing_import.index as i32,
+                    import_index: import_index_to_protocol(existing_import.index),
                     usage_position: Some(usage_position),
                     namespace_prefix,
                     ..Default::default()
                 },
                 ..Default::default()
-            });
+            }))
+        }) {
+            return result;
         }
 
         None
@@ -735,9 +1033,15 @@ fn get_namespace_like_import_text(declaration: P<Node>) -> String {
 
 impl View {
     // fix.go:690
-    fn try_add_to_existing_import(&self, export: &Export, is_valid_type_only_use_site: bool) -> Option<Fix> {
+    fn try_add_to_existing_import(
+        &self,
+        export: &Export,
+        is_valid_type_only_use_site: bool,
+    ) -> Option<Fix> {
         let existing_imports = self.get_existing_imports();
-        let matching_declarations = existing_imports.get(&export.module_id).map(|v| v.as_slice()).unwrap_or(&[]);
+        let matching_declarations = existing_imports
+            .get(&export.module_id)
+            .map_or(&[] as &[existingImport], std::vec::Vec::as_slice);
         if matching_declarations.is_empty() {
             return None;
         }
@@ -750,12 +1054,20 @@ impl View {
             return None;
         }
 
-        let import_kind = get_import_kind(self.importing_file, export, self.program, false /*forceImportKeyword*/);
-        if import_kind == lsproto::ImportKind::CommonJS || import_kind == lsproto::ImportKind::Namespace {
+        let import_kind = get_import_kind(
+            self.importing_file,
+            export,
+            self.program,
+            false, /*forceImportKeyword*/
+        );
+        if import_kind == lsproto::ImportKind::CommonJS
+            || import_kind == lsproto::ImportKind::Namespace
+        {
             return None;
         }
 
-        let add_as_type_only = get_add_as_type_only(is_valid_type_only_use_site, export, &self.program.options());
+        let add_as_type_only =
+            get_add_as_type_only(is_valid_type_only_use_site, export, &self.program.options());
 
         let mut best: Option<Fix> = None;
         for existing_import in matching_declarations {
@@ -764,7 +1076,8 @@ impl View {
             }
 
             if existing_import.node.kind() == Kind::VariableDeclaration {
-                if (import_kind == lsproto::ImportKind::Named || import_kind == lsproto::ImportKind::Default)
+                if (import_kind == lsproto::ImportKind::Named
+                    || import_kind == lsproto::ImportKind::Default)
                     && existing_import.node.name().unwrap().kind() == Kind::ObjectBindingPattern
                 {
                     let fix = Fix {
@@ -772,7 +1085,7 @@ impl View {
                             kind: lsproto::AutoImportFixKind::AddToExisting,
                             name: export.name().to_string(),
                             import_kind,
-                            import_index: existing_import.index as i32,
+                            import_index: import_index_to_protocol(existing_import.index),
                             module_specifier: existing_import.module_specifier.clone(),
                             add_as_type_only,
                             ..Default::default()
@@ -805,7 +1118,9 @@ impl View {
             let named_bindings = import_clause.named_bindings;
             // A type-only import may not have both a default and named imports, so the only way a name can
             // be added to an existing type-only import is adding a named import to existing named bindings.
-            if import_clause_node.is_type_only() && !(import_kind == lsproto::ImportKind::Named && named_bindings.is_some()) {
+            if import_clause_node.is_type_only()
+                && !(import_kind == lsproto::ImportKind::Named && named_bindings.is_some())
+            {
                 continue;
             }
 
@@ -818,7 +1133,9 @@ impl View {
             }
 
             // Cannot add a named import to a declaration that has a namespace import
-            if import_kind == lsproto::ImportKind::Named && named_bindings.is_some_and(|nb| nb.kind() == Kind::NamespaceImport) {
+            if import_kind == lsproto::ImportKind::Named
+                && named_bindings.is_some_and(|nb| nb.kind() == Kind::NamespaceImport)
+            {
                 continue;
             }
 
@@ -827,7 +1144,7 @@ impl View {
                     kind: lsproto::AutoImportFixKind::AddToExisting,
                     name: export.name().to_string(),
                     import_kind,
-                    import_index: existing_import.index as i32,
+                    import_index: import_index_to_protocol(existing_import.index),
                     module_specifier: existing_import.module_specifier.clone(),
                     add_as_type_only,
                     ..Default::default()
@@ -838,7 +1155,8 @@ impl View {
             let is_type_only = import_clause_node.is_type_only();
             // Give preference to putting types in existing type-only imports and avoiding conversions
             // of import statements to/from type-only.
-            if (add_as_type_only != lsproto::AddAsTypeOnly::NotAllowed && is_type_only) || (add_as_type_only == lsproto::AddAsTypeOnly::NotAllowed && !is_type_only)
+            if (add_as_type_only != lsproto::AddAsTypeOnly::NotAllowed && is_type_only)
+                || (add_as_type_only == lsproto::AddAsTypeOnly::NotAllowed && !is_type_only)
             {
                 return Some(fix);
             }
@@ -852,19 +1170,37 @@ impl View {
 }
 
 // fix.go:796
-pub fn get_import_kind_for_import_statement(importing_file: P<SourceFile>, export: &Export, program: &Program) -> lsproto::ImportKind {
+pub fn get_import_kind_for_import_statement(
+    importing_file: P<SourceFile>,
+    export: &Export,
+    program: &Program,
+) -> lsproto::ImportKind {
     get_import_kind(importing_file, export, program, true /*forceImportKeyword*/)
 }
 
 // fix.go:800
-fn get_import_kind(importing_file: P<SourceFile>, export: &Export, program: &Program, force_import_keyword: bool) -> lsproto::ImportKind {
-    if program.options().verbatim_module_syntax.is_true() && program.get_emit_module_format_of_file(importing_file) == ModuleKind::CommonJS {
+fn get_import_kind(
+    importing_file: P<SourceFile>,
+    export: &Export,
+    program: &Program,
+    force_import_keyword: bool,
+) -> lsproto::ImportKind {
+    if program.options().verbatim_module_syntax.is_true()
+        && program.get_emit_module_format_of_file(importing_file) == ModuleKind::CommonJS
+    {
         return lsproto::ImportKind::CommonJS;
     }
     match export.syntax {
-        ExportSyntax::DefaultModifier | ExportSyntax::DefaultDeclaration => lsproto::ImportKind::Default,
-        ExportSyntax::Named | ExportSyntax::Modifier | ExportSyntax::Star | ExportSyntax::CommonJSExportsProperty => {
-            if export.syntax == ExportSyntax::Named && export.export_name == ast::InternalSymbolNameDefault {
+        ExportSyntax::DefaultModifier | ExportSyntax::DefaultDeclaration => {
+            lsproto::ImportKind::Default
+        }
+        ExportSyntax::Named
+        | ExportSyntax::Modifier
+        | ExportSyntax::Star
+        | ExportSyntax::CommonJSExportsProperty => {
+            if export.syntax == ExportSyntax::Named
+                && export.export_name == ast::InternalSymbolNameDefault
+            {
                 return lsproto::ImportKind::Default;
             }
             lsproto::ImportKind::Named
@@ -875,23 +1211,34 @@ fn get_import_kind(importing_file: P<SourceFile>, export: &Export, program: &Pro
                 return lsproto::ImportKind::Named;
             }
             // !!! cache this?
-            for &statement in importing_file.statements().nodes() {
+            if let Some(result) = importing_file.statements().nodes().iter().find_map(|&statement| {
                 // `import foo` parses as an ImportEqualsDeclaration even though it could be an ImportDeclaration
-                if ast::is_import_equals_declaration(statement) && !ast::node_is_missing(Some(statement.as_import_equals_declaration().module_reference)) {
-                    return lsproto::ImportKind::CommonJS;
+                if ast::is_import_equals_declaration(statement)
+                    && !ast::node_is_missing(Some(
+                        statement.as_import_equals_declaration().module_reference,
+                    ))
+                {
+                    return Some(lsproto::ImportKind::CommonJS);
                 }
+
+                None
+            }) {
+                return result;
             }
             // !!! this logic feels weird; we're basically trying to predict if shouldUseRequire is going to
             //     be true. The meaning of "default import" is different depending on whether we write it as
             //     a require or an es6 import. The latter, compiled to CJS, has interop built in that will
             //     avoid accessing .default, but if we write a require directly and call it a default import,
             //     we emit an unconditional .default access.
-            if importing_file.external_module_indicator().is_some() || force_import_keyword || !ast::is_source_file_js(importing_file) {
+            if importing_file.external_module_indicator().is_some()
+                || force_import_keyword
+                || !ast::is_source_file_js(importing_file)
+            {
                 return lsproto::ImportKind::Default;
             }
             lsproto::ImportKind::CommonJS
         }
-        _ => panic!("unhandled export syntax kind: {}", export.syntax.string()),
+        ExportSyntax::None => panic!("unhandled export syntax kind: {}", export.syntax.string()),
     }
 }
 
@@ -906,38 +1253,51 @@ pub(crate) struct existingImport {
 impl View {
     // fix.go:844
     fn get_existing_imports(&self) -> Rc<FxHashMap<ModuleID, Vec<existingImport>>> {
-        Rc::clone(self.existing_imports_cell()
-            .get_or_init(|| {
-                let mut result: FxHashMap<ModuleID, Vec<existingImport>> = FxHashMap::default();
+        Rc::clone(self.existing_imports_cell().get_or_init(|| {
+            let mut result: FxHashMap<ModuleID, Vec<existingImport>> = FxHashMap::default();
 
-                for (i, &module_specifier) in self.importing_file.imports().iter().enumerate() {
-                    let Some(node) = ast::try_get_import_from_module_specifier(module_specifier) else {
-                        panic!("error: did not expect node kind {:?}", module_specifier.kind());
-                    };
-                    if ast::is_variable_declaration_initialized_to_require(node.parent().unwrap()) {
-                        if let Some(module_symbol) = self.checker().resolve_external_module_name_exported(module_specifier, None /*importAttributesType*/) {
-                            if let Some((module_id, _)) = try_get_module_id_and_file_name_of_module_symbol(module_symbol) {
-                                result.entry(module_id).or_default().push(existingImport {
-                                    node: node.parent().unwrap(),
-                                    module_specifier: module_specifier.text().to_string(),
-                                    index: i,
-                                });
-                            }
+            for (i, &module_specifier) in self.importing_file.imports().iter().enumerate() {
+                let Some(node) = ast::try_get_import_from_module_specifier(module_specifier) else {
+                    panic!("error: did not expect node kind {:?}", module_specifier.kind());
+                };
+                if ast::is_variable_declaration_initialized_to_require(node.parent().unwrap()) {
+                    if let Some(module_symbol) =
+                        self.checker().resolve_external_module_name_exported(
+                            module_specifier,
+                            None, /*importAttributesType*/
+                        )
+                    {
+                        if let Some((module_id, _)) =
+                            try_get_module_id_and_file_name_of_module_symbol(module_symbol)
+                        {
+                            result.entry(module_id).or_default().push(existingImport {
+                                node: node.parent().unwrap(),
+                                module_specifier: module_specifier.text().to_string(),
+                                index: i,
+                            });
                         }
-                    } else if node.kind() == Kind::ImportDeclaration || node.kind() == Kind::ImportEqualsDeclaration || node.kind() == Kind::JSDocImportTag {
-                        if let Some(module_symbol) = self.checker().get_symbol_at_location_exported(module_specifier) {
-                            if let Some((module_id, _)) = try_get_module_id_and_file_name_of_module_symbol(module_symbol) {
-                                result.entry(module_id).or_default().push(existingImport {
-                                    node,
-                                    module_specifier: module_specifier.text().to_string(),
-                                    index: i,
-                                });
-                            }
+                    }
+                } else if node.kind() == Kind::ImportDeclaration
+                    || node.kind() == Kind::ImportEqualsDeclaration
+                    || node.kind() == Kind::JSDocImportTag
+                {
+                    if let Some(module_symbol) =
+                        self.checker().get_symbol_at_location_exported(module_specifier)
+                    {
+                        if let Some((module_id, _)) =
+                            try_get_module_id_and_file_name_of_module_symbol(module_symbol)
+                        {
+                            result.entry(module_id).or_default().push(existingImport {
+                                node,
+                                module_specifier: module_specifier.text().to_string(),
+                                index: i,
+                            });
                         }
                     }
                 }
-                Rc::new(result)
-            }))
+            }
+            Rc::new(result)
+        }))
     }
 
     // fix.go:876
@@ -951,7 +1311,15 @@ impl View {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum fileSyntaxKind {
     Ambiguous,
+    #[expect(
+        clippy::upper_case_acronyms,
+        reason = "The name matches the upstream Go or protocol vocabulary."
+    )]
     ESM,
+    #[expect(
+        clippy::upper_case_acronyms,
+        reason = "The name matches the upstream Go or protocol vocabulary."
+    )]
     CJS,
 }
 
@@ -993,21 +1361,25 @@ fn detect_syntax_indicators(file: P<SourceFile>, options: &CompilerOptions) -> (
     }
     // Fall back to scanning Imports() for actual import/export declarations
     // (not require() calls or dynamic imports).
-    for &imp in file.imports() {
+    if let Some(result) = file.imports().iter().find_map(|&imp| {
         if imp.flags().intersects(NodeFlags::Synthesized) {
-            continue;
+            return None;
         }
-        let Some(parent) = imp.parent() else {
-            continue;
-        };
+        let parent = imp.parent()?;
         match parent.kind() {
-            Kind::ImportDeclaration | Kind::JSImportDeclaration | Kind::ExportDeclaration => return (true, has_cjs),
+            Kind::ImportDeclaration | Kind::JSImportDeclaration | Kind::ExportDeclaration => {
+                return Some((true, has_cjs));
+            }
             Kind::ExternalModuleReference => {
                 // import x = require("...") — this is ESM-ish syntax
-                return (true, has_cjs);
+                return Some((true, has_cjs));
             }
             _ => {}
         }
+
+        None
+    }) {
+        return result;
     }
     (false, has_cjs)
 }
@@ -1041,15 +1413,22 @@ impl View {
         }
 
         // 5. Match the first other JS file in the program that's unambiguously CJS or ESM
-        for &other_file in self.program.get_source_files() {
-            if other_file == self.importing_file || !ast::is_source_file_js(other_file) || self.program.is_source_file_from_external_library(other_file) {
-                continue;
+        if let Some(result) = self.program.get_source_files().iter().find_map(|&other_file| {
+            if other_file == self.importing_file
+                || !ast::is_source_file_js(other_file)
+                || self.program.is_source_file_from_external_library(other_file)
+            {
+                return None;
             }
             match detect_syntax(other_file, &self.program.options()) {
-                fileSyntaxKind::CJS => return true,
-                fileSyntaxKind::ESM => return false,
+                fileSyntaxKind::CJS => return Some(true),
+                fileSyntaxKind::ESM => return Some(false),
                 fileSyntaxKind::Ambiguous => {}
             }
+
+            None
+        }) {
+            return result;
         }
 
         // 6. Literally nothing to go on
@@ -1063,8 +1442,13 @@ fn needs_type_only(add_as_type_only: lsproto::AddAsTypeOnly) -> bool {
 }
 
 // fix.go:1000
-fn should_use_type_only(add_as_type_only: lsproto::AddAsTypeOnly, preferences: &UserPreferences) -> bool {
-    needs_type_only(add_as_type_only) || add_as_type_only != lsproto::AddAsTypeOnly::NotAllowed && preferences.prefer_type_only_auto_imports.is_true()
+fn should_use_type_only(
+    add_as_type_only: lsproto::AddAsTypeOnly,
+    preferences: &UserPreferences,
+) -> bool {
+    needs_type_only(add_as_type_only)
+        || add_as_type_only != lsproto::AddAsTypeOnly::NotAllowed
+            && preferences.prefer_type_only_auto_imports.is_true()
 }
 
 impl View {
@@ -1073,21 +1457,21 @@ impl View {
     // Sorting with this comparator will place the best fix first.
     // After rank sorting, fixes will be sorted by arbitrary but stable criteria
     // to ensure a deterministic order.
-    pub fn compare_fixes_for_sorting(&self, a: &Fix, b: &Fix) -> i32 {
+    pub fn compare_fixes_for_sorting(&self, a: &Fix, b: &Fix) -> Ordering {
         let res = self.compare_fixes_for_ranking(a, b);
-        if res != 0 {
+        if !res.is_eq() {
             return res;
         }
         self.compare_module_specifiers_for_sorting(a, b)
     }
 
     // fix.go:1018
-    // CompareFixesForRanking returns negative if `a` is better than `b`.
+    // CompareFixesForRanking returns `Ordering::Less` if `a` is better than `b`.
     // Sorting with this comparator will place the best fix first.
     // Fixes of equal desirability will be considered equal.
-    pub fn compare_fixes_for_ranking(&self, a: &Fix, b: &Fix) -> i32 {
+    pub fn compare_fixes_for_ranking(&self, a: &Fix, b: &Fix) -> Ordering {
         let res = compare_fix_kinds(a.kind, b.kind);
-        if res != 0 {
+        if !res.is_eq() {
             return res;
         }
         self.compare_module_specifiers_for_ranking(a, b)
@@ -1095,84 +1479,92 @@ impl View {
 }
 
 // fix.go:1025
-fn compare_fix_kinds(a: lsproto::AutoImportFixKind, b: lsproto::AutoImportFixKind) -> i32 {
-    a.0 - b.0
+fn compare_fix_kinds(a: lsproto::AutoImportFixKind, b: lsproto::AutoImportFixKind) -> Ordering {
+    a.0.cmp(&b.0)
 }
 
 impl View {
     // fix.go:1029
-    fn compare_module_specifiers_for_ranking(&self, a: &Fix, b: &Fix) -> i32 {
+    fn compare_module_specifiers_for_ranking(&self, a: &Fix, b: &Fix) -> Ordering {
         let comparison = compare_module_specifier_relativity(a, b, &self.preferences);
-        if comparison != 0 {
+        if !comparison.is_eq() {
             return comparison;
         }
-        if a.module_specifier_kind == ResultKind::Ambient && b.module_specifier_kind == ResultKind::Ambient {
-            let comparison = self.compare_node_core_module_specifiers(&a.module_specifier, &b.module_specifier);
-            if comparison != 0 {
+        if a.module_specifier_kind == ResultKind::Ambient
+            && b.module_specifier_kind == ResultKind::Ambient
+        {
+            let comparison =
+                self.compare_node_core_module_specifiers(&a.module_specifier, &b.module_specifier);
+            if !comparison.is_eq() {
                 return comparison;
             }
         }
-        if a.module_specifier_kind == ResultKind::Relative && b.module_specifier_kind == ResultKind::Relative {
+        if a.module_specifier_kind == ResultKind::Relative
+            && b.module_specifier_kind == ResultKind::Relative
+        {
             let comparison = tsrs_core::compare_booleans(
                 is_fix_possibly_re_exporting_importing_file(a, self.importing_file.file_name()),
                 is_fix_possibly_re_exporting_importing_file(b, self.importing_file.file_name()),
             );
-            if comparison != 0 {
+            if !comparison.is_eq() {
                 return comparison;
             }
         }
-        let comparison = tspath::compare_number_of_directory_separators(&a.module_specifier, &b.module_specifier);
-        if comparison != 0 {
+        let comparison = tspath::compare_number_of_directory_separators(
+            &a.module_specifier,
+            &b.module_specifier,
+        );
+        if !comparison.is_eq() {
             return comparison;
         }
-        0
+        Ordering::Equal
     }
 
     // fix.go:1054
-    fn compare_module_specifiers_for_sorting(&self, a: &Fix, b: &Fix) -> i32 {
+    fn compare_module_specifiers_for_sorting(&self, a: &Fix, b: &Fix) -> Ordering {
         let res = self.compare_module_specifiers_for_ranking(a, b);
-        if res != 0 {
+        if !res.is_eq() {
             return res;
         }
         // Sort ./foo before ../foo for equal-length specifiers
         if a.module_specifier.starts_with("./") && !b.module_specifier.starts_with("./") {
-            return -1;
+            return Ordering::Less;
         }
         if b.module_specifier.starts_with("./") && !a.module_specifier.starts_with("./") {
-            return 1;
+            return Ordering::Greater;
         }
         match a.module_specifier.cmp(&b.module_specifier) {
-            std::cmp::Ordering::Less => return -1,
-            std::cmp::Ordering::Greater => return 1,
-            std::cmp::Ordering::Equal => {}
+            Ordering::Less => return Ordering::Less,
+            Ordering::Greater => return Ordering::Greater,
+            Ordering::Equal => {}
         }
         match a.import_kind.0.cmp(&b.import_kind.0) {
-            std::cmp::Ordering::Less => return -1,
-            std::cmp::Ordering::Greater => return 1,
-            std::cmp::Ordering::Equal => {}
+            Ordering::Less => return Ordering::Less,
+            Ordering::Greater => return Ordering::Greater,
+            Ordering::Equal => {}
         }
         // !!! further tie-breakers? In practice this is only called on fixes with the same name
-        0
+        Ordering::Equal
     }
 
     // fix.go:1076
-    fn compare_node_core_module_specifiers(&self, a: &str, b: &str) -> i32 {
+    fn compare_node_core_module_specifiers(&self, a: &str, b: &str) -> Ordering {
         if a.starts_with("node:") && !b.starts_with("node:") {
             if self.should_use_uri_style_node_core_modules.is_true() {
-                return -1;
+                return Ordering::Less;
             } else if self.should_use_uri_style_node_core_modules.is_false() {
-                return 1;
+                return Ordering::Greater;
             }
-            return 0;
+            return Ordering::Equal;
         }
         if b.starts_with("node:") && !a.starts_with("node:") {
             if self.should_use_uri_style_node_core_modules.is_true() {
-                return 1;
+                return Ordering::Greater;
             } else if self.should_use_uri_style_node_core_modules.is_false() {
-                return -1;
+                return Ordering::Less;
             }
         }
-        0
+        Ordering::Equal
     }
 }
 
@@ -1185,7 +1577,8 @@ impl View {
 fn is_fix_possibly_re_exporting_importing_file(fix: &Fix, importing_file_name: &str) -> bool {
     if fix.is_re_export && is_index_file_name(&fix.module_file_name) {
         let re_export_dir = tspath::get_directory_path(&fix.module_file_name);
-        return importing_file_name.starts_with(&tspath::ensure_trailing_directory_separator(&re_export_dir));
+        return importing_file_name
+            .starts_with(&tspath::ensure_trailing_directory_separator(&re_export_dir));
     }
     false
 }
@@ -1198,7 +1591,10 @@ fn is_index_file_name(file_name: &str) -> bool {
     if file_name.len() <= last_slash + 1 {
         return false;
     }
-    matches!(&file_name[last_slash + 1..], "index.js" | "index.jsx" | "index.d.ts" | "index.ts" | "index.tsx")
+    matches!(
+        &file_name[last_slash + 1..],
+        "index.js" | "index.jsx" | "index.d.ts" | "index.ts" | "index.tsx"
+    )
 }
 
 // fix.go:1123
@@ -1216,69 +1612,118 @@ fn promote_from_type_only(
         Kind::ImportSpecifier => {
             let spec = alias_declaration.as_import_specifier();
             if spec.is_type_only {
-                if let Some(spec_parent) = alias_declaration.parent().filter(|p| p.kind() == Kind::NamedImports) {
+                if let Some(spec_parent) =
+                    alias_declaration.parent().filter(|p| p.kind() == Kind::NamedImports)
+                {
                     let named_imports_node = spec_parent.as_named_imports();
                     let elements = named_imports_node.elements.nodes();
                     if elements.len() > 1 {
                         // Create a synthetic specifier with isTypeOnly=false to compute sorted position
-                        let property_name = spec.property_name().map(|p| changes.node_factory.new_identifier(p.text()));
+                        let property_name = spec
+                            .property_name()
+                            .map(|p| changes.node_factory.new_identifier(p.text()));
                         let new_specifier = changes.node_factory.new_import_specifier(
                             false, // isTypeOnly = false
                             property_name,
                             changes.node_factory.new_identifier(spec.name().text()),
                         );
-                        let (specifier_comparer, _) = lsutil::get_named_import_specifier_comparer_with_detection(
-                            spec_parent.parent().unwrap().parent().unwrap(), // ImportDeclaration
-                            Some(source_file),
-                            preferences,
+                        let (specifier_comparer, _) =
+                            lsutil::get_named_import_specifier_comparer_with_detection(
+                                spec_parent.parent().unwrap().parent().unwrap(), // ImportDeclaration
+                                Some(source_file),
+                                preferences,
+                            );
+                        let insertion_index = lsutil::get_import_specifier_insertion_index(
+                            elements,
+                            new_specifier,
+                            &*specifier_comparer,
                         );
-                        let insertion_index = lsutil::get_import_specifier_insertion_index(elements, new_specifier, &*specifier_comparer);
-                        let current_index = elements.iter().position(|&e| e == alias_declaration).map_or(-1, |i| i as i64);
-                        if insertion_index as i64 != current_index {
+                        let current_index = elements.iter().position(|&e| e == alias_declaration);
+                        if Some(insertion_index) != current_index {
                             changes.delete(source_file, alias_declaration);
-                            changes.insert_import_specifier_at_index(source_file, new_specifier, spec_parent, insertion_index);
+                            changes.insert_import_specifier_at_index(
+                                source_file,
+                                new_specifier,
+                                spec_parent,
+                                insertion_index,
+                            );
                             return alias_declaration;
                         }
                     }
                     // If no re-sorting needed, just remove the 'type' keyword
-                    let first_token = lsutil::get_first_token(alias_declaration, source_file).unwrap();
-                    let type_keyword_pos = scanner::get_token_pos_of_node(first_token, source_file, false);
+                    let first_token =
+                        lsutil::get_first_token(alias_declaration, source_file).unwrap();
+                    let type_keyword_pos =
+                        scanner::get_token_pos_of_node(first_token, source_file, false);
                     let target_node = spec.property_name().unwrap_or_else(|| spec.name());
-                    let target_pos = scanner::get_token_pos_of_node(target_node, source_file, false);
+                    let target_pos =
+                        scanner::get_token_pos_of_node(target_node, source_file, false);
                     changes.delete_range(source_file, TextRange::new(type_keyword_pos, target_pos));
                 }
                 alias_declaration
             } else {
                 // The parent import clause is type-only
-                let Some(spec_parent) = alias_declaration.parent().filter(|p| p.kind() == Kind::NamedImports) else {
+                let Some(spec_parent) =
+                    alias_declaration.parent().filter(|p| p.kind() == Kind::NamedImports)
+                else {
                     panic!("ImportSpecifier parent must be NamedImports");
                 };
-                let Some(clause) = spec_parent.parent().filter(|p| p.kind() == Kind::ImportClause) else {
+                let Some(clause) = spec_parent.parent().filter(|p| p.kind() == Kind::ImportClause)
+                else {
                     panic!("NamedImports parent must be ImportClause");
                 };
-                promote_import_clause(changes, clause, compiler_options, source_file, preferences, convert_existing_to_type_only, Some(alias_declaration));
+                promote_import_clause(
+                    changes,
+                    clause,
+                    compiler_options,
+                    source_file,
+                    preferences,
+                    convert_existing_to_type_only,
+                    Some(alias_declaration),
+                );
                 clause
             }
         }
 
         Kind::ImportClause => {
-            promote_import_clause(changes, alias_declaration, compiler_options, source_file, preferences, convert_existing_to_type_only, Some(alias_declaration));
+            promote_import_clause(
+                changes,
+                alias_declaration,
+                compiler_options,
+                source_file,
+                preferences,
+                convert_existing_to_type_only,
+                Some(alias_declaration),
+            );
             alias_declaration
         }
 
         Kind::NamespaceImport => {
             // Promote the parent import clause
-            let Some(clause) = alias_declaration.parent().filter(|p| p.kind() == Kind::ImportClause) else {
+            let Some(clause) =
+                alias_declaration.parent().filter(|p| p.kind() == Kind::ImportClause)
+            else {
                 panic!("NamespaceImport parent must be ImportClause");
             };
-            promote_import_clause(changes, clause, compiler_options, source_file, preferences, convert_existing_to_type_only, Some(alias_declaration));
+            promote_import_clause(
+                changes,
+                clause,
+                compiler_options,
+                source_file,
+                preferences,
+                convert_existing_to_type_only,
+                Some(alias_declaration),
+            );
             clause
         }
 
         Kind::ImportEqualsDeclaration => {
             // Remove the 'type' keyword (which is the second token: 'import' 'type' name '=' ...)
             // The type keyword is after 'import' and before the name
-            let mut scan = scanner::get_scanner_for_source_file(source_file, alias_declaration.pos());
+            let mut scan = scanner::get_scanner_for_source_file(
+                source_file,
+                alias_declaration.pos().expect_source("parsed declarations have source positions"),
+            );
             // Skip 'import' keyword to get to 'type'
             scan.scan();
             delete_type_keyword(changes, source_file, scan.token_start());
@@ -1302,12 +1747,18 @@ fn promote_import_clause(
     let import_clause = import_clause_node.as_import_clause();
     // Delete the 'type' keyword
     if import_clause.phase_modifier() == Kind::TypeKeyword {
-        delete_type_keyword(changes, source_file, import_clause_node.pos());
+        delete_type_keyword(
+            changes,
+            source_file,
+            import_clause_node.pos().expect_source("parsed import clauses have source positions"),
+        );
     }
 
     // Handle .ts extension conversion to .js if necessary
     if compiler_options.allow_importing_ts_extensions.is_false() {
-        let module_specifier = tsrs_checker::try_get_module_specifier_from_declaration(import_clause_node.parent().unwrap());
+        let module_specifier = tsrs_checker::try_get_module_specifier_from_declaration(
+            import_clause_node.parent().unwrap(),
+        );
         if module_specifier.is_some() {
             // Note: We can't check ResolvedUsingTsExtension without program, so we'll skip this optimization
             // The fix will still work, just might not change .ts to .js extensions in all cases
@@ -1318,11 +1769,17 @@ fn promote_import_clause(
     // If convertExistingToTypeOnly is true, we need to add 'type' to other specifiers
     // in the same import declaration
     if convert_existing_to_type_only.is_true() {
-        if let Some(named_imports) = import_clause.named_bindings.filter(|n| n.kind() == Kind::NamedImports) {
+        if let Some(named_imports) =
+            import_clause.named_bindings.filter(|n| n.kind() == Kind::NamedImports)
+        {
             let named_imports_data = named_imports.as_named_imports();
             if named_imports_data.elements.nodes().len() > 1 {
                 // Check if the list is sorted and if we need to reorder
-                let (_, is_sorted) = lsutil::get_named_import_specifier_comparer_with_detection(import_clause_node.parent().unwrap(), Some(source_file), preferences);
+                let (_, is_sorted) = lsutil::get_named_import_specifier_comparer_with_detection(
+                    import_clause_node.parent().unwrap(),
+                    Some(source_file),
+                    preferences,
+                );
 
                 // If the alias declaration is an ImportSpecifier and the list is sorted,
                 // move it to index 0 (since it will be the only non-type-only import)
@@ -1331,13 +1788,22 @@ fn promote_import_clause(
                 {
                     let alias_declaration = alias_declaration.unwrap();
                     // Find the index of the alias declaration
-                    let alias_index = named_imports_data.elements.nodes().iter().position(|&e| e == alias_declaration);
+                    let alias_index = named_imports_data
+                        .elements
+                        .nodes()
+                        .iter()
+                        .position(|&e| e == alias_declaration);
                     // If not already at index 0, move it there
                     if alias_index.is_some_and(|i| i > 0) {
                         // Delete the specifier from its current position
                         changes.delete(source_file, alias_declaration);
                         // Insert it at index 0
-                        changes.insert_import_specifier_at_index(source_file, alias_declaration, named_imports, 0);
+                        changes.insert_import_specifier_at_index(
+                            source_file,
+                            alias_declaration,
+                            named_imports,
+                            0,
+                        );
                     }
                 }
 
@@ -1346,7 +1812,9 @@ fn promote_import_clause(
                     let spec = element.as_import_specifier();
                     // Skip the specifier being promoted (if aliasDeclaration is an ImportSpecifier)
                     if let Some(alias_declaration) = alias_declaration {
-                        if alias_declaration.kind() == Kind::ImportSpecifier && element == alias_declaration {
+                        if alias_declaration.kind() == Kind::ImportSpecifier
+                            && element == alias_declaration
+                        {
                             continue;
                         }
                     }
@@ -1363,7 +1831,7 @@ fn promote_import_clause(
 // fix.go:1293
 // deleteTypeKeyword deletes the 'type' keyword token starting at the given position,
 // including any trailing whitespace.
-fn delete_type_keyword(changes: &mut change::Tracker, source_file: P<SourceFile>, start_pos: i32) {
+fn delete_type_keyword(changes: &mut change::Tracker, source_file: P<SourceFile>, start_pos: u32) {
     let scan = scanner::get_scanner_for_source_file(source_file, start_pos);
     if scan.token() != Kind::TypeKeyword {
         return;
@@ -1372,7 +1840,9 @@ fn delete_type_keyword(changes: &mut change::Tracker, source_file: P<SourceFile>
     let mut type_end = scan.token_end();
     // Skip trailing whitespace
     let text = source_file.text().as_bytes();
-    while (type_end as usize) < text.len() && (text[type_end as usize] == b' ' || text[type_end as usize] == b'\t') {
+    while (type_end as usize) < text.len()
+        && (text[type_end as usize] == b' ' || text[type_end as usize] == b'\t')
+    {
         type_end += 1;
     }
     changes.delete_range(source_file, TextRange::new(type_start, type_end));
@@ -1400,12 +1870,18 @@ fn get_module_specifier_text(promoted_declaration: P<Node>) -> String {
 }
 
 // fix.go:1325
-// returns `-1` if `a` is better than `b`
-fn compare_module_specifier_relativity(a: &Fix, b: &Fix, preferences: &modulespecifiers::UserPreferences) -> i32 {
+// Returns `Ordering::Less` if `a` is better than `b`.
+fn compare_module_specifier_relativity(
+    a: &Fix,
+    b: &Fix,
+    preferences: &modulespecifiers::UserPreferences,
+) -> Ordering {
     match preferences.import_module_specifier_preference {
-        ImportModuleSpecifierPreference::NonRelative | ImportModuleSpecifierPreference::ProjectRelative => {
-            tsrs_core::compare_booleans(a.module_specifier_kind == ResultKind::Relative, b.module_specifier_kind == ResultKind::Relative)
-        }
-        _ => 0,
+        ImportModuleSpecifierPreference::NonRelative
+        | ImportModuleSpecifierPreference::ProjectRelative => tsrs_core::compare_booleans(
+            a.module_specifier_kind == ResultKind::Relative,
+            b.module_specifier_kind == ResultKind::Relative,
+        ),
+        _ => Ordering::Equal,
     }
 }

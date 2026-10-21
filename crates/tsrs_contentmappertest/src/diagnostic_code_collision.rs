@@ -1,9 +1,14 @@
-use tsrs_contentmapper::{Diagnostic, ProtocolJson, TransformParams, TransformResult, METHOD_INITIALIZE, METHOD_TRANSFORM};
+use tsrs_contentmapper::{
+    Diagnostic, METHOD_INITIALIZE, METHOD_TRANSFORM, ProtocolJson, TransformParams, TransformResult,
+};
 use tsrs_core::json::Value;
 use tsrs_diagnostics as diagnostics;
 use tsrs_ipc as ipc;
 
-use crate::protocol::{identity_mapped_output, initialize_result, no_notifications, testHandler, unexpected_method, unmarshal_params};
+use crate::protocol::{
+    identity_mapped_output, initialize_result, no_notifications, testHandler, unexpected_method,
+    unmarshal_params,
+};
 
 // diagnostic_code_collision.go:13
 pub(crate) struct diagnosticCodeCollisionHandler;
@@ -18,8 +23,10 @@ impl ipc::Handler for diagnosticCodeCollisionHandler {
             METHOD_TRANSFORM => {
                 let p: TransformParams = unmarshal_params(params)?;
                 let mapped_output = identity_mapped_output(&p.content)?;
-                // strings.Index: -1 when absent.
-                let start = p.content.find("foo").map_or(-1, |start| start as i64);
+                let start = i64::try_from(
+                    p.content.find("foo").expect("collision test input contains foo"),
+                )
+                .expect("diagnostic position exceeds protocol i64");
                 Ok(TransformResult {
                     mapped_output,
                     diagnostics: vec![Diagnostic {
@@ -36,7 +43,11 @@ impl ipc::Handler for diagnosticCodeCollisionHandler {
         }
     }
 
-    fn handle_notification(&self, _method: &str, _params: Option<&Value>) -> Result<(), ipc::Error> {
+    fn handle_notification(
+        &self,
+        _method: &str,
+        _params: Option<&Value>,
+    ) -> Result<(), ipc::Error> {
         no_notifications()
     }
 }

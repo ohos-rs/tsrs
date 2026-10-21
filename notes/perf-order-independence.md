@@ -10,7 +10,9 @@ with tsgo, and checks the result with random assignments.
 **Open (2026-10-08):** three programs outside these corpora still print assignment-dependent output, all through
 typescript-go's own history dependence: TanStack/router (a base constraint cut short by the depth guard and cached),
 sequelize (a circular property type entered through variance computations) and rxjs (which elaboration the relater
-prints). None is fixed; notes/open-history-dependence.md has the evidence and the fixes measured.
+prints). None is fixed; notes/open-history-dependence.md has the evidence and the fixes measured. Two more since
+(2026-10-12, sections 5 and 6 there): backstage's TS2589, charged to the expression that first checks a declaration
+(fixed), and dify's instantiation depth limit, reached on a checker that has cached less (open).
 
 ## The diffs
 
@@ -109,12 +111,14 @@ Before the fix the 40k-error corpus gave four distinct outputs over the same con
 - **Base constraints cut by the depth guard** (`getResolvedBaseConstraint`): a type first reached ten levels down in
   another type's constraint is cut short, and the cut result is cached for every later caller. Seen on TanStack/router
   (open, notes/open-history-dependence.md).
-- **Relation cache and elaboration:** which elaboration path the relater reports depends on what the relation cache
-  holds. Seen on rxjs (PR #212; open, notes/open-history-dependence.md).
+- **Elaboration depth:** which elaboration path the relater reports depends on whether a type reference was first
+  created from a type annotation (`ObjectFlagsFromTypeNode` changes its recursion identity, so `isDeeplyNestedType`
+  stops at a different level). Seen on rxjs (PR #212; open, notes/open-history-dependence.md section 3).
 - **Budget errors** (TS2589 instantiation depth and count, TS2859 relation complexity, TS2590 for a union whose
   subtype reduction is estimated to take more than 1,000,000 comparisons): they count work, and how much work a
   comparison takes depends on what the checker already resolved, so what is cached can decide whether they fire. Not
-  observed under random assignments on these corpora. A second shape was reported on a private monorepo (issue #218)
+  observed under random assignments on these corpora; seen since on backstage (TS2589 count, fixed) and dify (depth,
+  open), notes/open-history-dependence.md sections 5 and 6. A second shape was reported on a private monorepo (issue #218)
   and is closed: Go caches what it builds from the error type a TS2590 returns (an intersection split in halves, a
   union of two unions, an instantiation, a relation compared through it), so a checker reports the error only the
   first time it evaluates the type; by default tsrs does not cache a result computed while a TS2590 was reported, and
@@ -157,10 +161,10 @@ TSGO=tsgo-ref TSRS_CHECKER_ASSIGNMENT=locality tools/oracle/emit/monorepo.sh <mo
 
 ## Gate
 
-`tools/ci/determinism.sh` (CI's `check-and-test` job, on every pull request and push to main) is the standing check of
+`tools/ci/determinism.sh` (CI's `determinism` job, on every pull request and push to main) is the standing check of
 this note's claim: on xstate-main, webpack, nuxt and drizzle-orm and on every `testdata/regressions` case, the default
 mode at 2 and 4 checkers (three runs each; stealing moves files between checkers) and `random:1..6` at 2 and 4 checkers
-must print the single-threaded run's bytes and exit status (504 runs, about a minute on 8 vCPUs). Its `--self-test`
+must print the single-threaded run's bytes and exit status (720 runs with the current 36 regression cases). Its `--self-test`
 checks that an assignment-dependent binary fails it. Positive control, 2026-10-07: a tsrs 0.4.0 build from 2026-10-06
 (before the fixes of notes/fix-history-dependent-diagnostics.md) failed nuxt at 4 checkers under five of the six seeds
 (the builder-env.ts TS2320 lost) and drizzle-orm at 4 checkers under seed 4 (the cli-check.test.ts TS2769 gained);

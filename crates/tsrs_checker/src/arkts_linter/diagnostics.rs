@@ -16,9 +16,13 @@ impl ArkTsLinter<'_> {
         }
         self.strict_diagnostics.retain(|d| !deleted.contains(d));
     }
+    #[expect(
+        clippy::fn_params_excessive_bools,
+        reason = "the Go signature carries these flags; naming them as enums would not clarify them"
+    )]
     fn filter_library_call_diagnostic(&self, node: P<Node>, diagnostic: P<Diagnostic>, library: bool, filtered: bool, oh_modules_ets: bool, fallback: bool) -> bool {
         let error_type = self.strict_diagnostic_error_type(diagnostic);
-        let filterable = match error_type { StrictErrorType::Unknown => true, StrictErrorType::Null => library, StrictErrorType::PossiblyUndefined => library && filtered, _ => false };
+        let filterable = match error_type { StrictErrorType::Unknown => true, StrictErrorType::Null => library, StrictErrorType::PossiblyUndefined => library && filtered, StrictErrorType::NoError => false };
         if diagnostic.category() == Category::Warning || !filterable || !self.is_valid_library_call_diagnostic_range(node, diagnostic) { return false; }
         if fallback && oh_modules_ets && error_type != StrictErrorType::Unknown { diagnostic.set_category(Category::Warning); return false; }
         true
@@ -44,16 +48,35 @@ impl ArkTsLinter<'_> {
     }
     fn is_valid_library_call_diagnostic_range(&self, node: P<Node>, diagnostic: P<Diagnostic>) -> bool {
         let start = get_token_pos_of_node(node, self.file, false);
-        let full_call = diagnostic.len() != 0 && diagnostic.end() == node.end() && diagnostic.pos() >= start;
-        let valid_argument = self.is_valid_library_call_argument_position(node, diagnostic.pos());
+        let full_call = diagnostic.len().is_some_and(|len| len != 0)
+            && diagnostic.end() == node.end().source_offset()
+            && diagnostic.pos().is_some_and(|pos| pos >= start);
+        let valid_argument =
+            self.is_valid_library_call_argument_position(node, diagnostic.pos().unwrap_or(0));
         match diagnostic.code() { 2322 | 2345 => valid_argument, 2769 => full_call || valid_argument, 2532 => full_call, _ => false }
     }
-    fn is_valid_library_call_argument_position(&self, node: P<Node>, position: i32) -> bool {
+    fn is_valid_library_call_argument_position(&self, node: P<Node>, position: u32) -> bool {
         let Some(arguments) = node.argument_list() else { return false; };
-        if position < arguments.pos() || position >= arguments.end() { return false; }
+        if position < arguments.pos().source_offset().unwrap_or(0)
+            || position >= arguments.end().source_offset().unwrap_or(0)
+        {
+            return false;
+        }
         for argument in arguments.nodes() {
-            let (begin, end) = if ast::is_arrow_function(*argument) { let body = argument.body().unwrap(); (body.pos(), body.end()) }
-            else if ast::is_call_expression(*argument) { let Some(nested) = argument.argument_list() else { continue; }; (nested.pos(), nested.end()) }
+            let (begin, end) = if ast::is_arrow_function(*argument) {
+                let body = argument.body().unwrap();
+                (
+                    body.pos().source_offset().unwrap_or(0),
+                    body.end().source_offset().unwrap_or(0),
+                )
+            }
+            else if ast::is_call_expression(*argument) {
+                let Some(nested) = argument.argument_list() else { continue; };
+                (
+                    nested.pos().source_offset().unwrap_or(0),
+                    nested.end().source_offset().unwrap_or(0),
+                )
+            }
             else { continue; };
             if position >= begin && position < end { return false; }
         }

@@ -33,6 +33,7 @@ impl Tristate {
         self == Tristate::Unknown
     }
 
+    #[must_use]
     pub fn default_if_unknown(self, value: Tristate) -> Tristate {
         if self == Tristate::Unknown {
             return value;
@@ -52,7 +53,7 @@ impl Tristate {
         match self {
             Tristate::True => "true",
             Tristate::False => "false",
-            _ => "null",
+            Tristate::Unknown => "null",
         }
     }
 
@@ -73,9 +74,5 @@ impl std::fmt::Display for Tristate {
 
 #[inline]
 pub fn bool_to_tristate(b: bool) -> Tristate {
-    if b {
-        Tristate::True
-    } else {
-        Tristate::False
-    }
+    if b { Tristate::True } else { Tristate::False }
 }

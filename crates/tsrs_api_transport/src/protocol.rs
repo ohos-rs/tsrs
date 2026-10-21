@@ -11,14 +11,23 @@ pub trait ProtocolReader: Send {
 
 pub trait ProtocolWriter: Send {
     /// Writes a server-to-client request. `params` is JSON text (None = omitted / Go nil).
-    fn write_request(&mut self, id: &Id, method: &str, params: Option<&[u8]>) -> Result<(), TransportError>;
-    fn write_notification(&mut self, method: &str, params: Option<&[u8]>) -> Result<(), TransportError>;
+    fn write_request(
+        &mut self,
+        id: &Id,
+        method: &str,
+        params: Option<&[u8]>,
+    ) -> Result<(), TransportError>;
+    fn write_notification(
+        &mut self,
+        method: &str,
+        params: Option<&[u8]>,
+    ) -> Result<(), TransportError>;
     fn write_response(&mut self, id: &Id, result: &Response) -> Result<(), TransportError>;
     fn write_error(&mut self, id: &Id, err: &ResponseError) -> Result<(), TransportError>;
 }
 
-/// Which wire protocol a connection speaks. `--api` alone is MessagePack + sync connection;
-/// `--api --async` is JSON-RPC + async connection (server.go Run).
+/// Which wire protocol a connection speaks. `--api` alone is `MessagePack` + sync connection; `--api --async`
+/// is JSON-RPC + async connection (server.go Run).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WireProtocol {
     MessagePack,

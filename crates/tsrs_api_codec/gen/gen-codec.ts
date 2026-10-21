@@ -10,6 +10,7 @@
 // unionBitWidth, childType, ...) are ports of the pinned generate-encoder.ts functions of the same name; keep
 // them in sync with the pinned source when the TypeScript commit moves. Only the emitted language differs.
 
+import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { KindType, MemberInfo, NodeType, Type } from "../../../tools/gen-ast/schema.ts";
@@ -240,7 +241,8 @@ function genGetChildrenPropertyMask() {
             if (ct === "modifierList") check = `has_modifiers(n.modifiers())`;
             else if (ct === "rawNodeList") check = `!${getter(m)}.is_empty()`;
             else check = `present(${getter(m)})`;
-            return `((${check} as u8) << ${i})`;
+            const shifted = i === 0 ? `${check} as u8` : `(${check} as u8) << ${i}`;
+            return info.childProps.length === 1 ? shifted : `(${shifted})`;
         });
         w(`        ${kindPat(node)} => {`);
         w(`            let n = node.${cast(node)};`);
@@ -266,9 +268,11 @@ function genGetNodeCommonData() {
         else if (hasAutoEncodedData(info)) {
             const parts: string[] = [];
             const pre: string[] = [];
-            for (const { member: m, bitPos } of getAutoEncodedLayout(info)) {
+            const layout = getAutoEncodedLayout(info);
+            for (const { member: m, bitPos } of layout) {
                 if (!isSyntaxKindUnion(m)) {
-                    parts.push(`((${getter(m)} as u32) << ${24 + bitPos})`);
+                    const shifted = `(${getter(m)} as u32) << ${24 + bitPos}`;
+                    parts.push(layout.length === 1 ? shifted : `(${shifted})`);
                 }
                 else {
                     const kinds = unionKindValues(m.declaredType);
@@ -277,7 +281,8 @@ function genGetNodeCommonData() {
                     if (m.optional) kinds.forEach((k, i) => arms.push(`Kind::${k.name} => ${i + 1}`));
                     else kinds.forEach((k, i) => i > 0 && arms.push(`Kind::${k.name} => ${i}`));
                     pre.push(`let ${v}: u32 = match ${getter(m)} { ${arms.join(", ")}, _ => 0 };`);
-                    parts.push(`(${v} << ${24 + bitPos})`);
+                    const shifted = `${v} << ${24 + bitPos}`;
+                    parts.push(layout.length === 1 ? shifted : `(${shifted})`);
                 }
             }
             w(`        ${kindPat(node)} => {`);
@@ -318,7 +323,7 @@ function genRecordExtendedData() {
     for (const node of api.nodes()) {
         const info = analyzeNode(node);
         if (info.dataType !== "extended") continue;
-        w(`        ${kindPat(node)} => record_extended_data_${snake(node.name)}(node, cx)?,`);
+        w(`        ${kindPat(node)} => { record_extended_data_${snake(node.name)}(node, cx)?; },`);
     }
     w(`        k => unreachable!("record_extended_data: {k:?} is not an extended data node"),`);
     w("    }");
@@ -383,7 +388,7 @@ function argFor(m: MemberInfo, vars: Map<MemberInfo, string>): string {
 function genCreateStringNode() {
     w("impl Decoder<'_> {");
     w("    /// Go `createStringNode`.");
-    w("    pub(crate) fn create_string_node(&mut self, kind: Kind, data: u32, common_data: u32) -> Result<P<Node>, DecodeError> {");
+    w("    pub(crate) fn create_string_node(&self, kind: Kind, data: u32, common_data: u32) -> Result<P<Node>, DecodeError> {");
     w("        let text = self.get_string(data & NODE_DATA_STRING_INDEX_MASK)?;");
     w("        let f = &self.factory;");
     w("        let _ = common_data;");
@@ -411,7 +416,7 @@ function genCreateStringNode() {
 
 function genCreateExtendedNode() {
     w("    /// Go `createExtendedNode`: dispatches to the hand-written `decode_extended_data_*` functions.");
-    w("    pub(crate) fn create_extended_node(&mut self, kind: Kind, data: u32, child_indices: &[usize], common_data: u32) -> Result<P<Node>, DecodeError> {");
+    w("    pub(crate) fn create_extended_node(&self, kind: Kind, data: u32, child_indices: &[usize], common_data: u32) -> Result<P<Node>, DecodeError> {");
     w("        match kind {");
     for (const node of api.nodes()) {
         const info = analyzeNode(node);
@@ -442,7 +447,7 @@ function genCreateChildrenNode() {
     }
 
     w("    /// Go `createChildrenNode`.");
-    w("    pub(crate) fn create_children_node(&mut self, kind: Kind, data: u32, child_indices: &[usize], common_data: u32) -> Result<P<Node>, DecodeError> {");
+    w("    pub(crate) fn create_children_node(&self, kind: Kind, data: u32, child_indices: &[usize], common_data: u32) -> Result<P<Node>, DecodeError> {");
     w("        let mask = (data & NODE_DATA_CHILD_MASK) as u8;");
     w("        let _ = (mask, common_data);");
     w("        let f = self.factory.clone();");
@@ -463,10 +468,10 @@ function genCreateChildrenNode() {
             const v = ident(cp.goParamName());
             // The pinned Go decoder fills `d.allocNodeSlice(n)` (a zero-length slice) by index, so it panics with
             // "index out of range [0] with length 0" for any non-empty raw list; reproduce that failure.
-            if (ct === "rawNodeList") pre.push(`if !child_indices.is_empty() { return Err(DecodeError::GoDecoderPanic(format!("runtime error: index out of range [0] with length 0"))); }`, `let ${v}: &'static [P<Node>] = &[];`);
-            else if (ct === "nodeList") pre.push(hasCommonData ? `let ${v} = from_list(self.list_at(child_indices.first().copied().unwrap_or(0))?)?;` : `let ${v} = from_list(self.single_node_list_child(child_indices)?)?;`);
-            else if (ct === "modifierList") pre.push(`let ${v} = self.modifier_list_at(child_indices.first().copied().unwrap_or(0))?;`);
-            else pre.push(`let ${v} = from_node(self.single_child(child_indices)?)?;`);
+            if (ct === "rawNodeList") pre.push(`if !child_indices.is_empty() { return Err(DecodeError::GoDecoderPanic("runtime error: index out of range [0] with length 0".to_string())); }`, `let ${v}: &'static [P<Node>] = &[];`);
+            else if (ct === "nodeList") pre.push(hasCommonData ? `let ${v} = from_list(self.list_at(child_indices.first().copied().unwrap_or(0)))?;` : `let ${v} = from_list(self.single_node_list_child(child_indices))?;`);
+            else if (ct === "modifierList") pre.push(`let ${v} = self.modifier_list_at(child_indices.first().copied().unwrap_or(0));`);
+            else pre.push(`let ${v} = from_node(self.single_child(child_indices))?;`);
             childVars.set(cp, v);
         }
         else if (info.childProps.length > 1) {
@@ -474,10 +479,10 @@ function genCreateChildrenNode() {
             info.childProps.forEach((m, i) => {
                 const ct = childType(m);
                 const v = ident(m.goParamName());
-                if (ct === "modifierList") pre.push(`let ${v} = self.modifier_list_at(it.next_if(mask, ${i}))?;`);
-                else if (ct === "rawNodeList") pre.push(`let ${v} = self.list_at(it.next_if(mask, ${i}))?.map_or(&[][..], |l| l.nodes());`);
-                else if (ct === "nodeList") pre.push(`let ${v} = from_list(self.list_at(it.next_if(mask, ${i}))?)?;`);
-                else pre.push(`let ${v} = from_node(self.node_at_opt(it.next_if(mask, ${i}))?)?;`);
+                if (ct === "modifierList") pre.push(`let ${v} = self.modifier_list_at(it.next_if(mask, ${i}));`);
+                else if (ct === "rawNodeList") pre.push(`let ${v} = self.list_at(it.next_if(mask, ${i})).map_or(&[][..], |l| l.nodes());`);
+                else if (ct === "nodeList") pre.push(`let ${v} = from_list(self.list_at(it.next_if(mask, ${i})))?;`);
+                else pre.push(`let ${v} = from_node(self.node_at_opt(it.next_if(mask, ${i})))?;`);
                 childVars.set(m, v);
             });
         }
@@ -529,8 +534,6 @@ w("// Code generated by crates/tsrs_api_codec/gen/gen-codec.ts from ts-ref/tools
 w("//");
 w("// Rust counterpart of the pinned tsc/internal/api/encoder/{encoder,decoder}_generated.go.");
 w();
-w("#![allow(clippy::all, unused_parens, unused_variables, unused_mut, non_snake_case)]");
-w();
 w("use tsrs_ast::*;");
 w("use tsrs_core::{alloc_slice, P};");
 w();
@@ -548,7 +551,15 @@ genCreateStringNode();
 genCreateExtendedNode();
 genCreateChildrenNode();
 
-const generated = lines.join("\n");
+// Compare the same formatting that cargo fmt applies to the checked-in file.
+const generated = execFileSync("rustfmt", [
+    "--edition", "2024",
+    "--config-path", path.resolve(crateRoot, "../..", ".rustfmt.toml"),
+], {
+    input: lines.join("\n"),
+    encoding: "utf8",
+    cwd: path.resolve(crateRoot, "../.."),
+});
 const coverage = genCoverage();
 if (process.argv.includes("--check")) {
     let ok = true;

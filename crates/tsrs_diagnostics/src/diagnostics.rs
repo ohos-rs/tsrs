@@ -114,10 +114,9 @@ static MESSAGES_BY_KEY: OnceLock<FxHashMap<&'static str, &'static Message>> = On
 
 fn messages_by_key() -> &'static FxHashMap<&'static str, &'static Message> {
     MESSAGES_BY_KEY.get_or_init(|| {
-        let mut messages = FxHashMap::with_capacity_and_hasher(ALL_MESSAGES.len(), Default::default());
-        for &message in ALL_MESSAGES.iter() {
-            messages.insert(message.key.0, message);
-        }
+        let mut messages =
+            FxHashMap::with_capacity_and_hasher(ALL_MESSAGES.len(), rustc_hash::FxBuildHasher);
+        messages.extend(ALL_MESSAGES.iter().map(|&message| (message.key.0, message)));
         messages
     })
 }
@@ -156,9 +155,7 @@ pub fn format_strings(text: &str, args: &[String]) -> String {
     while i < bytes.len() {
         if bytes[i] == b'{' {
             let mut j = i + 1;
-            while j < bytes.len() && bytes[j].is_ascii_digit() {
-                j += 1;
-            }
+            j += (j..bytes.len()).take_while(|&index| bytes[index].is_ascii_digit()).count();
             if j > i + 1 && j < bytes.len() && bytes[j] == b'}' {
                 let index = match text[i + 1..j].parse::<usize>() {
                     Ok(index) if index < args.len() => index,
@@ -178,7 +175,7 @@ pub fn format_strings(text: &str, args: &[String]) -> String {
 }
 
 pub fn stringify_args(args: &[&dyn fmt::Display]) -> Vec<String> {
-    args.iter().map(|arg| arg.to_string()).collect()
+    args.iter().map(std::string::ToString::to_string).collect()
 }
 
 pub fn new_ad_hoc_message(message: &str) -> &'static Message {

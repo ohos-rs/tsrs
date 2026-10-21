@@ -29,7 +29,12 @@ pub struct ProcessSpawner;
 
 impl Spawner for ProcessSpawner {
     // sys.go:68
-    fn spawn(&self, command: &[String], dir: &str, stderr: Option<Box<dyn Write + Send>>) -> Result<ReadWriteCloser, String> {
+    fn spawn(
+        &self,
+        command: &[String],
+        dir: &str,
+        stderr: Option<Box<dyn Write + Send>>,
+    ) -> Result<ReadWriteCloser, String> {
         spawn_process(command, dir, stderr)
     }
 }
@@ -39,10 +44,15 @@ impl Spawner for ProcessSpawner {
 // sys.go:73 (The errors are os/exec's texts: exec.Command's PATH lookup of a bare name, os.StartProcess's check of
 // the working directory, and `fork/exec` for a command that cannot be executed. A None stderr is Go's io.Discard:
 // the child writes it to the null device instead of to a copying thread.)
-pub fn spawn_process(command: &[String], dir: &str, stderr: Option<Box<dyn Write + Send>>) -> Result<ReadWriteCloser, String> {
+pub fn spawn_process(
+    command: &[String],
+    dir: &str,
+    stderr: Option<Box<dyn Write + Send>>,
+) -> Result<ReadWriteCloser, String> {
     // exec.Command(command[0], command[1:]...): a name without a slash is looked up in PATH.
     let name = command[0].as_str();
-    let path = if !name.is_empty() && !name.contains('/') { look_path(name)? } else { name.to_string() };
+    let path =
+        if !name.is_empty() && !name.contains('/') { look_path(name)? } else { name.to_string() };
     if path.is_empty() {
         return Err("exec: no command".to_string());
     }
@@ -178,16 +188,23 @@ fn look_path(file: &str) -> Result<String, String> {
     let path = std::env::var_os("PATH").unwrap_or_default();
     // filepath.SplitList returns no elements for an empty list.
     if !path.is_empty() {
-        for dir in std::env::split_paths(&path) {
+        if let Some(result) = std::env::split_paths(&path).into_iter().find_map(|dir| {
             // Unix shell semantics: path element "" means "."
             let dir = if dir.as_os_str().is_empty() { PathBuf::from(".") } else { dir };
             let path = dir.join(file);
             if is_executable(&path) {
                 if !path.is_absolute() {
-                    return Err(format!("exec: {}: cannot run executable found relative to current directory", quote(file)));
+                    return Some(Err(format!(
+                        "exec: {}: cannot run executable found relative to current directory",
+                        quote(file)
+                    )));
                 }
-                return Ok(path.to_string_lossy().into_owned());
+                return Some(Ok(path.to_string_lossy().into_owned()));
             }
+
+            None
+        }) {
+            return result;
         }
     }
     Err(format!("exec: {}: executable file not found in $PATH", quote(file)))
@@ -218,7 +235,9 @@ fn is_executable(file: &Path) -> bool {
 fn errno_text(err: &io::Error) -> String {
     let text = err.to_string();
     let text = match err.raw_os_error() {
-        Some(code) => text.strip_suffix(&format!(" (os error {code})")).unwrap_or(&text).to_string(),
+        Some(code) => {
+            text.strip_suffix(&format!(" (os error {code})")).unwrap_or(&text).to_string()
+        }
         None => text,
     };
     let mut chars = text.chars();

@@ -3,7 +3,7 @@
 //!
 //! In a CLI run where no declaration file is type-checked (`skipLibCheck` or `noCheck`), the parser parses the member
 //! list of an interface, class or type literal in a declaration file as usual, and if the list is plain (no
-//! diagnostic, no eager JSDoc, no comment directive, nothing whose binding reaches outside the list, and the arena can
+//! diagnostic, no eager `JSDoc`, no comment directive, nothing whose binding reaches outside the list, and the arena can
 //! discard what the list allocated: `tsrs_parser`'s `parse_member_list_lazily`), it throws the nodes away and keeps a
 //! `LazyNodeList` instead: the owner node, where the list starts and the parser context there. The owner's `NodeList`
 //! points at the record (a long-form `ThinSlice` whose slice is `LAZY_HEAD_DATA`). The binder skips the list and
@@ -24,7 +24,7 @@
 //! program is shared; `nodes` is written once by the forcing thread before its Release store of `DONE`, and read by
 //! other threads only after an Acquire load of `DONE`.
 
-use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::sync::{Condvar, Mutex, OnceLock};
 
 use tsrs_core::{OwnedCell, P};
@@ -38,6 +38,8 @@ pub const DEFERRED: u8 = 1;
 pub const UNBOUND: u8 = 2;
 pub const FORCING: u8 = 3;
 pub const DONE: u8 = 4;
+/// `FORCING`, with at least one reader committed to waiting on the record's stripe.
+const FORCING_WITH_WAITERS: u8 = 5;
 
 /// `tsrs_parser::ParsingContext::ClassMembers as u8` (asserted there).
 pub const CLASS_MEMBERS: u8 = 5;
@@ -75,8 +77,8 @@ pub struct LazyNodeList {
     /// Set right after the parser creates the owner node (the list is parsed first).
     owner: OwnedCell<Option<P<Node>>>,
     /// `pos` / `end` of the list (its `loc`); the parser resumes at `pos`, the end of the `{` token.
-    pub pos: i32,
-    pub end: i32,
+    pub pos: u32,
+    pub end: u32,
     /// The parser's context flags and enclosing parsing contexts at the list.
     pub context_flags: NodeFlags,
     pub parsing_contexts: u32,
@@ -113,25 +115,6 @@ fn wait_stripe(record: &LazyNodeList) -> &'static (Mutex<()>, Condvar) {
     &WAIT[(std::ptr::from_ref(record).addr() >> 6) % WAIT.len()]
 }
 
-/// `TSRS_LAZY_DTS=stats`: lists made lazy, deferred by the binder, parsed again (all, and while their file was
-/// bound), never reached by the binder.
-pub static STATS: [AtomicU64; 7] = [const { AtomicU64::new(0) }; 7];
-
-pub fn note(i: usize) {
-    // Relaxed: a statistics counter, read once at exit.
-    STATS[i].fetch_add(1, Ordering::Relaxed);
-}
-
-/// One line for `TSRS_LAZY_DTS=stats`.
-pub fn stats_line() -> String {
-    // Relaxed: statistics counters, read at exit.
-    let v: Vec<u64> = STATS.iter().map(|c| c.load(Ordering::Relaxed)).collect();
-    format!(
-        "lazy-dts: {} lists lazy, {} deferred by the binder, {} never reached by it, {} parsed again ({} while their file was bound); readers spent {:.1} ms parsing and binding, {:.1} ms waiting\n",
-        v[0], v[1], v[4], v[2], v[3], v[5] as f64 / 1e6, v[6] as f64 / 1e6
-    )
-}
-
 fn thread_token() -> u64 {
     thread_local! {
         static TOKEN: u8 = const { 0 };
@@ -140,7 +123,13 @@ fn thread_token() -> u64 {
 }
 
 impl LazyNodeList {
-    pub fn new(pos: i32, end: i32, parsing_context: u8, context_flags: NodeFlags, parsing_contexts: u32) -> LazyNodeList {
+    pub fn new(
+        pos: u32,
+        end: u32,
+        parsing_context: u8,
+        context_flags: NodeFlags,
+        parsing_contexts: u32,
+    ) -> LazyNodeList {
         LazyNodeList {
             head: &LAZY_HEAD_DATA,
             state: AtomicU8::new(PENDING),
@@ -164,7 +153,7 @@ impl LazyNodeList {
     /// `head` is the `head` field of a live `LazyNodeList` (a lazy `NodeList`'s long-form slice).
     pub(crate) unsafe fn from_head(head: &'static &'static [P<Node>]) -> &'static LazyNodeList {
         // SAFETY: `head` is the first field of a `repr(C)` `LazyNodeList` (this function's contract).
-        unsafe { &*std::ptr::from_ref(head).cast::<LazyNodeList>() }
+        unsafe { tsrs_core::ptr::arena_neighbor(head, 0) }
     }
 
     /// Whether binding the list adds to the owner symbol's `exports` (static members of a class) as well as to its
@@ -191,7 +180,6 @@ impl LazyNodeList {
 
     /// Binder: the list was skipped in this state; the next reader parses and binds it.
     pub fn defer(&self, ctx: P<LazyBindContext>) {
-        note(1);
         self.bind.set(Some(ctx));
         // Release: publishes `bind` with the state (the program is also shared only after binding).
         self.state.store(DEFERRED, Ordering::Release);
@@ -201,7 +189,6 @@ impl LazyNodeList {
     pub fn mark_unbound(&self) {
         // Relaxed: this thread (the file's binder) made every earlier transition of a list still `PENDING`.
         if self.state.load(Ordering::Relaxed) == PENDING {
-            note(4);
             // Release: as in `defer`.
             self.state.store(UNBOUND, Ordering::Release);
         }
@@ -214,8 +201,6 @@ impl LazyNodeList {
     /// Binder (while the file is bound, in a state the record cannot replay): parse the list now; the caller binds it
     /// right where it is, as if it had never been lazy.
     pub fn parse_now(&self, file: P<SourceFile>) -> &'static [P<Node>] {
-        note(2);
-        note(3);
         let nodes = (PARSE_HOOK.get().expect("lazy list parse hook"))(self, file);
         self.nodes.set(nodes);
         // Release: pairs with the Acquire loads of readers (the program is also shared only after binding).
@@ -235,7 +220,11 @@ impl LazyNodeList {
                 PENDING => return &[],
                 s @ (DEFERRED | UNBOUND) => {
                     // Acquire: as above; the record's `bind` was published with `DEFERRED`.
-                    if self.state.compare_exchange(s, FORCING, Ordering::Acquire, Ordering::Acquire).is_ok() {
+                    if self
+                        .state
+                        .compare_exchange(s, FORCING, Ordering::Acquire, Ordering::Acquire)
+                        .is_ok()
+                    {
                         // Relaxed: read back only by this thread; another thread only needs to see a different value.
                         self.forcer.store(thread_token(), Ordering::Relaxed);
                         return self.force(s == DEFERRED);
@@ -247,7 +236,6 @@ impl LazyNodeList {
                     if self.forcer.load(Ordering::Relaxed) == thread_token() {
                         return self.nodes.get();
                     }
-                    let t = std::time::Instant::now();
                     // Most lists take microseconds to parse and bind: spin before sleeping on the condvar.
                     let mut spins = 0;
                     // Acquire: as above.
@@ -255,23 +243,38 @@ impl LazyNodeList {
                         std::hint::spin_loop();
                         spins += 1;
                     }
+                    // Acquire on success: as for the loads above. On failure it makes a concurrent `DONE` and the
+                    // nodes it publishes visible before the check under the stripe lock. The forcing thread swaps
+                    // the state to `DONE`, so it either sees this registration and notifies, or wins the race and
+                    // this exchange fails without a reader going to sleep.
+                    let _ = self.state.compare_exchange(
+                        FORCING,
+                        FORCING_WITH_WAITERS,
+                        // The state value itself registers the waiter; there is no other data to release.
+                        Ordering::Acquire,
+                        // A failed exchange may observe `DONE` and must acquire the published nodes.
+                        Ordering::Acquire,
+                    );
                     let (lock, cv) = wait_stripe(self);
-                    let mut g = lock.lock().unwrap();
-                    // Acquire: as above.
-                    while self.state.load(Ordering::Acquire) == FORCING {
-                        g = cv.wait(g).unwrap();
-                    }
-                    // Relaxed: a statistics counter, read at exit.
-                    STATS[6].fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                    // Waits for the forcing thread without holding a run slot (`tsrs_core::runslots`).
+                    tsrs_core::runslots::blocking(|| {
+                        let mut g = lock.lock().unwrap();
+                        // Acquire: as above.
+                        while matches!(
+                            self.state.load(Ordering::Acquire),
+                            FORCING | FORCING_WITH_WAITERS
+                        ) {
+                            g = cv.wait(g).unwrap();
+                        }
+                    });
                 }
             }
         }
     }
 
     fn force(&self, bind: bool) -> &'static [P<Node>] {
-        note(2);
-        let t = std::time::Instant::now();
-        let file = crate::utilities_1::get_source_file_of_node(Some(self.owner())).expect("a lazy list's file");
+        let file = crate::utilities_1::get_source_file_of_node(Some(self.owner()))
+            .expect("a lazy list's file");
         // The reader may be inside a scratch region or another allocation scope: the tree is shared and permanent.
         let _escape = tsrs_core::arena::escape_scratch();
         let _arena = tsrs_core::arena::enter_thread_arena();
@@ -281,13 +284,17 @@ impl LazyNodeList {
         if bind {
             (BIND_HOOK.get().expect("lazy list bind hook"))(self, file, nodes);
         }
-        // Release: publishes `nodes` and everything the parser and binder wrote to readers that load `DONE`.
-        self.state.store(DONE, Ordering::Release);
-        // Relaxed: a statistics counter, read at exit.
-        STATS[5].fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
-        let (lock, cv) = wait_stripe(self);
-        drop(lock.lock().unwrap());
-        cv.notify_all();
+        // Release: publishes `nodes` and everything the parser and binder wrote to readers that load `DONE`. The
+        // read half observes a waiter's registration in the same atomic modification order. A std condvar notify is
+        // a futex system call on Linux even with nobody waiting, and most lists have no competing reader.
+        let waiting = self.state.swap(DONE, Ordering::Release) == FORCING_WITH_WAITERS;
+        if waiting {
+            let (lock, cv) = wait_stripe(self);
+            // Prevent a missed wake: a registered reader either sees `DONE` while it holds the lock, or releases the
+            // lock atomically as it sleeps before this thread acquires it.
+            drop(lock.lock().unwrap());
+            cv.notify_all();
+        }
         nodes
     }
 
@@ -304,13 +311,15 @@ impl LazyNodeList {
     /// so the deferred list is parsed and bound by `bind` now, before the merge.
     pub fn force_inline(&self, file: P<SourceFile>, bind: &mut dyn FnMut(&'static [P<Node>])) {
         // Acquire: as in `force_nodes` (the binder of this file made the earlier transitions, on this thread).
-        if self.state.compare_exchange(DEFERRED, FORCING, Ordering::Acquire, Ordering::Acquire).is_err() {
+        if self
+            .state
+            .compare_exchange(DEFERRED, FORCING, Ordering::Acquire, Ordering::Acquire)
+            .is_err()
+        {
             return;
         }
         // Relaxed: as in `force_nodes`.
         self.forcer.store(thread_token(), Ordering::Relaxed);
-        note(2);
-        note(3);
         let nodes = (PARSE_HOOK.get().expect("lazy list parse hook"))(self, file);
         self.nodes.set(nodes);
         bind(nodes);

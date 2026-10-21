@@ -16,8 +16,6 @@ pub mod msgpack;
 pub mod protocol;
 pub mod reentrancy;
 pub mod strictjson;
-#[cfg(feature = "requestfs")]
-pub mod requestfs;
 pub mod timing;
 pub mod transport;
 
@@ -27,5 +25,7 @@ pub use conn_sync::{ConnOptions, SyncConn};
 pub use handler::{Caller, CancellationToken, Handler, RequestContext};
 pub use message::{ApiError, Id, Message, Response, ResponseError, TransportError};
 pub use protocol::WireProtocol;
-pub use reentrancy::{blocking_may_deadlock, current_request, lock_for_request, ContentionWait, Holder, RequestScope};
-pub use transport::{serve, Connection, LateCaller, PipeListener, ServeOptions, Stream};
+pub use reentrancy::{
+    ContentionWait, Holder, RequestScope, blocking_may_deadlock, current_request, lock_for_request,
+};
+pub use transport::{Connection, LateCaller, PipeListener, ServeOptions, Stream, serve};

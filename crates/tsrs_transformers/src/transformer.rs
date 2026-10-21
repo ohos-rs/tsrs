@@ -2,9 +2,11 @@
 
 use crate::*;
 
-/// Go `transformers.Transformer`, embedded by value in each transformer. Transformers are arena handles (`&self`
-/// methods), so the fields Go assigns in `NewTransformer` are `OnceCell`s. The visitor carries no state besides its
-/// callback, factory and hooks, so `visitor()` hands out a copy (Go shares one `*NodeVisitor`, which is re-entrant).
+/// Go `transformers.Transformer`, embedded by value in each transformer.
+///
+/// Transformers are arena handles (`&self` methods), so the fields Go assigns in `NewTransformer` are
+/// `OnceCell`s. The visitor carries no state besides its callback, factory and hooks, so `visitor()` hands
+/// out a copy (Go shares one `*NodeVisitor`, which is re-entrant).
 #[derive(Default)]
 pub struct Transformer {
     pub emit_context: OnceCell<P<EmitContext>>,
@@ -13,10 +15,12 @@ pub struct Transformer {
 
 impl Transformer {
     // transformer.go:14
-    pub fn new_transformer(&'static self, visit: ast::VisitFn, emit_context: Option<P<EmitContext>>) -> P<Transformer> {
-        if self.emit_context.get().is_some() {
-            panic!("Transformer already initialized");
-        }
+    pub fn new_transformer(
+        &'static self,
+        visit: ast::VisitFn,
+        emit_context: Option<P<EmitContext>>,
+    ) -> P<Transformer> {
+        assert!(self.emit_context.get().is_none(), "Transformer already initialized");
         let emit_context = emit_context.unwrap_or_else(printer::new_emit_context);
         let _ = self.emit_context.set(emit_context);
         let _ = self.visitor.set(emit_context.new_node_visitor(visit));

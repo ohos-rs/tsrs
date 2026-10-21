@@ -19,7 +19,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tsrs_core::tspath;
 use tsrs_vfs::internal::{self, Common, IoDirEntry, IoFS};
-use tsrs_vfs::{Entries, FileInfo, FileMode, FsError, FS};
+use tsrs_vfs::{Entries, FS, FileInfo, FileMode, FsError};
 
 pub const OP_READ: u32 = 0;
 pub const OP_STAT: u32 = 1;
@@ -36,6 +36,26 @@ pub enum HostError {
 }
 
 #[cfg(target_family = "wasm")]
+enum HostCallResult {
+    Data(usize),
+    NotFound,
+    Error(usize),
+}
+
+#[cfg(target_family = "wasm")]
+impl HostCallResult {
+    fn from_wire(value: i32) -> Self {
+        match value {
+            -1 => Self::NotFound,
+            0.. => Self::Data(value as usize),
+            _ => Self::Error(
+                usize::try_from(-2_i64 - i64::from(value)).expect("host error length is invalid"),
+            ),
+        }
+    }
+}
+
+#[cfg(target_family = "wasm")]
 #[link(wasm_import_module = "tsrs_host")]
 unsafe extern "C" {
     fn fs(op: u32, ptr: *const u8, len: usize) -> i32;
@@ -46,18 +66,20 @@ unsafe extern "C" {
 #[cfg(target_family = "wasm")]
 pub fn call(op: u32, arg: &[u8]) -> Result<Vec<u8>, HostError> {
     // SAFETY: the host reads `arg.len()` bytes at `arg.as_ptr()` during the call and keeps no reference to them.
-    let r = unsafe { fs(op, arg.as_ptr(), arg.len()) };
-    if r == -1 {
-        return Err(HostError::NotFound);
-    }
-    let n = if r >= 0 { r as usize } else { (-2 - r) as usize };
+    let status = HostCallResult::from_wire(unsafe { fs(op, arg.as_ptr(), arg.len()) });
+    let n = match status {
+        HostCallResult::Data(length) | HostCallResult::Error(length) => length,
+        HostCallResult::NotFound => return Err(HostError::NotFound),
+    };
     let mut out = vec![0u8; n];
     // SAFETY: the host staged exactly `n` bytes for this call; `fs_take` copies them into `out`, which has `n` bytes.
     unsafe { fs_take(out.as_mut_ptr()) };
-    if r >= 0 {
-        Ok(out)
-    } else {
-        Err(HostError::Other(String::from_utf8_lossy(&out).into_owned()))
+    match status {
+        HostCallResult::Data(_) => Ok(out),
+        HostCallResult::Error(_) => {
+            Err(HostError::Other(tsrs_core::utf8::from_utf8_lossy(&out).into_owned()))
+        }
+        HostCallResult::NotFound => unreachable!(),
     }
 }
 
@@ -84,7 +106,7 @@ pub mod test_host {
 
     fn split_nul(arg: &[u8]) -> (String, &[u8]) {
         let i = arg.iter().position(|&b| b == 0).unwrap_or(arg.len());
-        (String::from_utf8_lossy(&arg[..i]).into_owned(), arg.get(i + 1..).unwrap_or(&[]))
+        (tsrs_core::utf8::from_utf8_lossy(&arg[..i]).into_owned(), arg.get(i + 1..).unwrap_or(&[]))
     }
 
     pub fn call(op: u32, arg: &[u8]) -> Result<Vec<u8>, HostError> {
@@ -103,24 +125,28 @@ pub mod test_host {
                 }
                 let prefix = if path.ends_with('/') { path } else { format!("{path}/") };
                 let mut names: BTreeMap<String, u8> = BTreeMap::new();
-                for key in files.keys().filter(|k| k.starts_with(&prefix)) {
+                names.extend(files.keys().filter(|k| k.starts_with(&prefix)).map(|key| {
                     let tail = &key[prefix.len()..];
                     match tail.split_once('/') {
-                        Some((dir, _)) => names.insert(dir.to_string(), b'd'),
-                        None => names.insert(tail.to_string(), b'f'),
-                    };
-                }
+                        Some((dir, _)) => (dir.to_string(), b'd'),
+                        None => (tail.to_string(), b'f'),
+                    }
+                }));
                 let mut out = Vec::new();
-                for (name, kind) in names {
+                out = names.into_iter().fold(out, |mut out, (name, kind)| {
                     out.push(kind);
                     out.extend_from_slice(name.as_bytes());
                     out.push(0);
-                }
+
+                    out
+                });
                 Ok(out)
             }
             OP_REALPATH => Ok(path.into_bytes()),
             OP_WRITE | OP_APPEND => {
-                if let Some((_, text)) = FAIL_WRITES.lock().unwrap().iter().find(|(p, _)| path.starts_with(p.as_str())) {
+                if let Some((_, text)) =
+                    FAIL_WRITES.lock().unwrap().iter().find(|(p, _)| path.starts_with(p.as_str()))
+                {
                     return Err(HostError::Other(text.clone()));
                 }
                 let entry = files.entry(path).or_default();
@@ -201,9 +227,8 @@ fn base(path: &str) -> String {
 impl IoFS for HostRoot {
     fn stat(&self, name: &str) -> Result<FileInfo, FsError> {
         let full = self.join(name)?;
-        tsrs_vfs::osvfs::count_stat_call();
         let out = call(OP_STAT, full.as_bytes()).map_err(fs_error)?;
-        let text = String::from_utf8_lossy(&out);
+        let text = tsrs_core::utf8::from_utf8_lossy(&out);
         let mut fields = text.split(' ');
         let mode = match fields.next() {
             Some("d") => FileMode::Dir | FileMode::from_bits_retain(0o755),
@@ -212,18 +237,22 @@ impl IoFS for HostRoot {
         };
         let size = fields.next().and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
         let mtime = fields.next().and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
-        Ok(FileInfo { name: base(&full), size, mode, mod_time: Some(UNIX_EPOCH + Duration::from_nanos(mtime)) })
+        Ok(FileInfo {
+            name: base(&full),
+            size,
+            mode,
+            mod_time: Some(UNIX_EPOCH + Duration::from_nanos(mtime)),
+        })
     }
 
     fn read_dir(&self, name: &str) -> Result<Vec<IoDirEntry>, FsError> {
         let full = self.join(name)?;
-        tsrs_vfs::osvfs::count_read_dir_call();
         let out = call(OP_READ_DIR, full.as_bytes()).map_err(fs_error)?;
         let mut entries: Vec<IoDirEntry> = out
             .split(|&b| b == 0)
             .filter(|e| !e.is_empty())
             .map(|e| IoDirEntry {
-                name: String::from_utf8_lossy(&e[1..]).into_owned(),
+                name: tsrs_core::utf8::from_utf8_lossy(&e[1..]).into_owned(),
                 type_: match e[0] {
                     b'd' => FileMode::Dir,
                     b'f' => FileMode::None,
@@ -238,7 +267,6 @@ impl IoFS for HostRoot {
 
     fn read_file(&self, name: &str) -> Result<Vec<u8>, FsError> {
         let full = self.join(name)?;
-        tsrs_vfs::osvfs::count_read_file_call();
         call(OP_READ, full.as_bytes()).map_err(fs_error)
     }
 }
@@ -253,7 +281,9 @@ impl HostFs {
     pub fn new(case_sensitive: bool) -> HostFs {
         HostFs {
             common: Common {
-                root_for: Box::new(|root: &str| Some(Box::new(HostRoot { root: root.to_string() }) as Box<dyn IoFS>)),
+                root_for: Box::new(|root: &str| {
+                    Some(Box::new(HostRoot { root: root.to_string() }) as Box<dyn IoFS>)
+                }),
                 // Only consulted for `Irregular` entries; the host reports symlinks as `l`.
                 is_reparse_point: None,
             },
@@ -261,6 +291,10 @@ impl HostFs {
         }
     }
 
+    #[expect(
+        clippy::unused_self,
+        reason = "Host filesystem writes use the same instance interface on native and WebAssembly targets."
+    )]
     fn write(&self, op: u32, path: &str, content: &str) -> Result<(), String> {
         let _ = internal::root_length(path); // Assert path is rooted
         call(op, &path_and_data(path, content.as_bytes())).map(|_| ()).map_err(error_text)
@@ -312,7 +346,7 @@ impl FS for HostFs {
     fn realpath(&self, path: &str) -> String {
         let _ = internal::root_length(path); // Assert path is rooted
         match call(OP_REALPATH, path.as_bytes()) {
-            Ok(real) => tspath::normalize_slashes(&String::from_utf8_lossy(&real)),
+            Ok(real) => tspath::normalize_slashes(&tsrs_core::utf8::from_utf8_lossy(&real)),
             Err(_) => path.to_string(),
         }
     }

@@ -41,9 +41,7 @@ impl<K: Hash + Eq + Clone, T: Cloneable + Clone> MapEntry<K, T> {
     pub fn change(self: &Arc<Self>, apply: impl FnOnce(&mut T)) {
         let (mut value, register) = {
             let mut st = self.st.lock().unwrap();
-            if st.delete {
-                panic!("tried to change a deleted entry");
-            }
+            assert!(!st.delete, "tried to change a deleted entry");
             let mut register = false;
             if !st.dirty {
                 st.value = Some(st.value.as_ref().unwrap().clone_shared());
@@ -63,9 +61,7 @@ impl<K: Hash + Eq + Clone, T: Cloneable + Clone> MapEntry<K, T> {
     pub fn replace(self: &Arc<Self>, new_value: Shared<T>) {
         let register = {
             let mut st = self.st.lock().unwrap();
-            if st.delete {
-                panic!("tried to change a deleted entry");
-            }
+            assert!(!st.delete, "tried to change a deleted entry");
             let register = !st.dirty;
             st.dirty = true;
             st.value = Some(new_value);
@@ -77,7 +73,11 @@ impl<K: Hash + Eq + Clone, T: Cloneable + Clone> MapEntry<K, T> {
     }
 
     // map.go:33
-    pub fn change_if(self: &Arc<Self>, cond: impl FnOnce(&T) -> bool, apply: impl FnOnce(&mut T)) -> bool {
+    pub fn change_if(
+        self: &Arc<Self>,
+        cond: impl FnOnce(&T) -> bool,
+        apply: impl FnOnce(&mut T),
+    ) -> bool {
         let value = self.st.lock().unwrap().value();
         if let Some(value) = value {
             if cond(&value) {
@@ -130,7 +130,7 @@ impl<K: Hash + Eq + Clone, T: Cloneable + Clone> Value<T> for Arc<MapEntry<K, T>
     }
 
     fn change(&self, apply: &mut dyn FnMut(&mut T)) {
-        MapEntry::change(self, |v| apply(v))
+        MapEntry::change(self, |v| apply(v));
     }
 
     fn change_if(&self, cond: &mut dyn FnMut(&T) -> bool, apply: &mut dyn FnMut(&mut T)) -> bool {
@@ -138,18 +138,23 @@ impl<K: Hash + Eq + Clone, T: Cloneable + Clone> Value<T> for Arc<MapEntry<K, T>
     }
 
     fn delete(&self) {
-        MapEntry::delete(self)
+        MapEntry::delete(self);
     }
 
     // map.go:48
     fn locked(&self, f: &mut dyn FnMut(&dyn Value<T>)) {
-        f(self)
+        f(self);
     }
 }
 
 // map.go:57
 pub fn new_map<K, T>(base: SharedMap<K, T>) -> Map<K, T> {
-    Map { inner: Arc::new(mapInner { base: Mutex::new(base), dirty: Mutex::new(FxHashMap::default()) }) }
+    Map {
+        inner: Arc::new(mapInner {
+            base: Mutex::new(base),
+            dirty: Mutex::new(FxHashMap::default()),
+        }),
+    }
 }
 
 impl<K: Hash + Eq + Clone, T: Cloneable + Clone> Map<K, T> {
@@ -157,7 +162,12 @@ impl<K: Hash + Eq + Clone, T: Cloneable + Clone> Map<K, T> {
         Arc::new(MapEntry {
             m: Arc::downgrade(&self.inner),
             key,
-            st: Mutex::new(mapEntry { original: Some(value.clone()), value: Some(value), dirty: false, delete: false }),
+            st: Mutex::new(mapEntry {
+                original: Some(value.clone()),
+                value: Some(value),
+                dirty: false,
+                delete: false,
+            }),
         })
     }
 
@@ -184,7 +194,12 @@ impl<K: Hash + Eq + Clone, T: Cloneable + Clone> Map<K, T> {
         let entry = Arc::new(MapEntry {
             m: Arc::downgrade(&self.inner),
             key: key.clone(),
-            st: Mutex::new(mapEntry { original: None, value: Some(value), dirty: true, delete: false }),
+            st: Mutex::new(mapEntry {
+                original: None,
+                value: Some(value),
+                dirty: true,
+                delete: false,
+            }),
         });
         self.inner.dirty.lock().unwrap().insert(key, entry);
     }
@@ -212,15 +227,14 @@ impl<K: Hash + Eq + Clone, T: Cloneable + Clone> Map<K, T> {
 
     // map.go:114
     pub fn delete(&self, key: &K) {
-        if !self.try_delete(key) {
-            panic!("tried to delete a non-existent entry");
-        }
+        assert!(self.try_delete(key), "tried to delete a non-existent entry");
     }
 
     // map.go:120
     pub fn range(&self, mut f: impl FnMut(&Arc<MapEntry<K, T>>) -> bool) {
         let mut seen_in_dirty: FxHashSet<K> = FxHashSet::default();
-        let dirty: Vec<Arc<MapEntry<K, T>>> = self.inner.dirty.lock().unwrap().values().cloned().collect();
+        let dirty: Vec<Arc<MapEntry<K, T>>> =
+            self.inner.dirty.lock().unwrap().values().cloned().collect();
         for entry in &dirty {
             seen_in_dirty.insert(entry.key.clone());
             let deleted = entry.st.lock().unwrap().delete;
@@ -229,7 +243,10 @@ impl<K: Hash + Eq + Clone, T: Cloneable + Clone> Map<K, T> {
             }
         }
         let base = self.inner.base.lock().unwrap().clone();
-        #[expect(clippy::iter_over_hash_type, reason = "unspecified order, as in Go: Range ranges Go maps, so no caller can rely on an order")]
+        #[expect(
+            clippy::iter_over_hash_type,
+            reason = "unspecified order, as in Go: Range ranges Go maps, so no caller can rely on an order"
+        )]
         for (key, value) in base.iter() {
             if seen_in_dirty.contains(key) {
                 continue; // already processed in dirty entries

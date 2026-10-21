@@ -1,5 +1,4 @@
 use std::fmt;
-use std::fmt::Write as _;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -70,12 +69,12 @@ pub enum DiagnosticDirectiveErrorKind {
 }
 
 // DiagnosticDirectiveError reports an invalid diagnostic directive in a transform response.
-// host.go:54 (SupplementalIndex is -1 for a directive of the canonical output.)
+// host.go:54 (`None` for a directive of the canonical output.)
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub struct DiagnosticDirectiveError {
     pub kind: DiagnosticDirectiveErrorKind,
     pub index: usize,
-    pub supplemental_index: i32,
+    pub supplemental_index: Option<usize>,
     pub policy: DiagnosticDirectivePolicy,
 }
 
@@ -125,11 +124,21 @@ impl ProjectError {
     // the named constants, which the Rust enum cannot hold.)
     pub fn error(self) -> String {
         match self.kind {
-            ProjectErrorKind::MalformedResponse => "content mapper returned a malformed project response",
-            ProjectErrorKind::MissingConfigIdentity => "content mapper did not return configIdentity for dynamic configuration",
-            ProjectErrorKind::NonAbsoluteWatchedFile => "content mapper returned a non-absolute path in watchedFiles",
-            ProjectErrorKind::UnexpectedConfigIdentity => "content mapper returned configIdentity without declaring dynamicConfig",
-            ProjectErrorKind::UnexpectedWatchedFiles => "content mapper returned watchedFiles without declaring dynamicConfig",
+            ProjectErrorKind::MalformedResponse => {
+                "content mapper returned a malformed project response"
+            }
+            ProjectErrorKind::MissingConfigIdentity => {
+                "content mapper did not return configIdentity for dynamic configuration"
+            }
+            ProjectErrorKind::NonAbsoluteWatchedFile => {
+                "content mapper returned a non-absolute path in watchedFiles"
+            }
+            ProjectErrorKind::UnexpectedConfigIdentity => {
+                "content mapper returned configIdentity without declaring dynamicConfig"
+            }
+            ProjectErrorKind::UnexpectedWatchedFiles => {
+                "content mapper returned watchedFiles without declaring dynamicConfig"
+            }
         }
         .to_string()
     }
@@ -185,22 +194,38 @@ impl InitializeError {
     pub fn error(&self) -> String {
         match self.kind {
             InitializeErrorKind::ProcessStart => {
-                format!("could not start content mapper command {}: {}", quote(&self.command), self.detail)
+                format!(
+                    "could not start content mapper command {}: {}",
+                    quote(&self.command),
+                    self.detail
+                )
             }
             InitializeErrorKind::ProcessExit => {
-                format!("content mapper process exited before initialization with code {}", self.exit_code)
+                format!(
+                    "content mapper process exited before initialization with code {}",
+                    self.exit_code
+                )
             }
-            InitializeErrorKind::NoResponse => "content mapper did not respond to the initialize request".to_string(),
+            InitializeErrorKind::NoResponse => {
+                "content mapper did not respond to the initialize request".to_string()
+            }
             InitializeErrorKind::InvalidResponse => {
                 format!("content mapper returned an invalid initialize response: {}", self.detail)
             }
-            InitializeErrorKind::Request => format!("content mapper initialize request failed: {}", self.detail),
+            InitializeErrorKind::Request => {
+                format!("content mapper initialize request failed: {}", self.detail)
+            }
             InitializeErrorKind::PositionEncoding => {
                 format!("unsupported position encoding {}", quote(&self.position_encoding.0))
             }
-            InitializeErrorKind::EmptyDiagnosticSource => "diagnostic source must not be empty".to_string(),
+            InitializeErrorKind::EmptyDiagnosticSource => {
+                "diagnostic source must not be empty".to_string()
+            }
             InitializeErrorKind::ReservedDiagnosticSource => {
-                format!("diagnostic source {} is reserved by TypeScript", quote(&self.diagnostic_source))
+                format!(
+                    "diagnostic source {} is reserved by TypeScript",
+                    quote(&self.diagnostic_source)
+                )
             }
         }
     }
@@ -300,24 +325,31 @@ pub struct Timings {
 impl Timings {
     // Since returns the non-negative operation delta since previous.
     // host.go:245
+    #[must_use]
     pub fn since(&self, previous: &Timings) -> Timings {
         let mut result = Timings {
-            mappers: OrderedMap::with_capacity_and_hasher(self.mappers.len(), Default::default()),
+            mappers: OrderedMap::with_capacity_and_hasher(
+                self.mappers.len(),
+                rustc_hash::FxBuildHasher,
+            ),
             request_wait: self.request_wait.saturating_sub(previous.request_wait),
         };
-        for (identity, current) in &self.mappers {
+        result.mappers.extend(self.mappers.iter().map(|(identity, current)| {
             let before = previous.mappers.get(identity).copied().unwrap_or_default();
-            result.mappers.insert(
+            (
                 identity.clone(),
                 MapperTimings {
                     spawn: operation_timing_since(current.spawn, before.spawn),
                     initialize: operation_timing_since(current.initialize, before.initialize),
                     open_project: operation_timing_since(current.open_project, before.open_project),
-                    close_project: operation_timing_since(current.close_project, before.close_project),
+                    close_project: operation_timing_since(
+                        current.close_project,
+                        before.close_project,
+                    ),
                     transform: operation_timing_since(current.transform, before.transform),
                 },
-            );
-        }
+            )
+        }));
         result
     }
 }
@@ -356,7 +388,11 @@ pub trait Project: Send + Sync {
     fn diagnostics(&self) -> Vec<OptionDiagnostic>;
     // Transform transforms one content-mapped source file using mapper in this project's configuration.
     // host.go:288
-    fn transform(&self, mapper: &Mapper, request: Request<'_>) -> Result<TransformResultFiles, Error>;
+    fn transform(
+        &self,
+        mapper: &Mapper,
+        request: Request<'_>,
+    ) -> Result<TransformResultFiles, Error>;
     // Close releases this project reference and closes mapper project handles when no references remain.
     // host.go:290
     fn close(&self) -> Result<(), Error>;
@@ -388,7 +424,11 @@ pub trait Host: Send + Sync {
     // A non-nil error indicates the mapper itself failed to produce a result — for example the
     // host hit a broken pipe, a process crash, or could not deserialize the mapper's response.
     // host.go:312
-    fn transform(&self, mapper: &'static Mapper, request: Request<'_>) -> Result<TransformResultFiles, Error>;
+    fn transform(
+        &self,
+        mapper: &'static Mapper,
+        request: Request<'_>,
+    ) -> Result<TransformResultFiles, Error>;
     // Close shuts down every mapper process the host spawned.
     // host.go:314
     fn close(&self) -> Result<(), Error>;
@@ -403,6 +443,10 @@ pub const ERR_PROJECT_UNAVAILABLE: &str = "content mapper project is unavailable
 // operands here never are one of the typed errors), is `Other` with Go's text; an error from the mapper
 // connection is `Ipc`, which keeps the ipc sentinels (`ipc::ErrorTag`) for errors.Is.
 #[derive(Clone, Debug)]
+#[expect(
+    clippy::error_impl_error,
+    reason = "the public name mirrors Go's package-level content-mapper error value"
+)]
 pub enum Error {
     // *TransformError
     Transform(TransformError),
@@ -582,41 +626,5 @@ impl From<ipc::Error> for Error {
 
 // Go `strconv.Quote`, which fmt's %q verb uses for a string.
 pub(crate) fn quote(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('"');
-    for c in s.chars() {
-        match c {
-            '\x07' => out.push_str("\\a"),
-            '\x08' => out.push_str("\\b"),
-            '\x0c' => out.push_str("\\f"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            '\x0b' => out.push_str("\\v"),
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            c if (c as u32) < 0x20 || c == '\x7f' => {
-                let _ = write!(out, "\\x{:02x}", c as u32);
-            }
-            c if is_print(c) => out.push(c),
-            c if (c as u32) < 0x10000 => {
-                let _ = write!(out, "\\u{:04x}", c as u32);
-            }
-            c => {
-                let _ = write!(out, "\\U{:08x}", c as u32);
-            }
-        }
-    }
-    out.push('"');
-    out
-}
-
-// Go `strconv.IsPrint`, approximated: letters, marks, numbers, punctuation, symbols and the ASCII space.
-fn is_print(c: char) -> bool {
-    if c == ' ' {
-        return true;
-    }
-    !(c.is_control()
-        || c.is_whitespace()
-        || matches!(c, '\u{ad}' | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{2064}' | '\u{feff}'))
+    tsrs_core::gocompat::quote(s.as_bytes(), tsrs_core::gocompat::QuoteStyle::Header)
 }

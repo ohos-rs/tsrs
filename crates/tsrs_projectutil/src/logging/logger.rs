@@ -50,7 +50,12 @@ struct loggerState {
 
 impl logger {
     pub(crate) fn new(writer: Writer, prefix: Box<dyn Fn() -> String + Send + Sync>) -> logger {
-        logger { inner: Some(loggerInner { mu: Mutex::new(loggerState { verbose: false, writer }), prefix }) }
+        logger {
+            inner: Some(loggerInner {
+                mu: Mutex::new(loggerState { verbose: false, writer }),
+                prefix,
+            }),
+        }
     }
 }
 
@@ -99,32 +104,32 @@ impl Logger for logger {
 
     // logger.go:94
     fn error(&self, msg: &str) {
-        self.log(msg)
+        self.log(msg);
     }
 
     // logger.go:98
     fn errorf(&self, args: fmt::Arguments<'_>) {
-        self.logf(args)
+        self.logf(args);
     }
 
     // logger.go:102
     fn warn(&self, msg: &str) {
-        self.log(msg)
+        self.log(msg);
     }
 
     // logger.go:106
     fn warnf(&self, args: fmt::Arguments<'_>) {
-        self.logf(args)
+        self.logf(args);
     }
 
     // logger.go:110
     fn info(&self, msg: &str) {
-        self.log(msg)
+        self.log(msg);
     }
 
     // logger.go:114
     fn infof(&self, args: fmt::Arguments<'_>) {
-        self.logf(args)
+        self.logf(args);
     }
 }
 

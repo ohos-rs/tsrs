@@ -21,12 +21,23 @@ pub type DiagnosticReporter<'a> = Box<dyn Fn(P<Diagnostic>) + Send + Sync + 'a>;
 // Go `io.Writer` for the reporters: `sys.Writer()` or a build task's output buffer.
 pub type Writer<'a> = std::sync::Arc<dyn Fn(&str) + Send + Sync + 'a>;
 
-pub fn create_diagnostic_reporter<'a>(sys: &'a dyn System, options: Option<&CompilerOptions>) -> DiagnosticReporter<'a> {
-    create_diagnostic_reporter_with_writer(sys, std::sync::Arc::new(move |t: &str| sys.write(t)), options)
+pub fn create_diagnostic_reporter<'a>(
+    sys: &'a dyn System,
+    options: Option<&CompilerOptions>,
+) -> DiagnosticReporter<'a> {
+    create_diagnostic_reporter_with_writer(
+        sys,
+        std::sync::Arc::new(move |t: &str| sys.write(t)),
+        options,
+    )
 }
 
 // diagnostics.go:27 CreateDiagnosticReporter(sys, w, locale, options)
-pub fn create_diagnostic_reporter_with_writer<'a>(sys: &'a dyn System, w: Writer<'a>, options: Option<&CompilerOptions>) -> DiagnosticReporter<'a> {
+pub fn create_diagnostic_reporter_with_writer<'a>(
+    sys: &'a dyn System,
+    w: Writer<'a>,
+    options: Option<&CompilerOptions>,
+) -> DiagnosticReporter<'a> {
     if options.is_some_and(|o| o.quiet.is_true()) {
         return Box::new(|_| {});
     }
@@ -37,15 +48,19 @@ pub fn create_diagnostic_reporter_with_writer<'a>(sys: &'a dyn System, w: Writer
     if should_be_pretty(sys, options) {
         return Box::new(move |diagnostic| {
             let mut out = Vec::new();
-            diagnosticwriter::format_diagnostic_with_color_and_context(&mut out, diagnostic, &format_opts);
+            diagnosticwriter::format_diagnostic_with_color_and_context(
+                &mut out,
+                diagnostic,
+                &format_opts,
+            );
             out.extend_from_slice(format_opts.new_line.as_bytes());
-            w(&String::from_utf8_lossy(&out));
+            w(&tsrs_core::utf8::from_utf8_lossy(&out));
         });
     }
     Box::new(move |diagnostic| {
         let mut out = Vec::new();
         diagnosticwriter::write_format_diagnostic(&mut out, diagnostic, &format_opts);
-        w(&String::from_utf8_lossy(&out));
+        w(&tsrs_core::utf8::from_utf8_lossy(&out));
     })
 }
 
@@ -69,15 +84,69 @@ pub fn create_builder_status_reporter<'a>(
         let mut out = Vec::new();
         let time = sys.format_time_now();
         if pretty {
-            diagnosticwriter::format_diagnostics_status_with_color_and_time(&mut out, &time, diagnostic, &format_opts);
+            diagnosticwriter::format_diagnostics_status_with_color_and_time(
+                &mut out,
+                &time,
+                diagnostic,
+                &format_opts,
+            );
         } else {
-            diagnosticwriter::format_diagnostics_status_and_time(&mut out, &time, diagnostic, &format_opts);
+            diagnosticwriter::format_diagnostics_status_and_time(
+                &mut out,
+                &time,
+                diagnostic,
+                &format_opts,
+            );
         }
         out.extend_from_slice(format_opts.new_line.as_bytes());
         out.extend_from_slice(format_opts.new_line.as_bytes());
-        w(&String::from_utf8_lossy(&out));
+        w(&tsrs_core::utf8::from_utf8_lossy(&out));
         if let Some(testing) = testing {
             testing.on_build_status_report_end(&*w);
+        }
+    })
+}
+
+// diagnostics.go:168 CreateWatchStatusReporter: clears the screen before a compilation starts, then writes the status
+// with its time stamp and a blank line.
+pub fn create_watch_status_reporter<'a>(
+    sys: &'a dyn System,
+    options: &CompilerOptions,
+    testing: Option<&'a dyn super::CommandLineTesting>,
+) -> DiagnosticReporter<'a> {
+    let format_opts = get_format_opts_of_sys(sys);
+    let pretty = should_be_pretty(sys, Some(options));
+    let options = options.clone();
+    Box::new(move |diagnostic| {
+        if let Some(testing) = testing {
+            testing.on_watch_status_report_start(&|t: &str| sys.write(t));
+        }
+        let mut out = Vec::new();
+        diagnosticwriter::try_clear_screen(&mut out, diagnostic, &options);
+        let time = sys.format_time_now();
+        if pretty {
+            diagnosticwriter::format_diagnostics_status_with_color_and_time(
+                &mut out,
+                &time,
+                diagnostic,
+                &format_opts,
+            );
+        } else {
+            diagnosticwriter::format_diagnostics_status_and_time(
+                &mut out,
+                &time,
+                diagnostic,
+                &format_opts,
+            );
+        }
+        out.extend_from_slice(format_opts.new_line.as_bytes());
+        out.extend_from_slice(format_opts.new_line.as_bytes());
+        sys.write(&tsrs_core::utf8::from_utf8_lossy(&out));
+        // The CLI's stdout is block-buffered and a watch session never exits, so each status line (the start and end
+        // of every cycle) pushes the cycle's output out.
+        sys.flush();
+        if let Some(testing) = testing {
+            testing.on_watch_status_report_end(&|t: &str| sys.write(t));
         }
     })
 }
@@ -109,13 +178,16 @@ fn should_be_pretty(sys: &dyn System, options: Option<&CompilerOptions>) -> bool
 
 pub type DiagnosticsReporter<'a> = Box<dyn Fn(&[P<Diagnostic>]) + Send + Sync + 'a>;
 
-pub fn create_report_error_summary<'a>(sys: &'a dyn System, options: &CompilerOptions) -> DiagnosticsReporter<'a> {
+pub fn create_report_error_summary<'a>(
+    sys: &'a dyn System,
+    options: &CompilerOptions,
+) -> DiagnosticsReporter<'a> {
     if sys.diagnostic_sink().is_none() && should_be_pretty(sys, Some(options)) {
         let format_opts = get_format_opts_of_sys(sys);
         return Box::new(move |diagnostics| {
             let mut out = Vec::new();
             diagnosticwriter::write_error_summary_text(&mut out, diagnostics, &format_opts);
-            sys.write(&String::from_utf8_lossy(&out));
+            sys.write(&tsrs_core::utf8::from_utf8_lossy(&out));
         });
     }
     Box::new(|_| {})

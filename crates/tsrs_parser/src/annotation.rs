@@ -15,7 +15,7 @@ impl Parser {
 
     pub(crate) fn parse_annotation_declaration(
         &mut self,
-        pos: i32,
+        pos: u32,
         jsdoc: JsdocScannerInfo,
         modifiers: Option<P<ModifierList>>,
     ) -> P<Node> {

@@ -1,5 +1,5 @@
-use hashbrown::hash_table::Entry;
 use hashbrown::HashTable;
+use hashbrown::hash_table::Entry;
 use rustc_hash::{FxHashMap, FxHasher};
 use std::borrow::Borrow;
 use std::hash::{Hash, Hasher};
@@ -20,7 +20,9 @@ pub struct SyncMap<K: Hash + Eq, V> {
 
 impl<K: Hash + Eq, V> Default for SyncMap<K, V> {
     fn default() -> Self {
-        SyncMap { shards: (0..SHARDS).map(|_| RwLock::new(HashTable::new())).collect() }
+        SyncMap {
+            shards: std::iter::repeat_with(|| RwLock::new(HashTable::new())).take(SHARDS).collect(),
+        }
     }
 }
 
@@ -32,13 +34,25 @@ fn hash_of<Q: Hash + ?Sized>(key: &Q) -> u64 {
 }
 
 #[inline]
-fn read<K, V>(shard: &RwLock<HashTable<(K, V)>>) -> std::sync::RwLockReadGuard<'_, HashTable<(K, V)>> {
-    crate::festats::timed_counted(crate::festats::Cat::LockSyncMap, crate::festats::Cat::SyncMapOps, || shard.read().unwrap())
+fn read<K, V>(
+    shard: &RwLock<HashTable<(K, V)>>,
+) -> std::sync::RwLockReadGuard<'_, HashTable<(K, V)>> {
+    crate::festats::timed_counted(
+        crate::festats::Cat::LockSyncMap,
+        crate::festats::Cat::SyncMapOps,
+        || shard.read().unwrap(),
+    )
 }
 
 #[inline]
-fn write<K, V>(shard: &RwLock<HashTable<(K, V)>>) -> std::sync::RwLockWriteGuard<'_, HashTable<(K, V)>> {
-    crate::festats::timed_counted(crate::festats::Cat::LockSyncMap, crate::festats::Cat::SyncMapOps, || shard.write().unwrap())
+fn write<K, V>(
+    shard: &RwLock<HashTable<(K, V)>>,
+) -> std::sync::RwLockWriteGuard<'_, HashTable<(K, V)>> {
+    crate::festats::timed_counted(
+        crate::festats::Cat::LockSyncMap,
+        crate::festats::Cat::SyncMapOps,
+        || shard.write().unwrap(),
+    )
 }
 
 impl<K: Hash + Eq, V> SyncMap<K, V> {
@@ -104,12 +118,12 @@ impl<K: Hash + Eq + Clone, V: Clone> SyncMap<K, V> {
 
     pub fn range(&self, mut f: impl FnMut(&K, &V) -> bool) {
         // Go's sync.Map.Range visits a snapshot in no particular order; this visits the shards in index order.
-        let entries: Vec<(K, V)> = self.shards.iter().flat_map(|s| s.read().unwrap().iter().cloned().collect::<Vec<_>>()).collect();
-        for (k, v) in &entries {
-            if !f(k, v) {
-                break;
-            }
-        }
+        let entries: Vec<(K, V)> = self
+            .shards
+            .iter()
+            .flat_map(|s| s.read().unwrap().iter().cloned().collect::<Vec<_>>())
+            .collect();
+        entries.iter().all(|(k, v)| f(k, v));
     }
 
     // Size returns the approximate number of items in the map.
@@ -118,7 +132,7 @@ impl<K: Hash + Eq + Clone, V: Clone> SyncMap<K, V> {
     }
 
     pub fn to_map(&self) -> FxHashMap<K, V> {
-        let mut out = FxHashMap::with_capacity_and_hasher(self.size(), Default::default());
+        let mut out = FxHashMap::with_capacity_and_hasher(self.size(), rustc_hash::FxBuildHasher);
         for shard in &self.shards {
             out.extend(shard.read().unwrap().iter().cloned());
         }
@@ -126,9 +140,13 @@ impl<K: Hash + Eq + Clone, V: Clone> SyncMap<K, V> {
     }
 
     pub fn keys(&self) -> Vec<K> {
-        self.shards.iter().flat_map(|s| s.read().unwrap().iter().map(|(k, _)| k.clone()).collect::<Vec<_>>()).collect()
+        self.shards
+            .iter()
+            .flat_map(|s| s.read().unwrap().iter().map(|(k, _)| k.clone()).collect::<Vec<_>>())
+            .collect()
     }
 
+    #[must_use]
     pub fn clone_map(&self) -> SyncMap<K, V> {
         let clone = SyncMap::default();
         for (i, shard) in self.shards.iter().enumerate() {

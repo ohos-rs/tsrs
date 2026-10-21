@@ -64,58 +64,58 @@ fn test_get_root_length() {
 #[test]
 fn test_path_is_absolute() {
     // POSIX
-    assert_eq!(path_is_absolute("/path/to/file.ext"), true);
+    assert!(path_is_absolute("/path/to/file.ext"));
     // DOS
-    assert_eq!(path_is_absolute("c:/path/to/file.ext"), true);
+    assert!(path_is_absolute("c:/path/to/file.ext"));
     // URL
-    assert_eq!(path_is_absolute("file:///path/to/file.ext"), true);
+    assert!(path_is_absolute("file:///path/to/file.ext"));
     // Non-absolute
-    assert_eq!(path_is_absolute("path/to/file.ext"), false);
-    assert_eq!(path_is_absolute("./path/to/file.ext"), false);
+    assert!(!path_is_absolute("path/to/file.ext"));
+    assert!(!path_is_absolute("./path/to/file.ext"));
 }
 
 #[test]
 fn test_is_url() {
-    assert_eq!(is_url("a"), false);
-    assert_eq!(is_url("/"), false);
-    assert_eq!(is_url("c:"), false);
-    assert_eq!(is_url("c:d"), false);
-    assert_eq!(is_url("c:/"), false);
-    assert_eq!(is_url("c:\\"), false);
-    assert_eq!(is_url("//server"), false);
-    assert_eq!(is_url("//server/share"), false);
-    assert_eq!(is_url("\\\\server"), false);
-    assert_eq!(is_url("\\\\server\\share"), false);
-    assert_eq!(is_url("file:///path"), true);
-    assert_eq!(is_url("file:///c:"), true);
-    assert_eq!(is_url("file:///c:d"), true);
-    assert_eq!(is_url("file:///c:/path"), true);
-    assert_eq!(is_url("file://server"), true);
-    assert_eq!(is_url("file://server/path"), true);
-    assert_eq!(is_url("http://server"), true);
-    assert_eq!(is_url("http://server/path"), true);
+    assert!(!is_url("a"));
+    assert!(!is_url("/"));
+    assert!(!is_url("c:"));
+    assert!(!is_url("c:d"));
+    assert!(!is_url("c:/"));
+    assert!(!is_url("c:\\"));
+    assert!(!is_url("//server"));
+    assert!(!is_url("//server/share"));
+    assert!(!is_url("\\\\server"));
+    assert!(!is_url("\\\\server\\share"));
+    assert!(is_url("file:///path"));
+    assert!(is_url("file:///c:"));
+    assert!(is_url("file:///c:d"));
+    assert!(is_url("file:///c:/path"));
+    assert!(is_url("file://server"));
+    assert!(is_url("file://server/path"));
+    assert!(is_url("http://server"));
+    assert!(is_url("http://server/path"));
 }
 
 #[test]
 fn test_is_rooted_disk_path() {
-    assert_eq!(is_rooted_disk_path("a"), false);
-    assert_eq!(is_rooted_disk_path("/"), true);
-    assert_eq!(is_rooted_disk_path("c:"), true);
-    assert_eq!(is_rooted_disk_path("c:d"), false);
-    assert_eq!(is_rooted_disk_path("c:/"), true);
-    assert_eq!(is_rooted_disk_path("c:\\"), true);
-    assert_eq!(is_rooted_disk_path("//server"), true);
-    assert_eq!(is_rooted_disk_path("//server/share"), true);
-    assert_eq!(is_rooted_disk_path("\\\\server"), true);
-    assert_eq!(is_rooted_disk_path("\\\\server\\share"), true);
-    assert_eq!(is_rooted_disk_path("file:///path"), false);
-    assert_eq!(is_rooted_disk_path("file:///c:"), false);
-    assert_eq!(is_rooted_disk_path("file:///c:d"), false);
-    assert_eq!(is_rooted_disk_path("file:///c:/path"), false);
-    assert_eq!(is_rooted_disk_path("file://server"), false);
-    assert_eq!(is_rooted_disk_path("file://server/path"), false);
-    assert_eq!(is_rooted_disk_path("http://server"), false);
-    assert_eq!(is_rooted_disk_path("http://server/path"), false);
+    assert!(!is_rooted_disk_path("a"));
+    assert!(is_rooted_disk_path("/"));
+    assert!(is_rooted_disk_path("c:"));
+    assert!(!is_rooted_disk_path("c:d"));
+    assert!(is_rooted_disk_path("c:/"));
+    assert!(is_rooted_disk_path("c:\\"));
+    assert!(is_rooted_disk_path("//server"));
+    assert!(is_rooted_disk_path("//server/share"));
+    assert!(is_rooted_disk_path("\\\\server"));
+    assert!(is_rooted_disk_path("\\\\server\\share"));
+    assert!(!is_rooted_disk_path("file:///path"));
+    assert!(!is_rooted_disk_path("file:///c:"));
+    assert!(!is_rooted_disk_path("file:///c:d"));
+    assert!(!is_rooted_disk_path("file:///c:/path"));
+    assert!(!is_rooted_disk_path("file://server"));
+    assert!(!is_rooted_disk_path("file://server/path"));
+    assert!(!is_rooted_disk_path("http://server"));
+    assert!(!is_rooted_disk_path("http://server/path"));
 }
 
 #[test]
@@ -197,19 +197,84 @@ fn test_get_path_components() {
 
 #[test]
 fn test_reduce_path_components() {
-    assert_eq!(reduce_path_components(&vec![""].iter().map(|s| s.to_string()).collect::<Vec<_>>()), vec![""]);
-    assert_eq!(reduce_path_components(&vec!["", "."].iter().map(|s| s.to_string()).collect::<Vec<_>>()), vec![""]);
-    assert_eq!(reduce_path_components(&vec!["", ".", "a"].iter().map(|s| s.to_string()).collect::<Vec<_>>()), vec!["", "a"]);
-    assert_eq!(reduce_path_components(&vec!["", "a", "."].iter().map(|s| s.to_string()).collect::<Vec<_>>()), vec!["", "a"]);
-    assert_eq!(reduce_path_components(&vec!["", ".."].iter().map(|s| s.to_string()).collect::<Vec<_>>()), vec!["", ".."]);
-    assert_eq!(reduce_path_components(&vec!["", "..", ".."].iter().map(|s| s.to_string()).collect::<Vec<_>>()), vec!["", "..", ".."]);
-    assert_eq!(reduce_path_components(&vec!["", "..", ".", ".."].iter().map(|s| s.to_string()).collect::<Vec<_>>()), vec!["", "..", ".."]);
-    assert_eq!(reduce_path_components(&vec!["", "a", ".."].iter().map(|s| s.to_string()).collect::<Vec<_>>()), vec![""]);
-    assert_eq!(reduce_path_components(&vec!["", "..", "a"].iter().map(|s| s.to_string()).collect::<Vec<_>>()), vec!["", "..", "a"]);
-    assert_eq!(reduce_path_components(&vec!["/"].iter().map(|s| s.to_string()).collect::<Vec<_>>()), vec!["/"]);
-    assert_eq!(reduce_path_components(&vec!["/", "."].iter().map(|s| s.to_string()).collect::<Vec<_>>()), vec!["/"]);
-    assert_eq!(reduce_path_components(&vec!["/", ".."].iter().map(|s| s.to_string()).collect::<Vec<_>>()), vec!["/"]);
-    assert_eq!(reduce_path_components(&vec!["/", "a", ".."].iter().map(|s| s.to_string()).collect::<Vec<_>>()), vec!["/"]);
+    assert_eq!(
+        reduce_path_components(
+            &std::iter::once(&"").map(std::string::ToString::to_string).collect::<Vec<_>>()
+        ),
+        vec![""]
+    );
+    assert_eq!(
+        reduce_path_components(
+            &["", "."].iter().map(std::string::ToString::to_string).collect::<Vec<_>>()
+        ),
+        vec![""]
+    );
+    assert_eq!(
+        reduce_path_components(
+            &["", ".", "a"].iter().map(std::string::ToString::to_string).collect::<Vec<_>>()
+        ),
+        vec!["", "a"]
+    );
+    assert_eq!(
+        reduce_path_components(
+            &["", "a", "."].iter().map(std::string::ToString::to_string).collect::<Vec<_>>()
+        ),
+        vec!["", "a"]
+    );
+    assert_eq!(
+        reduce_path_components(
+            &["", ".."].iter().map(std::string::ToString::to_string).collect::<Vec<_>>()
+        ),
+        vec!["", ".."]
+    );
+    assert_eq!(
+        reduce_path_components(
+            &["", "..", ".."].iter().map(std::string::ToString::to_string).collect::<Vec<_>>()
+        ),
+        vec!["", "..", ".."]
+    );
+    assert_eq!(
+        reduce_path_components(
+            &["", "..", ".", ".."].iter().map(std::string::ToString::to_string).collect::<Vec<_>>()
+        ),
+        vec!["", "..", ".."]
+    );
+    assert_eq!(
+        reduce_path_components(
+            &["", "a", ".."].iter().map(std::string::ToString::to_string).collect::<Vec<_>>()
+        ),
+        vec![""]
+    );
+    assert_eq!(
+        reduce_path_components(
+            &["", "..", "a"].iter().map(std::string::ToString::to_string).collect::<Vec<_>>()
+        ),
+        vec!["", "..", "a"]
+    );
+    assert_eq!(
+        reduce_path_components(
+            &std::iter::once(&"/").map(std::string::ToString::to_string).collect::<Vec<_>>()
+        ),
+        vec!["/"]
+    );
+    assert_eq!(
+        reduce_path_components(
+            &["/", "."].iter().map(std::string::ToString::to_string).collect::<Vec<_>>()
+        ),
+        vec!["/"]
+    );
+    assert_eq!(
+        reduce_path_components(
+            &["/", ".."].iter().map(std::string::ToString::to_string).collect::<Vec<_>>()
+        ),
+        vec!["/"]
+    );
+    assert_eq!(
+        reduce_path_components(
+            &["/", "a", ".."].iter().map(std::string::ToString::to_string).collect::<Vec<_>>()
+        ),
+        vec!["/"]
+    );
 }
 
 #[test]
@@ -380,42 +445,220 @@ fn test_get_normalized_absolute_path() {
 #[test]
 fn test_get_normalized_absolute_path_without_root() {
     assert_eq!(get_normalized_absolute_path_without_root("/a/b/c.txt", "/a/b"), "a/b/c.txt");
-    assert_eq!(get_normalized_absolute_path_without_root("c:/work/hello.txt", "c:/work"), "work/hello.txt");
-    assert_eq!(get_normalized_absolute_path_without_root("c:/work/hello.txt", "d:/worspaces"), "work/hello.txt");
+    assert_eq!(
+        get_normalized_absolute_path_without_root("c:/work/hello.txt", "c:/work"),
+        "work/hello.txt"
+    );
+    assert_eq!(
+        get_normalized_absolute_path_without_root("c:/work/hello.txt", "d:/worspaces"),
+        "work/hello.txt"
+    );
 }
 
 #[test]
 fn test_get_relative_path_to_directory_or_url() {
     // !!!
     // Based on tests for `getRelativePathFromDirectory`.
-    assert_eq!(get_relative_path_to_directory_or_url("/", "/", false, &ComparePathsOptions::default()), "");
-    assert_eq!(get_relative_path_to_directory_or_url("/a", "/a", false, &ComparePathsOptions::default()), "");
-    assert_eq!(get_relative_path_to_directory_or_url("/a/", "/a", false, &ComparePathsOptions::default()), "");
-    assert_eq!(get_relative_path_to_directory_or_url("/a", "/", false, &ComparePathsOptions::default()), "..");
-    assert_eq!(get_relative_path_to_directory_or_url("/a", "/b", false, &ComparePathsOptions::default()), "../b");
-    assert_eq!(get_relative_path_to_directory_or_url("/a/b", "/b", false, &ComparePathsOptions::default()), "../../b");
-    assert_eq!(get_relative_path_to_directory_or_url("/a/b/c", "/b", false, &ComparePathsOptions::default()), "../../../b");
-    assert_eq!(get_relative_path_to_directory_or_url("/a/b/c", "/b/c", false, &ComparePathsOptions::default()), "../../../b/c");
-    assert_eq!(get_relative_path_to_directory_or_url("/a/b/c", "/a/b", false, &ComparePathsOptions::default()), "..");
-    assert_eq!(get_relative_path_to_directory_or_url("c:", "d:", false, &ComparePathsOptions::default()), "d:/");
-    assert_eq!(get_relative_path_to_directory_or_url("file:///", "file:///", false, &ComparePathsOptions::default()), "");
-    assert_eq!(get_relative_path_to_directory_or_url("file:///a", "file:///a", false, &ComparePathsOptions::default()), "");
-    assert_eq!(get_relative_path_to_directory_or_url("file:///a/", "file:///a", false, &ComparePathsOptions::default()), "");
-    assert_eq!(get_relative_path_to_directory_or_url("file:///a", "file:///", false, &ComparePathsOptions::default()), "..");
-    assert_eq!(get_relative_path_to_directory_or_url("file:///a", "file:///b", false, &ComparePathsOptions::default()), "../b");
-    assert_eq!(get_relative_path_to_directory_or_url("file:///a/b", "file:///b", false, &ComparePathsOptions::default()), "../../b");
-    assert_eq!(get_relative_path_to_directory_or_url("file:///a/b/c", "file:///b", false, &ComparePathsOptions::default()), "../../../b");
-    assert_eq!(get_relative_path_to_directory_or_url("file:///a/b/c", "file:///b/c", false, &ComparePathsOptions::default()), "../../../b/c");
-    assert_eq!(get_relative_path_to_directory_or_url("file:///a/b/c", "file:///a/b", false, &ComparePathsOptions::default()), "..");
-    assert_eq!(get_relative_path_to_directory_or_url("file:///c:", "file:///d:", false, &ComparePathsOptions::default()), "file:///d:/");
+    assert_eq!(
+        get_relative_path_to_directory_or_url(
+            "/",
+            "/",
+            false,
+            &crate::tspath::ComparePathsOptions::default()
+        ),
+        ""
+    );
+    assert_eq!(
+        get_relative_path_to_directory_or_url(
+            "/a",
+            "/a",
+            false,
+            &crate::tspath::ComparePathsOptions::default()
+        ),
+        ""
+    );
+    assert_eq!(
+        get_relative_path_to_directory_or_url(
+            "/a/",
+            "/a",
+            false,
+            &crate::tspath::ComparePathsOptions::default()
+        ),
+        ""
+    );
+    assert_eq!(
+        get_relative_path_to_directory_or_url(
+            "/a",
+            "/",
+            false,
+            &crate::tspath::ComparePathsOptions::default()
+        ),
+        ".."
+    );
+    assert_eq!(
+        get_relative_path_to_directory_or_url(
+            "/a",
+            "/b",
+            false,
+            &crate::tspath::ComparePathsOptions::default()
+        ),
+        "../b"
+    );
+    assert_eq!(
+        get_relative_path_to_directory_or_url(
+            "/a/b",
+            "/b",
+            false,
+            &crate::tspath::ComparePathsOptions::default()
+        ),
+        "../../b"
+    );
+    assert_eq!(
+        get_relative_path_to_directory_or_url(
+            "/a/b/c",
+            "/b",
+            false,
+            &crate::tspath::ComparePathsOptions::default()
+        ),
+        "../../../b"
+    );
+    assert_eq!(
+        get_relative_path_to_directory_or_url(
+            "/a/b/c",
+            "/b/c",
+            false,
+            &crate::tspath::ComparePathsOptions::default()
+        ),
+        "../../../b/c"
+    );
+    assert_eq!(
+        get_relative_path_to_directory_or_url(
+            "/a/b/c",
+            "/a/b",
+            false,
+            &crate::tspath::ComparePathsOptions::default()
+        ),
+        ".."
+    );
+    assert_eq!(
+        get_relative_path_to_directory_or_url(
+            "c:",
+            "d:",
+            false,
+            &crate::tspath::ComparePathsOptions::default()
+        ),
+        "d:/"
+    );
+    assert_eq!(
+        get_relative_path_to_directory_or_url(
+            "file:///",
+            "file:///",
+            false,
+            &crate::tspath::ComparePathsOptions::default()
+        ),
+        ""
+    );
+    assert_eq!(
+        get_relative_path_to_directory_or_url(
+            "file:///a",
+            "file:///a",
+            false,
+            &crate::tspath::ComparePathsOptions::default()
+        ),
+        ""
+    );
+    assert_eq!(
+        get_relative_path_to_directory_or_url(
+            "file:///a/",
+            "file:///a",
+            false,
+            &crate::tspath::ComparePathsOptions::default()
+        ),
+        ""
+    );
+    assert_eq!(
+        get_relative_path_to_directory_or_url(
+            "file:///a",
+            "file:///",
+            false,
+            &crate::tspath::ComparePathsOptions::default()
+        ),
+        ".."
+    );
+    assert_eq!(
+        get_relative_path_to_directory_or_url(
+            "file:///a",
+            "file:///b",
+            false,
+            &crate::tspath::ComparePathsOptions::default()
+        ),
+        "../b"
+    );
+    assert_eq!(
+        get_relative_path_to_directory_or_url(
+            "file:///a/b",
+            "file:///b",
+            false,
+            &crate::tspath::ComparePathsOptions::default()
+        ),
+        "../../b"
+    );
+    assert_eq!(
+        get_relative_path_to_directory_or_url(
+            "file:///a/b/c",
+            "file:///b",
+            false,
+            &crate::tspath::ComparePathsOptions::default()
+        ),
+        "../../../b"
+    );
+    assert_eq!(
+        get_relative_path_to_directory_or_url(
+            "file:///a/b/c",
+            "file:///b/c",
+            false,
+            &crate::tspath::ComparePathsOptions::default()
+        ),
+        "../../../b/c"
+    );
+    assert_eq!(
+        get_relative_path_to_directory_or_url(
+            "file:///a/b/c",
+            "file:///a/b",
+            false,
+            &crate::tspath::ComparePathsOptions::default()
+        ),
+        ".."
+    );
+    assert_eq!(
+        get_relative_path_to_directory_or_url(
+            "file:///c:",
+            "file:///d:",
+            false,
+            &crate::tspath::ComparePathsOptions::default()
+        ),
+        "file:///d:/"
+    );
 }
 
 #[test]
 fn test_to_file_name_lower_case() {
-    assert_eq!(to_file_name_lower_case("/user/UserName/projects/Project/file.ts"), "/user/username/projects/project/file.ts");
-    assert_eq!(to_file_name_lower_case("/user/UserName/projects/projectß/file.ts"), "/user/username/projects/projectß/file.ts");
-    assert_eq!(to_file_name_lower_case("/user/UserName/projects/İproject/file.ts"), "/user/username/projects/İproject/file.ts");
-    assert_eq!(to_file_name_lower_case("/user/UserName/projects/ı/file.ts"), "/user/username/projects/ı/file.ts");
+    assert_eq!(
+        to_file_name_lower_case("/user/UserName/projects/Project/file.ts"),
+        "/user/username/projects/project/file.ts"
+    );
+    assert_eq!(
+        to_file_name_lower_case("/user/UserName/projects/projectß/file.ts"),
+        "/user/username/projects/projectß/file.ts"
+    );
+    assert_eq!(
+        to_file_name_lower_case("/user/UserName/projects/İproject/file.ts"),
+        "/user/username/projects/İproject/file.ts"
+    );
+    assert_eq!(
+        to_file_name_lower_case("/user/UserName/projects/ı/file.ts"),
+        "/user/username/projects/ı/file.ts"
+    );
 }
 
 #[test]
@@ -436,12 +679,21 @@ fn test_get_longest_extension_from_path() {
 
 #[test]
 fn test_trim_file_path_prefix() {
-    assert_eq!(trim_file_path_prefix("/project/src/file.ts", "/project/src", true), Some("/file.ts"));
+    assert_eq!(
+        trim_file_path_prefix("/project/src/file.ts", "/project/src", true),
+        Some("/file.ts")
+    );
     assert_eq!(trim_file_path_prefix("/project/SRC/file.ts", "/project/src", true), None);
-    assert_eq!(trim_file_path_prefix("/project/SRC/file.ts", "/project/src", false), Some("/file.ts"));
+    assert_eq!(
+        trim_file_path_prefix("/project/SRC/file.ts", "/project/src", false),
+        Some("/file.ts")
+    );
     assert_eq!(trim_file_path_prefix("/other/file.ts", "/project/src", false), None);
     // Each Kelvin sign '\u212A' case-folds to the single-byte 'k'.
-    assert_eq!(trim_file_path_prefix("/kkk/a.ts", "/\u{212A}\u{212A}\u{212A}", false), Some("/a.ts"));
+    assert_eq!(
+        trim_file_path_prefix("/kkk/a.ts", "/\u{212A}\u{212A}\u{212A}", false),
+        Some("/a.ts")
+    );
     assert_eq!(trim_file_path_prefix("/project/src", "/project/src", true), Some(""));
 }
 
@@ -473,17 +725,23 @@ fn test_has_relative_path_segment_matches_segment_split() {
     // also behind a 5-byte prefix, against splitting on '/'.
     fn by_segments(p: &str) -> bool {
         let segments: Vec<&str> = p.split('/').collect();
-        segments.iter().enumerate().any(|(i, s)| *s == "." || *s == ".." || s.is_empty() && i > 0 && i + 1 < segments.len())
+        segments.iter().enumerate().any(|(i, s)| {
+            *s == "." || *s == ".." || s.is_empty() && i > 0 && i + 1 < segments.len()
+        })
     }
-    let alphabet = [b'/', b'.', b'a'];
+    let alphabet = *b"/.a";
     let mut bytes = Vec::new();
     for len in 0..=11 {
         for mut code in 0..3usize.pow(len) {
             bytes.clear();
-            for _ in 0..len {
-                bytes.push(alphabet[code % 3]);
-                code /= 3;
-            }
+            bytes.extend(
+                std::iter::repeat_with(|| {
+                    let byte = alphabet[code % 3];
+                    code /= 3;
+                    byte
+                })
+                .take(len as usize),
+            );
             let p = std::str::from_utf8(&bytes).unwrap();
             assert_eq!(has_relative_path_segment(p), by_segments(p), "{p}");
             let prefixed = format!("/ab/c{p}");
@@ -504,16 +762,14 @@ fn test_path_is_relative() {
         ("../foo/bar".into(), true),
         ("../".to_string() + &"foo/".repeat(100), true),
         // non-relative
-        ("".into(), false),
+        (String::new(), false),
         ("foo".into(), false),
         ("foo/bar".into(), false),
         ("/foo/bar".into(), false),
         ("c:/foo/bar".into(), false),
     ];
     let old = tests.clone();
-    for (p, r) in old {
-        tests.push((p.replace('/', "\\"), r));
-    }
+    tests.extend(old.into_iter().map(|(p, r)| (p.replace('/', "\\"), r)));
     for (p, expected) in tests {
         assert_eq!(path_is_relative(&p), expected, "{p}");
     }
@@ -521,20 +777,21 @@ fn test_path_is_relative() {
 
 #[test]
 fn test_get_common_parents() {
-    let opts = ComparePathsOptions::default();
-    let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<String>>();
-    let run = |paths: &[&str], min: usize| get_common_parents(&s(paths), min, get_path_components, &opts);
+    let opts = crate::tspath::ComparePathsOptions::default();
+    let s = |v: &[&str]| v.iter().map(std::string::ToString::to_string).collect::<Vec<String>>();
+    let run =
+        |paths: &[&str], min: usize| get_common_parents(&s(paths), min, get_path_components, &opts);
 
     let (got, ignored) = run(&[], 1);
     assert_eq!(ignored.len(), 0);
-    assert!(got.is_empty());
+    assert_eq!(got, [] as [std::string::String; 0]);
 
     let (got, ignored) = run(&["/a/b/c/d"], 1);
     assert_eq!(ignored.len(), 0);
     assert_eq!(got, vec!["/a/b/c/d"]);
 
     let (got, ignored) = run(&["/a/b/c/d", "/a/b/c/e", "/a/b/f/g", "/x/y"], 4);
-    assert_eq!(ignored, ["/x/y".to_string()].into_iter().collect());
+    assert_eq!(ignored, std::iter::once("/x/y".to_string()).collect());
     assert_eq!(got, vec!["/a/b/c", "/a/b/f/g"]);
 
     let (got, ignored) = run(&["/a/b/c/d", "/a/b/c/e", "/a/b/f/g"], 1);
@@ -569,11 +826,17 @@ fn test_get_common_parents() {
 #[test]
 fn test_untitled_path_handling() {
     let untitled_path = "^/untitled/ts-nul-authority/Untitled-2";
-    assert_eq!(get_encoded_root_length(untitled_path), 2);
+    assert_eq!(get_encoded_root_length(untitled_path), EncodedRootLength::Disk(2));
     assert!(is_rooted_disk_path(untitled_path));
     let current_dir = "/home/user/project";
-    assert_eq!(to_path(untitled_path, current_dir, true).as_str(), "^/untitled/ts-nul-authority/Untitled-2");
-    assert_eq!(get_normalized_absolute_path(untitled_path, current_dir), "^/untitled/ts-nul-authority/Untitled-2");
+    assert_eq!(
+        to_path(untitled_path, current_dir, true).as_str(),
+        "^/untitled/ts-nul-authority/Untitled-2"
+    );
+    assert_eq!(
+        get_normalized_absolute_path(untitled_path, current_dir),
+        "^/untitled/ts-nul-authority/Untitled-2"
+    );
 }
 
 #[test]
@@ -588,7 +851,15 @@ fn test_untitled_path_edge_cases() {
         ("^/untitled/ts-nul-authority/path/with/deeper/structure", 2, true),
     ];
     for (path, expected, is_rooted) in cases {
-        assert_eq!(get_encoded_root_length(path), expected, "{path}");
+        assert_eq!(
+            get_encoded_root_length(path),
+            if expected == 0 {
+                EncodedRootLength::Relative
+            } else {
+                EncodedRootLength::Disk(expected)
+            },
+            "{path}"
+        );
         assert_eq!(is_rooted_disk_path(path), is_rooted, "{path}");
     }
 }
@@ -611,12 +882,22 @@ fn test_starts_with_directory() {
         ("unicode characters", "/project/测试/file.ts", "/project/测试", true, true),
         ("unicode case insensitive", "/project/测试/file.ts", "/PROJECT/测试", false, true),
         ("file name shorter than directory", "/proj", "/project", true, false),
-        ("file name starts with directory but no separator", "/projectsrc/file.ts", "/project", true, false),
+        (
+            "file name starts with directory but no separator",
+            "/projectsrc/file.ts",
+            "/project",
+            true,
+            false,
+        ),
         ("relative paths", "src/file.ts", "src", true, true),
         ("absolute vs relative", "/project/src/file.ts", "project/src", true, false),
     ];
     for (name, file_name, directory_name, use_case_sensitive_file_names, expected) in tests {
-        assert_eq!(starts_with_directory(file_name, directory_name, use_case_sensitive_file_names), expected, "{name}");
+        assert_eq!(
+            starts_with_directory(file_name, directory_name, use_case_sensitive_file_names),
+            expected,
+            "{name}"
+        );
     }
 }
 
@@ -631,7 +912,11 @@ fn test_contains_ignored_path() {
         ("empty path", "", false),
         ("path with multiple ignored patterns", "/project/node_modules/.pnpm/.git/.#file.ts", true),
         ("case sensitive test", "/project/NODE_MODULES/.PNPM/file.ts", false),
-        ("path with ignored pattern in middle", "/project/src/node_modules/.pnpm/dist/file.js", true),
+        (
+            "path with ignored pattern in middle",
+            "/project/src/node_modules/.pnpm/dist/file.js",
+            true,
+        ),
         ("path with ignored pattern at end", "/project/src/file.ts.#", true),
         ("pattern at start", "/node_modules./file.ts", false),
         ("pattern at end", "/project/file.ts.#", true),
@@ -645,4 +930,32 @@ fn test_contains_ignored_path() {
     for pattern in ["/node_modules/.", "/.git", ".#"] {
         assert!(contains_ignored_path(&format!("/test{pattern}/file.ts")));
     }
+}
+
+// Case-insensitive path components compare with Go's strings.EqualFold (SimpleFold orbits). Expected values are
+// tsgo's ContainsPath / GetRelativePathFromDirectory.
+#[test]
+fn test_ignore_case_paths_use_simple_fold() {
+    let ci = ComparePathsOptions {
+        use_case_sensitive_file_names: false,
+        current_directory: "/".to_string(),
+    };
+    assert!(!contains_path("/dir/I", "/dir/\u{131}/a.ts", &ci));
+    assert_eq!(
+        get_relative_path_from_directory("/dir/I", "/dir/\u{131}/a.ts", &ci),
+        "../\u{131}/a.ts"
+    );
+    assert!(!contains_path("/dir/i", "/dir/\u{130}/a.ts", &ci));
+    assert_eq!(
+        get_relative_path_from_directory("/dir/i", "/dir/\u{130}/a.ts", &ci),
+        "../\u{130}/a.ts"
+    );
+    assert!(contains_path("/dir/\u{3D1}", "/dir/\u{3F4}/a.ts", &ci));
+    assert_eq!(get_relative_path_from_directory("/dir/\u{3D1}", "/dir/\u{3F4}/a.ts", &ci), "a.ts");
+    assert!(contains_path("/dir/\u{FB05}", "/dir/\u{FB06}/a.ts", &ci));
+    assert_eq!(
+        get_relative_path_from_directory("/dir/\u{FB05}", "/dir/\u{FB06}/a.ts", &ci),
+        "a.ts"
+    );
+    assert!(contains_path("/dir/\u{1F80}", "/dir/\u{1F88}/a.ts", &ci));
 }

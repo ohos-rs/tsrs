@@ -1,10 +1,15 @@
 # mem-compact-ast-sizing: what a more compact syntax tree would save on the 8-checker scoreboard losses (2026-10-09)
 
+The table-generation and blast-radius scripts under `tools/sizing/` have been removed. Their last versions are
+available at commit `b620e8e5`; the benchmark result snapshots cited here are also archived in Git history.
+The `tsrs_ast/ast-sizing` feature and `TSRS_AST_SIZING` counting pass have also been removed. Commands below
+describe how the original measurements were produced and require restoring the historical code and inputs.
+
 Question from the owner: the scoreboard moved to the 16-vCPU runner with tsrs at its default 8 checkers, where the
 parsed program, shared by every checker, is a larger share of the peak than at 32. Would a more compact syntax tree
 (identifier text as atoms, name-less property nodes, lists as inline ranges, anything else the counts show) put tsrs
 below `bun check` on the six projects where it still uses more memory? Answered with counts and bytes of the real
-trees, from a counting pass over the parsed and bound program (`--features ast-sizing`, section 3), on the code the
+trees, from a counting pass over the parsed and bound program (`--features tsrs_ast/ast-sizing`, section 3), on the code the
 benchmark measured. No design was built; every saving below is counts times layout sizes.
 
 Answer: no. The whole tree alive at the peak is 6-21% of it. No single design reaches 5% of the peak on any of the
@@ -65,7 +70,7 @@ MiB = 2^20 bytes throughout; the bar (AGENTS.md) is 5% of the peak at the defaul
 
 ## 3. Method
 
-`crates/tsrs_ast/src/sizing.rs`, compiled only with `cargo build --release -p tsrs_cli --features ast-sizing` (default
+`crates/tsrs_ast/src/sizing.rs`, compiled only with `cargo build --release -p tsrs_cli --features tsrs_ast/ast-sizing` (default
 builds are unchanged), walks the tree when `TSRS_AST_SIZING=<file>` is set, at two points of the type-check pass
 (`Program::get_semantic_diagnostics`): `pre` (after load, bind and the leaf classification, every file) and `post`
 (after the pass: every file but the freed check leaves, with the lazy member lists and the JSDoc the checkers forced).
@@ -187,7 +192,7 @@ one element, 5-13% none.
   list field.
 - **D, from the counts.** *D1*: the node id out of the header (24 -> 20 B, 4-aligned data at offset 20) saves 8 B on
   nodes whose data struct is 4 mod 8 bytes; ids must stay dense because the id-keyed link stores page by consecutive
-  ids (notes/mem-layout.md "Id-keyed link stores paged by id", crates/tsrs_checker/src/links.rs:285) and the API
+  ids (crates/tsrs_checker/src/links.rs:285) and the API
   codec orders nodes by id (crates/tsrs_api_codec/src/encoder.rs:55-75), so the 7-27% of nodes that get an id keep it
   in a side table (~12 B each, estimate). *D2*: `TokenFlags` out of string, numeric, bigint and regexp literals (40 ->
   32 B). *D3*: every payload-less `Token` node (24 B) replaced by its kind in the parent. Measured and not pursued: a
@@ -338,11 +343,11 @@ node itself (A) saves nothing since identifiers are 32 B.
    another reason (the language server, single-threaded runs), start with B for property-access names, text from the
    parent's end and no interner (269 lines name the parent kind; 30.5 MiB on vscode, 2.0-5.5 MiB elsewhere).
 
-## 10. Reproduce
+## 10. Original reproduction commands
 
 ```sh
 # build the opt-in tool (default builds do not contain it)
-cargo build --release -p tsrs_cli --features ast-sizing
+cargo build --release -p tsrs_cli --features tsrs_ast/ast-sizing
 python3 bench/run.py --setup-only            # checkouts in bench/.work/solutions/<name> (bench/projects.json)
 # per project, from its checkout root; -p: t3code-server apps/server, supabase-studio apps/studio, cal-diy apps/web,
 # formbricks-web apps/web/tsconfig.typecheck.json, vscode src, mikro-orm / webpack / drizzle-orm .

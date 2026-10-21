@@ -2,8 +2,11 @@
 // type with Go-compatible encoding (v2 defaults: no HTML escaping, invalid UTF-8 allowed,
 // ES6 number formatting) and a strict RFC 8259 parser.
 
-use crate::collections::OrderedMap;
 use std::fmt::Write;
+
+use indexmap::map::Entry;
+
+use crate::collections::OrderedMap;
 
 #[derive(Clone, Debug, PartialEq, Default)]
 pub enum Value {
@@ -47,12 +50,12 @@ pub fn write_compact(out: &mut String, v: &Value) -> Result<(), String> {
 
 /// Appends the encoding of a string, as `marshal` writes `Value::String`.
 pub fn write_compact_string(out: &mut String, s: &str) {
-    write_string(out, s)
+    write_string(out, s);
 }
 
 /// Appends the encoding of an integer, as `marshal` writes an integral `Value::Number` or a `Value::Integer`.
 pub fn write_compact_int(out: &mut String, n: i64) {
-    write_i64(out, n)
+    write_i64(out, n);
 }
 
 /// `json.Marshal` of a Go string.
@@ -102,7 +105,7 @@ fn es6_number_string(f: f64) -> String {
             out.push_str(&digits[1..]);
         }
         out.push('e');
-        out.push(if n - 1 >= 0 { '+' } else { '-' });
+        out.push(if n > 0 { '+' } else { '-' });
         out.push_str(&(n - 1).abs().to_string());
     }
     out
@@ -111,19 +114,25 @@ fn es6_number_string(f: f64) -> String {
 fn newline(out: &mut String, prefix: &str, indent: &str, depth: usize) {
     out.push('\n');
     out.push_str(prefix);
-    for _ in 0..depth {
-        out.push_str(indent);
-    }
+    out.extend(std::iter::repeat_n(indent, depth));
 }
 
-fn write_value(out: &mut String, v: &Value, prefix: &str, indent: &str, depth: usize) -> Result<(), String> {
+fn write_value(
+    out: &mut String,
+    v: &Value,
+    prefix: &str,
+    indent: &str,
+    depth: usize,
+) -> Result<(), String> {
     let multiline = !prefix.is_empty() || !indent.is_empty();
     match v {
         Value::Null => out.push_str("null"),
         Value::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
         // An integral value below 1e21 prints as its digits (es6_number_string's first case); writing those directly
         // avoids the shortest-digits formatting and its allocations, which dominate large integer arrays.
-        Value::Number(n) if n.fract() == 0.0 && n.abs() < 9007199254740992.0 => write_i64(out, *n as i64),
+        Value::Number(n) if n.fract() == 0.0 && n.abs() < 9_007_199_254_740_992.0 => {
+            write_i64(out, *n as i64);
+        }
         Value::Number(n) => out.push_str(&marshal_f64(*n)?),
         Value::Integer(n) => write_i64(out, *n),
         Value::String(s) => write_string(out, s),
@@ -193,7 +202,10 @@ fn write_string(out: &mut String, s: &str) {
     let mut i = 0;
     while i < bytes.len() {
         // Copy the run of bytes that need no escaping in one go.
-        let run = bytes[i..].iter().position(|&b| b >= 0x80 || b < 0x20 || b == b'"' || b == b'\\').unwrap_or(bytes.len() - i);
+        let run = bytes[i..]
+            .iter()
+            .position(|&b| !(0x20..0x80).contains(&b) || b == b'"' || b == b'\\')
+            .unwrap_or(bytes.len() - i);
         if run > 0 {
             out.push_str(&s[i..i + run]);
             i += run;
@@ -210,7 +222,7 @@ fn write_string(out: &mut String, s: &str) {
                 b'\r' => out.push_str("\\r"),
                 b'\t' => out.push_str("\\t"),
                 0..=0x1f => {
-                    let _ = write!(out, "\\u{:04x}", b);
+                    let _ = write!(out, "\\u{b:04x}");
                 }
                 _ => out.push(b as char),
             }
@@ -228,13 +240,20 @@ fn write_string(out: &mut String, s: &str) {
 pub fn unmarshal(input: &str) -> Result<Value, String> {
     let mut p = JsonParser { s: input.as_bytes(), pos: 0 };
     p.skip_ws();
-    let v = p.parse_value()?;
+    let v = p.parse_value(0)?;
     p.skip_ws();
     if p.pos != p.s.len() {
-        return Err(format!("jsontext: invalid character after top-level value at offset {}", p.pos));
+        return Err(format!(
+            "jsontext: invalid character after top-level value at offset {}",
+            p.pos
+        ));
     }
     Ok(v)
 }
+
+// jsontext's maxNestingDepth: opening a container deeper than this is an error (state.go `errMaxDepth`). The
+// limit also bounds the parser's recursion, so a deeply nested input cannot overflow the stack.
+const MAX_NESTING_DEPTH: usize = 10000;
 
 struct JsonParser<'a> {
     s: &'a [u8],
@@ -243,16 +262,20 @@ struct JsonParser<'a> {
 
 impl JsonParser<'_> {
     fn skip_ws(&mut self) {
-        while self.pos < self.s.len() && matches!(self.s[self.pos], b' ' | b'\t' | b'\n' | b'\r') {
-            self.pos += 1;
-        }
+        self.pos += (self.pos..self.s.len())
+            .take_while(|&index| matches!(self.s[index], b' ' | b'\t' | b'\n' | b'\r'))
+            .count();
     }
 
     fn err<T>(&self, msg: &str) -> Result<T, String> {
         Err(format!("jsontext: {msg} at offset {}", self.pos))
     }
 
-    fn parse_value(&mut self) -> Result<Value, String> {
+    // `depth` counts the containers enclosing the value.
+    fn parse_value(&mut self, depth: usize) -> Result<Value, String> {
+        if depth == MAX_NESTING_DEPTH && matches!(self.s.get(self.pos), Some(b'[' | b'{')) {
+            return self.err("exceeded max depth");
+        }
         match self.s.get(self.pos) {
             None => self.err("unexpected EOF"),
             Some(b'n') => self.literal("null", Value::Null),
@@ -269,7 +292,7 @@ impl JsonParser<'_> {
                 }
                 loop {
                     self.skip_ws();
-                    items.push(self.parse_value()?);
+                    items.push(self.parse_value(depth + 1)?);
                     self.skip_ws();
                     match self.s.get(self.pos) {
                         Some(b',') => self.pos += 1,
@@ -301,11 +324,18 @@ impl JsonParser<'_> {
                     }
                     self.pos += 1;
                     self.skip_ws();
-                    let value = self.parse_value()?;
-                    if members.contains_key(&key) {
-                        return self.err(&format!("duplicate object member name {}", marshal_string(&key)));
+                    let value = self.parse_value(depth + 1)?;
+                    match members.entry(key) {
+                        Entry::Occupied(entry) => {
+                            return self.err(&format!(
+                                "duplicate object member name {}",
+                                marshal_string(entry.key())
+                            ));
+                        }
+                        Entry::Vacant(entry) => {
+                            entry.insert(value);
+                        }
                     }
-                    members.insert(key, value);
                     self.skip_ws();
                     match self.s.get(self.pos) {
                         Some(b',') => self.pos += 1,
@@ -337,9 +367,7 @@ impl JsonParser<'_> {
         }
         let digits = |p: &mut Self| {
             let s = p.pos;
-            while p.pos < p.s.len() && p.s[p.pos].is_ascii_digit() {
-                p.pos += 1;
-            }
+            p.pos += (p.pos..p.s.len()).take_while(|&index| p.s[index].is_ascii_digit()).count();
             p.pos - s
         };
         match self.s.get(self.pos) {
@@ -381,8 +409,14 @@ impl JsonParser<'_> {
         if self.pos + 4 > self.s.len() {
             return self.err("invalid escape sequence");
         }
-        let text = std::str::from_utf8(&self.s[self.pos..self.pos + 4]).map_err(|e| e.to_string())?;
-        let v = u32::from_str_radix(text, 16).or_else(|_| self.err("invalid escape sequence"))?;
+        // jsonwire.parseHexUint16: exactly four hex digits (`u32::from_str_radix` would take a leading '+').
+        let mut v = 0;
+        for &c in &self.s[self.pos..self.pos + 4] {
+            let Some(digit) = (c as char).to_digit(16) else {
+                return self.err("invalid escape sequence");
+            };
+            v = v * 16 + digit;
+        }
         self.pos += 4;
         Ok(v)
     }
@@ -416,7 +450,9 @@ impl JsonParser<'_> {
                         b't' => out.push('\t'),
                         b'u' => {
                             let mut r = self.hex4()?;
-                            if (0xD800..0xDC00).contains(&r) && self.s[self.pos..].starts_with(b"\\u") {
+                            if (0xD800..0xDC00).contains(&r)
+                                && self.s[self.pos..].starts_with(b"\\u")
+                            {
                                 let save = self.pos;
                                 self.pos += 2;
                                 let r2 = self.hex4()?;
@@ -448,8 +484,12 @@ mod tests {
 
     #[test]
     fn round_trip() {
-        let v = unmarshal(r#"{"a": 1, "b": "two", "c": { "d": [4.5, true, null] }, "e": "é😀<>"}"#).unwrap();
-        assert_eq!(marshal(&v).unwrap(), r#"{"a":1,"b":"two","c":{"d":[4.5,true,null]},"e":"é😀<>"}"#);
+        let v = unmarshal(r#"{"a": 1, "b": "two", "c": { "d": [4.5, true, null] }, "e": "é😀<>"}"#)
+            .unwrap();
+        assert_eq!(
+            marshal(&v).unwrap(),
+            r#"{"a":1,"b":"two","c":{"d":[4.5,true,null]},"e":"é😀<>"}"#
+        );
         assert_eq!(
             marshal_indent(&unmarshal(r#"{"a":[1,2],"b":{}}"#).unwrap(), "", "  ").unwrap(),
             "{\n  \"a\": [\n    1,\n    2\n  ],\n  \"b\": {}\n}"
@@ -457,23 +497,101 @@ mod tests {
         assert_eq!(marshal_string("a\"\n\u{1}"), "\"a\\\"\\n\\u0001\"");
         assert_eq!(marshal_f64(1e21).unwrap(), "1e+21");
         assert_eq!(marshal_f64(123.456).unwrap(), "123.456");
-        assert_eq!(marshal_f64(-0.000001).unwrap(), "-0.000001");
+        assert_eq!(marshal_f64(-0.000_001).unwrap(), "-0.000001");
         assert_eq!(marshal_f64(1.5e-7).unwrap(), "1.5e-7");
         assert_eq!(marshal_f64(1e20).unwrap(), "100000000000000000000");
         // The integer fast path agrees with the general ES6 formatting.
-        for n in [0.0, -0.0, 1.0, -1.0, 9.0, 10.0, 12345.0, -987654321.0, 9007199254740991.0, -9007199254740991.0, 9007199254740992.0, 1e20] {
+        for n in [
+            0.0,
+            -0.0,
+            1.0,
+            -1.0,
+            9.0,
+            10.0,
+            12345.0,
+            -987_654_321.0,
+            9_007_199_254_740_991.0,
+            -9_007_199_254_740_991.0,
+            9_007_199_254_740_992.0,
+            1e20,
+        ] {
             assert_eq!(marshal(&Value::Number(n)).unwrap(), marshal_f64(n).unwrap(), "{n}");
         }
         assert_eq!(marshal(&Value::Integer(i64::MIN)).unwrap(), i64::MIN.to_string());
-        assert_eq!(marshal_string("plain/ascii run é \"q\" \\ tab\t end"), "\"plain/ascii run é \\\"q\\\" \\\\ tab\\t end\"");
+        assert_eq!(
+            marshal_string("plain/ascii run é \"q\" \\ tab\t end"),
+            "\"plain/ascii run é \\\"q\\\" \\\\ tab\\t end\""
+        );
         assert!(marshal_f64(f64::NAN).is_err());
         assert!(unmarshal("{\"a\":1,\"a\":2}").is_err());
         assert!(unmarshal("[1,]").is_err());
         // The integer fast path agrees with the general parse, including the sign of zero.
-        for text in ["0", "-0", "7", "-42", "123456789012345", "-999999999999999", "1234567890123456", "1.5", "2e3"] {
+        for text in [
+            "0",
+            "-0",
+            "7",
+            "-42",
+            "123456789012345",
+            "-999999999999999",
+            "1234567890123456",
+            "1.5",
+            "2e3",
+        ] {
             let Value::Number(n) = unmarshal(text).unwrap() else { panic!() };
             let expected: f64 = text.parse().unwrap();
             assert_eq!(n.to_bits(), expected.to_bits(), "{text}");
         }
+    }
+
+    #[test]
+    fn unicode_escape_needs_four_hex_digits() {
+        assert_eq!(unmarshal(r#""\u0041\u00e9\u00C9""#).unwrap(), Value::String("AéÉ".to_string()));
+        for text in [r#""\u+041""#, r#""\u-041""#, r#""\u 041""#, r#""\u004""#, r#""\ud83d\u+e00""#]
+        {
+            assert!(
+                unmarshal(text).unwrap_err().starts_with("jsontext: invalid escape sequence"),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn max_nesting_depth() {
+        // Recursion to the limit needs more than the default test thread stack in an unoptimized build.
+        std::thread::Builder::new()
+            .stack_size(256 << 20)
+            .spawn(|| {
+                let nested = |open: &str, close: &str, depth: usize| {
+                    format!("{}{}", open.repeat(depth), close.repeat(depth))
+                };
+                assert!(unmarshal(&nested("[", "]", MAX_NESTING_DEPTH)).is_ok());
+                assert!(
+                    unmarshal(&format!("{{\"a\":{}}}", nested("[", "]", MAX_NESTING_DEPTH - 1)))
+                        .is_ok()
+                );
+                assert_eq!(
+                    unmarshal(&nested("[", "]", MAX_NESTING_DEPTH + 1)).unwrap_err(),
+                    "jsontext: exceeded max depth at offset 10000"
+                );
+                let deep_object = format!("{{\"a\":{}", nested("[", "]", MAX_NESTING_DEPTH));
+                assert_eq!(
+                    unmarshal(&deep_object).unwrap_err(),
+                    "jsontext: exceeded max depth at offset 10004"
+                );
+                // Far deeper than the stack could recurse.
+                assert!(unmarshal(&nested("[", "]", 2_000_000)).is_err());
+                // Scalars at the limit are fine.
+                assert!(
+                    unmarshal(&format!(
+                        "{}1{}",
+                        "[".repeat(MAX_NESTING_DEPTH),
+                        "]".repeat(MAX_NESTING_DEPTH)
+                    ))
+                    .is_ok()
+                );
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 }

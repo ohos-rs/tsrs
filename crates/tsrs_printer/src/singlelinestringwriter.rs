@@ -1,8 +1,8 @@
 use tsrs_ast::*;
 use tsrs_core::*;
 
-use crate::textwriter::last_rune_is_white_space_like;
 use crate::EmitTextWriter;
+use crate::textwriter::last_rune_is_white_space_like;
 
 // Go pools these writers; the release function is kept for call-site parity and does nothing.
 pub fn get_single_line_string_writer() -> (Box<dyn EmitTextWriter>, impl FnOnce()) {
@@ -43,11 +43,11 @@ impl EmitTextWriter for singleLineStringWriter {
         0
     }
 
-    fn get_indent(&self) -> i32 {
+    fn get_indent(&self) -> u32 {
         0
     }
 
-    fn get_line(&self) -> i32 {
+    fn get_line(&self) -> u32 {
         0
     }
 
@@ -55,8 +55,8 @@ impl EmitTextWriter for singleLineStringWriter {
         self.builder.clone()
     }
 
-    fn get_text_pos(&self) -> i32 {
-        self.builder.len() as i32
+    fn get_text_pos(&self) -> u32 {
+        self.builder.len() as u32
     }
 
     fn has_trailing_comment(&self) -> bool {

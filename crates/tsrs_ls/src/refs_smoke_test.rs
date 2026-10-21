@@ -7,19 +7,22 @@
 use std::ptr::NonNull;
 use std::sync::{Arc, Mutex};
 
-use tsrs_compiler::{new_compiler_host, new_program, CheckerHandle, CheckerPool, CompilerHost, PooledChecker, Program, ProgramOptions};
+use tsrs_compiler::{
+    CheckerHandle, CheckerPool, CompilerHost, PooledChecker, Program, ProgramOptions,
+    new_compiler_host, new_program,
+};
+use tsrs_core::P;
 use tsrs_core::context::Context;
 use tsrs_core::json::{self, Value};
-use tsrs_core::P;
 use tsrs_lsproto::{self as lsproto, Json};
 use tsrs_tsoptions::{self as tsoptions, ParseConfigHost};
-use tsrs_vfs::{bundled, vfstest, FS};
+use tsrs_vfs::{FS, bundled, vfstest};
 
 use crate::autoimport::{ProjectID, Registry};
-use crate::lsconv::{self, compute_lsp_line_starts, Converters};
-use crate::lsutil::{new_default_user_preferences, UserPreferences};
+use crate::lsconv::{self, Converters, compute_lsp_line_starts};
+use crate::lsutil::{UserPreferences, new_default_user_preferences};
 use crate::sourcemap::ECMALineInfo;
-use crate::{new_language_service, Host, LanguageService};
+use crate::{Host, LanguageService, new_language_service};
 
 struct dataset {
     a: &'static str,
@@ -60,7 +63,7 @@ impl Host for testHost {
         self.fs.read_file(path)
     }
     fn converters(&self) -> Arc<Converters> {
-        self.converters.clone()
+        std::sync::Arc::clone(&self.converters)
     }
     fn get_preferences(&self, _active_file: &str) -> UserPreferences {
         new_default_user_preferences()
@@ -71,7 +74,15 @@ impl Host for testHost {
     fn auto_import_registry(&self) -> Option<Arc<Registry>> {
         None
     }
-    fn read_directory(&self, _: &str, _: &str, _: &[String], _: &[String], _: &[String], _: usize) -> Vec<String> {
+    fn read_directory(
+        &self,
+        _: &str,
+        _: &str,
+        _: &[String],
+        _: &[String],
+        _: &[String],
+        _: usize,
+    ) -> Vec<String> {
         Vec::new()
     }
     fn get_directories(&self, _path: &str) -> Vec<String> {
@@ -93,7 +104,7 @@ impl ParseConfigHost for parseConfigHost {
     fn fs(&self) -> &dyn FS {
         &*self.fs
     }
-    fn get_current_directory(&self) -> &str {
+    fn get_current_directory(&self) -> &'static str {
         "/"
     }
 }
@@ -112,12 +123,11 @@ impl CheckerPool for testPool {
     fn get_checker(&self, _ctx: &Context, _file: Option<P<tsrs_ast::SourceFile>>) -> CheckerHandle {
         let state = self.0;
         let mut slots = state.slots.lock().unwrap();
-        let index = match slots.iter().position(|(_, held)| !held) {
-            Some(index) => index,
-            None => {
-                slots.push((PooledChecker::new(tsrs_checker::new_checker(state.program)), false));
-                slots.len() - 1
-            }
+        let index = if let Some(index) = slots.iter().position(|(_, held)| !held) {
+            index
+        } else {
+            slots.push((PooledChecker::new(tsrs_checker::new_checker(state.program)), false));
+            slots.len() - 1
         };
         slots[index].1 = true;
         let checker: NonNull<tsrs_compiler::Checker> = slots[index].0.as_non_null();
@@ -135,33 +145,51 @@ impl CheckerPool for testPool {
 fn setup(d: &dataset) -> (LanguageService, Context) {
     let a_path = format!("/{}", d.a_name);
     let files = [("/tsconfig.json", d.tsconfig), (a_path.as_str(), d.a), ("/b.ts", d.b)];
-    let fs: Arc<dyn FS> = Arc::new(bundled::wrap_fs(vfstest::from_map(files.iter().map(|&(k, v)| (k, v)), true)));
-    let config_host: &'static parseConfigHost = Box::leak(Box::new(parseConfigHost { fs: fs.clone() }));
-    let (config, diagnostics) = tsoptions::get_parsed_command_line_of_config_file("/tsconfig.json", None, None, config_host, None);
-    assert!(diagnostics.is_empty());
-    let host: Arc<dyn CompilerHost> = new_compiler_host("/", fs.clone(), &bundled::lib_path(), None, None, None);
+    let fs: Arc<dyn FS> =
+        Arc::new(bundled::wrap_fs(vfstest::from_map(files.iter().map(|&(k, v)| (k, v)), true)));
+    let config_host: &'static parseConfigHost =
+        Box::leak(Box::new(parseConfigHost { fs: std::sync::Arc::clone(&fs) }));
+    let (config, diagnostics) = tsoptions::get_parsed_command_line_of_config_file(
+        "/tsconfig.json",
+        None,
+        None,
+        config_host,
+        None,
+    );
+    assert_eq!(diagnostics, [] as [tsrs_core::P<tsrs_ast::Diagnostic>; 0]);
+    let host: Arc<dyn CompilerHost> =
+        new_compiler_host("/", std::sync::Arc::clone(&fs), &bundled::lib_path(), None, None, None);
     let mut options = ProgramOptions::new(P::new(config.unwrap()), host);
     options.create_checker_pool = Some(Arc::new(|program: &'static Program| {
-        let state: &'static testPoolState = Box::leak(Box::new(testPoolState { program, slots: Mutex::new(Vec::new()) }));
+        let state: &'static testPoolState =
+            Box::leak(Box::new(testPoolState { program, slots: Mutex::new(Vec::new()) }));
         Box::new(testPool(state)) as Box<dyn CheckerPool>
     }));
     let program: &'static Program = new_program(options);
     program.bind_source_files();
-    let fs_for_lines = fs.clone();
+    let fs_for_lines = std::sync::Arc::clone(&fs);
     // Cached like the project system's snapshot line maps (keyword references land thousands of times in the libs).
-    let line_maps: Mutex<rustc_hash::FxHashMap<String, Arc<lsconv::LSPLineMap>>> = Mutex::new(Default::default());
-    let converters = lsconv::new_converters(lsproto::PositionEncodingKind::UTF16, move |file_name| {
-        if let Some(line_map) = line_maps.lock().unwrap().get(file_name) {
-            return Some(line_map.clone());
-        }
-        let line_map = fs_for_lines.read_file(file_name).map(|text| compute_lsp_line_starts(&text))?;
-        line_maps.lock().unwrap().insert(file_name.to_string(), line_map.clone());
-        Some(line_map)
-    });
+    let line_maps: Mutex<rustc_hash::FxHashMap<String, Arc<lsconv::LSPLineMap>>> =
+        Mutex::new(rustc_hash::FxHashMap::default());
+    let converters =
+        lsconv::new_converters(lsproto::PositionEncodingKind::UTF16, move |file_name| {
+            if let Some(line_map) = line_maps.lock().unwrap().get(file_name) {
+                return Some(std::sync::Arc::clone(line_map));
+            }
+            let line_map =
+                fs_for_lines.read_file(file_name).map(|text| compute_lsp_line_starts(&text))?;
+            line_maps
+                .lock()
+                .unwrap()
+                .insert(file_name.to_string(), std::sync::Arc::clone(&line_map));
+            Some(line_map)
+        });
     let host = Arc::new(testHost { fs, converters });
     let ls = new_language_service(ProjectID("/tsconfig.json".to_string()), program, host, "/b.ts");
-    let mut caps = lsproto::ResolvedClientCapabilities::default();
-    caps.vs_supports_visual_studio_extensions = d.vs;
+    let mut caps = lsproto::ResolvedClientCapabilities {
+        vs_supports_visual_studio_extensions: d.vs,
+        ..Default::default()
+    };
     caps.text_document.implementation.link_support = d.vs;
     let ctx = lsproto::with_client_capabilities(&Context::background(), Arc::new(caps));
     (ls, ctx)
@@ -171,7 +199,7 @@ fn position_of(text: &str, marker: &str, off: usize) -> Value {
     let offset = text.find(marker).unwrap() + off;
     let before = &text[..offset];
     let line = before.matches('\n').count();
-    let character = offset - before.rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let character = offset - before.rfind('\n').map_or(0, |i| i + 1);
     let mut pos = tsrs_core::collections::OrderedMap::default();
     pos.insert("line".to_string(), Value::Number(line as f64));
     pos.insert("character".to_string(), Value::Number(character as f64));
@@ -234,61 +262,102 @@ fn run(d: &dataset) {
         let method = str_of(get(r, "m").unwrap());
         let file = str_of(get(r, "f").unwrap());
         let at = str_of(get(r, "at").unwrap());
-        let off = get(r, "off").map_or(0, |v| if let Value::Number(n) = v { *n as usize } else { 0 });
+        let off =
+            get(r, "off").map_or(0, |v| if let Value::Number(n) = v { *n as usize } else { 0 });
         let text = if file == d.a_name { d.a } else { d.b };
         let mut params = tsrs_core::collections::OrderedMap::default();
         let mut text_document = tsrs_core::collections::OrderedMap::default();
-        text_document.insert("uri".to_string(), Value::String(format!("file:///{}", file)));
+        text_document.insert("uri".to_string(), Value::String(format!("file:///{file}")));
         params.insert("textDocument".to_string(), Value::Object(text_document));
         params.insert("position".to_string(), position_of(text, at, off));
         if let Some(Value::Object(extra)) = get(r, "params") {
-            for (k, v) in extra {
-                params.insert(k.clone(), v.clone());
-            }
+            params.extend(extra.into_iter().map(|(k, v)| (k.clone(), v.clone())));
         }
         let params = Value::Object(params);
         let started = std::time::Instant::now();
         let got = match method {
-            "textDocument/references" => to_line(&ls.provide_references(&ctx, &decode(&params), None).unwrap()),
-            "textDocument/_vs_references" => to_line(&ls.provide_vs_references(&ctx, &decode(&params), None).unwrap()),
-            "textDocument/rename" => to_line(&ls.provide_rename(&ctx, &decode(&params), None).unwrap()),
+            "textDocument/references" => {
+                to_line(&ls.provide_references(&ctx, &decode(&params), None).unwrap())
+            }
+            "textDocument/_vs_references" => {
+                to_line(&ls.provide_vs_references(&ctx, &decode(&params), None).unwrap())
+            }
+            "textDocument/rename" => {
+                to_line(&ls.provide_rename(&ctx, &decode(&params), None).unwrap())
+            }
             "textDocument/prepareRename" => {
                 let p: lsproto::PrepareRenameParams = decode(&params);
                 let info = ls.get_rename_info(&ctx, "", &p.text_document.uri, p.position);
                 if !info.can_rename {
-                    format!(r#"{{"error":{{"code":-32803,"message":"{}"}}}}"#, info.localized_error_message)
+                    format!(
+                        r#"{{"error":{{"code":-32803,"message":"{}"}}}}"#,
+                        info.localized_error_message
+                    )
                 } else {
-                    to_line(&lsproto::PrepareRenamePlaceholder { range: info.trigger_span, placeholder: info.display_name })
+                    to_line(&lsproto::PrepareRenamePlaceholder {
+                        range: info.trigger_span,
+                        placeholder: info.display_name,
+                    })
                 }
             }
             "textDocument/documentHighlight" => {
                 let p: lsproto::DocumentHighlightParams = decode(&params);
-                to_line(&ls.provide_document_highlights(&ctx, &p.text_document.uri, p.position).unwrap())
+                to_line(
+                    &ls.provide_document_highlights(&ctx, &p.text_document.uri, p.position)
+                        .unwrap(),
+                )
             }
             "custom/textDocument/multiDocumentHighlight" => {
                 let p: lsproto::MultiDocumentHighlightParams = decode(&params);
-                to_line(&ls.provide_multi_document_highlights(&ctx, &p.text_document.uri, p.position, &p.files_to_search).unwrap())
+                to_line(
+                    &ls.provide_multi_document_highlights(
+                        &ctx,
+                        &p.text_document.uri,
+                        p.position,
+                        &p.files_to_search,
+                    )
+                    .unwrap(),
+                )
             }
-            "textDocument/implementation" => to_line(&ls.provide_implementations(&ctx, &decode(&params), None).unwrap()),
+            "textDocument/implementation" => {
+                to_line(&ls.provide_implementations(&ctx, &decode(&params), None).unwrap())
+            }
             "textDocument/prepareCallHierarchy" => {
                 let p: lsproto::CallHierarchyPrepareParams = decode(&params);
-                to_line(&ls.provide_prepare_call_hierarchy(&ctx, &p.text_document.uri, p.position).unwrap())
+                to_line(
+                    &ls.provide_prepare_call_hierarchy(&ctx, &p.text_document.uri, p.position)
+                        .unwrap(),
+                )
             }
             "callHierarchy/incomingCalls" | "callHierarchy/outgoingCalls" => {
                 let p: lsproto::CallHierarchyPrepareParams = decode(&params);
-                let items = ls.provide_prepare_call_hierarchy(&ctx, &p.text_document.uri, p.position).unwrap().call_hierarchy_items.unwrap();
+                let items = ls
+                    .provide_prepare_call_hierarchy(&ctx, &p.text_document.uri, p.position)
+                    .unwrap()
+                    .call_hierarchy_items
+                    .unwrap();
                 if method == "callHierarchy/incomingCalls" {
-                    to_line(&ls.provide_call_hierarchy_incoming_calls(&ctx, &items[0], None).unwrap())
+                    to_line(
+                        &ls.provide_call_hierarchy_incoming_calls(&ctx, &items[0], None).unwrap(),
+                    )
                 } else {
                     to_line(&ls.provide_call_hierarchy_outgoing_calls(&ctx, &items[0]).unwrap())
                 }
             }
-            _ => panic!("unknown method {}", method),
+            _ => panic!("unknown method {method}"),
         };
-        if std::env::var("REFS_SMOKE_TIMES").is_ok() { eprintln!("{:?} {} {}", started.elapsed(), method, at); }
+        if std::env::var("REFS_SMOKE_TIMES").is_ok() {
+            eprintln!("{:?} {} {}", started.elapsed(), method, at);
+        }
         if got != want {
-            failures.push(format!("{} {} {:?}\n  want: {}\n  got:  {}", method, file, at, want, got));
+            failures.push(format!("{method} {file} {at:?}\n  want: {want}\n  got:  {got}"));
         }
     }
-    assert!(failures.is_empty(), "{} of {} responses differ:\n{}", failures.len(), d.expected.lines().count(), failures.join("\n"));
+    assert!(
+        failures.is_empty(),
+        "{} of {} responses differ:\n{}",
+        failures.len(),
+        d.expected.lines().count(),
+        failures.join("\n")
+    );
 }

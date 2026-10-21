@@ -51,13 +51,15 @@ impl Checker {
         // scanner/utilities::get_text_of_node also handles missing nodes,
         // virtual substring bounds, JSDoc normalization and reparsed literals.
         let missing = ast::node_is_missing(Some(node));
-        let start = if missing { node.pos() } else { tsrs_scanner::skip_trivia(file.text(), node.pos()) };
-        let text = (missing || node.is_virtual() && start > node.end()
+        let node_start = node.pos().source_offset().unwrap_or(0);
+        let node_end = node.end().source_offset().unwrap_or(0);
+        let start = if missing { node_start } else { tsrs_scanner::skip_trivia(file.text(), node_start) };
+        let text = (missing || node.is_virtual() && start > node_end
             || tsrs_scanner::is_jsdoc_type_expression_or_child(node)
             || node.flags().intersects(NodeFlags::ReparserTransformedLiteral))
             .then(|| tsrs_scanner::get_text_of_node(node));
         OhSdkPluginNodeSnapshot { file_name: file.file_name().to_string(), file_id: ast::get_node_id(file.as_node()).0,
-            source: file.text(), pos: positions.utf8_to_utf16(node.pos()), end: positions.utf8_to_utf16(node.end()),
-            start: positions.utf8_to_utf16(start), text }
+            source: file.text(), pos: positions.utf8_to_utf16(node_start) as i32, end: positions.utf8_to_utf16(node_end) as i32,
+            start: positions.utf8_to_utf16(start) as i32, text }
     }
 }

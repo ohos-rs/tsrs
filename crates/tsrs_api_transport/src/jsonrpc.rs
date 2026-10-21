@@ -1,21 +1,23 @@
 // Port of tsc/internal/jsonrpc/baseproto.go (Content-Length framing) and
 // tsc/internal/ipc/protocol_jsonrpc.go (JSON-RPC 2.0 messages) for the `--api --async` server.
 
-use std::fmt::Write as _;
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 
 use serde::Deserialize;
 use serde_json::value::RawValue;
 
-use crate::message::{read_exact_bounded, Id, Message, Response, ResponseError, TransportError, DEFAULT_MAX_FRAME_BYTES};
+use crate::message::{
+    DEFAULT_MAX_FRAME_BYTES, Id, Message, Response, ResponseError, TransportError,
+    read_exact_bounded,
+};
 use crate::protocol::{ProtocolReader, ProtocolWriter};
 
 pub const ERR_INVALID_HEADER: &str = "jsonrpc: invalid header";
 pub const ERR_INVALID_CONTENT_LENGTH: &str = "jsonrpc: invalid content length";
 pub const ERR_NO_CONTENT_LENGTH: &str = "jsonrpc: no content length";
 
-/// Upper bound on one header line. Go's bufio ReadBytes is unbounded; a header line is never
-/// legitimately this long, so longer lines are rejected instead of buffered forever.
+/// Upper bound on one header line. Go's bufio `ReadBytes` is unbounded; a header line is never legitimately
+/// this long, so longer lines are rejected instead of buffered forever.
 pub const MAX_HEADER_LINE_BYTES: usize = 8 * 1024;
 
 /// baseproto.go Reader.
@@ -36,9 +38,10 @@ impl<R: Read> FrameReader<R> {
     fn read_line(&mut self) -> Result<Option<Vec<u8>>, TransportError> {
         let mut line = Vec::new();
         let limit = (MAX_HEADER_LINE_BYTES + 1) as u64;
-        let n = (&mut self.r).take(limit).read_until(b'\n', &mut line).map_err(|e| {
-            TransportError::Protocol(format!("jsonrpc: read header: {e}"))
-        })?;
+        let n = (&mut self.r)
+            .take(limit)
+            .read_until(b'\n', &mut line)
+            .map_err(|e| TransportError::Protocol(format!("jsonrpc: read header: {e}")))?;
         if line.last() == Some(&b'\n') {
             return Ok(Some(line));
         }
@@ -62,13 +65,18 @@ impl<R: Read> FrameReader<R> {
                 break;
             }
             let Some(colon) = line.iter().position(|&b| b == b':') else {
-                return Err(TransportError::Protocol(format!("{ERR_INVALID_HEADER}: {}", go_quote(&line))));
+                return Err(TransportError::Protocol(format!(
+                    "{ERR_INVALID_HEADER}: {}",
+                    go_quote(&line)
+                )));
             };
             let (key, value) = (&line[..colon], &line[colon + 1..]);
             if key == b"Content-Length" {
-                let text = String::from_utf8_lossy(value.trim_ascii()).into_owned();
+                let text = tsrs_core::utf8::from_utf8_lossy(value.trim_ascii()).into_owned();
                 content_length = parse_go_int64(&text).map_err(|e| {
-                    TransportError::Protocol(format!("{ERR_INVALID_CONTENT_LENGTH}: parse error: {e}"))
+                    TransportError::Protocol(format!(
+                        "{ERR_INVALID_CONTENT_LENGTH}: parse error: {e}"
+                    ))
                 })?;
                 if content_length < 0 {
                     return Err(TransportError::Protocol(format!(
@@ -82,43 +90,23 @@ impl<R: Read> FrameReader<R> {
         }
         // Deliberate divergence: Go reports a body truncated before its first byte as io.EOF (clean
         // shutdown); any truncation inside a declared frame is reported here as an explicit error.
-        read_exact_bounded(&mut self.r, content_length as u64, self.max_frame_bytes, "jsonrpc: read content")
+        read_exact_bounded(
+            &mut self.r,
+            content_length as u64,
+            self.max_frame_bytes,
+            "jsonrpc: read content",
+        )
     }
 }
 
 /// strconv.ParseInt(s, 10, 64) error text.
 fn parse_go_int64(s: &str) -> Result<i64, String> {
-    let quoted = go_quote(s.as_bytes());
-    let digits = s.strip_prefix(['+', '-']).unwrap_or(s);
-    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
-        return Err(format!("strconv.ParseInt: parsing {quoted}: invalid syntax"));
-    }
-    s.parse::<i64>().map_err(|_| format!("strconv.ParseInt: parsing {quoted}: value out of range"))
+    tsrs_core::gocompat::parse_int64(s.as_bytes(), tsrs_core::gocompat::QuoteStyle::Api)
 }
 
 /// A close approximation of Go's %q for error messages.
 fn go_quote(bytes: &[u8]) -> String {
-    let mut out = String::from("\"");
-    for chunk in bytes.utf8_chunks() {
-        for c in chunk.valid().chars() {
-            match c {
-                '"' => out.push_str("\\\""),
-                '\\' => out.push_str("\\\\"),
-                '\n' => out.push_str("\\n"),
-                '\r' => out.push_str("\\r"),
-                '\t' => out.push_str("\\t"),
-                c if (c as u32) < 0x20 || c == '\u{7f}' => {
-                    let _ = write!(out, "\\x{:02x}", c as u32);
-                }
-                c => out.push(c),
-            }
-        }
-        for b in chunk.invalid() {
-            let _ = write!(out, "\\x{b:02x}");
-        }
-    }
-    out.push('"');
-    out
+    tsrs_core::gocompat::quote(bytes, tsrs_core::gocompat::QuoteStyle::Api)
 }
 
 #[derive(Deserialize)]
@@ -148,7 +136,8 @@ struct WireMessage<'a> {
 pub fn decode_message(data: &[u8]) -> Result<Message, TransportError> {
     // jsontext validates the whole message, including params/result it does not interpret.
     crate::strictjson::validate(data).map_err(TransportError::Protocol)?;
-    let wire: WireMessage<'_> = serde_json::from_slice(data).map_err(|e| TransportError::Protocol(format!("jsonrpc: {e}")))?;
+    let wire: WireMessage<'_> = serde_json::from_slice(data)
+        .map_err(|e| TransportError::Protocol(format!("jsonrpc: {e}")))?;
     if let Some(version) = wire.jsonrpc {
         if version.get() != "\"2.0\"" {
             return Err(TransportError::Protocol("invalid JSON-RPC version".to_string()));
@@ -170,10 +159,12 @@ pub fn decode_message(data: &[u8]) -> Result<Message, TransportError> {
 
 fn decode_id(raw: &str) -> Result<Id, TransportError> {
     if raw.starts_with('"') {
-        let s: String = serde_json::from_str(raw).map_err(|e| TransportError::Protocol(format!("jsonrpc: invalid id: {e}")))?;
+        let s: String = serde_json::from_str(raw)
+            .map_err(|e| TransportError::Protocol(format!("jsonrpc: invalid id: {e}")))?;
         return Ok(Id::Str(s));
     }
-    let i: i32 = serde_json::from_str(raw).map_err(|e| TransportError::Protocol(format!("jsonrpc: invalid id {raw}: {e}")))?;
+    let i: i32 = serde_json::from_str(raw)
+        .map_err(|e| TransportError::Protocol(format!("jsonrpc: invalid id {raw}: {e}")))?;
     Ok(Id::Int(i))
 }
 
@@ -184,7 +175,7 @@ impl<R: Read + Send> ProtocolReader for FrameReader<R> {
     }
 }
 
-/// baseproto.go Writer + protocol_jsonrpc.go Write*.
+/// baseproto.go Writer + `protocol_jsonrpc.go` Write*.
 pub struct FrameWriter<W: Write> {
     w: BufWriter<W>,
 }
@@ -204,12 +195,17 @@ impl<W: Write> FrameWriter<W> {
 
 /// Validates that `bytes` is exactly one JSON value, as json.Marshal of a json.Value does.
 pub fn validate_json(bytes: &[u8]) -> Result<&str, String> {
-    let s = std::str::from_utf8(bytes).map_err(|e| format!("invalid UTF-8 in JSON result: {e}"))?;
+    let s = tsrs_core::utf8::compat::from_utf8(bytes)
+        .map_err(|e| format!("invalid UTF-8 in JSON result: {e}"))?;
     serde_json::from_str::<&RawValue>(s).map_err(|e| format!("invalid JSON result: {e}"))?;
     Ok(s.trim_matches(|c: char| c == ' ' || c == '\t' || c == '\n' || c == '\r'))
 }
 
-pub fn encode_request(id: Option<&Id>, method: &str, params: Option<&[u8]>) -> Result<Vec<u8>, TransportError> {
+pub fn encode_request(
+    id: Option<&Id>,
+    method: &str,
+    params: Option<&[u8]>,
+) -> Result<Vec<u8>, TransportError> {
     let mut out = String::from("{\"jsonrpc\":\"2.0\"");
     if let Some(id) = id {
         out.push_str(",\"id\":");
@@ -231,7 +227,9 @@ pub fn encode_response(id: &Id, result: &Response) -> Result<Vec<u8>, TransportE
     out.push_str(&id.to_json());
     out.push_str(",\"result\":");
     match result {
-        Response::Json(json) => out.push_str(validate_json(json).map_err(TransportError::Protocol)?),
+        Response::Json(json) => {
+            out.push_str(validate_json(json).map_err(TransportError::Protocol)?);
+        }
         // json.Marshal([]byte) is a base64 string; a nil RawBinary marshals as null.
         Response::Binary(raw) => {
             out.push('"');
@@ -255,12 +253,21 @@ pub fn encode_error(id: &Id, err: &ResponseError) -> Vec<u8> {
 }
 
 impl<W: Write + Send> ProtocolWriter for FrameWriter<W> {
-    fn write_request(&mut self, id: &Id, method: &str, params: Option<&[u8]>) -> Result<(), TransportError> {
+    fn write_request(
+        &mut self,
+        id: &Id,
+        method: &str,
+        params: Option<&[u8]>,
+    ) -> Result<(), TransportError> {
         let data = encode_request(Some(id), method, params)?;
         self.write_frame(&data)
     }
 
-    fn write_notification(&mut self, method: &str, params: Option<&[u8]>) -> Result<(), TransportError> {
+    fn write_notification(
+        &mut self,
+        method: &str,
+        params: Option<&[u8]>,
+    ) -> Result<(), TransportError> {
         let data = encode_request(None, method, params)?;
         self.write_frame(&data)
     }

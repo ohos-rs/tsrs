@@ -15,12 +15,12 @@ use crate::ErrorCode;
 
 // A decoding error. Boxed so that every `Result<T, JsonError>` the decoders pass around stays small; the
 // fields are reached through `Deref`.
-#[derive(Clone, Debug, PartialEq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct JsonError(Box<SemanticError>);
 
 // json/v2's `SemanticError` (plus plain syntactic errors). `pointer` holds the JSON pointer tokens
 // innermost first; `within` appends as the error propagates outwards.
-#[derive(Clone, Debug, PartialEq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct SemanticError {
     pub go_type: String,
     pub json_kind: u8,
@@ -62,12 +62,19 @@ impl JsonError {
 
     // An error returned by a v1-style `UnmarshalJSON` method; json/v2 reports the JSON kind too.
     pub fn method_v1(kind: u8, go_type: &str, err: impl Into<String>) -> JsonError {
-        SemanticError { go_type: go_type.to_string(), json_kind: kind, err: err.into(), ..Default::default() }.into()
+        SemanticError {
+            go_type: go_type.to_string(),
+            json_kind: kind,
+            err: err.into(),
+            ..Default::default()
+        }
+        .into()
     }
 
     // json/v2: a JSON value of the wrong kind for the Go type.
     pub fn mismatch(v: &Value, go_type: &str) -> JsonError {
-        SemanticError { go_type: go_type.to_string(), json_kind: kind(v), ..Default::default() }.into()
+        SemanticError { go_type: go_type.to_string(), json_kind: kind(v), ..Default::default() }
+            .into()
     }
 
     // json/v2: a JSON number that does not fit the Go number type.
@@ -86,6 +93,7 @@ impl JsonError {
         SemanticError { err: err.into(), plain: true, ..Default::default() }.into()
     }
 
+    #[must_use]
     pub fn within(mut self, token: &str) -> JsonError {
         if !self.plain && !self.sealed {
             self.pointer.push(token.to_string());
@@ -95,6 +103,7 @@ impl JsonError {
 
     // The error of a fresh `json.Unmarshal` returned from an unmarshal method: json/v2 fills in the
     // current position only if the error has none.
+    #[must_use]
     pub fn seal(mut self) -> JsonError {
         if !self.pointer.is_empty() {
             self.sealed = true;
@@ -102,6 +111,7 @@ impl JsonError {
         self
     }
 
+    #[must_use]
     pub fn within_index(self, index: usize) -> JsonError {
         self.within(&index.to_string())
     }
@@ -230,7 +240,8 @@ pub fn marshal<T: Json>(v: &T) -> Result<String, String> {
 
 // Go `json.Unmarshal(data, &v)`.
 pub fn unmarshal<T: Json>(data: &[u8]) -> Result<T, JsonError> {
-    let text = std::str::from_utf8(data).map_err(|_| JsonError::plain("jsontext: invalid UTF-8"))?;
+    let text = tsrs_core::utf8::basic::from_utf8(data)
+        .map_err(|_| JsonError::plain("jsontext: invalid UTF-8"))?;
     let v = tsrs_core::json::unmarshal(text).map_err(JsonError::plain)?;
     T::from_json(&v)
 }
@@ -466,9 +477,10 @@ impl<T: Json> Json for Vec<T> {
         match v {
             Value::Array(items) => {
                 let mut out = Vec::with_capacity(items.len());
-                for (i, item) in items.iter().enumerate() {
+                out = items.iter().enumerate().try_fold(out, |mut out, (i, item)| {
                     out.push(T::from_json(item).map_err(|e| e.within_index(i))?);
-                }
+                    Ok::<_, JsonError>(out)
+                })?;
                 Ok(out)
             }
             Value::Null => Ok(Vec::new()),
@@ -491,12 +503,20 @@ impl Json for [u32; 2] {
                 let mut out = [0u32; 2];
                 for (i, item) in items.iter().enumerate() {
                     if i >= 2 {
-                        return Err(JsonError::method_v1(b'[', Self::GO_TYPE, "too many array elements"));
+                        return Err(JsonError::method_v1(
+                            b'[',
+                            Self::GO_TYPE,
+                            "too many array elements",
+                        ));
                     }
                     out[i] = u32::from_json(item).map_err(|e| e.within_index(i))?;
                 }
                 if items.len() < 2 {
-                    return Err(JsonError::method_v1(b'[', Self::GO_TYPE, "too few array elements"));
+                    return Err(JsonError::method_v1(
+                        b'[',
+                        Self::GO_TYPE,
+                        "too few array elements",
+                    ));
                 }
                 Ok(out)
             }
@@ -531,15 +551,18 @@ impl<K: JsonKey, V: Json> Json for OrderedMap<K, V> {
     const GO_TYPE: &'static str = "map";
 
     fn go_type_name() -> String {
-        format!("map[{}]{}{}", K::GO_KEY_TYPE, if V::GO_POINTER { "*" } else { "" }, V::go_type_name())
+        format!(
+            "map[{}]{}{}",
+            K::GO_KEY_TYPE,
+            if V::GO_POINTER { "*" } else { "" },
+            V::go_type_name()
+        )
     }
 
     fn to_json(&self) -> Value {
         let mut m = OrderedMap::default();
         m.reserve(self.len());
-        for (k, v) in self {
-            m.insert(k.key_string().to_string(), v.to_json());
-        }
+        m.extend(self.into_iter().map(|(k, v)| (k.key_string().to_string(), v.to_json())));
         Value::Object(m)
     }
 
@@ -548,9 +571,10 @@ impl<K: JsonKey, V: Json> Json for OrderedMap<K, V> {
             Value::Object(members) => {
                 let mut out = OrderedMap::default();
                 out.reserve(members.len());
-                for (k, item) in members {
+                out = members.into_iter().try_fold(out, |mut out, (k, item)| {
                     out.insert(K::from_key(k), V::from_json(item).map_err(|e| e.within(k))?);
-                }
+                    Ok::<_, JsonError>(out)
+                })?;
                 Ok(out)
             }
             Value::Null => Ok(OrderedMap::default()),
@@ -577,7 +601,7 @@ impl ObjectWriter {
     }
 
     // A pointer/slice/map/interface field with omitzero: omitted when nil.
-    pub fn opt<T: Json>(&mut self, name: &str, v: &Option<T>) {
+    pub fn opt<T: Json>(&mut self, name: &str, v: Option<&T>) {
         if let Some(v) = v {
             self.m.insert(name.to_string(), v.to_json());
         }

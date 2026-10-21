@@ -53,7 +53,7 @@ impl ProgramSnapshot {
                     .map(|&position| {
                         let offset = file
                             .get_position_map()
-                            .utf16_to_utf8(i32::try_from(position).unwrap_or(i32::MAX));
+                            .utf16_to_utf8(position);
                         let node = tsrs_astnav::get_touching_property_name(file, offset);
                         this.type_handle(checker.get_type_at_location(node))
                     })
@@ -85,6 +85,10 @@ impl ProgramSnapshot {
     #[expect(
         clippy::iter_over_hash_type,
         reason = "dependency and type reference lists are sorted before returning"
+    )]
+    #[expect(
+        clippy::case_sensitive_file_extension_comparisons,
+        reason = "compiler paths are already normalized, so an exact suffix matches the Go check"
     )]
     pub fn source_graph(&self) -> ApiResult<ProgramSourceGraph> {
         self.run(|this| {
@@ -208,13 +212,11 @@ pub(crate) fn annotation_info(checker: &mut Checker, info: &Info) -> AnnotationI
             .map(|p| {
                 let name = p.declaration.name().unwrap();
                 AnnotationProperty {
-                    name: ast::try_get_text_of_property_name(name)
-                        .unwrap_or_default()
-                        .into(),
-                    name_text: tsrs_scanner::get_text_of_node(name).into(),
+                    name: ast::try_get_text_of_property_name(name).unwrap_or_default(),
+                    name_text: tsrs_scanner::get_text_of_node(name),
                     initializer: annotation_constant(p.initializer.as_ref()),
                     argument: annotation_constant(p.argument.as_ref()),
-                    array_depth: p.array_depth as usize,
+                    array_depth: p.array_depth,
                     enum_first_value: annotation_constant(p.enum_first_value.as_ref()),
                     type_text: checker.type_to_string_ex_exported(
                         p.typ,
@@ -256,8 +258,8 @@ fn annotation_transform_info(
     collect_nodes(file.as_node(), &mut nodes);
     let positions = file.get_position_map();
     for node in nodes {
-        let pos = positions.utf8_to_utf16(node.pos()) as usize;
-        let end = positions.utf8_to_utf16(node.end()) as usize;
+        let pos = positions.utf8_to_utf16(node.pos().source_offset().unwrap_or(0)) as usize;
+        let end = positions.utf8_to_utf16(node.end().source_offset().unwrap_or(0)) as usize;
         if ast::is_annotation_declaration(node) || ast::is_decorator(node) {
             if let Some(info) = checker.get_annotation_info(node) {
                 let runtime_retained = ast::is_decorator(node)
@@ -347,11 +349,11 @@ pub(crate) fn transform_type_facts(
         };
         let mut checker = program.get_arkts_build_checker_for_file(file);
         let positions = file.get_position_map();
-        let ends = |ranges: &[TypeQueryRange]| -> ApiResult<rustc_hash::FxHashSet<i32>> {
+        let ends = |ranges: &[TypeQueryRange]| -> ApiResult<rustc_hash::FxHashSet<u32>> {
             ranges
                 .iter()
                 .map(|r| {
-                    let end = i32::try_from(r.end).map_err(|_| {
+                    let end = u32::try_from(r.end).map_err(|_| {
                         ApiError::client("query range exceeds compiler offset range")
                     })?;
                     Ok(positions.utf16_to_utf8(end))
@@ -376,21 +378,21 @@ pub(crate) fn transform_type_facts(
                     && !node.parent().is_some_and(ast::is_annotation_declaration)
                     && node
                         .name()
-                        .is_some_and(|name| property_ends.contains(&name.end()))
+                        .is_some_and(|name| property_ends.contains(&name.end().source_offset().unwrap_or(0)))
                 {
                     let name = node.name().unwrap();
                     facts.properties.push(ArktsPropertyTypeFacts {
-                        name_pos: positions.utf8_to_utf16(name.pos()) as usize,
-                        name_end: positions.utf8_to_utf16(name.end()) as usize,
+                        name_pos: positions.utf8_to_utf16(name.pos().source_offset().unwrap_or(0)) as usize,
+                        name_end: positions.utf8_to_utf16(name.end().source_offset().unwrap_or(0)) as usize,
                         r#type: node.type_node().map(|node| {
                             type_identity(checker.get_type_from_type_node_exported(node))
                         }),
                     });
                 }
                 if ast::is_property_access_expression(node) {
-                    let pos = positions.utf8_to_utf16(node.pos()) as usize;
-                    let end = positions.utf8_to_utf16(node.end()) as usize;
-                    if builder_ends.contains(&node.end())
+                    let pos = positions.utf8_to_utf16(node.pos().source_offset().unwrap_or(0)) as usize;
+                    let end = positions.utf8_to_utf16(node.end().source_offset().unwrap_or(0)) as usize;
+                    if builder_ends.contains(&node.end().source_offset().unwrap_or(0))
                         && node.name().unwrap().text() == "builder"
                     {
                         facts.builder_accesses.push(ArktsBuilderReceiverTypeFacts {
@@ -401,7 +403,7 @@ pub(crate) fn transform_type_facts(
                             ),
                         });
                     }
-                    if member_ends.contains(&node.end())
+                    if member_ends.contains(&node.end().source_offset().unwrap_or(0))
                         && ast::is_identifier(node.expression().unwrap())
                     {
                         facts.member_accesses.push(ArktsExpressionTypeFacts {

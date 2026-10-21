@@ -6,7 +6,7 @@ use std::fmt::Write;
 use tsrs_ast::{Diagnostic, SourceFile};
 use tsrs_core::json::{self, Value};
 use tsrs_core::tspath::{self, ComparePathsOptions};
-use tsrs_core::{BuildOptions, CompilerOptions, TypeAcquisition, P};
+use tsrs_core::{BuildOptions, CompilerOptions, P, TypeAcquisition};
 use tsrs_diagnostics::Category;
 
 use crate::commandlineoption::CompilerOptionsValue;
@@ -34,9 +34,7 @@ fn flattened_message(d: P<Diagnostic>, new_line: &str, indent: usize, out: &mut 
     out.push_str(&d.localize());
     for chain in d.message_chain() {
         out.push_str(new_line);
-        for _ in 0..=indent {
-            out.push_str("  ");
-        }
+        out.extend(std::iter::repeat_n("  ", indent + 1));
         flattened_message(*chain, new_line, indent + 1, out);
     }
 }
@@ -46,8 +44,12 @@ pub(crate) fn write_format_diagnostics(diagnostics: &[P<Diagnostic>], new_line: 
     let mut out = String::new();
     for d in diagnostics {
         if let Some(file) = d.file() {
-            let (line, character) = line_and_character(file, d.pos());
-            let relative_file_name = tspath::convert_to_relative_path(file.file_name(), &ComparePathsOptions::default());
+            let (line, character) =
+                line_and_character(file, d.pos().expect("file diagnostics have source positions"));
+            let relative_file_name = tspath::convert_to_relative_path(
+                file.file_name(),
+                &tsrs_core::tspath::ComparePathsOptions::default(),
+            );
             let _ = write!(out, "{}({},{}): ", relative_file_name, line + 1, character + 1);
         }
         let _ = write!(out, "{} TS{}: ", d.category().name(), d.code());
@@ -57,7 +59,7 @@ pub(crate) fn write_format_diagnostics(diagnostics: &[P<Diagnostic>], new_line: 
     out
 }
 
-fn line_starts(text: &str) -> Vec<i32> {
+fn line_starts(text: &str) -> Vec<u32> {
     let bytes = text.as_bytes();
     let mut result = vec![0];
     let mut pos = 0;
@@ -71,10 +73,14 @@ fn line_starts(text: &str) -> Vec<i32> {
                 if i < chars.len() && chars[i].1 == '\n' {
                     i += 1;
                 }
-                result.push(if i < chars.len() { chars[i].0 as i32 } else { bytes.len() as i32 });
+                result.push(
+                    u32::try_from(if i < chars.len() { chars[i].0 } else { bytes.len() }).unwrap(),
+                );
             }
             '\n' | '\u{2028}' | '\u{2029}' => {
-                result.push(if i < chars.len() { chars[i].0 as i32 } else { bytes.len() as i32 });
+                result.push(
+                    u32::try_from(if i < chars.len() { chars[i].0 } else { bytes.len() }).unwrap(),
+                );
             }
             _ => {}
         }
@@ -84,7 +90,7 @@ fn line_starts(text: &str) -> Vec<i32> {
     result
 }
 
-fn line_and_character(file: P<SourceFile>, pos: i32) -> (usize, usize) {
+fn line_and_character(file: P<SourceFile>, pos: u32) -> (usize, usize) {
     let starts = line_starts(file.text());
     let line = match starts.binary_search(&pos) {
         Ok(i) => i,
@@ -119,7 +125,7 @@ fn category_color(category: Category) -> &'static str {
     }
 }
 
-fn write_location(out: &mut String, file: P<SourceFile>, pos: i32, options: &ComparePathsOptions) {
+fn write_location(out: &mut String, file: P<SourceFile>, pos: u32, options: &ComparePathsOptions) {
     let (line, character) = line_and_character(file, pos);
     let relative_file_name = tspath::convert_to_relative_path(file.file_name(), options);
     with_style(out, &relative_file_name, FOREGROUND_COLOR_ESCAPE_CYAN);
@@ -129,10 +135,18 @@ fn write_location(out: &mut String, file: P<SourceFile>, pos: i32, options: &Com
     with_style(out, &(character + 1).to_string(), FOREGROUND_COLOR_ESCAPE_YELLOW);
 }
 
-fn write_code_snippet(out: &mut String, file: P<SourceFile>, start: i32, length: i32, squiggle_color: &str, indent: &str, new_line: &str) {
+fn write_code_snippet(
+    out: &mut String,
+    file: P<SourceFile>,
+    start: u32,
+    length: u32,
+    squiggle_color: &str,
+    indent: &str,
+    new_line: &str,
+) {
     let starts = line_starts(file.text());
     let text = file.text();
-    let line_of = |pos: i32| match starts.binary_search(&pos) {
+    let line_of = |pos: u32| match starts.binary_search(&pos) {
         Ok(i) => i,
         Err(i) => i - 1,
     };
@@ -144,7 +158,7 @@ fn write_code_snippet(out: &mut String, file: P<SourceFile>, start: i32, length:
     if length == 0 {
         last_line_char += 1; // When length is zero, squiggle the character right after the start position.
     }
-    let last_line_of_file = line_of(text.len() as i32);
+    let last_line_of_file = line_of(u32::try_from(text.len()).unwrap());
     let has_more_than_five_lines = last_line - first_line >= 4;
     let mut gutter_width = (last_line + 1).to_string().len();
     if has_more_than_five_lines {
@@ -158,7 +172,7 @@ fn write_code_snippet(out: &mut String, file: P<SourceFile>, start: i32, length:
         // so we'll skip ahead to the second-to-last line.
         if has_more_than_five_lines && first_line + 1 < i && i < last_line - 1 {
             out.push_str(indent);
-            with_style(out, &format!("{:>width$}", ELLIPSIS, width = gutter_width), GUTTER_STYLE_SEQUENCE);
+            with_style(out, &format!("{ELLIPSIS:>gutter_width$}"), GUTTER_STYLE_SEQUENCE);
             out.push_str(GUTTER_SEPARATOR);
             out.push_str(new_line);
             i = last_line - 1;
@@ -217,11 +231,22 @@ pub(crate) fn format_diagnostics_with_color_and_context(
             out.push_str(new_line);
         }
         if let Some(file) = diagnostic.file() {
-            write_location(&mut out, file, diagnostic.pos(), options);
+            write_location(
+                &mut out,
+                file,
+                diagnostic.pos().expect("file diagnostics have source positions"),
+                options,
+            );
             out.push_str(" - ");
         }
         with_style(&mut out, diagnostic.category().name(), category_color(diagnostic.category()));
-        let _ = write!(out, "{} TS{}: {}", FOREGROUND_COLOR_ESCAPE_GREY, diagnostic.code(), RESET_ESCAPE_SEQUENCE);
+        let _ = write!(
+            out,
+            "{} TS{}: {}",
+            FOREGROUND_COLOR_ESCAPE_GREY,
+            diagnostic.code(),
+            RESET_ESCAPE_SEQUENCE
+        );
         flattened_message(*diagnostic, new_line, 0, &mut out);
 
         if let Some(file) = diagnostic.file() {
@@ -230,8 +255,8 @@ pub(crate) fn format_diagnostics_with_color_and_context(
                 write_code_snippet(
                     &mut out,
                     file,
-                    diagnostic.pos(),
-                    diagnostic.end() - diagnostic.pos(),
+                    diagnostic.pos().expect("file diagnostics have source positions"),
+                    diagnostic.len().expect("file diagnostics have source positions"),
                     category_color(diagnostic.category()),
                     "",
                     new_line,

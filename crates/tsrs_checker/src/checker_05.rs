@@ -1,13 +1,10 @@
 use crate::*;
+use std::cell::Cell;
+use tsrs_ast as ast;
 use tsrs_ast::*;
 use tsrs_core::*;
-use tsrs_ast as ast;
 use tsrs_diagnostics as diagnostics;
 use tsrs_diagnostics::Message;
-use std::cell::Cell;
-
-// Generated as signature stubs by tools/gosig (checker.json); the bodies have since been ported by hand. Do not re-run
-// gosig into this directory: it rewrites every file listed in checker.json.
 
 // Non-function declarations in checker.go:8749-10856 (hand-ported by checker-foundation):
 //   type constructorAccessibilityError (checker.go:8829)
@@ -15,7 +12,12 @@ use std::cell::Cell;
 
 impl Checker {
     // checker.go:8749
-    pub(crate) fn resolve_new_expression(&mut self, node: P<Node>, candidates_out_array: Option<&mut Vec<P<Signature>>>, check_mode: CheckMode) -> P<Signature> {
+    pub(crate) fn resolve_new_expression(
+        &mut self,
+        node: P<Node>,
+        candidates_out_array: Option<&mut Vec<P<Signature>>>,
+        check_mode: CheckMode,
+    ) -> P<Signature> {
         let mut expression_type = self.check_non_null_expression(node.expression().unwrap());
         if expression_type == self.silent_never_type {
             return self.silent_never_signature;
@@ -35,7 +37,11 @@ impl Checker {
         // list and the result of the operation is of type Any.
         if is_type_any(Some(expression_type)) {
             if !node.type_arguments().is_empty() {
-                self.error(Some(node), &diagnostics::Untyped_function_calls_may_not_accept_type_arguments, &[]);
+                self.error(
+                    Some(node),
+                    &diagnostics::Untyped_function_calls_may_not_accept_type_arguments,
+                    &[],
+                );
             }
             return self.resolve_untyped_call(node);
         }
@@ -43,9 +49,14 @@ impl Checker {
         // but we are not including construct signatures that may have been added to the Object or
         // Function interface, since they have none by default. This is a bit of a leap of faith
         // that the user will not add any.
-        let construct_signatures = self.get_signatures_of_type(expression_type, SignatureKind::Construct);
+        let construct_signatures =
+            self.get_signatures_of_type(expression_type, SignatureKind::Construct);
         if !construct_signatures.is_empty() {
-            let accessibility_error = self.get_constructor_accessibility_error(node, &construct_signatures, ModifierFlags::NonPublicAccessibilityModifier);
+            let accessibility_error = self.get_constructor_accessibility_error(
+                node,
+                construct_signatures,
+                ModifierFlags::NonPublicAccessibilityModifier,
+            );
             if let Some(accessibility_error) = accessibility_error {
                 if accessibility_error.kind.intersects(ModifierFlags::Private) {
                     let s = self.type_to_string_exported(accessibility_error.declaring_class);
@@ -61,20 +72,37 @@ impl Checker {
             // then it cannot be instantiated.
             // In the case of a merged class-module or class-interface declaration,
             // only the class declaration node will have the Abstract flag set.
-            if some_signature(&construct_signatures, |sig| sig.flags().intersects(SignatureFlags::Abstract)) {
-                self.error(Some(node), &diagnostics::Cannot_create_an_instance_of_an_abstract_class, &[]);
+            if some_signature(construct_signatures, |sig| {
+                sig.flags().intersects(SignatureFlags::Abstract)
+            }) {
+                self.error(
+                    Some(node),
+                    &diagnostics::Cannot_create_an_instance_of_an_abstract_class,
+                    &[],
+                );
                 return self.resolve_error_call(node);
             }
             if let Some(symbol) = expression_type.symbol() {
                 let value_decl = get_class_like_declaration_of_symbol(symbol);
                 if let Some(value_decl) = value_decl {
                     if has_modifier(value_decl, ModifierFlags::Abstract) {
-                        self.error(Some(node), &diagnostics::Cannot_create_an_instance_of_an_abstract_class, &[]);
+                        self.error(
+                            Some(node),
+                            &diagnostics::Cannot_create_an_instance_of_an_abstract_class,
+                            &[],
+                        );
                         return self.resolve_error_call(node);
                     }
                 }
             }
-            return self.resolve_call(node, &construct_signatures, candidates_out_array, check_mode, SignatureFlags::None, None);
+            return self.resolve_call(
+                node,
+                construct_signatures,
+                candidates_out_array,
+                check_mode,
+                SignatureFlags::None,
+                None,
+            );
         }
         // If expressionType's apparent type is an object type with no construct signatures but
         // one or more call signatures, the expression is processed as a function call. A compile-time
@@ -82,10 +110,23 @@ impl Checker {
         // operation is Any. It is an error to have a Void this type.
         let call_signatures = self.get_signatures_of_type(expression_type, SignatureKind::Call);
         if !call_signatures.is_empty() {
-            let signature = self.resolve_call(node, &call_signatures, candidates_out_array, check_mode, SignatureFlags::None, None);
+            let signature = self.resolve_call(
+                node,
+                call_signatures,
+                candidates_out_array,
+                check_mode,
+                SignatureFlags::None,
+                None,
+            );
             if !self.no_implicit_any {
-                if signature.declaration().is_some() && self.get_return_type_of_signature(signature) != self.void_type {
-                    self.error(Some(node), &diagnostics::Only_a_void_function_can_be_called_with_the_new_keyword, &[]);
+                if signature.declaration().is_some()
+                    && self.get_return_type_of_signature(signature) != self.void_type
+                {
+                    self.error(
+                        Some(node),
+                        &diagnostics::Only_a_void_function_can_be_called_with_the_new_keyword,
+                        &[],
+                    );
                 }
                 if self.get_this_type_of_signature(signature) == Some(self.void_type) {
                     self.error(Some(node), &diagnostics::A_function_that_is_called_with_the_new_keyword_cannot_have_a_this_type_that_is_void, &[]);
@@ -93,20 +134,28 @@ impl Checker {
             }
             return signature;
         }
-        self.invocation_error(node.expression().unwrap(), expression_type, SignatureKind::Construct, None);
+        self.invocation_error(
+            node.expression().unwrap(),
+            expression_type,
+            SignatureKind::Construct,
+            None,
+        );
         self.resolve_error_call(node)
     }
 
     // checker.go:8834
-    pub(crate) fn get_constructor_accessibility_error(&mut self, node: P<Node>, signatures: &[P<Signature>], modifiers_mask: ModifierFlags) -> Option<P<constructorAccessibilityError>> {
-        for &signature in signatures {
-            let Some(declaration) = signature.declaration() else {
-                continue;
-            };
+    pub(crate) fn get_constructor_accessibility_error(
+        &mut self,
+        node: P<Node>,
+        signatures: &[P<Signature>],
+        modifiers_mask: ModifierFlags,
+    ) -> Option<P<constructorAccessibilityError>> {
+        if let Some(result) = signatures.iter().find_map(|&signature| {
+            let declaration = signature.declaration()?;
             let modifiers = get_selected_modifier_flags(declaration, modifiers_mask);
             // (1) Public constructors and (2) constructor functions are always accessible.
             if modifiers.is_empty() || !is_constructor_declaration(declaration) {
-                continue;
+                return None;
             }
             let parent_symbol = declaration.parent().unwrap().symbol().unwrap();
             let declaring_class_declaration = get_class_like_declaration_of_symbol(parent_symbol);
@@ -117,20 +166,31 @@ impl Checker {
                     if modifiers.intersects(ModifierFlags::Protected) {
                         let containing_type = self.get_type_of_node(containing_class);
                         if self.type_has_protected_accessible_base(parent_symbol, containing_type) {
-                            continue;
+                            return None;
                         }
                     }
                 }
                 let declaring_class = self.get_declared_type_of_symbol(parent_symbol);
-                return Some(P::new(constructorAccessibilityError { kind: modifiers, declaring_class }));
+                return Some(Some(P::new(constructorAccessibilityError {
+                    kind: modifiers,
+                    declaring_class,
+                })));
             }
+
+            None
+        }) {
+            return result;
         }
         None
     }
 
     // checker.go:8864
-    pub(crate) fn type_has_protected_accessible_base(&mut self, target: P<Symbol>, t: P<Type>) -> bool {
-        let target_type = self.get_target_type(t).unwrap();
+    pub(crate) fn type_has_protected_accessible_base(
+        &mut self,
+        target: P<Symbol>,
+        t: P<Type>,
+    ) -> bool {
+        let target_type = Self::get_target_type(t).unwrap();
         let base_types = self.get_base_types(target_type);
         if base_types.is_empty() {
             return false;
@@ -139,10 +199,13 @@ impl Checker {
         if first_base.flags().intersects(TypeFlags::Intersection) {
             let types = first_base.as_intersection_type().types.get();
             let (mixin_flags, _) = self.find_mixins(types);
-            for (i, &intersection_member) in first_base.types().iter().enumerate() {
+            if first_base.types().iter().enumerate().any(|(i, &intersection_member)| {
                 // We want to ignore mixin ctors
                 if !mixin_flags[i] {
-                    if intersection_member.object_flags().intersects(ObjectFlags::Class | ObjectFlags::Interface) {
+                    if intersection_member
+                        .object_flags()
+                        .intersects(ObjectFlags::Class | ObjectFlags::Interface)
+                    {
                         if intersection_member.symbol() == Some(target) {
                             return true;
                         }
@@ -151,6 +214,10 @@ impl Checker {
                         }
                     }
                 }
+
+                false
+            }) {
+                return true;
             }
             return false;
         }
@@ -162,19 +229,29 @@ impl Checker {
 }
 
 // checker.go:8894
-pub(crate) fn some_signature(signatures: &[P<Signature>], mut f: impl FnMut(P<Signature>) -> bool) -> bool {
-    for &sig in signatures {
+pub(crate) fn some_signature(
+    signatures: &[P<Signature>],
+    mut f: impl FnMut(P<Signature>) -> bool,
+) -> bool {
+    if signatures.iter().any(|&sig| {
         let composite = sig.composite();
-        if composite.is_some_and(|composite| composite.is_union.get() && composite.signatures.get().iter().any(|&s| f(s))) || composite.is_none() && f(sig) {
-            return true;
-        }
+        composite.is_some_and(|composite| {
+            composite.is_union.get() && composite.signatures.get().iter().any(|&s| f(s))
+        }) || composite.is_none() && f(sig)
+    }) {
+        return true;
     }
     false
 }
 
 impl Checker {
     // checker.go:8903
-    pub(crate) fn resolve_tagged_template_expression(&mut self, node: P<Node>, candidates_out_array: Option<&mut Vec<P<Signature>>>, check_mode: CheckMode) -> P<Signature> {
+    pub(crate) fn resolve_tagged_template_expression(
+        &mut self,
+        node: P<Node>,
+        candidates_out_array: Option<&mut Vec<P<Signature>>>,
+        check_mode: CheckMode,
+    ) -> P<Signature> {
         let tag = node.as_tagged_template_expression().tag;
         let tag_type = self.check_expression(tag);
         let apparent_type = self.get_apparent_type(tag_type);
@@ -183,8 +260,14 @@ impl Checker {
             return self.resolve_error_call(node);
         }
         let call_signatures = self.get_signatures_of_type(apparent_type, SignatureKind::Call);
-        let num_construct_signatures = self.get_signatures_of_type(apparent_type, SignatureKind::Construct).len() as i32;
-        if self.is_untyped_function_call(tag_type, apparent_type, call_signatures.len() as i32, num_construct_signatures) {
+        let num_construct_signatures =
+            self.get_signatures_of_type(apparent_type, SignatureKind::Construct).len();
+        if self.is_untyped_function_call(
+            tag_type,
+            apparent_type,
+            call_signatures.len(),
+            num_construct_signatures,
+        ) {
             return self.resolve_untyped_call(node);
         }
         if call_signatures.is_empty() {
@@ -195,11 +278,23 @@ impl Checker {
             self.invocation_error(tag, apparent_type, SignatureKind::Call, None);
             return self.resolve_error_call(node);
         }
-        self.resolve_call(node, &call_signatures, candidates_out_array, check_mode, SignatureFlags::None, None)
+        self.resolve_call(
+            node,
+            call_signatures,
+            candidates_out_array,
+            check_mode,
+            SignatureFlags::None,
+            None,
+        )
     }
 
     // checker.go:8927
-    pub(crate) fn resolve_decorator(&mut self, node: P<Node>, candidates_out_array: Option<&mut Vec<P<Signature>>>, check_mode: CheckMode) -> P<Signature> {
+    pub(crate) fn resolve_decorator(
+        &mut self,
+        node: P<Node>,
+        candidates_out_array: Option<&mut Vec<P<Signature>>>,
+        check_mode: CheckMode,
+    ) -> P<Signature> {
         if !can_have_decorators(node.parent().unwrap()) {
             return self.resolve_error_call(node);
         }
@@ -210,18 +305,27 @@ impl Checker {
             return self.resolve_error_call(node);
         }
         let call_signatures = self.get_signatures_of_type(apparent_type, SignatureKind::Call);
-        let num_construct_signatures = self.get_signatures_of_type(apparent_type, SignatureKind::Construct).len() as i32;
-        if self.is_untyped_function_call(func_type, apparent_type, call_signatures.len() as i32, num_construct_signatures) {
+        let num_construct_signatures =
+            self.get_signatures_of_type(apparent_type, SignatureKind::Construct).len();
+        if self.is_untyped_function_call(
+            func_type,
+            apparent_type,
+            call_signatures.len(),
+            num_construct_signatures,
+        ) {
             return self.resolve_untyped_call(node);
         }
-        if self.is_potentially_uncalled_decorator(node, &call_signatures) && !is_parenthesized_expression(expression) {
+        if self.is_potentially_uncalled_decorator(node, call_signatures)
+            && !is_parenthesized_expression(expression)
+        {
             let node_str = tsrs_scanner::get_text_of_node(expression);
             self.error(Some(node), &diagnostics::X_0_accepts_too_few_arguments_to_be_used_as_a_decorator_here_Did_you_mean_to_call_it_first_and_write_0, &[&node_str]);
             return self.resolve_error_call(node);
         }
-        let head_message = self.get_diagnostic_head_message_for_decorator_resolution(node);
+        let head_message = Self::get_diagnostic_head_message_for_decorator_resolution(node);
         if call_signatures.is_empty() {
-            let details = self.invocation_error_details(expression, apparent_type, SignatureKind::Call);
+            let details =
+                self.invocation_error_details(expression, apparent_type, SignatureKind::Call);
             let mut diag = ast::new_diagnostic_chain(details, head_message, &[]);
             diag = self.add_diagnostic(diag);
             self.invocation_error_recovery(apparent_type, SignatureKind::Call, diag);
@@ -231,28 +335,40 @@ impl Checker {
         if decorator_signature.is_none() {
             return self.resolve_error_call(node);
         }
-        self.resolve_call(node, &call_signatures, candidates_out_array, check_mode, SignatureFlags::None, Some(head_message))
+        self.resolve_call(
+            node,
+            call_signatures,
+            candidates_out_array,
+            check_mode,
+            SignatureFlags::None,
+            Some(head_message),
+        )
     }
 
     // Sometimes, we have a decorator that could accept zero arguments,
     // but is receiving too many arguments as part of the decorator invocation.
     // In those cases, a user may have meant to *call* the expression before using it as a decorator.
     // checker.go:8963
-    pub(crate) fn is_potentially_uncalled_decorator(&mut self, decorator: P<Node>, signatures: &[P<Signature>]) -> bool {
+    pub(crate) fn is_potentially_uncalled_decorator(
+        &mut self,
+        decorator: P<Node>,
+        signatures: &[P<Signature>],
+    ) -> bool {
         if signatures.is_empty() {
             return false;
         }
-        for &sig in signatures {
-            if !(sig.min_argument_count.get() == 0 && !signature_has_rest_parameter(sig) && (sig.parameters().len() as i32) < self.get_decorator_argument_count(decorator, sig)) {
-                return false;
-            }
-        }
-        true
+        !(signatures.iter().any(|&sig| {
+            !(sig.min_argument_count.get() == 0
+                && !signature_has_rest_parameter(sig)
+                && sig.parameters().len() < self.get_decorator_argument_count(decorator, sig))
+        }))
     }
 
     // Gets the localized diagnostic head message to use for errors when resolving a decorator as a call expression.
     // checker.go:8970
-    pub(crate) fn get_diagnostic_head_message_for_decorator_resolution(&mut self, node: P<Node>) -> &'static Message {
+    pub(crate) fn get_diagnostic_head_message_for_decorator_resolution(
+        node: P<Node>,
+    ) -> &'static Message {
         match node.parent().unwrap().kind() {
             Kind::ClassDeclaration | Kind::ClassExpression => &diagnostics::Unable_to_resolve_signature_of_class_decorator_when_called_as_an_expression,
             Kind::Parameter => &diagnostics::Unable_to_resolve_signature_of_parameter_decorator_when_called_as_an_expression,
@@ -263,26 +379,46 @@ impl Checker {
     }
 
     // checker.go:8984
-    pub(crate) fn resolve_instanceof_expression(&mut self, node: P<Node>, candidates_out_array: Option<&mut Vec<P<Signature>>>, check_mode: CheckMode) -> P<Signature> {
+    pub(crate) fn resolve_instanceof_expression(
+        &mut self,
+        node: P<Node>,
+        candidates_out_array: Option<&mut Vec<P<Signature>>>,
+        check_mode: CheckMode,
+    ) -> P<Signature> {
         // if rightType is an object type with a custom `[Symbol.hasInstance]` method, then it is potentially
         // valid on the right-hand side of the `instanceof` operator. This allows normal `object` types to
         // participate in `instanceof`, as per Step 2 of https://tc39.es/ecma262/#sec-instanceofoperator.
         let right = node.as_binary_expression().right();
         let right_type = self.check_expression(right);
         if !is_type_any(Some(right_type)) {
-            let has_instance_method_type = self.get_symbol_has_instance_method_of_object_type(right_type);
+            let has_instance_method_type =
+                self.get_symbol_has_instance_method_of_object_type(right_type);
             if let Some(has_instance_method_type) = has_instance_method_type {
                 let apparent_type = self.get_apparent_type(has_instance_method_type);
                 if self.is_error_type(apparent_type) {
                     return self.resolve_error_call(node);
                 }
-                let call_signatures = self.get_signatures_of_type(apparent_type, SignatureKind::Call);
-                let construct_signatures = self.get_signatures_of_type(apparent_type, SignatureKind::Construct);
-                if self.is_untyped_function_call(has_instance_method_type, apparent_type, call_signatures.len() as i32, construct_signatures.len() as i32) {
+                let call_signatures =
+                    self.get_signatures_of_type(apparent_type, SignatureKind::Call);
+                let construct_signatures =
+                    self.get_signatures_of_type(apparent_type, SignatureKind::Construct);
+                if self.is_untyped_function_call(
+                    has_instance_method_type,
+                    apparent_type,
+                    call_signatures.len(),
+                    construct_signatures.len(),
+                ) {
                     return self.resolve_untyped_call(node);
                 }
                 if !call_signatures.is_empty() {
-                    return self.resolve_call(node, &call_signatures, candidates_out_array, check_mode, SignatureFlags::None, None);
+                    return self.resolve_call(
+                        node,
+                        call_signatures,
+                        candidates_out_array,
+                        check_mode,
+                        SignatureFlags::None,
+                        None,
+                    );
                 }
             } else if !(self.type_has_call_or_construct_signatures(right_type) || {
                 let global_function_type = self.global_function_type;
@@ -297,24 +433,71 @@ impl Checker {
     }
 
     // checker.go:9028
-    #[cfg_attr(not(feature = "work-census"), inline(always), expect(clippy::inline_always, reason = "without the census the wrapper is a forwarding call; inlined, callers call the body as before (notes/perf-checker-algorithms.md)"))]
-    pub(crate) fn resolve_call(&mut self, node: P<Node>, signatures: &[P<Signature>], candidates_out_array: Option<&mut Vec<P<Signature>>>, check_mode: CheckMode, call_chain_flags: SignatureFlags, head_message: Option<&'static Message>) -> P<Signature> {
+    #[cfg_attr(
+        not(feature = "work-census"),
+        inline(always),
+        expect(
+            clippy::inline_always,
+            reason = "without the census the wrapper is a forwarding call; inlined, callers call the body as before (notes/perf-checker-algorithms.md)"
+        )
+    )]
+    pub(crate) fn resolve_call(
+        &mut self,
+        node: P<Node>,
+        signatures: &[P<Signature>],
+        candidates_out_array: Option<&mut Vec<P<Signature>>>,
+        check_mode: CheckMode,
+        call_chain_flags: SignatureFlags,
+        head_message: Option<&'static Message>,
+    ) -> P<Signature> {
         if self.census_on() {
             let callee = signatures.first().and_then(|s| s.declaration());
-            let generic = signatures.iter().filter(|s| !s.type_parameters().is_empty()).count() as u64;
+            let generic =
+                signatures.iter().filter(|s| !s.type_parameters().is_empty()).count() as u64;
             self.census.as_mut().unwrap().call_stack.push(callee);
-            let span = self.census_begin(crate::workcensus::Cat::Call, || crate::workcensus::CKey::OptNode(callee));
-            let r = self.resolve_call_worker(node, signatures, candidates_out_array, check_mode, call_chain_flags, head_message);
+            let span = self.census_begin(crate::workcensus::Cat::Call, || {
+                crate::workcensus::CKey::OptNode(callee)
+            });
+            let r = self.resolve_call_worker(
+                node,
+                signatures,
+                candidates_out_array,
+                check_mode,
+                call_chain_flags,
+                head_message,
+            );
             let timing = self.census_end(span).unwrap();
             let census = self.census.as_mut().unwrap();
             census.call_stack.pop();
-            census.record(crate::workcensus::Cat::Call, crate::workcensus::CKey::OptNode(callee), timing, signatures.len() as u64, generic, 0);
+            census.record(
+                crate::workcensus::Cat::Call,
+                crate::workcensus::CKey::OptNode(callee),
+                timing,
+                signatures.len() as u64,
+                generic,
+                0,
+            );
             return r;
         }
-        self.resolve_call_worker(node, signatures, candidates_out_array, check_mode, call_chain_flags, head_message)
+        self.resolve_call_worker(
+            node,
+            signatures,
+            candidates_out_array,
+            check_mode,
+            call_chain_flags,
+            head_message,
+        )
     }
 
-    fn resolve_call_worker(&mut self, node: P<Node>, signatures: &[P<Signature>], candidates_out_array: Option<&mut Vec<P<Signature>>>, check_mode: CheckMode, call_chain_flags: SignatureFlags, head_message: Option<&'static Message>) -> P<Signature> {
+    fn resolve_call_worker(
+        &mut self,
+        node: P<Node>,
+        signatures: &[P<Signature>],
+        candidates_out_array: Option<&mut Vec<P<Signature>>>,
+        check_mode: CheckMode,
+        call_chain_flags: SignatureFlags,
+        head_message: Option<&'static Message>,
+    ) -> P<Signature> {
         let mut candidates_out_array = candidates_out_array;
         let mut head_message = head_message;
         let is_tagged_template = node.kind() == Kind::TaggedTemplateExpression;
@@ -322,12 +505,15 @@ impl Checker {
         let is_jsx_opening_or_self_closing_element = is_jsx_opening_like_element(node);
         let is_instanceof = node.kind() == Kind::BinaryExpression;
         let report_errors = !self.is_inference_partially_blocked && candidates_out_array.is_none();
-        let mut s = CallState::default();
-        s.node = Some(node);
-        if !is_decorator && !is_instanceof && !is_super_call(node) && !is_jsx_opening_fragment(node) {
+        let mut s = CallState { node: Some(node), ..CallState::default() };
+        if !is_decorator && !is_instanceof && !is_super_call(node) && !is_jsx_opening_fragment(node)
+        {
             s.type_arguments = node.type_arguments().to_vec();
             // We already perform checking on the type arguments on the class declaration itself.
-            if is_tagged_template || is_jsx_opening_or_self_closing_element || node.expression().unwrap().kind() != Kind::SuperKeyword {
+            if is_tagged_template
+                || is_jsx_opening_or_self_closing_element
+                || node.expression().unwrap().kind() != Kind::SuperKeyword
+            {
                 let type_arguments = s.type_arguments.clone();
                 self.check_source_elements(&type_arguments);
             }
@@ -359,15 +545,13 @@ impl Checker {
         //
         // For a decorator, no arguments are susceptible to contextual typing due to the fact
         // decorators are applied to a declaration by the emitter, and not to an expression.
-        s.is_single_non_generic_candidate = s.candidates.len() == 1 && s.candidates[0].type_parameters().is_empty();
+        s.is_single_non_generic_candidate =
+            s.candidates.len() == 1 && s.candidates[0].type_parameters().is_empty();
         let mut some_context_sensitive = false;
         if !is_decorator && !s.is_single_non_generic_candidate {
             let args = s.args.clone();
-            for arg in args {
-                if self.is_context_sensitive(arg) {
-                    some_context_sensitive = true;
-                    break;
-                }
+            if args.into_iter().any(|arg| self.is_context_sensitive(arg)) {
+                some_context_sensitive = true;
             }
         }
         if some_context_sensitive {
@@ -398,7 +582,9 @@ impl Checker {
         //
         // If we are in signature help, a trailing comma indicates that we intend to provide another argument,
         // so we will only accept overloads with arity at least 1 higher than the current number of provided arguments.
-        s.signature_help_trailing_comma = check_mode.intersects(CheckMode::IsForSignatureHelp) && is_call_expression(node) && node.argument_list().unwrap().has_trailing_comma();
+        s.signature_help_trailing_comma = check_mode.intersects(CheckMode::IsForSignatureHelp)
+            && is_call_expression(node)
+            && node.argument_list().unwrap().has_trailing_comma();
         // Section 4.12.1:
         // if the candidate list contains one or more signatures for which the type of each argument
         // expression is a subtype of each corresponding parameter type, the return type of the first
@@ -429,8 +615,14 @@ impl Checker {
             return result;
         }
         let args = s.args.clone();
-        let result = self.get_candidate_for_overload_failure(s_node, &mut s.candidates, &args, candidates_out_array.is_some(), check_mode);
-        if let Some(out) = candidates_out_array.as_deref_mut() {
+        let result = self.get_candidate_for_overload_failure(
+            s_node,
+            &mut s.candidates,
+            &args,
+            candidates_out_array.is_some(),
+            check_mode,
+        );
+        if let Some(out) = candidates_out_array {
             out.clone_from(&s.candidates);
         }
         // Preemptively cache the result; getResolvedSignature will do this after we return, but
@@ -452,19 +644,23 @@ impl Checker {
             if head_message.is_none() && is_instanceof {
                 head_message = Some(&diagnostics::The_left_hand_side_of_an_instanceof_expression_must_be_assignable_to_the_first_argument_of_the_right_hand_side_s_Symbol_hasInstance_method);
             }
-            self.report_call_resolution_errors(node, &mut s, signatures, head_message);
+            self.report_call_resolution_errors(node, &s, signatures, head_message);
         }
         result
     }
 
     // checker.go:9145
-    pub(crate) fn reorder_candidates(&mut self, signatures: &[P<Signature>], call_chain_flags: SignatureFlags) -> Vec<P<Signature>> {
+    pub(crate) fn reorder_candidates(
+        &mut self,
+        signatures: &[P<Signature>],
+        call_chain_flags: SignatureFlags,
+    ) -> Vec<P<Signature>> {
         let mut last_parent: Option<P<Node>> = None;
         let mut last_symbol: Option<P<Symbol>> = None;
         let mut index: usize = 0;
         let mut cutoff_index: usize = 0;
         let mut splice_index: usize;
-        let mut specialized_index: i32 = -1;
+        let mut specialized_count = 0;
         let mut result: Vec<P<Signature>> = Vec::with_capacity(signatures.len());
         for &signature in signatures {
             let mut signature = signature;
@@ -492,8 +688,8 @@ impl Checker {
             // specialized signatures always need to be placed before non-specialized signatures regardless
             // of the cutoff position; see GH#1133
             if signature_has_literal_types(signature) {
-                specialized_index += 1;
-                splice_index = specialized_index as usize;
+                splice_index = specialized_count;
+                specialized_count += 1;
                 // The cutoff index always needs to be greater than or equal to the specialized signature index
                 // in order to prevent non-specialized signatures from being added before a specialized
                 // signature.
@@ -517,11 +713,22 @@ pub(crate) fn signature_has_literal_types(s: P<Signature>) -> bool {
 
 impl Checker {
     // checker.go:9199
-    pub(crate) fn get_optional_call_signature(&mut self, signature: P<Signature>, call_chain_flags: SignatureFlags) -> P<Signature> {
+    pub(crate) fn get_optional_call_signature(
+        &mut self,
+        signature: P<Signature>,
+        call_chain_flags: SignatureFlags,
+    ) -> P<Signature> {
         if signature.flags() & SignatureFlags::CallChainFlags == call_chain_flags {
             return signature;
         }
-        let key = CachedSignatureKey { sig: signature, key: if call_chain_flags == SignatureFlags::IsInnerCallChain { SignatureKeyInner } else { SignatureKeyOuter } };
+        let key = CachedSignatureKey {
+            sig: signature,
+            key: if call_chain_flags == SignatureFlags::IsInnerCallChain {
+                SignatureKeyInner
+            } else {
+                SignatureKeyOuter
+            },
+        };
         if let Some(cached) = self.cached_signatures.get(&key) {
             return cached;
         }
@@ -532,7 +739,11 @@ impl Checker {
     }
 
     // checker.go:9213
-    pub(crate) fn choose_overload(&mut self, s: &mut CallState, relation: P<Relation>) -> Option<P<Signature>> {
+    pub(crate) fn choose_overload(
+        &mut self,
+        s: &mut CallState,
+        relation: P<Relation>,
+    ) -> Option<P<Signature>> {
         s.candidates_for_argument_error = Vec::new();
         s.candidate_for_argument_arity_error = None;
         s.candidate_for_type_argument_error = None;
@@ -540,10 +751,21 @@ impl Checker {
         let args = s.args.clone();
         if s.is_single_non_generic_candidate {
             let candidate = s.candidates[0];
-            if (!s.type_arguments.is_empty() && !s.type_arguments.iter().any(|n| n.is_virtual())) || !self.has_correct_arity(node, &args, candidate, s.signature_help_trailing_comma) {
+            if (!s.type_arguments.is_empty()
+                && !s.type_arguments.iter().any(|n| n.is_virtual()))
+                || !self.has_correct_arity(node, &args, candidate, s.signature_help_trailing_comma)
+            {
                 return None;
             }
-            if !self.is_signature_applicable(node, &args, candidate, relation, CheckMode::Normal, false /*reportErrors*/, None /*diagnosticOutput*/) {
+            if !self.is_signature_applicable(
+                node,
+                &args,
+                candidate,
+                relation,
+                CheckMode::Normal,
+                false, /*reportErrors*/
+                None,  /*diagnosticOutput*/
+            ) {
                 s.candidates_for_argument_error = vec![candidate];
                 return None;
             }
@@ -552,11 +774,21 @@ impl Checker {
         let type_arguments = s.type_arguments.clone();
         for candidate_index in 0..s.candidates.len() {
             let candidate = s.candidates[candidate_index];
-            if !self.has_correct_type_argument_arity(candidate, &type_arguments) || !self.has_correct_arity(node, &args, candidate, s.signature_help_trailing_comma) {
+            if !Self::has_correct_type_argument_arity(candidate, &type_arguments)
+                || !self.has_correct_arity(node, &args, candidate, s.signature_help_trailing_comma)
+            {
                 continue;
             }
             let mut inference_context: Option<P<InferenceContext>> = None;
-            let chosen = self.choose_overload_candidate(s, relation, node, &args, &type_arguments, candidate_index, &mut inference_context);
+            let chosen = self.choose_overload_candidate(
+                s,
+                relation,
+                node,
+                &args,
+                &type_arguments,
+                candidate_index,
+                &mut inference_context,
+            );
             // 94% of these contexts are garbage once the candidate is decided (notes/mem-census.md); the inference
             // context stack entries that referred to it were popped by `inferTypeArguments`.
             if let Some(ctx) = inference_context {
@@ -586,7 +818,12 @@ impl Checker {
             if !candidate.type_parameters().is_empty() {
                 let type_argument_types: Vec<P<Type>>;
                 if !type_arguments.is_empty() {
-                    type_argument_types = self.check_type_arguments(candidate, type_arguments, false /*reportErrors*/, None);
+                    type_argument_types = self.check_type_arguments(
+                        candidate,
+                        type_arguments,
+                        false, /*reportErrors*/
+                        None,
+                    );
                     if type_argument_types.is_empty() {
                         s.candidate_for_type_argument_error = Some(candidate);
                         return None;
@@ -594,11 +831,29 @@ impl Checker {
                 } else {
                     // When we are recursively resolving a call with a single candidate, we skip constraints checks during
                     // type inference to avoid circularity errors. For example, see #64192.
-                    let inference_flags = (if s.recursive_resolution && s.candidates.len() == 1 { InferenceFlags::NoConstraintChecks } else { InferenceFlags::None })
-                        | (if is_in_js_file(node) { InferenceFlags::AnyDefault } else { InferenceFlags::None });
-                    let ctx = self.new_inference_context(candidate.type_parameters(), Some(candidate), inference_flags /*flags*/, None);
+                    let inference_flags = (if s.recursive_resolution && s.candidates.len() == 1 {
+                        InferenceFlags::NoConstraintChecks
+                    } else {
+                        InferenceFlags::None
+                    }) | (if is_in_js_file(node) {
+                        InferenceFlags::AnyDefault
+                    } else {
+                        InferenceFlags::None
+                    });
+                    let ctx = Self::new_inference_context(
+                        candidate.type_parameters(),
+                        Some(candidate),
+                        inference_flags, /*flags*/
+                        None,
+                    );
                     *inference_context = Some(ctx);
-                    type_argument_types = self.infer_type_arguments(node, candidate, args, s.arg_check_mode | CheckMode::SkipGenericFunctions, ctx);
+                    type_argument_types = self.infer_type_arguments(
+                        node,
+                        candidate,
+                        args,
+                        s.arg_check_mode | CheckMode::SkipGenericFunctions,
+                        ctx,
+                    );
                     if ctx.flags.get().intersects(InferenceFlags::SkippedGenericFunction) {
                         s.arg_check_mode |= CheckMode::SkipGenericFunctions;
                     }
@@ -607,17 +862,37 @@ impl Checker {
                     Some(ctx) => ctx.inferred_type_parameters(),
                     None => &[],
                 };
-                check_candidate = self.get_signature_instantiation(candidate, &type_argument_types, is_in_js_file(candidate.declaration()), inferred_type_parameters);
+                check_candidate = self.get_signature_instantiation(
+                    candidate,
+                    &type_argument_types,
+                    is_in_js_file(candidate.declaration()),
+                    inferred_type_parameters,
+                );
                 // If the original signature has a generic rest type, instantiation may produce a
                 // signature with different arity and we need to perform another arity check.
-                if self.get_non_array_rest_type(candidate).is_some() && !self.has_correct_arity(node, args, check_candidate, s.signature_help_trailing_comma) {
+                if self.get_non_array_rest_type(candidate).is_some()
+                    && !self.has_correct_arity(
+                        node,
+                        args,
+                        check_candidate,
+                        s.signature_help_trailing_comma,
+                    )
+                {
                     s.candidate_for_argument_arity_error = Some(check_candidate);
                     return None;
                 }
             } else {
                 check_candidate = candidate;
             }
-            if !self.is_signature_applicable(node, args, check_candidate, relation, s.arg_check_mode, false /*reportErrors*/, None /*diagnosticOutput*/) {
+            if !self.is_signature_applicable(
+                node,
+                args,
+                check_candidate,
+                relation,
+                s.arg_check_mode,
+                false, /*reportErrors*/
+                None,  /*diagnosticOutput*/
+            ) {
                 // Give preference to error candidates that have no rest parameters (as they are more specific)
                 s.candidates_for_argument_error.push(check_candidate);
                 return None;
@@ -628,16 +903,37 @@ impl Checker {
                 // round of type inference and applicability checking for this particular candidate.
                 s.arg_check_mode = CheckMode::Normal;
                 if let Some(ctx) = *inference_context {
-                    let type_argument_types = self.infer_type_arguments(node, candidate, args, s.arg_check_mode, ctx);
-                    check_candidate = self.get_signature_instantiation(candidate, &type_argument_types, is_in_js_file(candidate.declaration()), ctx.inferred_type_parameters());
+                    let type_argument_types =
+                        self.infer_type_arguments(node, candidate, args, s.arg_check_mode, ctx);
+                    check_candidate = self.get_signature_instantiation(
+                        candidate,
+                        &type_argument_types,
+                        is_in_js_file(candidate.declaration()),
+                        ctx.inferred_type_parameters(),
+                    );
                     // If the original signature has a generic rest type, instantiation may produce a
                     // signature with different arity and we need to perform another arity check.
-                    if self.get_non_array_rest_type(candidate).is_some() && !self.has_correct_arity(node, args, check_candidate, s.signature_help_trailing_comma) {
+                    if self.get_non_array_rest_type(candidate).is_some()
+                        && !self.has_correct_arity(
+                            node,
+                            args,
+                            check_candidate,
+                            s.signature_help_trailing_comma,
+                        )
+                    {
                         s.candidate_for_argument_arity_error = Some(check_candidate);
                         return None;
                     }
                 }
-                if !self.is_signature_applicable(node, args, check_candidate, relation, s.arg_check_mode, false /*reportErrors*/, None /*diagnosticOutput*/) {
+                if !self.is_signature_applicable(
+                    node,
+                    args,
+                    check_candidate,
+                    relation,
+                    s.arg_check_mode,
+                    false, /*reportErrors*/
+                    None,  /*diagnosticOutput*/
+                ) {
                     // Give preference to error candidates that have no rest parameters (as they are more specific)
                     s.candidates_for_argument_error.push(check_candidate);
                     return None;
@@ -649,22 +945,34 @@ impl Checker {
     }
 
     // checker.go:9299
-    pub(crate) fn has_correct_arity(&mut self, node: P<Node>, args: &[P<Node>], signature: P<Signature>, signature_help_trailing_comma: bool) -> bool {
+    pub(crate) fn has_correct_arity(
+        &mut self,
+        node: P<Node>,
+        args: &[P<Node>],
+        signature: P<Signature>,
+        signature_help_trailing_comma: bool,
+    ) -> bool {
         if is_jsx_opening_fragment(node) {
             return true;
         }
-        let arg_count: i32;
+        let arg_count: usize;
         let mut call_is_incomplete = false;
         // In incomplete call we want to be lenient when we have too few arguments
         let mut effective_parameter_count = self.get_parameter_count(signature);
         let mut effective_minimum_arguments = self.get_min_argument_count(signature);
         if is_tagged_template_expression(node) {
-            arg_count = args.len() as i32;
+            arg_count = args.len();
             let template = node.as_tagged_template_expression().template;
             if is_template_expression(template) {
                 // If a tagged template expression lacks a tail literal, the call is incomplete.
                 // Specifically, a template only can end in a TemplateTail or a Missing literal.
-                let last_span = template.as_template_expression().template_spans.nodes().last().copied().unwrap();
+                let last_span = template
+                    .as_template_expression()
+                    .template_spans
+                    .nodes()
+                    .last()
+                    .copied()
+                    .unwrap();
                 // we should always have at least one span.
                 let literal = last_span.as_template_span().literal;
                 call_is_incomplete = node_is_missing(literal) || is_unterminated_literal(literal);
@@ -683,7 +991,7 @@ impl Checker {
             if call_is_incomplete {
                 return true;
             }
-            arg_count = if effective_minimum_arguments == 0 { args.len() as i32 } else { 1 };
+            arg_count = if effective_minimum_arguments == 0 { args.len() } else { 1 };
             effective_parameter_count = if args.is_empty() { effective_parameter_count } else { 1 }; // class may have argumentless ctor functions - still resolve ctor and compare vs props member type
             effective_minimum_arguments = effective_minimum_arguments.min(1); // sfc may specify context argument - handled by framework and not typechecked
         } else if is_new_expression(node) && node.argument_list().is_none() {
@@ -691,16 +999,18 @@ impl Checker {
             return self.get_min_argument_count(signature) == 0;
         } else {
             if signature_help_trailing_comma {
-                arg_count = args.len() as i32 + 1;
+                arg_count = args.len() + 1;
             } else {
-                arg_count = args.len() as i32;
+                arg_count = args.len();
             }
             // If we are missing the close parenthesis, the call is incomplete.
             call_is_incomplete = node.argument_list().unwrap().end() == node.end();
             // If a spread argument is present, check that it corresponds to a rest parameter or at least that it's in the valid range.
-            let spread_arg_index = self.get_spread_argument_index(args);
-            if spread_arg_index >= 0 {
-                return spread_arg_index >= self.get_min_argument_count(signature) && (self.has_effective_rest_parameter(signature) || spread_arg_index < self.get_parameter_count(signature));
+            let spread_arg_index = Self::get_spread_argument_index(args);
+            if let Some(spread_arg_index) = spread_arg_index {
+                return spread_arg_index >= self.get_min_argument_count(signature)
+                    && (self.has_effective_rest_parameter(signature)
+                        || spread_arg_index < self.get_parameter_count(signature));
             }
         }
         // Too many arguments implies incorrect arity.
@@ -712,11 +1022,11 @@ impl Checker {
         if call_is_incomplete || arg_count >= effective_minimum_arguments {
             return true;
         }
-        for i in arg_count..effective_minimum_arguments {
+        if (arg_count..effective_minimum_arguments).any(|i| {
             let t = self.get_type_at_position(signature, i);
-            if self.filter_type(t, |_, t| accepts_void(t)).flags().intersects(TypeFlags::Never) {
-                return false;
-            }
+            self.filter_type(t, |_, t| accepts_void(t)).flags().intersects(TypeFlags::Never)
+        }) {
+            return false;
         }
         true
     }
@@ -729,18 +1039,26 @@ pub(crate) fn accepts_void(t: P<Type>) -> bool {
 
 impl Checker {
     // checker.go:9375
-    pub(crate) fn get_decorator_argument_count(&mut self, node: P<Node>, signature: P<Signature>) -> i32 {
+    pub(crate) fn get_decorator_argument_count(
+        &mut self,
+        node: P<Node>,
+        signature: P<Signature>,
+    ) -> usize {
         if self.compiler_options.experimental_decorators.is_true() {
             return self.get_legacy_decorator_argument_count(node, signature);
         }
-        self.get_parameter_count(signature).max(1).min(2)
+        self.get_parameter_count(signature).clamp(1, 2)
     }
 
     /**
      * Returns the argument count for a decorator node that works like a function invocation.
      */
     // checker.go:9385
-    pub(crate) fn get_legacy_decorator_argument_count(&mut self, node: P<Node>, signature: P<Signature>) -> i32 {
+    pub(crate) fn get_legacy_decorator_argument_count(
+        &mut self,
+        node: P<Node>,
+        signature: P<Signature>,
+    ) -> usize {
         let parent = node.parent().unwrap();
         match parent.kind() {
             Kind::ClassDeclaration | Kind::ClassExpression => 1,
@@ -763,48 +1081,81 @@ impl Checker {
     }
 
     // checker.go:9406
-    pub(crate) fn has_correct_type_argument_arity(&mut self, signature: P<Signature>, type_arguments: &[P<Node>]) -> bool {
+    pub(crate) fn has_correct_type_argument_arity(
+        signature: P<Signature>,
+        type_arguments: &[P<Node>],
+    ) -> bool {
         // If the user supplied type arguments, but the number of type arguments does not match
         // the declared number of type parameters, the call has an incorrect arity.
-        let mut num_type_parameters = signature.type_parameters().len() as i32;
-        let mut min_type_argument_count = self.get_min_type_argument_count(signature.type_parameters());
+        let mut num_type_parameters = signature.type_parameters().len();
+        let mut min_type_argument_count =
+            Self::get_min_type_argument_count(signature.type_parameters());
         if type_arguments.iter().any(|n| n.is_virtual()) {
             num_type_parameters = 1;
             min_type_argument_count = 1;
         }
-        let len = type_arguments.len() as i32;
+        let len = type_arguments.len();
         len == 0 || len >= min_type_argument_count && len <= num_type_parameters
     }
 
     // checker.go:9414
-    pub(crate) fn check_type_arguments(&mut self, signature: P<Signature>, type_argument_nodes: &[P<Node>], report_errors: bool, head_message: Option<&'static Message>) -> Vec<P<Type>> {
+    pub(crate) fn check_type_arguments(
+        &mut self,
+        signature: P<Signature>,
+        type_argument_nodes: &[P<Node>],
+        report_errors: bool,
+        head_message: Option<&'static Message>,
+    ) -> Vec<P<Type>> {
         let is_java_script = is_in_js_file(signature.declaration());
         let type_parameters = signature.type_parameters();
         let mut type_argument_node_types = Vec::with_capacity(type_argument_nodes.len());
-        for &n in type_argument_nodes {
-            type_argument_node_types.push(self.get_type_from_type_node(n));
-        }
-        let min_type_argument_count = self.get_min_type_argument_count(type_parameters);
-        let type_argument_types = self.fill_missing_type_arguments(&type_argument_node_types, type_parameters, min_type_argument_count, is_java_script);
+        type_argument_node_types
+            .extend(type_argument_nodes.iter().map(|&n| self.get_type_from_type_node(n)));
+        let min_type_argument_count = Self::get_min_type_argument_count(type_parameters);
+        let type_argument_types = self.fill_missing_type_arguments(
+            &type_argument_node_types,
+            type_parameters,
+            min_type_argument_count,
+            is_java_script,
+        );
         let mut mapper: Option<P<TypeMapper>> = None;
-        for i in 0..type_argument_nodes.len() {
-            assert!(i < type_parameters.len(), "Should not call checkTypeArguments with too many type arguments");
+        for (i, element) in type_argument_nodes.iter().enumerate() {
+            assert!(
+                i < type_parameters.len(),
+                "Should not call checkTypeArguments with too many type arguments"
+            );
             let constraint = self.get_constraint_of_type_parameter(type_parameters[i]);
             if let Some(constraint) = constraint {
-                let type_argument_head_message = head_message.unwrap_or(&diagnostics::Type_0_does_not_satisfy_the_constraint_1);
+                let type_argument_head_message =
+                    head_message.unwrap_or(&diagnostics::Type_0_does_not_satisfy_the_constraint_1);
                 if mapper.is_none() {
-                    mapper = Some(new_type_mapper(type_parameters, alloc_slice(&type_argument_types)));
+                    mapper =
+                        Some(new_type_mapper(type_parameters, alloc_slice(&type_argument_types)));
                 }
                 let type_argument = type_argument_types[i];
-                let error_node = if report_errors { Some(type_argument_nodes[i]) } else { None };
+                let error_node = if report_errors { Some(*element) } else { None };
                 let mut diags: Vec<P<Diagnostic>> = Vec::new();
                 let instantiated_constraint = self.instantiate_type(constraint, mapper);
-                let target = self.get_type_with_this_argument(instantiated_constraint, Some(type_argument), false);
-                if !self.check_type_assignable_to_ex(type_argument, target, error_node, Some(type_argument_head_message), &mut diags) {
+                let target = self.get_type_with_this_argument(
+                    instantiated_constraint,
+                    Some(type_argument),
+                    false,
+                );
+                if !self.check_type_assignable_to_ex(
+                    type_argument,
+                    target,
+                    error_node,
+                    Some(type_argument_head_message),
+                    &mut diags,
+                ) {
                     if !diags.is_empty() {
                         let mut diagnostic = diags[0];
                         if head_message.is_some() {
-                            diagnostic = ast::new_diagnostic_chain(diagnostic, &diagnostics::Type_0_does_not_satisfy_the_constraint_1, &[]);
+                            diagnostic = ast::new_diagnostic_chain(
+                                diagnostic,
+                                &diagnostics::Type_0_does_not_satisfy_the_constraint_1,
+                                &[],
+                            );
                         }
                         self.add_diagnostic(diagnostic);
                     }
@@ -816,14 +1167,33 @@ impl Checker {
     }
 
     // checker.go:9448
-    pub(crate) fn is_signature_applicable(&mut self, node: P<Node>, args: &[P<Node>], signature: P<Signature>, relation: P<Relation>, check_mode: CheckMode, report_errors: bool, diagnostic_output: Option<&mut Vec<P<Diagnostic>>>) -> bool {
+    pub(crate) fn is_signature_applicable(
+        &mut self,
+        node: P<Node>,
+        args: &[P<Node>],
+        signature: P<Signature>,
+        relation: P<Relation>,
+        check_mode: CheckMode,
+        report_errors: bool,
+        diagnostic_output: Option<&mut Vec<P<Diagnostic>>>,
+    ) -> bool {
         let mut diagnostic_output = diagnostic_output;
         if is_jsx_call_like(node) {
-            return self.check_applicable_signature_for_jsx_call_like_element(node, signature, relation, check_mode, report_errors, diagnostic_output);
+            return self.check_applicable_signature_for_jsx_call_like_element(
+                node,
+                signature,
+                relation,
+                check_mode,
+                report_errors,
+                diagnostic_output,
+            );
         }
         let this_type = self.get_this_type_of_signature(signature);
         if let Some(this_type) = this_type {
-            if this_type != self.void_type && !(is_new_expression(node) || is_call_expression(node) && is_super_property(node.expression().unwrap())) {
+            if this_type != self.void_type
+                && !(is_new_expression(node)
+                    || is_call_expression(node) && is_super_property(node.expression().unwrap()))
+            {
                 // If the called expression is not of the form `x.f` or `x["f"]`, then sourceType = voidType
                 // If the signature's 'this' type is voidType, then the check is skipped -- anything is compatible.
                 // If the expression is a new expression or super call expression, then the check is skipped.
@@ -837,23 +1207,33 @@ impl Checker {
                     }
                 }
                 let head_message = &diagnostics::The_this_context_of_type_0_is_not_assignable_to_method_s_this_of_type_1;
-                if !self.check_type_related_to_ex(this_argument_type, this_type, relation, error_node, Some(head_message), diagnostic_output.as_deref_mut()) {
+                if !self.check_type_related_to_ex(
+                    this_argument_type,
+                    this_type,
+                    relation,
+                    error_node,
+                    Some(head_message),
+                    diagnostic_output.as_deref_mut(),
+                ) {
                     return false;
                 }
             }
         }
-        let head_message = &diagnostics::Argument_of_type_0_is_not_assignable_to_parameter_of_type_1;
+        let head_message =
+            &diagnostics::Argument_of_type_0_is_not_assignable_to_parameter_of_type_1;
         let rest_type = self.get_non_array_rest_type(signature);
-        let arg_count: i32 = if rest_type.is_some() {
-            (self.get_parameter_count(signature) - 1).min(args.len() as i32)
+        let arg_count = if rest_type.is_some() {
+            (self.get_parameter_count(signature) - 1).min(args.len())
         } else {
-            args.len() as i32
+            args.len()
         };
-        for i in 0..arg_count {
-            let arg = args[i as usize];
+        for (i, &arg) in args.iter().take(arg_count).enumerate() {
             if !is_omitted_expression(arg) {
                 let param_type = self.get_type_at_position(signature, i);
-                let arg_type = self.check_expression_with_contextual_type(arg, param_type, None /*inferenceContext*/, check_mode);
+                let arg_type = self.check_expression_with_contextual_type(
+                    arg, param_type, None, /*inferenceContext*/
+                    check_mode,
+                );
                 // If one or more arguments are still excluded (as indicated by CheckMode.SkipContextSensitive),
                 // we obtain the regular type of any object literal arguments because we may not have inferred complete
                 // parameter types yet and therefore excess property checks may yield false positives (see #17041).
@@ -862,16 +1242,38 @@ impl Checker {
                 } else {
                     arg_type
                 };
-                let effective_check_argument_node = self.get_effective_check_node(arg);
-                if !self.check_type_related_to_and_optionally_elaborate(check_arg_type, param_type, relation, if report_errors { effective_check_argument_node } else { None }, effective_check_argument_node, Some(head_message), diagnostic_output.as_deref_mut()) {
-                    self.maybe_add_missing_await_info(Some(arg), check_arg_type, param_type, relation, report_errors, diagnostic_output.as_deref_mut());
+                let effective_check_argument_node = Self::get_effective_check_node(arg);
+                if !self.check_type_related_to_and_optionally_elaborate(
+                    check_arg_type,
+                    param_type,
+                    relation,
+                    if report_errors { Some(effective_check_argument_node) } else { None },
+                    Some(effective_check_argument_node),
+                    Some(head_message),
+                    diagnostic_output.as_deref_mut(),
+                ) {
+                    self.maybe_add_missing_await_info(
+                        Some(arg),
+                        check_arg_type,
+                        param_type,
+                        relation,
+                        report_errors,
+                        diagnostic_output.as_deref_mut(),
+                    );
                     return false;
                 }
             }
         }
         if let Some(rest_type) = rest_type {
-            let spread_type = self.get_spread_argument_type(args, arg_count, args.len() as i32, rest_type, None /*context*/, check_mode);
-            let rest_arg_count = args.len() as i32 - arg_count;
+            let spread_type = self.get_spread_argument_type(
+                args,
+                arg_count,
+                args.len(),
+                rest_type,
+                None, /*context*/
+                check_mode,
+            );
+            let rest_arg_count = args.len() - arg_count;
             let mut error_node: Option<P<Node>> = None;
             if report_errors {
                 match rest_arg_count {
@@ -879,17 +1281,35 @@ impl Checker {
                         error_node = Some(node);
                     }
                     1 => {
-                        error_node = self.get_effective_check_node(args[arg_count as usize]);
+                        error_node = Some(Self::get_effective_check_node(args[arg_count]));
                     }
                     _ => {
-                        let synthetic = self.create_synthetic_expression(node, spread_type, false, None);
-                        synthetic.set_loc(TextRange::new(args[arg_count as usize].pos(), args[args.len() - 1].end()));
+                        let synthetic =
+                            self.create_synthetic_expression(node, spread_type, false, None);
+                        synthetic.set_loc(TextRange::from_text_pos(
+                            args[arg_count].pos(),
+                            args[args.len() - 1].end(),
+                        ));
                         error_node = Some(synthetic);
                     }
                 }
             }
-            if !self.check_type_related_to_ex(spread_type, rest_type, relation, error_node, Some(head_message), diagnostic_output.as_deref_mut()) {
-                self.maybe_add_missing_await_info(error_node, spread_type, rest_type, relation, report_errors, diagnostic_output.as_deref_mut());
+            if !self.check_type_related_to_ex(
+                spread_type,
+                rest_type,
+                relation,
+                error_node,
+                Some(head_message),
+                diagnostic_output.as_deref_mut(),
+            ) {
+                self.maybe_add_missing_await_info(
+                    error_node,
+                    spread_type,
+                    rest_type,
+                    relation,
+                    report_errors,
+                    diagnostic_output,
+                );
                 return false;
             }
         }
@@ -897,8 +1317,18 @@ impl Checker {
     }
 
     // checker.go:9523
-    pub(crate) fn maybe_add_missing_await_info(&mut self, error_node: Option<P<Node>>, source: P<Type>, target: P<Type>, relation: P<Relation>, report_errors: bool, diagnostic_output: Option<&mut Vec<P<Diagnostic>>>) {
-        if let (Some(error_node), true, Some(diagnostic_output)) = (error_node, report_errors, diagnostic_output) {
+    pub(crate) fn maybe_add_missing_await_info(
+        &mut self,
+        error_node: Option<P<Node>>,
+        source: P<Type>,
+        target: P<Type>,
+        relation: P<Relation>,
+        report_errors: bool,
+        diagnostic_output: Option<&mut Vec<P<Diagnostic>>>,
+    ) {
+        if let (Some(error_node), true, Some(diagnostic_output)) =
+            (error_node, report_errors, diagnostic_output)
+        {
             if diagnostic_output.is_empty() {
                 return;
             }
@@ -909,7 +1339,11 @@ impl Checker {
             let awaited_type_of_source = self.get_awaited_type_of_promise(source);
             if let Some(awaited_type_of_source) = awaited_type_of_source {
                 if self.is_type_related_to(awaited_type_of_source, target, relation) {
-                    diagnostic_output[0].add_related_info(new_diagnostic_for_node(Some(error_node), Some(&diagnostics::Did_you_forget_to_use_await), &[]));
+                    diagnostic_output[0].add_related_info(new_diagnostic_for_node(
+                        Some(error_node),
+                        Some(&diagnostics::Did_you_forget_to_use_await),
+                        &[],
+                    ));
                 }
             }
         }
@@ -917,7 +1351,7 @@ impl Checker {
 
     // Returns the `this` argument node in calls like `x.f(...)` and `x[f](...)`. `nil` otherwise.
     // checker.go:9537
-    pub(crate) fn get_this_argument_of_call(&mut self, node: P<Node>) -> Option<P<Node>> {
+    pub(crate) fn get_this_argument_of_call(&self, node: P<Node>) -> Option<P<Node>> {
         if is_binary_expression(node) {
             return Some(node.as_binary_expression().right());
         }
@@ -954,42 +1388,80 @@ impl Checker {
     }
 
     // checker.go:9573
-    pub(crate) fn get_effective_check_node(&mut self, argument: P<Node>) -> Option<P<Node>> {
+    pub(crate) fn get_effective_check_node(argument: P<Node>) -> P<Node> {
         let flags = if is_in_js_file(argument) {
-            OuterExpressionKinds::Parentheses | OuterExpressionKinds::Satisfies | OuterExpressionKinds::ExcludeJSDocTypeAssertion
+            OuterExpressionKinds::Parentheses
+                | OuterExpressionKinds::Satisfies
+                | OuterExpressionKinds::ExcludeJSDocTypeAssertion
         } else {
             OuterExpressionKinds::Parentheses | OuterExpressionKinds::Satisfies
         };
-        Some(skip_outer_expressions(argument, flags))
+        skip_outer_expressions(argument, flags)
     }
 
     // checker.go:9582
-    #[cfg_attr(not(feature = "work-census"), inline(always), expect(clippy::inline_always, reason = "without the census the wrapper is a forwarding call; inlined, callers call the body as before (notes/perf-checker-algorithms.md)"))]
-    pub(crate) fn infer_type_arguments(&mut self, node: P<Node>, signature: P<Signature>, args: &[P<Node>], check_mode: CheckMode, context: P<InferenceContext>) -> Vec<P<Type>> {
+    #[cfg_attr(
+        not(feature = "work-census"),
+        inline(always),
+        expect(
+            clippy::inline_always,
+            reason = "without the census the wrapper is a forwarding call; inlined, callers call the body as before (notes/perf-checker-algorithms.md)"
+        )
+    )]
+    pub(crate) fn infer_type_arguments(
+        &mut self,
+        node: P<Node>,
+        signature: P<Signature>,
+        args: &[P<Node>],
+        check_mode: CheckMode,
+        context: P<InferenceContext>,
+    ) -> Vec<P<Type>> {
         if self.census_on() {
             let start = self.census.as_ref().unwrap().infer_args.len();
-            let span = self.census_begin(crate::workcensus::Cat::Infer, || crate::workcensus::CKey::OptNode(signature.declaration()));
+            let span = self.census_begin(crate::workcensus::Cat::Infer, || {
+                crate::workcensus::CKey::OptNode(signature.declaration())
+            });
             let r = self.infer_type_arguments_worker(node, signature, args, check_mode, context);
             let timing = self.census_end(span).unwrap();
             let census = self.census.as_mut().unwrap();
-            let mut words: Vec<u32> = vec![signature.to_bits() as u32, check_mode.bits() as u32];
+            let mut words: Vec<u32> = vec![signature.to_bits() as u32, check_mode.bits()];
             words.extend_from_slice(&census.infer_args[start..]);
             census.infer_args.truncate(start);
             let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
             let key = xxhash_rust::xxh3::xxh3_128(&bytes);
-            let e = census.infer_keys.entry(key).or_insert((0, 0, node.to_bits(), 0, signature.declaration()));
+            let e = census.infer_keys.entry(key).or_insert((
+                0,
+                0,
+                node.to_bits(),
+                0,
+                signature.declaration(),
+            ));
             e.0 += 1;
             e.1 += timing.incl_ns;
             if e.2 != node.to_bits() {
                 e.3 += 1;
             }
-            census.record(crate::workcensus::Cat::Infer, crate::workcensus::CKey::OptNode(signature.declaration()), timing, args.len() as u64, 0, 0);
+            census.record(
+                crate::workcensus::Cat::Infer,
+                crate::workcensus::CKey::OptNode(signature.declaration()),
+                timing,
+                args.len() as u64,
+                0,
+                0,
+            );
             return r;
         }
         self.infer_type_arguments_worker(node, signature, args, check_mode, context)
     }
 
-    fn infer_type_arguments_worker(&mut self, node: P<Node>, signature: P<Signature>, args: &[P<Node>], check_mode: CheckMode, context: P<InferenceContext>) -> Vec<P<Type>> {
+    fn infer_type_arguments_worker(
+        &mut self,
+        node: P<Node>,
+        signature: P<Signature>,
+        args: &[P<Node>],
+        check_mode: CheckMode,
+        context: P<InferenceContext>,
+    ) -> Vec<P<Type>> {
         if is_jsx_opening_like_element(node) {
             return self.infer_jsx_type_arguments(node, signature, check_mode, context);
         }
@@ -998,14 +1470,18 @@ impl Checker {
         // 'let f: (x: string) => number = wrap(s => s.length)', we infer from the declared type of 'f' to the
         // return type of 'wrap'.
         if !is_decorator(node) && !is_binary_expression(node) {
-            let mut skip_binding_patterns = true;
-            for &p in signature.type_parameters() {
-                if self.get_default_from_type_parameter(p).is_none() {
-                    skip_binding_patterns = false;
-                    break;
-                }
-            }
-            let contextual_type = self.get_contextual_type(node, if skip_binding_patterns { ContextFlags::SkipBindingPatterns } else { ContextFlags::None });
+            let skip_binding_patterns = !(signature
+                .type_parameters()
+                .iter()
+                .any(|&p| self.get_default_from_type_parameter(p).is_none()));
+            let contextual_type = self.get_contextual_type(
+                node,
+                if skip_binding_patterns {
+                    ContextFlags::SkipBindingPatterns
+                } else {
+                    ContextFlags::None
+                },
+            );
             if let Some(contextual_type) = contextual_type {
                 if let Some(census) = self.census_mut() {
                     census.infer_args.push(contextual_type.id.0 | 0x8000_0000);
@@ -1013,7 +1489,9 @@ impl Checker {
                 let inference_target_type = self.get_return_type_of_signature(signature);
                 if self.could_contain_type_variables(inference_target_type) {
                     let outer_context = self.get_inference_context(node);
-                    let is_from_binding_pattern = !skip_binding_patterns && self.get_contextual_type(node, ContextFlags::SkipBindingPatterns) != Some(contextual_type);
+                    let is_from_binding_pattern = !skip_binding_patterns
+                        && self.get_contextual_type(node, ContextFlags::SkipBindingPatterns)
+                            != Some(contextual_type);
                     // A return type inference from a binding pattern can be used in instantiating the contextual
                     // type of an argument later in inference, but cannot stand on its own as the final return type.
                     // It is incorporated into `context.returnMapper` which is used in `instantiateContextualType`,
@@ -1028,9 +1506,11 @@ impl Checker {
                         // We clone the inference context to avoid disturbing a resolution in progress for an
                         // outer call expression. Effectively we just want a snapshot of whatever has been
                         // inferred for any outer call expression so far.
-                        let cloned = self.clone_inference_context(outer_context, InferenceFlags::NoDefault);
-                        let outer_mapper = self.get_mapper_from_context(cloned);
-                        let instantiated_type = self.instantiate_type(contextual_type, outer_mapper);
+                        let cloned =
+                            Self::clone_inference_context(outer_context, InferenceFlags::NoDefault);
+                        let outer_mapper = Self::get_mapper_from_context(cloned);
+                        let instantiated_type =
+                            self.instantiate_type(contextual_type, outer_mapper);
                         // If the contextual type is a generic function type with a single call signature, we
                         // instantiate the type with its own type parameters and type arguments. This ensures that
                         // the type parameters are not erased to type any during type inference such that they can
@@ -1038,16 +1518,29 @@ impl Checker {
                         //   declare function arrayMap<T, U>(f: (x: T) => U): (a: T[]) => U[];
                         //   const boxElements: <A>(a: A[]) => { value: A }[] = arrayMap(value => ({ value }));
                         // Above, the type of the 'value' parameter is inferred to be 'A'.
-                        let contextual_signature = self.get_single_call_signature(instantiated_type);
+                        let contextual_signature =
+                            self.get_single_call_signature(instantiated_type);
                         let inference_source_type = match contextual_signature {
-                            Some(contextual_signature) if !contextual_signature.type_parameters().is_empty() => {
-                                let instantiated = self.get_signature_instantiation_without_filling_in_type_arguments(contextual_signature, contextual_signature.type_parameters());
+                            Some(contextual_signature)
+                                if !contextual_signature.type_parameters().is_empty() =>
+                            {
+                                let instantiated = self
+                                    .get_signature_instantiation_without_filling_in_type_arguments(
+                                        contextual_signature,
+                                        contextual_signature.type_parameters(),
+                                    );
                                 self.get_or_create_type_from_signature(instantiated)
                             }
                             _ => instantiated_type,
                         };
                         // Inferences made from return types have lower priority than all other inferences.
-                        self.infer_types(context.inferences.get(), inference_source_type, inference_target_type, InferencePriority::ReturnType, false);
+                        self.infer_types(
+                            context.inferences.get(),
+                            inference_source_type,
+                            inference_target_type,
+                            InferencePriority::ReturnType,
+                            false,
+                        );
                         // The snapshot is garbage now unless its mapper was stored (notes/mem-scoped-arenas.md).
                         if let Some(cloned) = cloned {
                             InferenceContext::recycle(cloned);
@@ -1061,16 +1554,33 @@ impl Checker {
                     // replaced with inferences produced from the outer return type or preceding outer arguments.
                     // This protects against circular inferences, i.e. avoiding situations where inferences reference
                     // type parameters for which the inferences are being made.
-                    let return_context = self.new_inference_context(signature.type_parameters(), Some(signature), context.flags.get(), None);
+                    let return_context = Self::new_inference_context(
+                        signature.type_parameters(),
+                        Some(signature),
+                        context.flags.get(),
+                        None,
+                    );
                     let mut outer_return_mapper: Option<P<TypeMapper>> = None;
                     if let Some(outer_context) = outer_context {
-                        outer_return_mapper = Some(self.create_outer_return_mapper(outer_context));
+                        outer_return_mapper = Some(Self::create_outer_return_mapper(outer_context));
                     }
-                    let return_source_type = self.instantiate_type(contextual_type, outer_return_mapper);
-                    self.infer_types(return_context.inferences.get(), return_source_type, inference_target_type, InferencePriority::None, false);
-                    if return_context.inferences.get().iter().any(|&info| has_inference_candidates(info)) {
-                        let cloned = self.clone_inferred_part_of_context(return_context);
-                        let return_mapper = self.get_mapper_from_context(cloned);
+                    let return_source_type =
+                        self.instantiate_type(contextual_type, outer_return_mapper);
+                    self.infer_types(
+                        return_context.inferences.get(),
+                        return_source_type,
+                        inference_target_type,
+                        InferencePriority::None,
+                        false,
+                    );
+                    if return_context
+                        .inferences
+                        .get()
+                        .iter()
+                        .any(|&info| has_inference_candidates(info))
+                    {
+                        let cloned = Self::clone_inferred_part_of_context(return_context);
+                        let return_mapper = Self::get_mapper_from_context(cloned);
                         context.set_return_mapper(return_mapper);
                     } else {
                         context.set_return_mapper(None);
@@ -1081,16 +1591,21 @@ impl Checker {
             }
         }
         let rest_type = self.get_non_array_rest_type(signature);
-        let mut arg_count = args.len() as i32;
+        let mut arg_count = args.len();
         if rest_type.is_some() {
             arg_count = (self.get_parameter_count(signature) - 1).min(arg_count);
         }
         if let Some(rest_type) = rest_type {
             if rest_type.flags().intersects(TypeFlags::TypeParameter) {
-                let info = context.inferences.get().iter().copied().find(|info| info.type_parameter.get() == Some(rest_type));
+                let info = context
+                    .inferences
+                    .get()
+                    .iter()
+                    .copied()
+                    .find(|info| info.type_parameter.get() == Some(rest_type));
                 if let Some(info) = info {
-                    if !args[arg_count as usize..].iter().any(|&arg| is_spread_argument(arg)) {
-                        info.implied_arity.set(args.len() as i32 - arg_count);
+                    if !args[arg_count..].iter().any(|&arg| is_spread_argument(arg)) {
+                        info.implied_arity.set(Some(args.len() - arg_count));
                     }
                 }
             }
@@ -1100,26 +1615,55 @@ impl Checker {
             if self.could_contain_type_variables(this_type) {
                 let this_argument_node = self.get_this_argument_of_call(node);
                 let this_argument_type = self.get_this_argument_type(this_argument_node);
-                self.infer_types(context.inferences.get(), this_argument_type, this_type, InferencePriority::None, false);
+                self.infer_types(
+                    context.inferences.get(),
+                    this_argument_type,
+                    this_type,
+                    InferencePriority::None,
+                    false,
+                );
             }
         }
-        for i in 0..arg_count {
-            let arg = args[i as usize];
+        for (i, &arg) in args.iter().take(arg_count).enumerate() {
             if arg.kind() != Kind::OmittedExpression {
                 let param_type = self.get_type_at_position(signature, i);
                 if self.could_contain_type_variables(param_type) {
-                    let arg_type = self.check_expression_with_contextual_type(arg, param_type, Some(context), check_mode);
+                    let arg_type = self.check_expression_with_contextual_type(
+                        arg,
+                        param_type,
+                        Some(context),
+                        check_mode,
+                    );
                     if let Some(census) = self.census_mut() {
                         census.infer_args.push(arg_type.id.0);
                     }
-                    self.infer_types(context.inferences.get(), arg_type, param_type, InferencePriority::None, false);
+                    self.infer_types(
+                        context.inferences.get(),
+                        arg_type,
+                        param_type,
+                        InferencePriority::None,
+                        false,
+                    );
                 }
             }
         }
         if let Some(rest_type) = rest_type {
             if self.could_contain_type_variables(rest_type) {
-                let spread_type = self.get_spread_argument_type(args, arg_count, args.len() as i32, rest_type, Some(context), check_mode);
-                self.infer_types(context.inferences.get(), spread_type, rest_type, InferencePriority::None, false);
+                let spread_type = self.get_spread_argument_type(
+                    args,
+                    arg_count,
+                    args.len(),
+                    rest_type,
+                    Some(context),
+                    check_mode,
+                );
+                self.infer_types(
+                    context.inferences.get(),
+                    spread_type,
+                    rest_type,
+                    InferencePriority::None,
+                    false,
+                );
             }
         }
         self.get_inferred_types(context)
@@ -1127,77 +1671,106 @@ impl Checker {
 
     // No signature was applicable. We have already reported the errors for the invalid signature.
     // checker.go:9690
-    pub(crate) fn get_candidate_for_overload_failure(&mut self, node: P<Node>, candidates: &mut [P<Signature>], args: &[P<Node>], has_candidates_out_array: bool, check_mode: CheckMode) -> P<Signature> {
+    pub(crate) fn get_candidate_for_overload_failure(
+        &mut self,
+        node: P<Node>,
+        candidates: &mut [P<Signature>],
+        args: &[P<Node>],
+        has_candidates_out_array: bool,
+        check_mode: CheckMode,
+    ) -> P<Signature> {
         // Else should not have called this.
         self.check_node_deferred(node);
         // Normally we will combine overloads. Skip this if they have type parameters since that's hard to combine.
         // Don't do this if there is a `candidatesOutArray`,
         // because then we want the chosen best candidate to be one of the overloads, not a combination.
-        if has_candidates_out_array || candidates.len() == 1 || candidates.iter().any(|s| !s.type_parameters().is_empty()) {
+        if has_candidates_out_array
+            || candidates.len() == 1
+            || candidates.iter().any(|s| !s.type_parameters().is_empty())
+        {
             return self.pick_longest_candidate_signature(node, candidates, args, check_mode);
         }
         self.create_union_of_signatures_for_overload_failure(candidates)
     }
 
     // checker.go:9702
-    pub(crate) fn pick_longest_candidate_signature(&mut self, node: P<Node>, candidates: &mut [P<Signature>], args: &[P<Node>], check_mode: CheckMode) -> P<Signature> {
+    pub(crate) fn pick_longest_candidate_signature(
+        &mut self,
+        node: P<Node>,
+        candidates: &mut [P<Signature>],
+        args: &[P<Node>],
+        check_mode: CheckMode,
+    ) -> P<Signature> {
         // Pick the longest signature. This way we can get a contextual type for cases like:
         //     declare function f(a: { xa: number; xb: number; }, b: number);
         //     f({ |
         // Also, use explicitly-supplied type arguments if they are provided, so we can get a contextual signature in cases like:
         //     declare function f<T>(k: keyof T);
         //     f<Foo>("
-        let mut arg_count = args.len() as i32;
+        let mut arg_count = args.len();
         if let Some(apparent_argument_count) = self.apparent_argument_count {
             arg_count = apparent_argument_count;
         }
-        let best_index = self.get_longest_candidate_index(candidates, arg_count) as usize;
+        let best_index = self.get_longest_candidate_index(candidates, arg_count);
         let candidate = candidates[best_index];
         let type_parameters = candidate.type_parameters();
         if type_parameters.is_empty() {
             return candidate;
         }
         let mut type_argument_nodes: &[P<Node>] = &[];
-        if self.call_like_expression_may_have_type_arguments(node) {
+        if Self::call_like_expression_may_have_type_arguments(node) {
             type_argument_nodes = node.type_arguments();
         }
         let instantiated = if !type_argument_nodes.is_empty() {
-            let type_arguments = self.get_type_arguments_from_nodes(type_argument_nodes, type_parameters);
+            let type_arguments =
+                self.get_type_arguments_from_nodes(type_argument_nodes, type_parameters);
             self.create_signature_instantiation(candidate, &type_arguments)
         } else {
-            self.infer_signature_instantiation_for_overload_failure(node, type_parameters, candidate, args, check_mode)
+            self.infer_signature_instantiation_for_overload_failure(
+                node,
+                type_parameters,
+                candidate,
+                args,
+                check_mode,
+            )
         };
         candidates[best_index] = instantiated;
         instantiated
     }
 
     // checker.go:9733
-    pub(crate) fn get_longest_candidate_index(&mut self, candidates: &[P<Signature>], args_count: i32) -> i32 {
-        let mut max_params_index: i32 = -1;
-        let mut max_params: i32 = -1;
+    pub(crate) fn get_longest_candidate_index(
+        &mut self,
+        candidates: &[P<Signature>],
+        args_count: usize,
+    ) -> usize {
+        let mut max_params_index = 0;
+        let mut max_params = 0;
         for (i, &candidate) in candidates.iter().enumerate() {
             let param_count = self.get_parameter_count(candidate);
             if self.has_effective_rest_parameter(candidate) || param_count >= args_count {
-                return i as i32;
+                return i;
             }
             if param_count > max_params {
                 max_params = param_count;
-                max_params_index = i as i32;
+                max_params_index = i;
             }
         }
         max_params_index
     }
 
     // checker.go:9749
-    pub(crate) fn get_type_arguments_from_nodes(&mut self, type_argument_nodes: &[P<Node>], type_parameters: &[P<Type>]) -> Vec<P<Type>> {
+    pub(crate) fn get_type_arguments_from_nodes(
+        &mut self,
+        type_argument_nodes: &[P<Node>],
+        type_parameters: &[P<Type>],
+    ) -> Vec<P<Type>> {
         let mut type_argument_nodes = type_argument_nodes;
         if type_argument_nodes.len() > type_parameters.len() {
             type_argument_nodes = &type_argument_nodes[..type_parameters.len()];
         }
         let mut type_arguments: Vec<P<Type>> = Vec::with_capacity(type_parameters.len());
-        for &n in type_argument_nodes {
-            type_arguments.push(self.get_type_from_type_node(n));
-        }
+        type_arguments.extend(type_argument_nodes.iter().map(|&n| self.get_type_from_type_node(n)));
         while type_arguments.len() < type_parameters.len() {
             let mut t = self.get_default_from_type_parameter(type_parameters[type_arguments.len()]);
             if t.is_none() {
@@ -1212,48 +1785,66 @@ impl Checker {
     }
 
     // checker.go:9767
-    pub(crate) fn infer_signature_instantiation_for_overload_failure(&mut self, node: P<Node>, type_parameters: &[P<Type>], candidate: P<Signature>, args: &[P<Node>], check_mode: CheckMode) -> P<Signature> {
-        let inference_context = self.new_inference_context(type_parameters, Some(candidate), if is_in_js_file(node) { InferenceFlags::AnyDefault } else { InferenceFlags::None }, None);
-        let type_argument_types = self.infer_type_arguments(node, candidate, args, check_mode | CheckMode::SkipContextSensitive | CheckMode::SkipGenericFunctions, inference_context);
+    pub(crate) fn infer_signature_instantiation_for_overload_failure(
+        &mut self,
+        node: P<Node>,
+        type_parameters: &[P<Type>],
+        candidate: P<Signature>,
+        args: &[P<Node>],
+        check_mode: CheckMode,
+    ) -> P<Signature> {
+        let inference_context = Self::new_inference_context(
+            type_parameters,
+            Some(candidate),
+            if is_in_js_file(node) { InferenceFlags::AnyDefault } else { InferenceFlags::None },
+            None,
+        );
+        let type_argument_types = self.infer_type_arguments(
+            node,
+            candidate,
+            args,
+            check_mode | CheckMode::SkipContextSensitive | CheckMode::SkipGenericFunctions,
+            inference_context,
+        );
         self.create_signature_instantiation(candidate, &type_argument_types)
     }
 
     // checker.go:9773
-    pub(crate) fn create_union_of_signatures_for_overload_failure(&mut self, candidates: &[P<Signature>]) -> P<Signature> {
-        let this_parameters: Vec<P<Symbol>> = candidates.iter().filter_map(|c| c.this_parameter()).collect();
+    pub(crate) fn create_union_of_signatures_for_overload_failure(
+        &mut self,
+        candidates: &[P<Signature>],
+    ) -> P<Signature> {
+        let this_parameters: Vec<P<Symbol>> =
+            candidates.iter().filter_map(|c| c.this_parameter()).collect();
         let mut this_parameter: Option<P<Symbol>> = None;
         if !this_parameters.is_empty() {
             let mut this_types = Vec::with_capacity(this_parameters.len());
-            for &p in &this_parameters {
-                this_types.push(self.get_type_of_parameter(p));
-            }
-            this_parameter = Some(self.create_combined_symbol_from_types(&this_parameters, &this_types));
+            this_types.extend(this_parameters.iter().map(|&p| self.get_type_of_parameter(p)));
+            this_parameter =
+                Some(self.create_combined_symbol_from_types(&this_parameters, &this_types));
         }
-        let (min_argument_count, max_non_rest_param) = min_and_max(candidates, get_non_rest_parameter_count);
-        let mut parameters: Vec<P<Symbol>> = Vec::with_capacity(max_non_rest_param.max(0) as usize);
+        let (min_argument_count, max_non_rest_param) =
+            min_and_max(candidates, get_non_rest_parameter_count);
+        let mut parameters: Vec<P<Symbol>> = Vec::with_capacity(max_non_rest_param);
         for i in 0..max_non_rest_param {
             let symbols: Vec<P<Symbol>> = candidates
                 .iter()
                 .filter_map(|&s| {
                     let params = s.parameters();
                     if signature_has_rest_parameter(s) {
-                        if (i as usize) < params.len().wrapping_sub(1) && params.len() >= 1 {
-                            return Some(params[i as usize]);
+                        if i < params.len().wrapping_sub(1) && !params.is_empty() {
+                            return Some(params[i]);
                         }
                         return params.last().copied();
                     }
-                    if (i as usize) < params.len() {
-                        return Some(params[i as usize]);
+                    if i < params.len() {
+                        return Some(params[i]);
                     }
                     None
                 })
                 .collect();
             let mut types = Vec::new();
-            for &s in candidates {
-                if let Some(t) = self.try_get_type_at_position(s, i) {
-                    types.push(t);
-                }
-            }
+            types.extend(candidates.iter().filter_map(|&s| self.try_get_type_at_position(s, i)));
             parameters.push(self.create_combined_symbol_from_types(&symbols, &types));
         }
         let rest_parameter_symbols: Vec<P<Symbol>> = candidates
@@ -1268,35 +1859,49 @@ impl Checker {
         let mut flags = SignatureFlags::IsSignatureCandidateForOverloadFailure;
         if !rest_parameter_symbols.is_empty() {
             let mut rest_types = Vec::new();
-            for &s in candidates {
-                if let Some(t) = self.try_get_rest_type_of_signature(s) {
-                    rest_types.push(t);
-                }
-            }
-            let union = self.get_union_type_ex(&rest_types, UnionReduction::Subtype, AliasArg::None, None);
+            rest_types
+                .extend(candidates.iter().filter_map(|&s| self.try_get_rest_type_of_signature(s)));
+            let union =
+                self.get_union_type_ex(&rest_types, UnionReduction::Subtype, AliasArg::None, None);
             let t = self.create_array_type(union);
-            parameters.push(self.create_combined_symbol_for_overload_failure(&rest_parameter_symbols, t));
+            parameters
+                .push(self.create_combined_symbol_for_overload_failure(&rest_parameter_symbols, t));
             flags |= SignatureFlags::HasRestParameter;
         }
         if candidates.iter().any(|&s| signature_has_literal_types(s)) {
             flags |= SignatureFlags::HasLiteralTypes;
         }
         let mut return_types = Vec::with_capacity(candidates.len());
-        for &s in candidates {
-            return_types.push(self.get_return_type_of_signature(s));
-        }
+        return_types.extend(candidates.iter().map(|&s| self.get_return_type_of_signature(s)));
         let return_type = self.get_intersection_type(&return_types);
-        self.new_signature(flags, candidates[0].declaration(), &[], this_parameter, &parameters, Some(return_type), None, min_argument_count)
+        self.new_signature(
+            flags,
+            candidates[0].declaration(),
+            &[],
+            this_parameter,
+            &parameters,
+            Some(return_type),
+            None,
+            min_argument_count,
+        )
     }
 
     // checker.go:9814
-    pub(crate) fn create_combined_symbol_from_types(&mut self, sources: &[P<Symbol>], types: &[P<Type>]) -> P<Symbol> {
+    pub(crate) fn create_combined_symbol_from_types(
+        &mut self,
+        sources: &[P<Symbol>],
+        types: &[P<Type>],
+    ) -> P<Symbol> {
         let t = self.get_union_type_ex(types, UnionReduction::Subtype, AliasArg::None, None);
         self.create_combined_symbol_for_overload_failure(sources, t)
     }
 
     // checker.go:9818
-    pub(crate) fn create_combined_symbol_for_overload_failure(&mut self, sources: &[P<Symbol>], t: P<Type>) -> P<Symbol> {
+    pub(crate) fn create_combined_symbol_for_overload_failure(
+        &mut self,
+        sources: &[P<Symbol>],
+        t: P<Type>,
+    ) -> P<Symbol> {
         // This function is currently only used for erroneous overloads, so it's good enough to just use the first source.
         self.create_symbol_with_type(sources.first().copied().unwrap(), Some(t))
     }
@@ -1310,7 +1915,10 @@ impl Checker {
     }
 
     // checker.go:9827
-    pub(crate) fn try_get_rest_type_of_signature(&mut self, signature: P<Signature>) -> Option<P<Type>> {
+    pub(crate) fn try_get_rest_type_of_signature(
+        &mut self,
+        signature: P<Signature>,
+    ) -> Option<P<Type>> {
         if !signature_has_rest_parameter(signature) {
             return None;
         }
@@ -1324,7 +1932,13 @@ impl Checker {
     }
 
     // checker.go:9841
-    pub(crate) fn report_call_resolution_errors(&mut self, node: P<Node>, s: &mut CallState, signatures: &[P<Signature>], head_message: Option<&'static Message>) {
+    pub(crate) fn report_call_resolution_errors(
+        &mut self,
+        node: P<Node>,
+        s: &CallState,
+        signatures: &[P<Signature>],
+        head_message: Option<&'static Message>,
+    ) {
         let s_node = s.node.unwrap();
         let is_ets = get_source_file_of_node(node).is_some_and(|file| file.script_kind.get() == tsrs_core::ScriptKind::ETS);
         if is_ets && (2..=3).contains(&s.candidates_for_argument_error.len()) {
@@ -1372,59 +1986,117 @@ impl Checker {
             let mut diags: Vec<P<Diagnostic>> = Vec::new();
             let args = s.args.clone();
             let assignable_relation = self.assignable_relation;
-            self.is_signature_applicable(s_node, &args, last, assignable_relation, CheckMode::Normal, true /*reportErrors*/, Some(&mut diags));
+            self.is_signature_applicable(
+                s_node,
+                &args,
+                last,
+                assignable_relation,
+                CheckMode::Normal,
+                true, /*reportErrors*/
+                Some(&mut diags),
+            );
             for diagnostic in diags {
                 let mut diagnostic = diagnostic;
                 if s.candidates_for_argument_error.len() > last_overload_threshold {
-                    diagnostic = ast::new_diagnostic_chain(diagnostic, &diagnostics::The_last_overload_gave_the_following_error, &[]);
-                    diagnostic = ast::new_diagnostic_chain(diagnostic, &diagnostics::No_overload_matches_this_call, &[]);
+                    diagnostic = ast::new_diagnostic_chain(
+                        diagnostic,
+                        &diagnostics::The_last_overload_gave_the_following_error,
+                        &[],
+                    );
+                    diagnostic = ast::new_diagnostic_chain(
+                        diagnostic,
+                        &diagnostics::No_overload_matches_this_call,
+                        &[],
+                    );
                 }
                 if let Some(head_message) = head_message {
                     diagnostic = ast::new_diagnostic_chain(diagnostic, head_message, &[]);
                 }
-                if last.declaration().is_some() && s.candidates_for_argument_error.len() > last_overload_threshold {
-                    diagnostic.add_related_info(new_diagnostic_for_node(last.declaration(), Some(&diagnostics::The_last_overload_is_declared_here), &[]));
+                if last.declaration().is_some()
+                    && s.candidates_for_argument_error.len() > last_overload_threshold
+                {
+                    diagnostic.add_related_info(new_diagnostic_for_node(
+                        last.declaration(),
+                        Some(&diagnostics::The_last_overload_is_declared_here),
+                        &[],
+                    ));
                 }
                 self.add_implementation_success_elaboration(s, last, diagnostic);
                 self.add_diagnostic(diagnostic);
             }
-        } else if let Some(candidate_for_argument_arity_error) = s.candidate_for_argument_arity_error {
+        } else if let Some(candidate_for_argument_arity_error) =
+            s.candidate_for_argument_arity_error
+        {
             let args = s.args.clone();
-            let d = self.get_argument_arity_error(s_node, &[candidate_for_argument_arity_error], &args, head_message);
+            let d = self.get_argument_arity_error(
+                s_node,
+                &[candidate_for_argument_arity_error],
+                &args,
+                head_message,
+            );
             self.add_diagnostic(d);
-        } else if let Some(candidate_for_type_argument_error) = s.candidate_for_type_argument_error {
-            self.check_type_arguments(candidate_for_type_argument_error, s_node.type_arguments(), true /*reportErrors*/, head_message);
+        } else if let Some(candidate_for_type_argument_error) = s.candidate_for_type_argument_error
+        {
+            self.check_type_arguments(
+                candidate_for_type_argument_error,
+                s_node.type_arguments(),
+                true, /*reportErrors*/
+                head_message,
+            );
         } else if !is_jsx_opening_fragment(node) {
             let type_arguments = s.type_arguments.clone();
             let mut signatures_with_correct_type_argument_arity = Vec::new();
-            for &sig in signatures {
-                if self.has_correct_type_argument_arity(sig, &type_arguments) {
-                    signatures_with_correct_type_argument_arity.push(sig);
-                }
-            }
+            signatures_with_correct_type_argument_arity.extend(signatures.iter().filter_map(
+                |&sig| {
+                    if Self::has_correct_type_argument_arity(sig, &type_arguments) {
+                        Some(sig)
+                    } else {
+                        None
+                    }
+                },
+            ));
             if signatures_with_correct_type_argument_arity.is_empty() {
-                let d = self.get_type_argument_arity_error(s_node, signatures, &type_arguments, head_message);
+                let d = Self::get_type_argument_arity_error(
+                    s_node,
+                    signatures,
+                    &type_arguments,
+                    head_message,
+                );
                 self.add_diagnostic(d);
             } else {
                 let args = s.args.clone();
-                let d = self.get_argument_arity_error(s_node, &signatures_with_correct_type_argument_arity, &args, head_message);
+                let d = self.get_argument_arity_error(
+                    s_node,
+                    &signatures_with_correct_type_argument_arity,
+                    &args,
+                    head_message,
+                );
                 self.add_diagnostic(d);
             }
         }
     }
 
     // checker.go:9877
-    pub(crate) fn add_implementation_success_elaboration(&mut self, s: &mut CallState, failed: P<Signature>, diagnostic: P<Diagnostic>) {
+    pub(crate) fn add_implementation_success_elaboration(
+        &mut self,
+        s: &CallState,
+        failed: P<Signature>,
+        diagnostic: P<Diagnostic>,
+    ) {
         if let Some(failed_declaration) = failed.declaration() {
             if let Some(symbol) = failed_declaration.symbol() {
                 let declarations = symbol.declarations();
                 if declarations.len() > 1 {
-                    let implementation = declarations.iter().copied().find(|&d| is_function_like_declaration(d) && node_is_present(d.body()));
+                    let implementation = declarations
+                        .iter()
+                        .copied()
+                        .find(|&d| is_function_like_declaration(d) && node_is_present(d.body()));
                     if let Some(implementation) = implementation {
                         let candidate = self.get_signature_from_declaration(implementation);
                         let mut local_state = s.clone();
                         local_state.candidates = vec![candidate];
-                        local_state.is_single_non_generic_candidate = candidate.type_parameters().is_empty();
+                        local_state.is_single_non_generic_candidate =
+                            candidate.type_parameters().is_empty();
                         let assignable_relation = self.assignable_relation;
                         if self.choose_overload(&mut local_state, assignable_relation).is_some() {
                             diagnostic.add_related_info(new_diagnostic_for_node(Some(implementation), Some(&diagnostics::The_call_would_have_succeeded_against_this_implementation_but_implementation_signatures_of_overloads_are_not_externally_visible), &[]));
@@ -1436,10 +2108,16 @@ impl Checker {
     }
 
     // checker.go:9897
-    pub(crate) fn get_argument_arity_error(&mut self, node: P<Node>, signatures: &[P<Signature>], args: &[P<Node>], head_message: Option<&'static Message>) -> P<Diagnostic> {
-        let spread_index = self.get_spread_argument_index(args);
-        if spread_index > -1 {
-            return new_diagnostic_for_node(Some(args[spread_index as usize]), Some(&diagnostics::A_spread_argument_must_either_have_a_tuple_type_or_be_passed_to_a_rest_parameter), &[]);
+    pub(crate) fn get_argument_arity_error(
+        &mut self,
+        node: P<Node>,
+        signatures: &[P<Signature>],
+        args: &[P<Node>],
+        head_message: Option<&'static Message>,
+    ) -> P<Diagnostic> {
+        let spread_index = Self::get_spread_argument_index(args);
+        if let Some(spread_index) = spread_index {
+            return new_diagnostic_for_node(Some(args[spread_index]), Some(&diagnostics::A_spread_argument_must_either_have_a_tuple_type_or_be_passed_to_a_rest_parameter), &[]);
         }
         let args_len = args.len() as i64;
         let mut min_count = i64::MAX; // smallest parameter count
@@ -1464,13 +2142,8 @@ impl Checker {
                 min_above = max_parameter;
             }
         }
-        let mut has_rest_parameter = false;
-        for &sig in signatures {
-            if self.has_effective_rest_parameter(sig) {
-                has_rest_parameter = true;
-                break;
-            }
-        }
+        let has_rest_parameter =
+            signatures.iter().any(|&sig| self.has_effective_rest_parameter(sig));
         let parameter_range = if has_rest_parameter {
             min_count.to_string()
         } else if min_count < max_count {
@@ -1478,10 +2151,13 @@ impl Checker {
         } else {
             min_count.to_string()
         };
-        let is_void_promise_error = !has_rest_parameter && parameter_range == "1" && args.is_empty() && self.is_promise_resolve_arity_error(node);
+        let is_void_promise_error = !has_rest_parameter
+            && parameter_range == "1"
+            && args.is_empty()
+            && self.is_promise_resolve_arity_error(node);
         let error_node = get_error_node_for_call_node(node);
         if is_void_promise_error && is_in_js_file(node) {
-            return new_diagnostic_for_node(error_node, Some(&diagnostics::Expected_1_argument_but_got_0_new_Promise_needs_a_JSDoc_hint_to_produce_a_resolve_that_can_be_called_without_arguments), &[]);
+            return new_diagnostic_for_node(Some(error_node), Some(&diagnostics::Expected_1_argument_but_got_0_new_Promise_needs_a_JSDoc_hint_to_produce_a_resolve_that_can_be_called_without_arguments), &[]);
         }
         let message: &'static Message = if is_decorator(node) {
             if has_rest_parameter {
@@ -1498,30 +2174,45 @@ impl Checker {
         };
         if min_count < args_len && args_len < max_count {
             // between min and max, but with no matching overload
-            let mut diagnostic = new_diagnostic_for_node(error_node, Some(&diagnostics::No_overload_expects_0_arguments_but_overloads_do_exist_that_expect_either_1_or_2_arguments), &[&args_len, &max_below, &min_above]);
+            let mut diagnostic = new_diagnostic_for_node(Some(error_node), Some(&diagnostics::No_overload_expects_0_arguments_but_overloads_do_exist_that_expect_either_1_or_2_arguments), &[&args_len, &max_below, &min_above]);
             if let Some(head_message) = head_message {
                 diagnostic = ast::new_diagnostic_chain(diagnostic, head_message, &[]);
             }
             diagnostic
         } else if args_len < min_count {
             // too short: put the error span on the call expression, not any of the args
-            let mut diagnostic = new_diagnostic_for_node(error_node, Some(message), &[&parameter_range, &args_len]);
+            let mut diagnostic = new_diagnostic_for_node(
+                Some(error_node),
+                Some(message),
+                &[&parameter_range, &args_len],
+            );
             if let Some(head_message) = head_message {
                 diagnostic = ast::new_diagnostic_chain(diagnostic, head_message, &[]);
             }
             let mut parameter: Option<P<Node>> = None;
             if let Some(closest_signature) = closest_signature {
                 if let Some(declaration) = closest_signature.declaration() {
-                    parameter = element_or_nil(declaration.parameters(), args.len() + if closest_signature.this_parameter().is_some() { 1 } else { 0 });
+                    parameter = element_or_nil(
+                        declaration.parameters(),
+                        args.len() + usize::from(closest_signature.this_parameter().is_some()),
+                    );
                 }
             }
             if let Some(parameter) = parameter {
                 let related = if is_binding_pattern(parameter.name().unwrap()) {
                     new_diagnostic_for_node(Some(parameter), Some(&diagnostics::An_argument_matching_this_binding_pattern_was_not_provided), &[])
                 } else if is_rest_parameter(parameter) {
-                    new_diagnostic_for_node(Some(parameter), Some(&diagnostics::Arguments_for_the_rest_parameter_0_were_not_provided), &[&parameter.name().unwrap().text()])
+                    new_diagnostic_for_node(
+                        Some(parameter),
+                        Some(&diagnostics::Arguments_for_the_rest_parameter_0_were_not_provided),
+                        &[&parameter.name().unwrap().text()],
+                    )
                 } else {
-                    new_diagnostic_for_node(Some(parameter), Some(&diagnostics::An_argument_for_0_was_not_provided), &[&parameter.name().unwrap().text()])
+                    new_diagnostic_for_node(
+                        Some(parameter),
+                        Some(&diagnostics::An_argument_for_0_was_not_provided),
+                        &[&parameter.name().unwrap().text()],
+                    )
                 };
                 diagnostic.add_related_info(related);
             }
@@ -1532,15 +2223,21 @@ impl Checker {
             // count actually matches the parameter count (e.g., due to trailing commas
             // causing signature resolution to fail for other reasons).
             if max_count >= args_len {
-                let mut diagnostic = new_diagnostic_for_node(error_node, Some(message), &[&parameter_range, &args_len]);
+                let mut diagnostic = new_diagnostic_for_node(
+                    Some(error_node),
+                    Some(message),
+                    &[&parameter_range, &args_len],
+                );
                 if let Some(head_message) = head_message {
                     diagnostic = ast::new_diagnostic_chain(diagnostic, head_message, &[]);
                 }
                 return diagnostic;
             }
             let source_file = get_source_file_of_node(node).unwrap();
-            let mut pos = args[max_count as usize].pos();
-            let mut end = args[args.len() - 1].end();
+            let mut pos =
+                args[max_count as usize].pos().expect_source("parsed nodes have source positions");
+            let mut end =
+                args[args.len() - 1].end().expect_source("parsed nodes have source positions");
             if end == pos {
                 end += 1;
             }
@@ -1548,7 +2245,12 @@ impl Checker {
             if end < pos {
                 end = pos;
             }
-            let mut diagnostic = ast::new_diagnostic(Some(source_file), TextRange::new(pos, end), message, &[&parameter_range, &args_len]);
+            let mut diagnostic = ast::new_diagnostic(
+                Some(source_file),
+                TextRange::new(pos, end),
+                message,
+                &[&parameter_range, &args_len],
+            );
             if let Some(head_message) = head_message {
                 diagnostic = ast::new_diagnostic_chain(diagnostic, head_message, &[]);
             }
@@ -1562,7 +2264,14 @@ impl Checker {
             return false;
         }
         let expression = node.expression().unwrap();
-        let symbol = self.resolve_name(Some(expression), expression.text(), SymbolFlags::Value, None /*nameNotFoundMessage*/, false /*isUse*/, false);
+        let symbol = self.resolve_name(
+            Some(expression),
+            expression.text(),
+            SymbolFlags::Value,
+            None,  /*nameNotFoundMessage*/
+            false, /*isUse*/
+            false,
+        );
         let Some(symbol) = symbol else {
             return false;
         };
@@ -1570,20 +2279,25 @@ impl Checker {
         let Some(decl) = decl else {
             return false;
         };
-        if !is_parameter_declaration(decl) || !is_function_expression_or_arrow_function(decl.parent().unwrap()) || !is_new_expression(decl.parent().unwrap().parent().unwrap()) || !is_identifier(decl.parent().unwrap().parent().unwrap().expression().unwrap()) {
+        if !is_parameter_declaration(decl)
+            || !is_function_expression_or_arrow_function(decl.parent().unwrap())
+            || !is_new_expression(decl.parent().unwrap().parent().unwrap())
+            || !is_identifier(decl.parent().unwrap().parent().unwrap().expression().unwrap())
+        {
             return false;
         }
         let global_promise_symbol = self.get_global_promise_constructor_symbol_or_nil();
         let Some(global_promise_symbol) = global_promise_symbol else {
             return false;
         };
-        let constructor_symbol = self.get_resolved_symbol(decl.parent().unwrap().parent().unwrap().expression().unwrap());
+        let constructor_symbol = self
+            .get_resolved_symbol(decl.parent().unwrap().parent().unwrap().expression().unwrap());
         constructor_symbol == global_promise_symbol
     }
 }
 
 // checker.go:10035
-pub(crate) fn get_error_node_for_call_node(node: P<Node>) -> Option<P<Node>> {
+pub(crate) fn get_error_node_for_call_node(node: P<Node>) -> P<Node> {
     let mut node = node;
     if is_call_expression(node) {
         node = node.expression().unwrap();
@@ -1591,33 +2305,57 @@ pub(crate) fn get_error_node_for_call_node(node: P<Node>) -> Option<P<Node>> {
             node = node.name().unwrap();
         }
     }
-    Some(node)
+    node
 }
 
 impl Checker {
     // checker.go:10045
-    pub(crate) fn get_type_argument_arity_error(&mut self, node: P<Node>, signatures: &[P<Signature>], type_arguments: &[P<Node>], head_message: Option<&'static Message>) -> P<Diagnostic> {
+    pub(crate) fn get_type_argument_arity_error(
+        node: P<Node>,
+        signatures: &[P<Signature>],
+        type_arguments: &[P<Node>],
+        head_message: Option<&'static Message>,
+    ) -> P<Diagnostic> {
         let mut diagnostic: P<Diagnostic>;
         let arg_count = type_arguments.len() as i64;
         let source_file = get_source_file_of_node(node).unwrap();
         let type_argument_list = node.type_argument_list().unwrap();
-        let loc = TextRange::new(tsrs_scanner::skip_trivia(source_file.text(), type_argument_list.loc.get().pos()), type_argument_list.loc.get().end());
+        let loc = TextRange::new(
+            tsrs_scanner::skip_trivia(
+                source_file.text(),
+                type_argument_list
+                    .loc
+                    .get()
+                    .pos()
+                    .expect_source("parsed node lists have source positions"),
+            ),
+            type_argument_list
+                .loc
+                .get()
+                .end()
+                .expect_source("parsed node lists have source positions"),
+        );
         if signatures.len() == 1 {
             // No overloads exist
             let sig = signatures[0];
-            let min_count = self.get_min_type_argument_count(sig.type_parameters());
-            let max_count = sig.type_parameters().len() as i32;
+            let min_count = Self::get_min_type_argument_count(sig.type_parameters());
+            let max_count = sig.type_parameters().len();
             let mut expected = min_count.to_string();
             if min_count < max_count {
                 expected = expected + "-" + &max_count.to_string();
             }
-            diagnostic = ast::new_diagnostic(Some(source_file), loc, &diagnostics::Expected_0_type_arguments_but_got_1, &[&expected, &arg_count]);
+            diagnostic = ast::new_diagnostic(
+                Some(source_file),
+                loc,
+                &diagnostics::Expected_0_type_arguments_but_got_1,
+                &[&expected, &arg_count],
+            );
         } else {
             // Overloads exist
             let mut below_arg_count = i64::MIN;
             let mut above_arg_count = i64::MAX;
             for &sig in signatures {
-                let min_count = self.get_min_type_argument_count(sig.type_parameters()) as i64;
+                let min_count = Self::get_min_type_argument_count(sig.type_parameters()) as i64;
                 let max_count = sig.type_parameters().len() as i64;
                 if min_count > arg_count {
                     above_arg_count = above_arg_count.min(min_count);
@@ -1628,8 +2366,14 @@ impl Checker {
             if below_arg_count != i64::MIN && above_arg_count != i64::MAX {
                 diagnostic = ast::new_diagnostic(Some(source_file), loc, &diagnostics::No_overload_expects_0_type_arguments_but_overloads_do_exist_that_expect_either_1_or_2_type_arguments, &[&arg_count, &below_arg_count, &above_arg_count]);
             } else {
-                let expected = if below_arg_count == i64::MIN { above_arg_count } else { below_arg_count };
-                diagnostic = ast::new_diagnostic(Some(source_file), loc, &diagnostics::Expected_0_type_arguments_but_got_1, &[&expected, &arg_count]);
+                let expected =
+                    if below_arg_count == i64::MIN { above_arg_count } else { below_arg_count };
+                diagnostic = ast::new_diagnostic(
+                    Some(source_file),
+                    loc,
+                    &diagnostics::Expected_0_type_arguments_but_got_1,
+                    &[&expected, &arg_count],
+                );
             }
         }
         if let Some(head_message) = head_message {
@@ -1639,7 +2383,11 @@ impl Checker {
     }
 
     // checker.go:10086
-    pub(crate) fn report_cannot_invoke_possibly_null_or_undefined_error(&mut self, node: P<Node>, facts: TypeFacts) {
+    pub(crate) fn report_cannot_invoke_possibly_null_or_undefined_error(
+        &mut self,
+        node: P<Node>,
+        facts: TypeFacts,
+    ) {
         let message: &'static Message = if facts.intersects(TypeFacts::IsUndefined) {
             if facts.intersects(TypeFacts::IsNull) {
                 &diagnostics::Cannot_invoke_an_object_which_is_possibly_null_or_undefined
@@ -1654,7 +2402,7 @@ impl Checker {
 
     // checker.go:10094
     pub(crate) fn resolve_untyped_call(&mut self, node: P<Node>) -> P<Signature> {
-        if self.call_like_expression_may_have_type_arguments(node) {
+        if Self::call_like_expression_may_have_type_arguments(node) {
             // Check type arguments even though we will give an error that untyped calls may not accept type arguments.
             // This gets us diagnostics for the type arguments and marks them as referenced.
             self.check_source_elements(node.type_arguments());
@@ -1687,14 +2435,21 @@ impl Checker {
 
     /**
      * TS 1.0 spec: 4.12
-     * If FuncExpr is of type Any, or of an object type that has no call or construct signatures
+     * If `FuncExpr` is of type Any, or of an object type that has no call or construct signatures
      * but is a subtype of the Function interface, the call is an untyped function call.
      */
     // checker.go:10125
-    pub(crate) fn is_untyped_function_call(&mut self, func_type: P<Type>, apparent_func_type: P<Type>, num_call_signatures: i32, num_construct_signatures: i32) -> bool {
+    pub(crate) fn is_untyped_function_call(
+        &mut self,
+        func_type: P<Type>,
+        apparent_func_type: P<Type>,
+        num_call_signatures: usize,
+        num_construct_signatures: usize,
+    ) -> bool {
         // We exclude union types because we may have a union of function types that happen to have no common signatures.
         is_type_any(Some(func_type))
-            || is_type_any(Some(apparent_func_type)) && func_type.flags().intersects(TypeFlags::TypeParameter)
+            || is_type_any(Some(apparent_func_type))
+                && func_type.flags().intersects(TypeFlags::TypeParameter)
             || num_call_signatures == 0
                 && num_construct_signatures == 0
                 && !apparent_func_type.flags().intersects(TypeFlags::Union)
@@ -1706,7 +2461,12 @@ impl Checker {
     }
 
     // checker.go:10132
-    pub(crate) fn invocation_error_details(&mut self, error_target: P<Node>, apparent_type: P<Type>, kind: SignatureKind) -> P<Diagnostic> {
+    pub(crate) fn invocation_error_details(
+        &mut self,
+        error_target: P<Node>,
+        apparent_type: P<Type>,
+        kind: SignatureKind,
+    ) -> P<Diagnostic> {
         let mut diagnostic: Option<P<Diagnostic>> = None;
         let is_call = kind == SignatureKind::Call;
         let awaited_type = self.get_awaited_type(apparent_type);
@@ -1715,7 +2475,9 @@ impl Checker {
             None => false,
         };
         let mut target = error_target;
-        if is_property_access_expression(error_target) && is_call_expression(error_target.parent().unwrap()) {
+        if is_property_access_expression(error_target)
+            && is_call_expression(error_target.parent().unwrap())
+        {
             target = error_target.name().unwrap();
         }
         if apparent_type.flags().intersects(TypeFlags::Union) {
@@ -1733,9 +2495,26 @@ impl Checker {
                     // Error on the first non callable constituent only
                     if diagnostic.is_none() {
                         let s = self.type_to_string_exported(constituent);
-                        let d = new_diagnostic_for_node(Some(target), Some(if is_call { &diagnostics::Type_0_has_no_call_signatures } else { &diagnostics::Type_0_has_no_construct_signatures }), &[&s]);
+                        let d = new_diagnostic_for_node(
+                            Some(target),
+                            Some(if is_call {
+                                &diagnostics::Type_0_has_no_call_signatures
+                            } else {
+                                &diagnostics::Type_0_has_no_construct_signatures
+                            }),
+                            &[&s],
+                        );
                         let s = self.type_to_string_exported(apparent_type);
-                        diagnostic = Some(new_diagnostic_chain_for_node(Some(d), target, Some(if is_call { &diagnostics::Not_all_constituents_of_type_0_are_callable } else { &diagnostics::Not_all_constituents_of_type_0_are_constructable }), &[&s]));
+                        diagnostic = Some(new_diagnostic_chain_for_node(
+                            Some(d),
+                            target,
+                            Some(if is_call {
+                                &diagnostics::Not_all_constituents_of_type_0_are_callable
+                            } else {
+                                &diagnostics::Not_all_constituents_of_type_0_are_constructable
+                            }),
+                            &[&s],
+                        ));
                     }
                     if has_signatures {
                         // Bail early if we already found a signature, no chance of "No constituent of type is callable"
@@ -1745,7 +2524,15 @@ impl Checker {
             }
             if !has_signatures {
                 let s = self.type_to_string_exported(apparent_type);
-                diagnostic = Some(new_diagnostic_for_node(Some(target), Some(if is_call { &diagnostics::No_constituent_of_type_0_is_callable } else { &diagnostics::No_constituent_of_type_0_is_constructable }), &[&s]));
+                diagnostic = Some(new_diagnostic_for_node(
+                    Some(target),
+                    Some(if is_call {
+                        &diagnostics::No_constituent_of_type_0_is_callable
+                    } else {
+                        &diagnostics::No_constituent_of_type_0_is_constructable
+                    }),
+                    &[&s],
+                ));
             }
             if diagnostic.is_none() {
                 let s = self.type_to_string_exported(apparent_type);
@@ -1761,9 +2548,22 @@ impl Checker {
             }
         } else {
             let s = self.type_to_string_exported(apparent_type);
-            diagnostic = Some(new_diagnostic_chain_for_node(diagnostic, target, Some(if is_call { &diagnostics::Type_0_has_no_call_signatures } else { &diagnostics::Type_0_has_no_construct_signatures }), &[&s]));
+            diagnostic = Some(new_diagnostic_chain_for_node(
+                diagnostic,
+                target,
+                Some(if is_call {
+                    &diagnostics::Type_0_has_no_call_signatures
+                } else {
+                    &diagnostics::Type_0_has_no_construct_signatures
+                }),
+                &[&s],
+            ));
         }
-        let mut head_message: &'static Message = if is_call { &diagnostics::This_expression_is_not_callable } else { &diagnostics::This_expression_is_not_constructable };
+        let mut head_message: &'static Message = if is_call {
+            &diagnostics::This_expression_is_not_callable
+        } else {
+            &diagnostics::This_expression_is_not_constructable
+        };
         // Diagnose get accessors incorrectly called as functions
         let error_target_parent = error_target.parent().unwrap();
         if is_call_expression(error_target_parent) && error_target_parent.arguments().is_empty() {
@@ -1776,13 +2576,23 @@ impl Checker {
         }
         let diagnostic = new_diagnostic_chain_for_node(diagnostic, target, Some(head_message), &[]);
         if maybe_missing_await {
-            diagnostic.add_related_info(new_diagnostic_for_node(Some(error_target), Some(&diagnostics::Did_you_forget_to_use_await), &[]));
+            diagnostic.add_related_info(new_diagnostic_for_node(
+                Some(error_target),
+                Some(&diagnostics::Did_you_forget_to_use_await),
+                &[],
+            ));
         }
         diagnostic
     }
 
     // checker.go:10188
-    pub(crate) fn invocation_error(&mut self, error_target: P<Node>, apparent_type: P<Type>, kind: SignatureKind, related_information: Option<P<Diagnostic>>) {
+    pub(crate) fn invocation_error(
+        &mut self,
+        error_target: P<Node>,
+        apparent_type: P<Type>,
+        kind: SignatureKind,
+        related_information: Option<P<Diagnostic>>,
+    ) {
         let mut diagnostic = self.invocation_error_details(error_target, apparent_type, kind);
         if let Some(related_information) = related_information {
             diagnostic.add_related_info(related_information);
@@ -1792,7 +2602,12 @@ impl Checker {
     }
 
     // checker.go:10197
-    pub(crate) fn invocation_error_recovery(&mut self, apparent_type: P<Type>, kind: SignatureKind, diagnostic: P<Diagnostic>) {
+    pub(crate) fn invocation_error_recovery(
+        &mut self,
+        apparent_type: P<Type>,
+        kind: SignatureKind,
+        diagnostic: P<Diagnostic>,
+    ) {
         let Some(symbol) = apparent_type.symbol() else {
             return;
         };
@@ -1813,7 +2628,10 @@ impl Checker {
     }
 
     // checker.go:10213
-    pub(crate) fn is_generic_function_returning_function(&mut self, signature: P<Signature>) -> bool {
+    pub(crate) fn is_generic_function_returning_function(
+        &mut self,
+        signature: P<Signature>,
+    ) -> bool {
         if signature.type_parameters().is_empty() {
             return false;
         }
@@ -1822,7 +2640,7 @@ impl Checker {
     }
 
     // checker.go:10217
-    pub(crate) fn skipped_generic_function(&mut self, node: P<Node>, check_mode: CheckMode) {
+    pub(crate) fn skipped_generic_function(&self, node: P<Node>, check_mode: CheckMode) {
         if check_mode.intersects(CheckMode::Inferential) {
             // We have skipped a generic function during inferential typing. Obtain the inference context and
             // indicate this has occurred such that we know a second pass of inference is be needed.
@@ -1842,7 +2660,11 @@ impl Checker {
     }
 
     // checker.go:10235
-    pub(crate) fn check_parenthesized_expression(&mut self, node: P<Node>, check_mode: CheckMode) -> P<Type> {
+    pub(crate) fn check_parenthesized_expression(
+        &mut self,
+        node: P<Node>,
+        check_mode: CheckMode,
+    ) -> P<Type> {
         self.check_expression_ex(node.expression().unwrap(), check_mode)
     }
 
@@ -1856,26 +2678,43 @@ impl Checker {
     }
 
     // checker.go:10246
-    pub(crate) fn get_first_transformable_static_class_element(&mut self, node: P<Node>) -> Option<P<Node>> {
+    pub(crate) fn get_first_transformable_static_class_element(
+        &self,
+        node: P<Node>,
+    ) -> Option<P<Node>> {
         let will_transform_static_elements_of_decorated_class = !self.legacy_decorators
-            && self.language_version < LanguageFeatureMinimumTarget.class_and_class_element_decorators
+            && self.language_version
+                < LanguageFeatureMinimumTarget.class_and_class_element_decorators
             && class_or_constructor_parameter_is_decorated(false, node);
-        let will_transform_private_elements_or_class_static_blocks = self.language_version < LanguageFeatureMinimumTarget.private_names_and_class_static_blocks || self.language_version < LanguageFeatureMinimumTarget.class_and_class_element_decorators;
+        let will_transform_private_elements_or_class_static_blocks = self.language_version
+            < LanguageFeatureMinimumTarget.private_names_and_class_static_blocks
+            || self.language_version
+                < LanguageFeatureMinimumTarget.class_and_class_element_decorators;
         let will_transform_initializers = !self.emit_standard_class_fields;
-        if will_transform_static_elements_of_decorated_class || will_transform_private_elements_or_class_static_blocks {
-            for &member in node.members() {
-                if will_transform_static_elements_of_decorated_class && class_element_or_class_element_parameter_is_decorated(false, member, node) {
+        if will_transform_static_elements_of_decorated_class
+            || will_transform_private_elements_or_class_static_blocks
+        {
+            if let Some(result) = node.members().iter().find_map(|&member| {
+                if will_transform_static_elements_of_decorated_class
+                    && class_element_or_class_element_parameter_is_decorated(false, member, node)
+                {
                     if let Some(first_decorator) = node.decorators().first().copied() {
-                        return Some(first_decorator);
+                        return Some(Some(first_decorator));
                     }
-                    return Some(node);
+                    return Some(Some(node));
                 } else if will_transform_private_elements_or_class_static_blocks {
-                    if is_class_static_block_declaration(member) {
-                        return Some(member);
-                    } else if ast::is_static(member) && (is_private_identifier_class_element_declaration(member) || will_transform_initializers && is_initialized_property(member)) {
-                        return Some(member);
+                    if (is_class_static_block_declaration(member))
+                        || (ast::is_static(member)
+                            && (is_private_identifier_class_element_declaration(member)
+                                || will_transform_initializers && is_initialized_property(member)))
+                    {
+                        return Some(Some(member));
                     }
                 }
+
+                None
+            }) {
+                return result;
             }
         }
         None
@@ -1891,21 +2730,29 @@ impl Checker {
             return;
         }
 
-        let will_transform_es_decorators = !self.legacy_decorators && self.language_version < LanguageFeatureMinimumTarget.class_and_class_element_decorators;
-        let location: Option<P<Node>>;
-        if will_transform_es_decorators && class_or_constructor_parameter_is_decorated(false, node) {
+        let will_transform_es_decorators = !self.legacy_decorators
+            && self.language_version
+                < LanguageFeatureMinimumTarget.class_and_class_element_decorators;
+
+        let location: Option<P<Node>> = if will_transform_es_decorators
+            && class_or_constructor_parameter_is_decorated(false, node)
+        {
             let mut loc = node;
             if let Some(first_decorator) = node.decorators().first().copied() {
                 loc = first_decorator;
             }
-            location = Some(loc);
+            Some(loc)
         } else {
-            location = self.get_first_transformable_static_class_element(node);
-        }
+            self.get_first_transformable_static_class_element(node)
+        };
 
         if let Some(location) = location {
             self.check_external_emit_helpers(location, ExternalEmitHelpers::SetFunctionName);
-            if (is_property_assignment(parent) || is_property_declaration(parent) || is_binding_element(parent)) && is_computed_property_name(parent.name().unwrap()) {
+            if (is_property_assignment(parent)
+                || is_property_declaration(parent)
+                || is_binding_element(parent))
+                && is_computed_property_name(parent.name().unwrap())
+            {
                 self.check_external_emit_helpers(location, ExternalEmitHelpers::PropKey);
             }
         }
@@ -1918,7 +2765,11 @@ impl Checker {
     }
 
     // checker.go:10306
-    pub(crate) fn check_function_expression_or_object_literal_method(&mut self, node: P<Node>, check_mode: CheckMode) -> P<Type> {
+    pub(crate) fn check_function_expression_or_object_literal_method(
+        &mut self,
+        node: P<Node>,
+        check_mode: CheckMode,
+    ) -> P<Type> {
         self.check_node_deferred(node);
         if let Some(full_signature) = node.function_like_data().unwrap().full_signature() {
             self.check_source_element(Some(full_signature));
@@ -1926,21 +2777,41 @@ impl Checker {
         if is_function_expression(node) {
             self.check_collisions_for_declaration_name(node, node.name());
         }
-        if check_mode.intersects(CheckMode::SkipContextSensitive) && self.is_context_sensitive(node) {
+        if check_mode.intersects(CheckMode::SkipContextSensitive) && self.is_context_sensitive(node)
+        {
             // Skip parameters, return signature with return type that retains noncontextual parts so inferences can still be drawn in an early stage
             if node.type_node().is_none() && !has_context_sensitive_parameters(node) {
                 // Return plain anyFunctionType if there is no possibility we'll make inferences from the return type
                 let contextual_signature = self.get_contextual_signature(node);
                 if let Some(contextual_signature) = contextual_signature {
-                    let contextual_return_type = self.get_return_type_of_signature(contextual_signature);
+                    let contextual_return_type =
+                        self.get_return_type_of_signature(contextual_signature);
                     if self.could_contain_type_variables(contextual_return_type) {
                         if let Some(&cached) = self.context_free_types.get(&node) {
                             return cached;
                         }
                         let return_type = self.get_return_type_from_body(node, check_mode);
-                        let return_only_signature = self.new_signature(SignatureFlags::IsNonInferrable, None, &[] /*typeParameters*/, None /*thisParameter*/, &[], Some(return_type), None /*resolvedTypePredicate*/, 0);
-                        let return_only_type = self.new_anonymous_type(node.symbol(), None, &[return_only_signature], &[], &[]);
-                        return_only_type.object_flags.set(return_only_type.object_flags.get() | ObjectFlags::NonInferrableType);
+                        let return_only_signature = self.new_signature(
+                            SignatureFlags::IsNonInferrable,
+                            None,
+                            &[],  /*typeParameters*/
+                            None, /*thisParameter*/
+                            &[],
+                            Some(return_type),
+                            None, /*resolvedTypePredicate*/
+                            0,
+                        );
+                        let return_only_type = self.new_anonymous_type(
+                            node.symbol(),
+                            None,
+                            &[return_only_signature],
+                            &[],
+                            &[],
+                        );
+                        return_only_type.object_flags.set(
+                            return_only_type.object_flags.get_lazy()
+                                | ObjectFlags::NonInferrableType,
+                        );
                         self.context_free_types.insert(node, return_only_type);
                         return return_only_type;
                     }
@@ -1965,7 +2836,11 @@ impl Checker {
     }
 
     // checker.go:10347
-    pub(crate) fn contextually_check_function_expression_or_object_literal_method(&mut self, node: P<Node>, check_mode: CheckMode) {
+    pub(crate) fn contextually_check_function_expression_or_object_literal_method(
+        &mut self,
+        node: P<Node>,
+        check_mode: CheckMode,
+    ) {
         let links = self.node_links.get(node);
         // Check if function expression is contextually typed and assign parameter types if so.
         if !links.flags.get().intersects(NodeCheckFlags::ContextChecked) {
@@ -1977,7 +2852,8 @@ impl Checker {
                 links.flags.set(links.flags.get() | NodeCheckFlags::ContextChecked);
                 let symbol = self.get_symbol_of_declaration(node).unwrap();
                 let symbol_type = self.get_type_of_symbol(symbol);
-                let signature = self.get_signatures_of_type(symbol_type, SignatureKind::Call).first().copied();
+                let signature =
+                    self.get_signatures_of_type(symbol_type, SignatureKind::Call).first().copied();
                 let Some(signature) = signature else {
                     return;
                 };
@@ -1986,38 +2862,64 @@ impl Checker {
                         let inference_context = self.get_inference_context(node);
                         let mut instantiated_contextual_signature: Option<P<Signature>> = None;
                         if check_mode.intersects(CheckMode::Inferential) {
-                            self.infer_from_annotated_parameters_and_return(signature, contextual_signature, inference_context);
+                            self.infer_from_annotated_parameters_and_return(
+                                signature,
+                                contextual_signature,
+                                inference_context,
+                            );
                             let rest_type = self.get_effective_rest_type(contextual_signature);
                             if let Some(rest_type) = rest_type {
                                 if rest_type.flags().intersects(TypeFlags::TypeParameter) {
-                                    let non_fixing_mapper = inference_context.unwrap().non_fixing_mapper();
-                                    instantiated_contextual_signature = Some(self.instantiate_signature(contextual_signature, non_fixing_mapper));
+                                    let non_fixing_mapper =
+                                        inference_context.unwrap().non_fixing_mapper();
+                                    instantiated_contextual_signature =
+                                        Some(self.instantiate_signature(
+                                            contextual_signature,
+                                            non_fixing_mapper,
+                                        ));
                                 }
                             }
                         }
                         if instantiated_contextual_signature.is_none() {
                             if let Some(inference_context) = inference_context {
                                 let mapper = inference_context.mapper();
-                                instantiated_contextual_signature = Some(self.instantiate_signature(contextual_signature, mapper));
+                                instantiated_contextual_signature =
+                                    Some(self.instantiate_signature(contextual_signature, mapper));
                             } else {
                                 instantiated_contextual_signature = Some(contextual_signature);
                             }
                         }
-                        self.assign_contextual_parameter_types(signature, instantiated_contextual_signature.unwrap());
+                        self.assign_contextual_parameter_types(
+                            signature,
+                            instantiated_contextual_signature.unwrap(),
+                        );
                     } else {
                         // Force resolution of all parameter types such that the absence of a contextual type is consistently reflected.
                         self.assign_non_contextual_parameter_types(signature);
                     }
-                } else if let Some(contextual_signature) = contextual_signature.filter(|cs| node.type_parameter_list().is_none() && cs.parameters().len() > node.parameters().len()) {
+                } else if let Some(contextual_signature) = contextual_signature.filter(|cs| {
+                    node.type_parameter_list().is_none()
+                        && cs.parameters().len() > node.parameters().len()
+                }) {
                     let inference_context = self.get_inference_context(node);
                     if check_mode.intersects(CheckMode::Inferential) {
-                        self.infer_from_annotated_parameters_and_return(signature, contextual_signature, inference_context);
+                        self.infer_from_annotated_parameters_and_return(
+                            signature,
+                            contextual_signature,
+                            inference_context,
+                        );
                     }
                 }
-                if contextual_signature.is_some() && self.get_return_type_from_annotation(node).is_none() && signature.resolved_return_type.get().is_none() {
+                if contextual_signature.is_some()
+                    && self.get_return_type_from_annotation(node).is_none()
+                    && signature.resolved_return_type.get().is_none()
+                {
                     // resolvedReturnType is cached indefinitely, so the return type here has to be computed without CheckModeSkipContextSensitive;
                     // otherwise anyFunctionType could leak as part of the computed (and cached) return type.
-                    let return_type = self.get_return_type_from_body(node, check_mode & !CheckMode::SkipContextSensitive);
+                    let return_type = self.get_return_type_from_body(
+                        node,
+                        check_mode & !CheckMode::SkipContextSensitive,
+                    );
                     if signature.resolved_return_type.get().is_none() {
                         signature.resolved_return_type.set(Some(return_type));
                     }
@@ -2028,7 +2930,10 @@ impl Checker {
     }
 
     // checker.go:10403
-    pub(crate) fn check_function_expression_or_object_literal_method_deferred(&mut self, node: P<Node>) {
+    pub(crate) fn check_function_expression_or_object_literal_method_deferred(
+        &mut self,
+        node: P<Node>,
+    ) {
         let function_flags = get_function_flags(Some(node));
         let return_type = self.get_return_type_from_annotation(node);
         self.check_all_code_paths_in_non_void_function_return_or_throw(node, return_type);
@@ -2053,9 +2958,17 @@ impl Checker {
                 // its return type annotation.
                 let expr_type = self.check_expression(body);
                 if let Some(return_type) = return_type {
-                    let return_or_promised_type = self.unwrap_return_type(return_type, function_flags);
+                    let return_or_promised_type =
+                        self.unwrap_return_type(return_type, function_flags);
                     if let Some(return_or_promised_type) = return_or_promised_type {
-                        self.check_return_expression(node, return_or_promised_type, body, Some(body), expr_type, false);
+                        self.check_return_expression(
+                            node,
+                            return_or_promised_type,
+                            body,
+                            Some(body),
+                            expr_type,
+                            false,
+                        );
                     }
                 }
             }
@@ -2063,23 +2976,44 @@ impl Checker {
     }
 
     // checker.go:10436
-    pub(crate) fn infer_from_annotated_parameters_and_return(&mut self, sig: P<Signature>, context: P<Signature>, inference_context: Option<P<InferenceContext>>) {
-        let length = sig.parameters().len() - if signature_has_rest_parameter(sig) { 1 } else { 0 };
+    pub(crate) fn infer_from_annotated_parameters_and_return(
+        &mut self,
+        sig: P<Signature>,
+        context: P<Signature>,
+        inference_context: Option<P<InferenceContext>>,
+    ) {
+        let length = sig.parameters().len() - usize::from(signature_has_rest_parameter(sig));
         for i in 0..length {
             let declaration = sig.parameters()[i].value_declaration().unwrap();
             let type_node = declaration.type_node();
             if let Some(type_node) = type_node {
                 let t = self.get_type_from_type_node(type_node);
-                let source = self.add_optionality_ex(t, false /*isProperty*/, is_optional_declaration(declaration));
-                let target = self.get_type_at_position(context, i as i32);
-                self.infer_types(inference_context.unwrap().inferences.get(), source, target, InferencePriority::None, false);
+                let source = self.add_optionality_ex(
+                    t,
+                    false, /*isProperty*/
+                    is_optional_declaration(declaration),
+                );
+                let target = self.get_type_at_position(context, i);
+                self.infer_types(
+                    inference_context.unwrap().inferences.get(),
+                    source,
+                    target,
+                    InferencePriority::None,
+                    false,
+                );
             }
         }
         if let Some(declaration) = sig.declaration() {
             if let Some(return_type_node) = declaration.type_node() {
                 let source = self.get_type_from_type_node(return_type_node);
                 let target = self.get_return_type_of_signature(context);
-                self.infer_types(inference_context.unwrap().inferences.get(), source, target, InferencePriority::None, false);
+                self.infer_types(
+                    inference_context.unwrap().inferences.get(),
+                    source,
+                    target,
+                    InferencePriority::None,
+                    false,
+                );
             }
         }
     }
@@ -2100,7 +3034,16 @@ impl Checker {
         for &current in types {
             let signature = self.get_contextual_call_signature(current, node);
             if let Some(signature) = signature {
-                if !signature_list.is_empty() && self.compare_signatures_identical(signature_list[0], signature, false /*partialMatch*/, true /*ignoreThisTypes*/, true /*ignoreReturnTypes*/, |c, s, t| c.compare_types_identical(s, t)) == Ternary::False {
+                if !signature_list.is_empty()
+                    && self.compare_signatures_identical(
+                        signature_list[0],
+                        signature,
+                        false, /*partialMatch*/
+                        true,  /*ignoreThisTypes*/
+                        true,  /*ignoreReturnTypes*/
+                        super::checker::Checker::compare_types_identical,
+                    ) == Ternary::False
+                {
                     // Signatures aren't identical, do not use
                     return None;
                 }
@@ -2118,9 +3061,16 @@ impl Checker {
     }
 
     // checker.go:10492
-    pub(crate) fn create_union_signature(&mut self, sig: P<Signature>, union_signatures: &[P<Signature>]) -> P<Signature> {
+    pub(crate) fn create_union_signature(
+        &mut self,
+        sig: P<Signature>,
+        union_signatures: &[P<Signature>],
+    ) -> P<Signature> {
         let result = self.clone_signature(sig);
-        result.set_composite(Some(P::new(CompositeSignature { is_union: Cell::new(true), signatures: Cell::new(alloc_slice(union_signatures)) })));
+        result.set_composite(Some(P::new(CompositeSignature {
+            is_union: Cell::new(true),
+            signatures: Cell::new(alloc_slice(union_signatures)),
+        })));
         result.target.set(None);
         result.mapper.set(None);
         result
@@ -2129,14 +3079,18 @@ impl Checker {
     // If the given type is an object or union type with a single signature, and if that signature has at
     // least as many parameters as the given function, return the signature. Otherwise return undefined.
     // checker.go:10502
-    pub(crate) fn get_contextual_call_signature(&mut self, t: P<Type>, node: P<Node>) -> Option<P<Signature>> {
+    pub(crate) fn get_contextual_call_signature(
+        &mut self,
+        t: P<Type>,
+        node: P<Node>,
+    ) -> Option<P<Signature>> {
         let signatures = self.get_signatures_of_type(t, SignatureKind::Call);
         let mut applicable_by_arity = Vec::new();
-        for &s in signatures {
-            if !self.is_arity_smaller(s, node) {
-                applicable_by_arity.push(s);
-            }
-        }
+        applicable_by_arity.extend(
+            signatures
+                .iter()
+                .filter_map(|&s| if !self.is_arity_smaller(s, node) { Some(s) } else { None }),
+        );
         if applicable_by_arity.len() == 1 {
             return Some(applicable_by_arity[0]);
         }
@@ -2144,21 +3098,35 @@ impl Checker {
     }
 
     // checker.go:10511
-    pub(crate) fn get_intersected_signatures(&mut self, signatures: &[P<Signature>]) -> Option<P<Signature>> {
+    pub(crate) fn get_intersected_signatures(
+        &mut self,
+        signatures: &[P<Signature>],
+    ) -> Option<P<Signature>> {
         if !self.no_implicit_any {
             return None;
         }
         let mut combined: Option<P<Signature>> = None;
-        for &sig in signatures {
+        combined = match signatures.iter().try_fold(combined, |mut combined, &sig| {
             match combined {
                 None => combined = Some(sig),
                 Some(c) if c == sig => combined = Some(sig),
-                Some(c) if self.compare_type_parameters_identical(c.type_parameters(), sig.type_parameters()) => {
-                    combined = Some(self.combine_union_or_intersection_member_signatures(c, sig, false /*isUnion*/));
+                Some(c)
+                    if self.compare_type_parameters_identical(
+                        c.type_parameters(),
+                        sig.type_parameters(),
+                    ) =>
+                {
+                    combined = Some(self.combine_union_or_intersection_member_signatures(
+                        c, sig, false, /*isUnion*/
+                    ));
                 }
-                _ => return None,
+                _ => return Err(None),
             }
-        }
+            Ok(combined)
+        }) {
+            Ok(value) => value,
+            Err(value) => return value,
+        };
         combined
     }
 
@@ -2166,10 +3134,13 @@ impl Checker {
     // checker.go:10530
     pub(crate) fn is_arity_smaller(&mut self, signature: P<Signature>, target: P<Node>) -> bool {
         let parameters = target.parameters();
-        let mut target_parameter_count: i32 = 0;
-        while (target_parameter_count as usize) < parameters.len() {
-            let param = parameters[target_parameter_count as usize];
-            if param.initializer().is_some() || param.question_token().is_some() || has_dot_dot_dot_token(param) {
+        let mut target_parameter_count = 0;
+        while target_parameter_count < parameters.len() {
+            let param = parameters[target_parameter_count];
+            if param.initializer().is_some()
+                || param.question_token().is_some()
+                || has_dot_dot_dot_token(param)
+            {
                 break;
             }
             target_parameter_count += 1;
@@ -2177,11 +3148,16 @@ impl Checker {
         if !parameters.is_empty() && is_this_parameter(parameters[0]) {
             target_parameter_count -= 1;
         }
-        !self.has_effective_rest_parameter(signature) && self.get_parameter_count(signature) < target_parameter_count
+        !self.has_effective_rest_parameter(signature)
+            && self.get_parameter_count(signature) < target_parameter_count
     }
 
     // checker.go:10546
-    pub(crate) fn assign_contextual_parameter_types(&mut self, sig: P<Signature>, context: P<Signature>) {
+    pub(crate) fn assign_contextual_parameter_types(
+        &mut self,
+        sig: P<Signature>,
+        context: P<Signature>,
+    ) {
         if !context.type_parameters().is_empty() {
             if !sig.type_parameters().is_empty() {
                 // This signature has already has a contextual inference performed and cached on it
@@ -2191,25 +3167,36 @@ impl Checker {
         }
         if let Some(context_this_parameter) = context.this_parameter() {
             let parameter = sig.this_parameter();
-            if parameter.is_none() || parameter.unwrap().value_declaration().is_some_and(|vd| vd.type_node().is_none()) {
+            if parameter.is_none()
+                || parameter.unwrap().value_declaration().is_some_and(|vd| vd.type_node().is_none())
+            {
                 if parameter.is_none() {
-                    sig.set_this_parameter(Some(self.create_symbol_with_type(context_this_parameter, None /*type*/)));
+                    sig.set_this_parameter(Some(
+                        self.create_symbol_with_type(context_this_parameter, None /*type*/),
+                    ));
                 }
                 let t = self.get_type_of_symbol(context_this_parameter);
                 self.assign_parameter_type(sig.this_parameter().unwrap(), Some(t));
             }
         }
-        let length = sig.parameters().len() - if signature_has_rest_parameter(sig) { 1 } else { 0 };
+        let length = sig.parameters().len() - usize::from(signature_has_rest_parameter(sig));
         for i in 0..length {
             let parameter = sig.parameters()[i];
             let declaration = parameter.value_declaration().unwrap();
             if declaration.type_node().is_none() {
-                let mut t = self.try_get_type_at_position(context, i as i32);
+                let mut t = self.try_get_type_at_position(context, i);
                 if let Some(tt) = t {
                     if declaration.initializer().is_some() {
-                        let mut initializer_type = self.check_declaration_initializer(declaration, CheckMode::Normal, None);
+                        let mut initializer_type = self.check_declaration_initializer(
+                            declaration,
+                            CheckMode::Normal,
+                            None,
+                        );
                         if !self.is_type_assignable_to(initializer_type, tt) {
-                            initializer_type = self.widen_type_inferred_from_initializer(declaration, initializer_type);
+                            initializer_type = self.widen_type_inferred_from_initializer(
+                                declaration,
+                                initializer_type,
+                            );
                             if self.is_type_assignable_to(tt, initializer_type) {
                                 t = Some(initializer_type);
                             }
@@ -2223,8 +3210,12 @@ impl Checker {
             // parameter might be a transient symbol generated by use of `arguments` in the function body.
             let parameter = sig.parameters().last().copied().unwrap();
             let value_declaration = parameter.value_declaration();
-            if value_declaration.is_some_and(|vd| vd.type_node().is_none()) || value_declaration.is_none() && parameter.check_flags.get().intersects(CheckFlags::DeferredType) {
-                let contextual_parameter_type = self.get_rest_type_at_position(context, length as i32, false);
+            if value_declaration.is_some_and(|vd| vd.type_node().is_none())
+                || value_declaration.is_none()
+                    && parameter.check_flags.get().intersects(CheckFlags::DeferredType)
+            {
+                let contextual_parameter_type =
+                    self.get_rest_type_at_position(context, length, false);
                 self.assign_parameter_type(parameter, Some(contextual_parameter_type));
             }
         }
@@ -2241,7 +3232,11 @@ impl Checker {
     }
 
     // checker.go:10601
-    pub(crate) fn assign_parameter_type(&mut self, parameter: P<Symbol>, contextual_type: Option<P<Type>>) {
+    pub(crate) fn assign_parameter_type(
+        &mut self,
+        parameter: P<Symbol>,
+        contextual_type: Option<P<Type>>,
+    ) {
         let links = self.value_symbol_links.get(parameter);
         if links.resolved_type.get().is_some() {
             return;
@@ -2250,18 +3245,25 @@ impl Checker {
         let t = match contextual_type {
             Some(t) => t,
             None => match declaration {
-                Some(declaration) => self.get_widened_type_for_variable_like_declaration(declaration, true /*reportErrors*/),
+                Some(declaration) => self.get_widened_type_for_variable_like_declaration(
+                    declaration,
+                    true, /*reportErrors*/
+                ),
                 None => self.get_type_of_symbol(parameter),
             },
         };
-        let is_optional = declaration.is_some_and(|declaration| declaration.initializer().is_none() && is_optional_declaration(declaration));
+        let is_optional = declaration.is_some_and(|declaration| {
+            declaration.initializer().is_none() && is_optional_declaration(declaration)
+        });
         links.resolved_type.set(Some(self.add_optionality_ex(t, false, is_optional)));
         if let Some(declaration) = declaration {
             let name = declaration.name().unwrap();
             if !is_identifier(name) {
                 // if inference didn't come up with anything but unknown, fall back to the binding pattern if present.
                 if links.resolved_type.get() == Some(self.unknown_type) {
-                    links.resolved_type.set(Some(self.get_type_from_binding_pattern(name, false, false)));
+                    links
+                        .resolved_type
+                        .set(Some(self.get_type_from_binding_pattern(name, false, false)));
                 }
                 self.assign_binding_element_types(name, links.resolved_type.get().unwrap());
             }
@@ -2275,7 +3277,11 @@ impl Checker {
         for &element in pattern.elements() {
             let name = element.name();
             if let Some(name) = name {
-                let t = self.get_binding_element_type_from_parent_type(element, parent_type, false /*noTupleBoundsCheck*/);
+                let t = self.get_binding_element_type_from_parent_type(
+                    element,
+                    parent_type,
+                    false, /*noTupleBoundsCheck*/
+                );
                 if is_identifier(name) {
                     let symbol = self.get_symbol_of_declaration(element).unwrap();
                     self.value_symbol_links.get(symbol).resolved_type.set(Some(t));
@@ -2287,7 +3293,11 @@ impl Checker {
     }
 
     // checker.go:10641
-    pub(crate) fn check_collisions_for_declaration_name(&mut self, node: P<Node>, name: Option<P<Node>>) {
+    pub(crate) fn check_collisions_for_declaration_name(
+        &mut self,
+        node: P<Node>,
+        name: Option<P<Node>>,
+    ) {
         let Some(name) = name else {
             return;
         };
@@ -2307,19 +3317,29 @@ impl Checker {
     }
 
     // checker.go:10660
-    pub(crate) fn check_collision_with_require_exports_in_generated_code(&mut self, node: P<Node>, name: Option<P<Node>>) {
+    pub(crate) fn check_collision_with_require_exports_in_generated_code(
+        &mut self,
+        node: P<Node>,
+        name: Option<P<Node>>,
+    ) {
         // No need to check for require or exports for ES6 modules and later
-        if self.program.get_emit_module_format_of_file(get_source_file_of_node(node).unwrap()) >= ModuleKind::ES2015 {
+        if self.emit_module_format_of_file(get_source_file_of_node(node).unwrap())
+            >= ModuleKind::ES2015
+        {
             return;
         }
         let Some(name_node) = name else {
             return;
         };
-        if !self.need_collision_check_for_identifier(node, name, "require") && !self.need_collision_check_for_identifier(node, name, "exports") {
+        if !Self::need_collision_check_for_identifier(node, name, "require")
+            && !Self::need_collision_check_for_identifier(node, name, "exports")
+        {
             return;
         }
         // Uninstantiated modules shouldnt do this check
-        if is_module_declaration(node) && get_module_instance_state(node) != ModuleInstanceState::Instantiated {
+        if is_module_declaration(node)
+            && get_module_instance_state(node) != ModuleInstanceState::Instantiated
+        {
             return;
         }
         // In case of variable declaration, node.parent is variable statement so look at the variable statement's parent
@@ -2332,20 +3352,29 @@ impl Checker {
     }
 
     // checker.go:10680
-    pub(crate) fn check_collision_with_global_object_in_generated_code(&mut self, node: P<Node>, name: Option<P<Node>>) {
+    pub(crate) fn check_collision_with_global_object_in_generated_code(
+        &mut self,
+        node: P<Node>,
+        name: Option<P<Node>>,
+    ) {
         let Some(name_node) = name else {
             return;
         };
-        if is_class_like(node) || !self.need_collision_check_for_identifier(node, name, "Object") {
+        if is_class_like(node) || !Self::need_collision_check_for_identifier(node, name, "Object") {
             return;
         }
         // Uninstantiated modules shouldn't do this check
-        if is_module_declaration(node) && get_module_instance_state(node) != ModuleInstanceState::Instantiated {
+        if is_module_declaration(node)
+            && get_module_instance_state(node) != ModuleInstanceState::Instantiated
+        {
             return;
         }
         // In case of variable declaration, node.parent is variable statement so look at the variable statement's parent
         let parent = get_declaration_container(node).unwrap();
-        if is_source_file(parent) && is_external_or_common_js_module(parent.as_source_file_p()) && self.program.get_emit_module_format_of_file(parent.as_source_file_p()) == ModuleKind::CommonJS {
+        if is_source_file(parent)
+            && is_external_or_common_js_module(parent.as_source_file_p())
+            && self.emit_module_format_of_file(parent.as_source_file_p()) == ModuleKind::CommonJS
+        {
             // If the declaration happens to be in external module, report error that Object is a reserved identifier.
             let s = tsrs_scanner::declaration_name_to_string(Some(name_node));
             self.error_skipped_on_no_emit(name_node, &diagnostics::Duplicate_identifier_0_Compiler_reserves_name_1_in_top_level_scope_of_a_module, &[&s, &s]);
@@ -2353,14 +3382,24 @@ impl Checker {
     }
 
     // checker.go:10696
-    pub(crate) fn need_collision_check_for_identifier(&mut self, node: P<Node>, identifier: Option<P<Node>>, name: &str) -> bool {
+    pub(crate) fn need_collision_check_for_identifier(
+        node: P<Node>,
+        identifier: Option<P<Node>>,
+        name: &str,
+    ) -> bool {
         if let Some(identifier) = identifier {
             if identifier.text() != name {
                 return false;
             }
         }
         match node.kind() {
-            Kind::PropertyDeclaration | Kind::PropertySignature | Kind::MethodDeclaration | Kind::MethodSignature | Kind::GetAccessor | Kind::SetAccessor | Kind::PropertyAssignment => {
+            Kind::PropertyDeclaration
+            | Kind::PropertySignature
+            | Kind::MethodDeclaration
+            | Kind::MethodSignature
+            | Kind::GetAccessor
+            | Kind::SetAccessor
+            | Kind::PropertyAssignment => {
                 // it is ok to have member named '_super', '_this', `Promise`, etc. - member access is always qualified
                 return false;
             }
@@ -2370,7 +3409,8 @@ impl Checker {
             // ambient context - no codegen impact
             return false;
         }
-        if is_import_clause(node) || is_import_equals_declaration(node) || is_import_specifier(node) {
+        if is_import_clause(node) || is_import_equals_declaration(node) || is_import_specifier(node)
+        {
             // type-only imports do not require collision checks against runtime values.
             if is_type_only_import_or_export_declaration(node) {
                 return false;
@@ -2388,14 +3428,18 @@ impl Checker {
     pub(crate) fn set_node_links_for_private_identifier_scope(&mut self, node: P<Node>) {
         let name = node.name().unwrap();
         if is_private_identifier(name) {
-            if self.language_version < LanguageFeatureMinimumTarget.private_names_and_class_static_blocks
-                || self.language_version < LanguageFeatureMinimumTarget.class_and_class_element_decorators
+            if self.language_version
+                < LanguageFeatureMinimumTarget.private_names_and_class_static_blocks
+                || self.language_version
+                    < LanguageFeatureMinimumTarget.class_and_class_element_decorators
                 || !self.compiler_options.get_use_define_for_class_fields()
             {
                 let mut lexical_scope = get_enclosing_block_scope_container(node);
                 while let Some(scope) = lexical_scope {
                     let links = self.node_links.get(scope);
-                    links.flags.set(links.flags.get() | NodeCheckFlags::ContainsClassWithPrivateIdentifiers);
+                    links.flags.set(
+                        links.flags.get() | NodeCheckFlags::ContainsClassWithPrivateIdentifiers,
+                    );
                     lexical_scope = get_enclosing_block_scope_container(scope);
                 }
             }
@@ -2403,8 +3447,15 @@ impl Checker {
     }
 
     // checker.go:10736
-    pub(crate) fn record_potential_collision_with_weak_map_set_in_generated_code(&mut self, node: P<Node>, name: P<Node>) {
-        if self.language_version <= ScriptTarget::ES2021 && (self.need_collision_check_for_identifier(node, Some(name), "WeakMap") || self.need_collision_check_for_identifier(node, Some(name), "WeakSet")) {
+    pub(crate) fn record_potential_collision_with_weak_map_set_in_generated_code(
+        &mut self,
+        node: P<Node>,
+        name: P<Node>,
+    ) {
+        if self.language_version <= ScriptTarget::ES2021
+            && (Self::need_collision_check_for_identifier(node, Some(name), "WeakMap")
+                || Self::need_collision_check_for_identifier(node, Some(name), "WeakSet"))
+        {
             self.add_deferred_diagnostic(move |c| {
                 c.check_weak_map_set_collision(node);
             });
@@ -2414,7 +3465,13 @@ impl Checker {
     // checker.go:10745
     pub(crate) fn check_weak_map_set_collision(&mut self, node: P<Node>) {
         let enclosing_block_scope = get_enclosing_block_scope_container(node).unwrap();
-        if self.node_links.get(enclosing_block_scope).flags.get().intersects(NodeCheckFlags::ContainsClassWithPrivateIdentifiers) {
+        if self
+            .node_links
+            .get(enclosing_block_scope)
+            .flags
+            .get()
+            .intersects(NodeCheckFlags::ContainsClassWithPrivateIdentifiers)
+        {
             let name = node.name();
             if let Some(name) = name {
                 if is_identifier(name) {
@@ -2425,20 +3482,31 @@ impl Checker {
     }
 
     // checker.go:10755
-    pub(crate) fn check_collision_with_global_promise_in_generated_code(&mut self, node: P<Node>, name: Option<P<Node>>) {
+    pub(crate) fn check_collision_with_global_promise_in_generated_code(
+        &mut self,
+        node: P<Node>,
+        name: Option<P<Node>>,
+    ) {
         let Some(name_node) = name else {
             return;
         };
-        if self.language_version >= ScriptTarget::ES2017 || !self.need_collision_check_for_identifier(node, name, "Promise") {
+        if self.language_version >= ScriptTarget::ES2017
+            || !Self::need_collision_check_for_identifier(node, name, "Promise")
+        {
             return;
         }
         // Uninstantiated modules shouldn't do this check
-        if is_module_declaration(node) && get_module_instance_state(node) != ModuleInstanceState::Instantiated {
+        if is_module_declaration(node)
+            && get_module_instance_state(node) != ModuleInstanceState::Instantiated
+        {
             return;
         }
         // In case of variable declaration, node.parent is variable statement so look at the variable statement's parent
         let parent = get_declaration_container(node).unwrap();
-        if is_source_file(parent) && is_external_or_common_js_module(parent.as_source_file_p()) && parent.flags().intersects(NodeFlags::HasAsyncFunctions) {
+        if is_source_file(parent)
+            && is_external_or_common_js_module(parent.as_source_file_p())
+            && parent.flags().intersects(NodeFlags::HasAsyncFunctions)
+        {
             // If the declaration happens to be in external module, report error that Promise is a reserved identifier.
             let s = tsrs_scanner::declaration_name_to_string(Some(name_node));
             self.error_skipped_on_no_emit(name_node, &diagnostics::Duplicate_identifier_0_Compiler_reserves_name_1_in_top_level_scope_of_a_module_containing_async_functions, &[&s, &s]);
@@ -2446,8 +3514,15 @@ impl Checker {
     }
 
     // checker.go:10771
-    pub(crate) fn record_potential_collision_with_reflect_in_generated_code(&mut self, node: P<Node>, name: Option<P<Node>>) {
-        if name.is_some() && self.language_version <= ScriptTarget::ES2021 && self.need_collision_check_for_identifier(node, name, "Reflect") {
+    pub(crate) fn record_potential_collision_with_reflect_in_generated_code(
+        &mut self,
+        node: P<Node>,
+        name: Option<P<Node>>,
+    ) {
+        if name.is_some()
+            && self.language_version <= ScriptTarget::ES2021
+            && Self::need_collision_check_for_identifier(node, name, "Reflect")
+        {
             self.add_deferred_diagnostic(move |c| {
                 c.check_reflect_collision(node);
             });
@@ -2459,21 +3534,36 @@ impl Checker {
         let mut has_collision = false;
         if is_class_expression(node) {
             // ClassExpression names don't contribute to their containers, but do matter for any of their block-scoped members.
-            for &member in node.members() {
-                if self.node_links.get(member).flags.get().intersects(NodeCheckFlags::ContainsSuperPropertyInStaticInitializer) {
-                    has_collision = true;
-                    break;
-                }
+            if node.members().iter().any(|&member| {
+                self.node_links
+                    .get(member)
+                    .flags
+                    .get()
+                    .intersects(NodeCheckFlags::ContainsSuperPropertyInStaticInitializer)
+            }) {
+                has_collision = true;
             }
         } else if is_function_expression(node) {
             // FunctionExpression names don't contribute to their containers, but do matter for their contents
-            if self.node_links.get(node).flags.get().intersects(NodeCheckFlags::ContainsSuperPropertyInStaticInitializer) {
+            if self
+                .node_links
+                .get(node)
+                .flags
+                .get()
+                .intersects(NodeCheckFlags::ContainsSuperPropertyInStaticInitializer)
+            {
                 has_collision = true;
             }
         } else {
             let container = get_enclosing_block_scope_container(node);
             if let Some(container) = container {
-                if self.node_links.get(container).flags.get().intersects(NodeCheckFlags::ContainsSuperPropertyInStaticInitializer) {
+                if self
+                    .node_links
+                    .get(container)
+                    .flags
+                    .get()
+                    .intersects(NodeCheckFlags::ContainsSuperPropertyInStaticInitializer)
+                {
                     has_collision = true;
                 }
             }
@@ -2491,7 +3581,10 @@ impl Checker {
 
     // checker.go:10808
     pub(crate) fn check_class_name_collision_with_object(&mut self, name: P<Node>) {
-        if name.text() == "Object" && self.program.get_emit_module_format_of_file(get_source_file_of_node(name).unwrap()) < ModuleKind::ES2015 {
+        if name.text() == "Object"
+            && self.emit_module_format_of_file(get_source_file_of_node(name).unwrap())
+                < ModuleKind::ES2015
+        {
             let module_kind = self.module_kind.to_string();
             self.error(Some(name), &diagnostics::Class_name_cannot_be_Object_when_targeting_ES5_and_above_with_module_0, &[&module_kind]);
         }
@@ -2529,7 +3622,10 @@ impl Checker {
         self.check_source_elements(node.type_arguments());
         if self.compiler_options.ets_loader_path.is_empty() && is_expression_with_type_arguments(node) {
             let parent = walk_up_parenthesized_expressions(node.parent()).unwrap();
-            if is_binary_expression(parent) && parent.as_binary_expression().operator_token.kind() == Kind::InstanceOfKeyword && crate::is_node_descendant_of(Some(node), parent.as_binary_expression().right()) {
+            if is_binary_expression(parent)
+                && parent.as_binary_expression().operator_token.kind() == Kind::InstanceOfKeyword
+                && crate::is_node_descendant_of(Some(node), parent.as_binary_expression().right())
+            {
                 self.error(Some(node), &diagnostics::The_right_hand_side_of_an_instanceof_expression_must_not_be_an_instantiation_expression, &[]);
             }
         }

@@ -40,7 +40,7 @@ impl Event {
 
 // eventEntry tracks coalescing state during a debounce batch.
 #[derive(Clone, Copy, Default)]
-struct eventEntry {
+pub(crate) struct eventEntry {
     created_seq: u64,
     updated_seq: u64,
     deleted_seq: u64,
@@ -67,6 +67,7 @@ impl eventList {
     // create records a new-file event for path. Both create and update
     // produce EventUpdate externally; sequence state tracks coalescing
     // (create+delete within a batch cancels out).
+    #[cfg(any(unix, test))]
     pub(crate) fn create(&self, path: &str) {
         let mut el = self.mu.lock().unwrap();
         let seq = el.next_seq_locked();
@@ -75,6 +76,7 @@ impl eventList {
 
     // event.go:79
     // update records an update event for path.
+    #[cfg(any(unix, test))]
     pub(crate) fn update(&self, path: &str) {
         let mut el = self.mu.lock().unwrap();
         let seq = el.next_seq_locked();
@@ -100,6 +102,7 @@ impl eventList {
 
     // event.go:106
     // remove records a delete event for path.
+    #[cfg(any(unix, test))]
     pub(crate) fn remove(&self, path: &str) {
         let mut el = self.mu.lock().unwrap();
         let seq = el.next_seq_locked();
@@ -107,7 +110,10 @@ impl eventList {
     }
 
     // event.go:113
-    #[expect(dead_code, reason = "its only Go caller, windows.go (windowsSubscription.processOne), is not ported")]
+    #[expect(
+        dead_code,
+        reason = "its only Go caller, windows.go (windowsSubscription.processOne), is not ported"
+    )]
     pub(crate) fn remove_and_get_sequence(&self, path: &str) -> u64 {
         let mut el = self.mu.lock().unwrap();
         let seq = el.next_seq_locked();
@@ -160,7 +166,11 @@ impl eventList {
     }
 
     // event.go:187
-    pub(crate) fn drain_for_sequences(&self, start_seqs: &[u64]) -> (Vec<Vec<Event>>, Option<Error>) {
+    #[cfg(test)] // only its ported test calls it: trigger_callbacks makes the snapshots outside the lock (`drain_entries`)
+    pub(crate) fn drain_for_sequences(
+        &self,
+        start_seqs: &[u64],
+    ) -> (Vec<Vec<Event>>, Option<Error>) {
         let mut el = self.mu.lock().unwrap();
         let out = start_seqs.iter().map(|&start_seq| el.snapshot_since_locked(start_seq)).collect();
         let err = el.err.take();
@@ -168,8 +178,21 @@ impl eventList {
         (out, err)
     }
 
+    // tsrs-only: `drain_for_sequences` without the per-callback snapshots, which the caller makes outside the lock
+    // (`dirWatch::trigger_callbacks`): the pending entries and the stored error, and the list cleared.
+    pub(crate) fn drain_entries(&self) -> (Vec<(String, eventEntry)>, Option<Error>) {
+        let mut el = self.mu.lock().unwrap();
+        let entries = std::mem::take(&mut el.entries);
+        let err = el.err.take();
+        drop(el);
+        // order-independent: one entry per path; Go ranges the map too ("Order is not guaranteed")
+        let entries = entries.into_iter().collect();
+        (entries, err)
+    }
+
     // event.go:201
     // setError stores the first error encountered (later errors are ignored).
+    #[cfg(any(unix, test))]
     pub(crate) fn set_error(&self, err: Error) {
         let mut el = self.mu.lock().unwrap();
         if el.err.is_none() {
@@ -198,6 +221,7 @@ impl eventList {
 
 impl eventListState {
     // event.go:65
+    #[cfg(any(unix, test))]
     fn create_locked(&mut self, path: &str, seq: u64) {
         let entry = self.get_or_create(path);
         if entry.is_deleted() {
@@ -213,6 +237,7 @@ impl eventListState {
     }
 
     // event.go:101
+    #[cfg(any(unix, test))]
     fn update_locked(&mut self, path: &str, seq: u64) {
         self.get_or_create(path).updated_seq = seq;
     }
@@ -233,13 +258,11 @@ impl eventListState {
     // event.go:154
     fn snapshot_since_locked(&self, start_seq: u64) -> Vec<Event> {
         let mut out = Vec::with_capacity(self.entries.len());
-        #[expect(clippy::iter_over_hash_type, reason = "order-independent: entries are keyed by path, so a batch has at most one event per path, and Go ranges the map too (getEvents: \"Order is not guaranteed\")")]
-        for (path, e) in &self.entries {
-            let Some(kind) = e.kind_since(start_seq) else {
-                continue;
-            };
-            out.push(Event { kind, path: path.clone(), included_watch_root: e.included_watch_root });
-        }
+        // order-independent: entries are keyed by path, so a batch has at most one event per path, and Go ranges the map too (getEvents: "Order is not guaranteed")
+        out.extend(self.entries.iter().filter_map(|(path, e)| {
+            let kind = e.kind_since(start_seq)?;
+            Some(Event { kind, path: path.clone(), included_watch_root: e.included_watch_root })
+        }));
         out
     }
 
@@ -268,14 +291,24 @@ impl eventListState {
 
 impl eventEntry {
     // event.go:252
+    #[cfg(any(unix, test))]
     fn is_deleted(&self) -> bool {
         self.deleted_seq > self.created_seq && self.deleted_seq > self.updated_seq
     }
 
     // event.go:256
+    // tsrs-only: the event `snapshot_since_locked` makes of this entry.
+    pub(crate) fn event_since(&self, path: &str, start_seq: u64) -> Option<Event> {
+        let kind = self.kind_since(start_seq)?;
+        Some(Event { kind, path: path.to_string(), included_watch_root: self.included_watch_root })
+    }
+
     fn kind_since(&self, start_seq: u64) -> Option<EventKind> {
         if self.deleted_seq > start_seq {
-            if self.created_seq > start_seq && self.created_seq < self.deleted_seq && self.updated_seq < self.deleted_seq {
+            if self.created_seq > start_seq
+                && self.created_seq < self.deleted_seq
+                && self.updated_seq < self.deleted_seq
+            {
                 return None;
             }
             return Some(EventKind::Delete);

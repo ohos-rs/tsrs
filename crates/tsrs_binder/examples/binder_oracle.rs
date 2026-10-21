@@ -3,13 +3,16 @@
 //   binder_oracle dump FILE        print the binder dump of FILE
 //   binder_oracle hash < filelist  print "hash path" for every file named on stdin
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::fmt::Write as _;
 use std::io::{BufRead, Write as _};
 
-use tsrs_ast::{FlowFlags, FlowList, FlowNode, Kind, Node, NodeFlags, SourceFileParseOptions, Symbol, SymbolTable};
-use tsrs_core::tspath::Path;
+use tsrs_ast::{
+    FlowFlags, FlowList, FlowNode, Kind, Node, NodeFlags, SourceFileParseOptions, Symbol,
+    SymbolTable,
+};
 use tsrs_core::P;
+use tsrs_core::tspath::Path;
 
 fn binder_node_flags() -> NodeFlags {
     NodeFlags::ExportContext
@@ -31,7 +34,7 @@ fn escape(sb: &mut String, s: &str) {
         if (0x20..0x7f).contains(&b) && b != b'\\' && b != b' ' {
             sb.push(b as char);
         } else {
-            let _ = write!(sb, "\\x{:02x}", b);
+            let _ = write!(sb, "\\x{b:02x}");
         }
     }
 }
@@ -46,7 +49,7 @@ fn node_ref(n: Option<P<Node>>) -> String {
 #[derive(Default)]
 struct Dumper {
     sb: String,
-    ids: HashMap<P<FlowNode>, usize>,
+    ids: FxHashMap<P<FlowNode>, usize>,
     queue: Vec<P<FlowNode>>,
 }
 
@@ -58,7 +61,7 @@ impl Dumper {
         if id == next {
             self.queue.push(f);
         }
-        format!("#{}", id)
+        format!("#{id}")
     }
 
     fn flow_list(&mut self, mut l: Option<P<FlowList>>) -> String {
@@ -73,8 +76,8 @@ impl Dumper {
     fn table(&mut self, tag: &str, t: Option<P<SymbolTable>>) {
         let Some(t) = t else { return };
         let mut entries = t.entries();
-        entries.sort_by(|a, b| printed_name(a.0).cmp(&printed_name(b.0)));
-        let _ = write!(self.sb, " {}{{", tag);
+        entries.sort_by_key(|a| printed_name(a.0));
+        let _ = write!(self.sb, " {tag}{{");
         for (i, (name, symbol)) in entries.iter().enumerate() {
             if i > 0 {
                 self.sb.push(' ');
@@ -86,9 +89,15 @@ impl Dumper {
     }
 
     fn symbol(&mut self, tag: &str, s: P<Symbol>) {
-        let _ = write!(self.sb, " {}(", tag);
+        let _ = write!(self.sb, " {tag}(");
         escape(&mut self.sb, s.name.get());
-        let _ = write!(self.sb, " {:x} {} {}", s.flags.get().bits(), s.declarations().len(), node_ref(s.value_declaration()));
+        let _ = write!(
+            self.sb,
+            " {:x} {} {}",
+            s.flags.get().bits(),
+            s.declarations().len(),
+            node_ref(s.value_declaration())
+        );
         if let Some(parent) = s.parent() {
             self.sb.push_str(" p=");
             escape(&mut self.sb, parent.name.get());
@@ -121,21 +130,23 @@ impl Dumper {
         }
         if let Some(flow) = n.flow_node() {
             let r = self.flow_ref(Some(flow));
-            let _ = write!(self.sb, " f={}", r);
+            let _ = write!(self.sb, " f={r}");
         }
         if let Some(end) = n.body_data().and_then(|d| d.end_flow_node.get()) {
             let r = self.flow_ref(Some(end));
-            let _ = write!(self.sb, " e={}", r);
+            let _ = write!(self.sb, " e={r}");
         }
         let ret = match n.kind() {
             Kind::Constructor => n.as_constructor_declaration().return_flow_node(),
             Kind::FunctionDeclaration => n.as_function_declaration().return_flow_node(),
             Kind::FunctionExpression => n.as_function_expression().return_flow_node(),
-            Kind::ClassStaticBlockDeclaration => n.as_class_static_block_declaration().return_flow_node(),
+            Kind::ClassStaticBlockDeclaration => {
+                n.as_class_static_block_declaration().return_flow_node()
+            }
             Kind::CaseClause | Kind::DefaultClause => {
                 if let Some(t) = n.as_case_or_default_clause().fallthrough_flow_node() {
                     let r = self.flow_ref(Some(t));
-                    let _ = write!(self.sb, " t={}", r);
+                    let _ = write!(self.sb, " t={r}");
                 }
                 None
             }
@@ -143,7 +154,7 @@ impl Dumper {
         };
         if ret.is_some() {
             let r = self.flow_ref(ret);
-            let _ = write!(self.sb, " r={}", r);
+            let _ = write!(self.sb, " r={r}");
         }
         let body = std::mem::replace(&mut self.sb, old);
         if !body.is_empty() {
@@ -156,25 +167,31 @@ impl Dumper {
         let _ = write!(self.sb, "F #{} {:x} ", id, f.flags.get().bits());
         if f.flags.get().intersects(FlowFlags::SwitchClause) {
             let data = f.node.get().unwrap().as_flow_switch_clause_data();
-            let _ = write!(self.sb, "SW({},{},{})", node_ref(Some(data.switch_statement)), data.clause_start, data.clause_end);
+            let _ = write!(
+                self.sb,
+                "SW({},{},{})",
+                node_ref(Some(data.switch_statement)),
+                data.clause_start,
+                data.clause_end
+            );
         } else if f.flags.get().intersects(FlowFlags::ReduceLabel) {
             let data = f.node.get().unwrap().as_flow_reduce_label_data();
             let target = self.flow_ref(Some(data.target));
             let list = self.flow_list(data.antecedents);
-            let _ = write!(self.sb, "RL({},{})", target, list);
+            let _ = write!(self.sb, "RL({target},{list})");
         } else {
             self.sb.push_str(&node_ref(f.node.get()));
         }
         let antecedent = self.flow_ref(f.antecedent());
         let antecedents = self.flow_list(f.antecedents());
-        let _ = writeln!(self.sb, " {} {}", antecedent, antecedents);
+        let _ = writeln!(self.sb, " {antecedent} {antecedents}");
     }
 }
 
 fn file_name_directive(line: &str) -> Option<String> {
     let line = line.trim_end_matches(['\r', '\n']).trim_start_matches([' ', '\t']);
     let line = line.strip_prefix("//")?.trim_start_matches([' ', '\t']);
-    if line.len() < 9 || !line.is_char_boundary(9) || line[..9].to_ascii_lowercase() != "@filename" {
+    if line.len() < 9 || !line.is_char_boundary(9) || !line[..9].eq_ignore_ascii_case("@filename") {
         return None;
     }
     let line = line[9..].trim_start_matches([' ', '\t']);
@@ -184,7 +201,7 @@ fn file_name_directive(line: &str) -> Option<String> {
 
 // Invalid UTF-8 input bytes become U+FFFD here (Go keeps them), so a handful of binary-ish test files differ.
 fn dump(path: &str) -> Result<String, String> {
-    let text = std::fs::read(path).map_err(|e| format!("{}: {}", path, e))?;
+    let text = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
     let text = String::from_utf8_lossy(&text).into_owned();
     let mut out = String::new();
     let mut name = std::path::Path::new(path).file_name().unwrap().to_string_lossy().into_owned();
@@ -203,7 +220,8 @@ fn dump(path: &str) -> Result<String, String> {
 }
 
 fn dump_unit(out: &mut String, name: &str, text: &str) {
-    let file_name = tsrs_core::tspath::normalize_path(&format!("/oracle/{}", name.trim_start_matches('/')));
+    let file_name =
+        tsrs_core::tspath::normalize_path(&format!("/oracle/{}", name.trim_start_matches('/')));
     out.push_str("U ");
     escape(out, &file_name);
     out.push('\n');
@@ -212,7 +230,13 @@ fn dump_unit(out: &mut String, name: &str, text: &str) {
         out.push_str("skipped\n");
         return;
     }
-    let opts = SourceFileParseOptions { file_name: file_name.clone(), path: Path::new(file_name.clone()), external_module_indicator_options: Default::default(), ..Default::default() };
+    let opts = SourceFileParseOptions {
+        file_name: file_name.clone(),
+        path: Path::new(file_name.clone()),
+        external_module_indicator_options:
+            tsrs_ast::parseoptions::ExternalModuleIndicatorOptions::default(),
+        ..Default::default()
+    };
     let file = tsrs_parser::parse_source_file(opts, text, script_kind);
     tsrs_binder::bind_source_file(file);
     let mut d = Dumper::default();
@@ -224,23 +248,40 @@ fn dump_unit(out: &mut String, name: &str, text: &str) {
         i += 1;
     }
     for diag in file.bind_diagnostics() {
-        let _ = write!(d.sb, "B {} {} {} ", diag.code(), diag.pos(), diag.len());
+        let _ = write!(
+            d.sb,
+            "B {} {} {} ",
+            diag.code(),
+            diag.pos().map_or(-1_i64, i64::from),
+            diag.len().map_or(-1_i64, i64::from)
+        );
         escape(&mut d.sb, diag.message_text());
         d.sb.push_str(" R");
         for r in diag.related_information() {
-            let _ = write!(d.sb, " {}:{}:{}", r.code(), r.pos(), r.len());
+            let _ = write!(
+                d.sb,
+                " {}:{}:{}",
+                r.code(),
+                r.pos().map_or(-1_i64, i64::from),
+                r.len().map_or(-1_i64, i64::from)
+            );
         }
         d.sb.push('\n');
     }
-    let _ = writeln!(d.sb, "C {} {}", file.symbol_count.get(), file.pattern_ambient_modules.get().len());
+    let _ = writeln!(
+        d.sb,
+        "C {} {}",
+        file.symbol_count.get(),
+        file.pattern_ambient_modules.get().len()
+    );
     out.push_str(&d.sb);
 }
 
 fn fnv64a(data: &[u8]) -> u64 {
-    let mut h: u64 = 0xcbf29ce484222325;
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for &b in data {
         h ^= b as u64;
-        h = h.wrapping_mul(0x100000001b3);
+        h = h.wrapping_mul(0x0100_0000_01b3);
     }
     h
 }
@@ -249,9 +290,9 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     match args[1].as_str() {
         "dump" => match dump(&args[2]) {
-            Ok(out) => print!("{}", out),
+            Ok(out) => print!("{out}"),
             Err(e) => {
-                eprintln!("{}", e);
+                eprintln!("{e}");
                 std::process::exit(1);
             }
         },
@@ -266,9 +307,9 @@ fn main() {
                     Ok(Ok(out)) => {
                         let _ = writeln!(w, "{:016x} {}", fnv64a(out.as_bytes()), path);
                     }
-                    Ok(Err(e)) => eprintln!("{}", e),
+                    Ok(Err(e)) => eprintln!("{e}"),
                     Err(_) => {
-                        let _ = writeln!(w, "PANIC {}", path);
+                        let _ = writeln!(w, "PANIC {path}");
                     }
                 }
             }

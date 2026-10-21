@@ -1,21 +1,20 @@
 # Porting guide: TypeScript 7 (Go) -> Rust
 
 `tsrs` is a faithful port of the TypeScript 7 type checker (the Go implementation in
-`ts-ref/tsc/internal/`, a symlink to a checkout of microsoft/TypeScript at commit
-b85298b6a81f, = nightly 7.1.0-dev.20260929) to Rust. Scope: the `tsc` command line (type checking, JavaScript and
+`ts-ref/tsc/internal/`, from a checkout of microsoft/TypeScript at the commit pinned in
+`Cargo.toml`, `[workspace.metadata.typescript]`) to Rust. Scope: the `tsc` command line (type checking, JavaScript and
 declaration emit, source maps, incremental builds, `--build`), the language server (`--lsp`) and the API server
-(`--api`). Not ported: watch mode for the CLI, `--init`, `--showConfig`, tracing (`--generateTrace`), pprof, localized
-messages (English only), and in the language server automatic type acquisition and telemetry; the README capability
-table has the full, current list.
+(`--api`), including watch mode (`--watch`, `-b --watch`). Not ported: `--init`, `--showConfig`, tracing (`--generateTrace`), pprof, localized
+messages (English only), and in the language server automatic type acquisition and performance/project telemetry; the
+[capability table](COMPATIBILITY.md#what-it-does-and-doesnt-do) has the full, current list.
 
 The port is **mechanical and faithful**: same algorithms, same function decomposition,
 same order of operations, same diagnostics (code, position, message, order). Behavior
 that matches the Go code is correct; "improvements" are bugs. Every Rust function should
 be recognizable next to its Go original. Do not redesign.
 
-Many agents port different files at the same time. The conventions below exist so that
-independently written code fits together. Follow them exactly, even where you would
-personally choose differently.
+These conventions keep the Rust code comparable with its Go source and make upstream updates easier to review.
+Use them consistently across crates.
 
 ## Layout
 
@@ -52,6 +51,8 @@ contributing `impl` blocks to the same type.
   Names are the snake_case of the Go name, always. Acronym runs are one word:
   `getJSXElementType` -> `get_jsx_element_type`, `isESSymbol` -> `is_es_symbol`,
   `getTypeOfJSDoc` -> `get_type_of_jsdoc`, `URL` -> `url`, `ID`/`Id` -> `id`.
+- Use `&self` for helpers that only read the receiver, and associated functions for helpers that do not use it.
+  Callback and interface methods keep their required signatures with a local, reasoned `#[expect]` when necessary.
 - Exported (capitalized) Go identifiers -> `pub`. Unexported -> `pub(crate)`.
 - Go package-level functions -> free functions in the corresponding module.
 - If snake_casing produces a Rust keyword, append `_`: `type_`, `in_`, `as_`, `ref_`, `mod_`, `match_`, `loop_`.
@@ -64,20 +65,21 @@ contributing `impl` blocks to the same type.
 
 Go objects that are referenced by pointer, live long, reference each other cyclically and
 are compared by identity — AST nodes, symbols, types, signatures, links, flow nodes,
-mappers, inference contexts … — are allocated in a process-lifetime leak arena and
-referenced through `tsrs_core::P<T>`:
+mappers, inference contexts … — are allocated in arenas and referenced through `tsrs_core::P<T>`.
+Batch allocations usually live until process exit; the language server uses owned regions to release old
+programs and file versions ([LSP.md](LSP.md#memory-management)). The rules are:
 
 - `P<T>`: `Copy`, `Deref<Target = T>`, equality/hash/order **by identity** (like Go pointers).
   Create with `P::new(value)`. `p.get()` returns `&'static T`. It is a 32-bit handle (an offset in 8-byte units into
-  one reserved address range; `tsrs_core::reserve`, notes/mem-pointer-compression.md), or a plain reference with
-  `--features tsrs_core/plain-ptrs`. So: `P::from_static(r)` only for references to arena objects (an object made
+  one reserved address range; `tsrs_core::reserve`, notes/mem-pointer-compression.md), or a plain pointer (a raw pointer, so a `P` argument is not a protected
+  reference) with `--features tsrs_core/plain-ptrs` and on targets without `mmap`. So: `P::from_static(r)` only for references to arena objects (an object made
   with `P::new` / `alloc`, or a view that starts 8-aligned inside one); a Go package-level `*T` variable that is a
   Rust `static` is an `SP<T>`. Packed words store `p.to_bits()` / `p.key()`, never addresses.
 - Go `*T` that can be nil -> `Option<P<T>>`. Go `*T` that is never nil -> `P<T>`.
   Decide from the Go code (nil checks, `return nil`). When unsure, use `Option`.
 - There are **no lifetime parameters** anywhere in this codebase. Arena data is `'static`.
-- Nothing is ever freed. That is intentional (batch compiler). The exceptions are a few recycling sites that
-  prove an object dead (rolled-back parses, dropped flow labels, scratch mappers and inference contexts whose escape
+- Arena objects remain live until their arena is released, unless an explicit recycling site proves them dead
+  (rolled-back parses, dropped flow labels, scratch mappers and inference contexts whose escape
   bit is clear; `tsrs_core::arena`, notes/mem-recycle.md). A struct field that keeps a mapper must be a `MapperCell`.
   Emit runs each file in a scratch region that is freed after the file is written (notes/mem-emit-regions.md): code
   that emit calls and that stores what it allocates beyond the file (the checker, program caches, diagnostics)
@@ -101,7 +103,7 @@ referenced through `tsrs_core::P<T>`:
 ### Threading
 
 Parsing and binding run per file (in parallel) and finish before checking. Checking runs on N checkers
-(`--checkers N`, `--singleThreaded` = 1; Go's default is 4, tsrs's default is max(cores/2, min(cores, 8)), clamped to
+(`--checkers N`, `--singleThreaded` = 1; Go's default is 4, tsrs's default is max(cores/2, min(cores, 16)), clamped to
 4..32, then capped at one checker per 32 type-checked files (but not below 4), then at most the file count; 4 in build
 mode: `default_checker_count`), each on its own OS thread with a 512 MB stack (`tsrs_compiler::checkerpool`). Files are assigned to checkers by directory
 locality; in the type-check pass a checker that runs out steals unstarted files from the busiest one
@@ -146,8 +148,10 @@ These rules make independently ported call sites agree:
 | `[]T` / `[]*T`                       | `&[T]` / `&[P<T>]`                      | `Vec<…>` when freshly built; `&'static […]` when returning a stored/cached slice |
 | `string`                             | `&str`                                  | `String` when freshly built; `&'static str` when returning stored text |
 | `bool`, enums, flags                 | by value                                | by value |
-| `int` text position / offset         | `i32`                                   | `i32` |
-| `int` count / index / length         | `usize` (`i32` if it can be negative)   | same |
+| `int` text position / byte offset    | `u32`; `TextPos` when synthetic is possible | same |
+| `int` count / index / length         | `usize`                                 | same |
+| negative sentinel (`-1` = absent)    | `Option<T>`; a named enum when negative is a real state | same |
+| three-way comparator                 | arguments as usual                      | `std::cmp::Ordering` |
 | `int32`, `uint32`, `float64`, …      | `i32`, `u32`, `f64`, …                  | same |
 | `func(...)` callback                 | `impl FnMut(...)` (or `&mut dyn FnMut` when recursion/object safety needs it) | — |
 | `(A, B)` multiple results            | —                                       | `(A, B)` |
@@ -155,6 +159,12 @@ These rules make independently ported call sites agree:
 | `error` result                       | —                                       | `Result<T, String>` unless a richer error is needed |
 | `map[K]V`                            | `&FxHashMap<K, V>`                      | `FxHashMap<K, V>` |
 | interface value                      | enum or `&dyn Trait` — see the owning crate | |
+
+Keep signed integers at external boundaries that specify them (diagnostic codes, LSP/JSON-RPC integers, process
+statuses and C APIs), and validate/convert immediately when the internal value is a position, index or count.
+`TextPos::Synthetic` replaces the old `-1` AST-position sentinel; `TextPos::Source(SourcePos)` carries a source byte
+offset. Construct ordinary ranges with `TextRange::new(u32, u32)` and synthetic ranges with
+`TextRange::synthetic()`.
 
 Method receivers: types with a big mutable state machine (`Checker`, `Parser`, `Scanner`,
 `Binder`, `Relater`, `Program` while loading) take `&mut self` and keep plain (non-`Cell`)
@@ -204,10 +214,11 @@ callback, even when the closure does not need it.
 
 ## What not to port
 
-Watch mode for the CLI, `--init`/`--showConfig`, tracing, pprof, message localization, and the language server's
-automatic type acquisition and telemetry are not ported (README capability table). If a function only serves one of
-those, leave it out; if a needed function has a branch that only serves one, keep the branch structure and mark only
-the truly unreachable part.
+`--init`/`--showConfig`, tracing, pprof, message localization, the fanotify and Windows file-watching backends, and
+the language server's automatic type acquisition and performance/project telemetry are not ported
+([capability table](COMPATIBILITY.md#what-it-does-and-doesnt-do)). If a function only serves one of those, leave it
+out; if a needed function has a branch that only serves one, keep the branch structure and mark only the truly
+unreachable part.
 
 ## Working rules for agents
 
@@ -216,8 +227,8 @@ the truly unreachable part.
 - No `unsafe` outside `tsrs_core` and generated AST code without a very good reason.
 - No lint/clippy cleanups, no doc comments restating the code, no `// ported from` banners. Keep comments that
   the Go source has when they explain *why*. Do not add `#[allow]`s; workspace lints already silence the noisy ones.
-  The lints that are on (`docs/RUST.md`) are gated by `tools/lint/ratchet.py`: new code must not add findings, and
-  an intended exception is `#[expect(clippy::<lint>, reason = "...")]`.
+  The lints that are on (`docs/RUST.md`) are denied by Clippy; an intended exception is
+  `#[expect(clippy::<lint>, reason = "...")]`.
 - Never leave `todo!()`/`unimplemented!()` for in-scope behavior without listing it in your final report.
 - Your crate must compile (`cargo check -p <crate>`) when you finish, with zero warnings of the kinds not
   silenced workspace-wide. Use your own target dir to avoid lock contention with other agents:

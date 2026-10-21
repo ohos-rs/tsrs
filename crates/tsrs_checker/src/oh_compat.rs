@@ -38,8 +38,8 @@ impl Checker {
         let binary = expression.as_binary_expression();
         Self::is_open_harmony_string_concat(binary.left) && Self::is_open_harmony_string_concat(binary.right())
     }
-    pub(crate) fn get_open_harmony_inferred_type(&mut self, n: P<InferenceContext>, index: i32) -> P<Type> {
-        let inference = n.inferences.get()[index as usize];
+    pub(crate) fn get_open_harmony_inferred_type(&mut self, n: P<InferenceContext>, index: usize) -> P<Type> {
+        let inference = n.inferences.get()[index];
         let type_parameter = inference.type_parameter.get().unwrap();
         let inferred = if let Some(signature) = n.signature.get() {
             let covariant = if inference.candidates.is_empty() { None } else { Some(self.get_covariant_inference(inference, signature)) };

@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use tsrs_core::context::{CancelFunc, Context};
 use tsrs_core::tspath;
-use tsrs_vfs::{bundled, osvfs, FS};
+use tsrs_vfs::{FS, bundled, osvfs};
 
 // lsp.go:20
 pub fn run_lsp(args: &[String]) -> i32 {
@@ -31,24 +31,23 @@ pub fn run_lsp(args: &[String]) -> i32 {
 
     if !pprof_dir.is_empty() {
         // pprof is out of scope (docs/LSP.md): the message is printed, no profile is written.
-        eprintln!("pprof profiles will be written to: {}", pprof_dir);
+        eprintln!("pprof profiles will be written to: {pprof_dir}");
     }
 
     let fs: Arc<dyn FS> = Arc::new(bundled::wrap_fs(osvfs::fs()));
-    let default_library_path = bundled::lib_path();
+    let default_library_path = bundled::default_lib_path();
     let typings_location = get_global_typings_cache_location();
 
-    // signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM): signals keep their default action (the process
-    // terminates) because the port has no signal handling; `stop` is still what the watchdog calls.
+    // signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM); main started catching the signals.
     let (ctx, stop) = Context::background().with_cancel();
+    let on_signal = stop.clone();
+    crate::signals::on_interrupt(move || on_signal.call());
 
     let cwd = match std::env::current_dir() {
         Ok(cwd) => cwd.to_string_lossy().into_owned(),
         Err(err) => panic!("{}", err),
     };
 
-    #[cfg(feature = "alloc-profile")]
-    crate::census::prepare_lsp();
     let s = tsrs_lsp::new_server(tsrs_lsp::ServerOptions {
         in_: tsrs_lsp::to_reader(std::io::stdin()),
         out: tsrs_lsp::to_writer(std::io::stdout()),
@@ -59,7 +58,11 @@ pub fn run_lsp(args: &[String]) -> i32 {
         typings_location,
         parse_cache: None,
         npm_install: Some(Arc::new(|cwd: &str, args: &[String]| {
-            let output = std::process::Command::new("npm").args(args).current_dir(cwd).stderr(std::process::Stdio::piped()).output();
+            let output = std::process::Command::new("npm")
+                .args(args)
+                .current_dir(cwd)
+                .stderr(std::process::Stdio::piped())
+                .output();
             match output {
                 Ok(output) if output.status.success() => Ok(output.stdout),
                 Ok(output) => Err(format!("exit status {}", output.status.code().unwrap_or(-1))),
@@ -71,10 +74,8 @@ pub fn run_lsp(args: &[String]) -> i32 {
     });
 
     let result = s.run(&ctx);
-    #[cfg(feature = "alloc-profile")]
-    crate::census::run_lsp(&s);
     if let Err(err) = result {
-        eprintln!("{}", err);
+        eprintln!("{err}");
         return 1;
     }
     0
@@ -84,7 +85,11 @@ pub fn run_lsp(args: &[String]) -> i32 {
 // newParentProcessWatchdog returns a SetParentProcessID callback if the platform
 // supports process-alive checking and no client process ID override was provided,
 // or nil otherwise.
-fn new_parent_process_watchdog(ctx: &Context, stop: &CancelFunc, client_process_id: i64) -> Option<Box<dyn Fn(i32) + Send + Sync>> {
+fn new_parent_process_watchdog(
+    ctx: &Context,
+    stop: &CancelFunc,
+    client_process_id: i64,
+) -> Option<Box<dyn Fn(i32) + Send + Sync>> {
     if !PROCESS_ALIVE_SUPPORTED {
         return None;
     }
@@ -94,7 +99,9 @@ fn new_parent_process_watchdog(ctx: &Context, stop: &CancelFunc, client_process_
     }
     let ctx = ctx.clone();
     let stop = stop.clone();
-    Some(Box::new(move |parent_pid: i32| start_parent_process_watchdog(&ctx, &stop, parent_pid as i64)))
+    Some(Box::new(move |parent_pid: i32| {
+        start_parent_process_watchdog(&ctx, &stop, parent_pid as i64);
+    }))
 }
 
 // lsp.go:95
@@ -109,15 +116,17 @@ fn start_parent_process_watchdog(ctx: &Context, stop: &CancelFunc, parent_pid: i
     let stop = stop.clone();
     std::thread::Builder::new()
         .name("lsp-parent-watchdog".to_string())
-        .spawn(move || loop {
-            // time.NewTicker(5 * time.Second): select on ctx.Done() and the ticker.
-            if ctx.wait_timeout(Duration::from_secs(5)) {
-                return;
-            }
-            if !is_process_alive(parent_pid) {
-                eprintln!("Parent process {} has exited, shutting down.", parent_pid);
-                stop.call();
-                return;
+        .spawn(move || {
+            loop {
+                // time.NewTicker(5 * time.Second): select on ctx.Done() and the ticker.
+                if ctx.wait_timeout(Duration::from_secs(5)) {
+                    return;
+                }
+                if !is_process_alive(parent_pid) {
+                    eprintln!("Parent process {parent_pid} has exited, shutting down.");
+                    stop.call();
+                    return;
+                }
             }
         })
         .expect("failed to spawn the parent process watchdog");
@@ -159,7 +168,9 @@ fn is_process_alive(_pid: i64) -> bool {
 
 // vfs/osvfs/os.go:193
 fn get_global_typings_cache_location() -> String {
-    let cache_dir = user_cache_dir().unwrap_or_else(|| std::env::temp_dir().to_string_lossy().trim_end_matches('/').to_string());
+    let cache_dir = user_cache_dir().unwrap_or_else(|| {
+        std::env::temp_dir().to_string_lossy().trim_end_matches('/').to_string()
+    });
 
     let subdir = if cfg!(windows) { "Microsoft/TypeScript" } else { "typescript" };
     tspath::combine_paths(&cache_dir, &[subdir, tsrs_core::version_major_minor()])
@@ -263,11 +274,11 @@ impl flagSet {
             out.push_str(&line);
             out.push('\n');
         }
-        eprint!("{}", out);
+        eprint!("{out}");
     }
 
     fn fail(&self, message: &str) -> Result<(), ()> {
-        eprintln!("{}", message);
+        eprintln!("{message}");
         self.usage();
         Err(())
     }
@@ -290,7 +301,7 @@ impl flagSet {
             }
             let name = &s[num_minuses..];
             if name.is_empty() || name.starts_with('-') || name.starts_with('=') {
-                return self.fail(&format!("bad flag syntax: {}", s));
+                return self.fail(&format!("bad flag syntax: {s}"));
             }
             i += 1;
 
@@ -305,39 +316,43 @@ impl flagSet {
                     self.usage();
                     return Err(());
                 }
-                return self.fail(&format!("flag provided but not defined: -{}", name));
+                return self.fail(&format!("flag provided but not defined: -{name}"));
             };
 
-            match self.flags[index].value {
-                flagValue::Bool(_) => {
-                    let b = match value.as_deref() {
-                        None => true,
-                        Some("1" | "t" | "T" | "TRUE" | "true" | "True") => true,
-                        Some("0" | "f" | "F" | "FALSE" | "false" | "False") => false,
-                        Some(v) => return self.fail(&format!("invalid boolean value {:?} for -{}: parse error", v, name)),
-                    };
-                    self.flags[index].value = flagValue::Bool(b);
-                }
-                _ => {
-                    let value = match value {
-                        Some(value) => value,
-                        None => {
-                            if i >= args.len() {
-                                return self.fail(&format!("flag needs an argument: -{}", name));
-                            }
-                            i += 1;
-                            args[i - 1].clone()
+            if let flagValue::Bool(_) = self.flags[index].value {
+                let b = match value.as_deref() {
+                    None => true,
+                    Some("1" | "t" | "T" | "TRUE" | "true" | "True") => true,
+                    Some("0" | "f" | "F" | "FALSE" | "false" | "False") => false,
+                    Some(v) => {
+                        return self.fail(&format!(
+                            "invalid boolean value {v:?} for -{name}: parse error"
+                        ));
+                    }
+                };
+                self.flags[index].value = flagValue::Bool(b);
+            } else {
+                let value = if let Some(value) = value {
+                    value
+                } else {
+                    if i >= args.len() {
+                        return self.fail(&format!("flag needs an argument: -{name}"));
+                    }
+                    i += 1;
+                    args[i - 1].clone()
+                };
+                let new_value = match self.flags[index].value {
+                    flagValue::Int(_) => match parse_go_int(&value) {
+                        Ok(n) => flagValue::Int(n),
+                        Err(reason) => {
+                            return self.fail(&format!(
+                                "invalid value {value:?} for flag -{name}: {reason}"
+                            ));
                         }
-                    };
-                    let new_value = match self.flags[index].value {
-                        flagValue::Int(_) => match parse_go_int(&value) {
-                            Ok(n) => flagValue::Int(n),
-                            Err(reason) => return self.fail(&format!("invalid value {:?} for flag -{}: {}", value, name, reason)),
-                        },
-                        _ => flagValue::String(value),
-                    };
-                    self.flags[index].value = new_value;
-                }
+                    },
+                    _ => flagValue::String(value),
+                };
+                self.flags[index].value = new_value;
             }
         }
         Ok(())
@@ -350,17 +365,18 @@ fn parse_go_int(s: &str) -> Result<i64, &'static str> {
         Some(rest) => (true, rest),
         None => (false, s.strip_prefix('+').unwrap_or(s)),
     };
-    let (radix, digits) = if let Some(rest) = body.strip_prefix("0x").or_else(|| body.strip_prefix("0X")) {
-        (16, rest)
-    } else if let Some(rest) = body.strip_prefix("0b").or_else(|| body.strip_prefix("0B")) {
-        (2, rest)
-    } else if let Some(rest) = body.strip_prefix("0o").or_else(|| body.strip_prefix("0O")) {
-        (8, rest)
-    } else if body.len() > 1 && body.starts_with('0') {
-        (8, &body[1..])
-    } else {
-        (10, body)
-    };
+    let (radix, digits) =
+        if let Some(rest) = body.strip_prefix("0x").or_else(|| body.strip_prefix("0X")) {
+            (16, rest)
+        } else if let Some(rest) = body.strip_prefix("0b").or_else(|| body.strip_prefix("0B")) {
+            (2, rest)
+        } else if let Some(rest) = body.strip_prefix("0o").or_else(|| body.strip_prefix("0O")) {
+            (8, rest)
+        } else if body.len() > 1 && body.starts_with('0') {
+            (8, &body[1..])
+        } else {
+            (10, body)
+        };
     let digits = digits.replace('_', "");
     if digits.is_empty() || !digits.chars().all(|c| c.is_digit(radix)) {
         return Err("parse error");

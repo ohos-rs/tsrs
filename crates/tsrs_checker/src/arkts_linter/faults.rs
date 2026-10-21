@@ -1,4 +1,4 @@
-//! Diagnostic catalog from OH checker/arkts_linter.go (ArkTS 1.1 Problems.ts).
+//! Diagnostic catalog from OH `checker/arkts_linter.go` (`ArkTS` 1.1 `Problems.ts`).
 use tsrs_diagnostics::Category;
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Fault {

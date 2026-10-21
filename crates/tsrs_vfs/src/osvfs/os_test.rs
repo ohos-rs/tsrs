@@ -7,7 +7,11 @@ use super::*;
 // A fresh directory under the system temp dir (t.TempDir()).
 pub(super) fn temp_dir() -> String {
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
-    let dir = std::env::temp_dir().join(format!("tsrs_vfs_test_{}_{}", std::process::id(), COUNTER.fetch_add(1, Ordering::SeqCst)));
+    let dir = std::env::temp_dir().join(format!(
+        "tsrs_vfs_test_{}_{}",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::SeqCst)
+    ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir.to_string_lossy().into_owned()
@@ -129,6 +133,12 @@ fn test_clean() {
         ("abc//./../def", "def"),
         ("abc/../../././../def", "../../def"),
     ] {
-        assert_eq!(clean(input), want, "clean({:?})", input);
+        assert_eq!(clean(input), want, "clean({input:?})");
     }
+}
+
+// Not in Go: swapCase uses unicode.ToUpper / unicode.ToLower, the simple mappings (U+1FB3 -> U+1FBC, U+0130 -> 'i').
+#[test]
+fn test_swap_case_simple_mapping() {
+    assert_eq!(swap_case("\u{1FB3}\u{130}aB\u{DF}"), "\u{1FBC}iAb\u{DF}");
 }

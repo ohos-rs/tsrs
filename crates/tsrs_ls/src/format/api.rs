@@ -1,6 +1,6 @@
 use tsrs_ast::{Kind, Node, SourceFile};
 use tsrs_core::stringutil::{decode_rune, is_line_break, is_white_space_single_line};
-use tsrs_core::{LanguageVariant, TextChange, TextRange, P};
+use tsrs_core::{LanguageVariant, P, TextChange, TextRange};
 use tsrs_scanner as scanner;
 
 use super::*;
@@ -8,6 +8,10 @@ use crate::lsutil::{self, FormatCodeSettings};
 
 // api.go:14
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[expect(
+    clippy::enum_variant_names,
+    reason = "The variant names preserve the upstream Go enum names."
+)]
 pub enum FormatRequestKind {
     FormatDocument,
     FormatSelection,
@@ -28,8 +32,23 @@ pub struct FormatContext {
     format_newline: Option<String>,
 }
 
+/// tsrs-only: the largest indent, tab and base indent size the formatter uses (`with_format_code_settings`), far
+/// beyond any real indentation.
+pub const MAX_INDENT_SIZE: i32 = 100;
+
 // api.go:32
-pub fn with_format_code_settings(ctx: &FormatContext, options: FormatCodeSettings, new_line: &str) -> FormatContext {
+pub fn with_format_code_settings(
+    ctx: &FormatContext,
+    mut options: FormatCodeSettings,
+    new_line: &str,
+) -> FormatContext {
+    // tsrs-only: the formatter builds each line's indentation as a string of that many columns, so a client's
+    // `tabSize: 1e9` made every indented line a gigabyte (Go and tsrs grew until killed). Sizes past
+    // MAX_INDENT_SIZE are clamped to it.
+    let editor = &mut options.editor_settings;
+    for size in [&mut editor.indent_size, &mut editor.tab_size, &mut editor.base_indent_size] {
+        *size = (*size).min(MAX_INDENT_SIZE);
+    }
     let mut ctx = ctx.clone();
     ctx.format_options = Some(options);
     ctx.format_newline = Some(new_line.to_string());
@@ -53,7 +72,10 @@ pub fn get_new_line_or_default_from_context(ctx: &FormatContext) -> String {
         return opt.new_line_character.clone();
     }
     // Go type-asserts the context value, which panics when it is absent.
-    let host = ctx.format_newline.as_deref().expect("interface conversion: interface {} is nil, not string");
+    let host = ctx
+        .format_newline
+        .as_deref()
+        .expect("interface conversion: interface {} is nil, not string");
     if !host.is_empty() {
         return host.to_string();
     }
@@ -61,7 +83,12 @@ pub fn get_new_line_or_default_from_context(ctx: &FormatContext) -> String {
 }
 
 // api.go:58
-pub fn format_span(ctx: &FormatContext, span: TextRange, file: P<SourceFile>, kind: FormatRequestKind) -> Vec<TextChange> {
+pub fn format_span(
+    ctx: &FormatContext,
+    span: TextRange,
+    file: P<SourceFile>,
+    kind: FormatRequestKind,
+) -> Vec<TextChange> {
     // find the smallest node that fully wraps the range and compute the initial indentation for the node
     let enclosing_node = find_enclosing_node(span, file);
     let opts = get_format_code_settings_from_context(ctx);
@@ -76,7 +103,13 @@ pub fn format_span(ctx: &FormatContext, span: TextRange, file: P<SourceFile>, ki
         prepare_range_contains_error_function(file.diagnostics(), span),
         file,
     );
-    new_formatting_scanner(file.text(), file.language_variant(), get_scan_start_position(enclosing_node, span, file), span.end(), &mut worker)
+    new_formatting_scanner(
+        file.text(),
+        file.language_variant(),
+        get_scan_start_position(enclosing_node, span, file),
+        span.end().expect_source("formatting spans have source positions"),
+        &mut worker,
+    )
 }
 
 // api.go:81
@@ -88,7 +121,7 @@ pub fn format_node_given_indentation(
     initial_indentation: i32,
     delta: i32,
 ) -> Vec<TextChange> {
-    let text_range = TextRange::new(node.pos(), node.end());
+    let text_range = TextRange::from_text_pos(node.pos(), node.end());
     let mut worker = new_format_span_worker(
         ctx,
         text_range,
@@ -99,27 +132,52 @@ pub fn format_node_given_indentation(
         Box::new(|_: TextRange| false), // assume that node does not have any errors
         file,
     );
-    new_formatting_scanner(file.text(), language_variant, text_range.pos(), text_range.end(), &mut worker)
+    new_formatting_scanner(
+        file.text(),
+        language_variant,
+        text_range.pos().expect_source("formatting ranges have source positions"),
+        text_range.end().expect_source("formatting ranges have source positions"),
+        &mut worker,
+    )
 }
 
 // api.go:101
-fn format_node_lines(ctx: &FormatContext, source_file: P<SourceFile>, node: Option<P<Node>>, request_kind: FormatRequestKind) -> Vec<TextChange> {
+fn format_node_lines(
+    ctx: &FormatContext,
+    source_file: P<SourceFile>,
+    node: Option<P<Node>>,
+    request_kind: FormatRequestKind,
+) -> Vec<TextChange> {
     let Some(node) = node else {
         return Vec::new();
     };
     let token_start = scanner::get_token_pos_of_node(node, source_file, false);
     let line_start = get_line_start_position_for_position(token_start, source_file);
-    let span = TextRange::new(line_start, node.end());
+    let span =
+        TextRange::new(line_start, node.end().expect_source("parsed nodes have source positions"));
     format_span(ctx, span, source_file, request_kind)
 }
 
 // api.go:111
 pub fn format_document(ctx: &FormatContext, source_file: P<SourceFile>) -> Vec<TextChange> {
-    format_span(ctx, TextRange::new(0, source_file.as_node().end()), source_file, FormatRequestKind::FormatDocument)
+    format_span(
+        ctx,
+        TextRange::new(
+            0,
+            source_file.as_node().end().expect_source("source files have source positions"),
+        ),
+        source_file,
+        FormatRequestKind::FormatDocument,
+    )
 }
 
 // api.go:115
-pub fn format_selection(ctx: &FormatContext, source_file: P<SourceFile>, start: i32, end: i32) -> Vec<TextChange> {
+pub fn format_selection(
+    ctx: &FormatContext,
+    source_file: P<SourceFile>,
+    start: u32,
+    end: u32,
+) -> Vec<TextChange> {
     format_span(
         ctx,
         TextRange::new(get_line_start_position_for_position(start, source_file), end),
@@ -129,8 +187,14 @@ pub fn format_selection(ctx: &FormatContext, source_file: P<SourceFile>, start: 
 }
 
 // api.go:119
-pub fn format_on_opening_curly(ctx: &FormatContext, source_file: P<SourceFile>, position: i32) -> Vec<TextChange> {
-    let Some(opening_curly) = find_immediately_preceding_token_of_kind(position, Kind::OpenBraceToken, source_file) else {
+pub fn format_on_opening_curly(
+    ctx: &FormatContext,
+    source_file: P<SourceFile>,
+    position: u32,
+) -> Vec<TextChange> {
+    let Some(opening_curly) =
+        find_immediately_preceding_token_of_kind(position, Kind::OpenBraceToken, source_file)
+    else {
         return Vec::new();
     };
     let curly_brace_range = opening_curly.parent();
@@ -148,39 +212,67 @@ pub fn format_on_opening_curly(ctx: &FormatContext, source_file: P<SourceFile>, 
      * and we wouldn't want to move the closing brace.
      */
     let text_range = TextRange::new(
-        get_line_start_position_for_position(scanner::get_token_pos_of_node(outermost_node.unwrap(), source_file, false), source_file),
+        get_line_start_position_for_position(
+            scanner::get_token_pos_of_node(outermost_node.unwrap(), source_file, false),
+            source_file,
+        ),
         position,
     );
     format_span(ctx, text_range, source_file, FormatRequestKind::FormatOnOpeningCurlyBrace)
 }
 
 // api.go:142
-pub fn format_on_closing_curly(ctx: &FormatContext, source_file: P<SourceFile>, position: i32) -> Vec<TextChange> {
-    let preceding_token = find_immediately_preceding_token_of_kind(position, Kind::CloseBraceToken, source_file);
-    format_node_lines(ctx, source_file, find_outermost_node_within_list_level(preceding_token), FormatRequestKind::FormatOnClosingCurlyBrace)
+pub fn format_on_closing_curly(
+    ctx: &FormatContext,
+    source_file: P<SourceFile>,
+    position: u32,
+) -> Vec<TextChange> {
+    let preceding_token =
+        find_immediately_preceding_token_of_kind(position, Kind::CloseBraceToken, source_file);
+    format_node_lines(
+        ctx,
+        source_file,
+        find_outermost_node_within_list_level(preceding_token),
+        FormatRequestKind::FormatOnClosingCurlyBrace,
+    )
 }
 
 // api.go:147
-pub fn format_on_semicolon(ctx: &FormatContext, source_file: P<SourceFile>, position: i32) -> Vec<TextChange> {
-    let semicolon = find_immediately_preceding_token_of_kind(position, Kind::SemicolonToken, source_file);
-    format_node_lines(ctx, source_file, find_outermost_node_within_list_level(semicolon), FormatRequestKind::FormatOnSemicolon)
+pub fn format_on_semicolon(
+    ctx: &FormatContext,
+    source_file: P<SourceFile>,
+    position: u32,
+) -> Vec<TextChange> {
+    let semicolon =
+        find_immediately_preceding_token_of_kind(position, Kind::SemicolonToken, source_file);
+    format_node_lines(
+        ctx,
+        source_file,
+        find_outermost_node_within_list_level(semicolon),
+        FormatRequestKind::FormatOnSemicolon,
+    )
 }
 
 // api.go:152
-pub fn format_on_enter(ctx: &FormatContext, source_file: P<SourceFile>, position: i32) -> Vec<TextChange> {
+pub fn format_on_enter(
+    ctx: &FormatContext,
+    source_file: P<SourceFile>,
+    position: u32,
+) -> Vec<TextChange> {
     let line = scanner::get_ecma_line_of_position(source_file.get(), position);
     if line == 0 {
         return Vec::new();
     }
     // get start position for the previous line
-    let start_pos = scanner::get_ecma_line_starts(source_file.get())[(line - 1) as usize] as i32;
+    let start_pos = scanner::get_ecma_line_starts(source_file.get())[line - 1];
     // After the enter key, the cursor is now at a new line. The new line may or may not contain non-whitespace characters.
     // If the new line has only whitespaces, we won't want to format this line, because that would remove the indentation as
     // trailing whitespaces. So the end of the formatting span should be the later one between:
     //  1. the end of the previous line
     //  2. the last non-whitespace character in the current line
-    let mut end_of_format_span = scanner::get_ecma_end_line_position(source_file, line);
     let text = source_file.text().as_bytes();
+    let mut end_of_format_span =
+        scanner::get_ecma_end_line_position(source_file, line).unwrap_or(text.len() as u32);
     while end_of_format_span > start_pos {
         let (ch, s) = decode_rune(&text[end_of_format_span as usize..]);
         if s == 0 || is_white_space_single_line(ch) {

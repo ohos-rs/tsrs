@@ -5,13 +5,12 @@ use rustc_hash::FxHashMap;
 
 use super::embed_generated::EMBEDDED_CONTENTS;
 use super::libs_generated::LIB_NAMES;
-use crate::{Entries, FileInfo, FileMode, FS};
-
-pub(crate) const EMBEDDED: bool = true;
+use crate::{Entries, FS, FileInfo, FileMode};
 
 const SCHEME: &str = "bundled:///";
 
-static EMBEDDED_CONTENTS_MAP: LazyLock<FxHashMap<&'static str, &'static str>> = LazyLock::new(|| EMBEDDED_CONTENTS.iter().copied().collect());
+static EMBEDDED_CONTENTS_MAP: LazyLock<FxHashMap<&'static str, &'static str>> =
+    LazyLock::new(|| EMBEDDED_CONTENTS.iter().copied().collect());
 
 fn embedded_contents(rest: &str) -> Option<&'static str> {
     EMBEDDED_CONTENTS_MAP.get(rest).copied()
@@ -21,8 +20,8 @@ fn split_path(path: &str) -> Option<&str> {
     path.strip_prefix(SCHEME)
 }
 
-pub(crate) fn lib_path() -> String {
-    format!("{}libs", SCHEME)
+pub fn lib_path() -> String {
+    format!("{SCHEME}libs")
 }
 
 pub fn is_bundled(path: &str) -> bool {
@@ -37,7 +36,7 @@ pub struct WrappedFS<T: FS> {
     fs: T,
 }
 
-pub(crate) fn wrap_fs<T: FS>(fs: T) -> WrappedFS<T> {
+pub fn wrap_fs<T: FS>(fs: T) -> WrappedFS<T> {
     WrappedFS { fs }
 }
 
@@ -47,13 +46,15 @@ impl<T: FS> WrappedFS<T> {
     }
 
     // ReadFile without copying the embedded contents.
-    pub fn read_embedded_file(&self, path: &str) -> Option<&'static str> {
+    pub fn read_embedded_file(path: &str) -> Option<&'static str> {
         embedded_file(path)
     }
 }
 
 /// The embedded text of a `bundled:///` path (the lib files `include_str!` put in the binary), without a copy; `None`
-/// for any other path. tsrs-only: the compiler host parses this text in place instead of reading a heap copy through
+/// for any other path.
+///
+/// tsrs-only: the compiler host parses this text in place instead of reading a heap copy through
 /// `FS::read_file` and leaking it (lib.dom.d.ts alone is 2.3 MB).
 pub fn embedded_file(path: &str) -> Option<&'static str> {
     split_path(path).and_then(embedded_contents)
@@ -73,7 +74,7 @@ impl<T: FS> FS for WrappedFS<T> {
 
     fn read_file(&self, path: &str) -> Option<String> {
         if let Some(rest) = split_path(path) {
-            return embedded_contents(rest).map(|s| s.to_string());
+            return embedded_contents(rest).map(std::string::ToString::to_string);
         }
         self.fs.read_file(path)
     }
@@ -91,7 +92,7 @@ impl<T: FS> FS for WrappedFS<T> {
             if rest.is_empty() {
                 result.directories = vec!["libs".to_string()];
             } else if rest == "libs" {
-                result.files = LIB_NAMES.iter().map(|s| s.to_string()).collect();
+                result.files = LIB_NAMES.iter().map(std::string::ToString::to_string).collect();
             }
             return result;
         }
@@ -137,30 +138,22 @@ impl<T: FS> FS for WrappedFS<T> {
     }
 
     fn write_file(&self, path: &str, data: &str) -> Result<(), String> {
-        if split_path(path).is_some() {
-            panic!("cannot write to embedded file system");
-        }
+        assert!(split_path(path).is_none(), "cannot write to embedded file system");
         self.fs.write_file(path, data)
     }
 
     fn append_file(&self, path: &str, data: &str) -> Result<(), String> {
-        if split_path(path).is_some() {
-            panic!("cannot write to embedded file system");
-        }
+        assert!(split_path(path).is_none(), "cannot write to embedded file system");
         self.fs.append_file(path, data)
     }
 
     fn remove(&self, path: &str) -> Result<(), String> {
-        if split_path(path).is_some() {
-            panic!("cannot remove from embedded file system");
-        }
+        assert!(split_path(path).is_none(), "cannot remove from embedded file system");
         self.fs.remove(path)
     }
 
     fn chtimes(&self, path: &str, a_time: SystemTime, m_time: SystemTime) -> Result<(), String> {
-        if split_path(path).is_some() {
-            panic!("cannot change times on embedded file system");
-        }
+        assert!(split_path(path).is_none(), "cannot change times on embedded file system");
         self.fs.chtimes(path, a_time, m_time)
     }
 }

@@ -26,7 +26,7 @@ fn oh_sdk_snapshot_slice_or_legacy_text_matches_scanner_including_jsdoc_types() 
     let factory = NodeFactory::default();
     let text = "\u{feff}// 😀\r\n  name";
     let ordinary = factory.new_identifier("name");
-    ordinary.set_loc(TextRange::new(0, text.len() as i32));
+    ordinary.set_loc(TextRange::new(0, text.len() as u32));
     verify(attach(ordinary, text), false);
     let missing = factory.new_identifier("");
     missing.set_loc(TextRange::new(0, 0));
@@ -41,12 +41,12 @@ fn oh_sdk_snapshot_slice_or_legacy_text_matches_scanner_including_jsdoc_types() 
     let text = "\r\n * T\r\n * U";
     let child = factory.new_identifier("T");
     child.set_flags(NodeFlags::JSDoc);
-    child.set_loc(TextRange::new(0, text.len() as i32));
+    child.set_loc(TextRange::new(0, text.len() as u32));
     let type_node = factory.new_type_reference_node(child, None);
     type_node.set_flags(NodeFlags::JSDoc);
-    type_node.set_loc(TextRange::new(0, text.len() as i32));
+    type_node.set_loc(TextRange::new(0, text.len() as u32));
     let expression = factory.new_jsdoc_type_expression(type_node);
-    expression.set_loc(TextRange::new(0, text.len() as i32));
+    expression.set_loc(TextRange::new(0, text.len() as u32));
     attach(expression, text);
     type_node.set_parent(Some(expression));
     child.set_parent(Some(type_node));

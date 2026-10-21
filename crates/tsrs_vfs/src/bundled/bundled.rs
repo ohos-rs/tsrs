@@ -1,24 +1,40 @@
 use tsrs_core::tspath;
 
-use super::embed::{self, WrappedFS};
+use super::implementation;
 use crate::FS;
 
 // Embedded is true if the bundled files are implemented through an embedded FS.
-pub const EMBEDDED: bool = embed::EMBEDDED;
+pub const EMBEDDED: bool = !cfg!(feature = "noembed");
 
 // WrapFS returns an FS which redirects embedded paths to the embedded file system.
-pub fn wrap_fs<T: FS>(fs: T) -> WrappedFS<T> {
-    embed::wrap_fs(fs)
+// If embedding is disabled, it returns the original FS.
+pub fn wrap_fs<T: FS>(fs: T) -> impl FS {
+    implementation::wrap_fs(fs)
 }
 
 // LibPath returns the path to the directory containing the bundled lib.d.ts files.
 pub fn lib_path() -> String {
-    embed::lib_path()
+    implementation::lib_path()
 }
 
-// The embedded text of a bundled lib path without a copy (tsrs-only, see embed::embedded_file).
+/// The default library directory, with the tsrs-only `TSRS_LIB_PATH` override.
+///
+/// Otherwise follows Go's build-selected `bundled.LibPath`: embedded libraries for
+/// standalone builds, or the executable's directory for npm (`noembed`) builds.
+pub fn default_lib_path() -> String {
+    default_lib_path_from(std::env::var("TSRS_LIB_PATH").ok())
+}
+
+pub(crate) fn default_lib_path_from(override_dir: Option<String>) -> String {
+    match override_dir.filter(|dir| !dir.is_empty()) {
+        Some(dir) => tspath::normalize_path(&dir),
+        None => lib_path(),
+    }
+}
+
+// The embedded text of a bundled lib path without a copy (tsrs-only, see implementation::embedded_file).
 pub fn embedded_file(path: &str) -> Option<&'static str> {
-    embed::embedded_file(path)
+    implementation::embedded_file(path)
 }
 
 // TestingLibPath returns the path to the source bundled libs directory.

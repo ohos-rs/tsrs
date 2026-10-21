@@ -1,11 +1,11 @@
-use crate::collections::{new_ordered_map_with_size_hint, OrderedMap, OrderedMapExt, SyncSet};
 use crate::P;
+use crate::collections::{OrderedMap, OrderedMapExt, SyncSet, new_ordered_map_with_size_hint};
 use std::hash::Hash;
 
 // The Go implementation visits each level in parallel but always picks the lowest-index result,
 // so this sequential port produces the same results.
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct BreadthFirstSearchResult<N> {
     pub stopped: bool,
     pub path: Vec<N>,
@@ -30,11 +30,7 @@ impl<K: Hash + Eq, N> BreadthFirstSearchLevel<'_, K, N> {
     }
 
     pub fn range(&self, mut f: impl FnMut(&N) -> bool) {
-        for job in self.jobs.values() {
-            if !f(&job.node) {
-                return;
-            }
-        }
+        self.jobs.values().all(|job| f(&job.node));
     }
 }
 
@@ -61,7 +57,13 @@ pub fn breadth_first_search_parallel<N: Clone + Hash + Eq + 'static>(
     neighbors: impl FnMut(&N) -> Vec<N>,
     visit: impl FnMut(&N) -> (bool, bool),
 ) -> BreadthFirstSearchResult<N> {
-    breadth_first_search_parallel_ex(start, neighbors, visit, BreadthFirstSearchOptions::default(), |n: &N| n.clone())
+    breadth_first_search_parallel_ex(
+        start,
+        neighbors,
+        visit,
+        BreadthFirstSearchOptions::default(),
+        |n: &N| n.clone(),
+    )
 }
 
 // BreadthFirstSearchParallelEx is an extension of BreadthFirstSearchParallel that allows
@@ -82,11 +84,7 @@ pub fn breadth_first_search_parallel_ex<K: Hash + Eq + Clone, N: Clone + 'static
 
     let create_path = |job: Option<P<BreadthFirstSearchJob<N>>>| -> Vec<N> {
         let mut path = Vec::new();
-        let mut job = job;
-        while let Some(j) = job {
-            path.push(j.node.clone());
-            job = j.parent;
-        }
+        path.extend(std::iter::successors(job, |j| j.parent).map(|j| j.node.clone()));
         path
     };
 
@@ -124,7 +122,10 @@ pub fn breadth_first_search_parallel_ex<K: Hash + Eq + Clone, N: Clone + 'static
             // Add the next level jobs
             let neighbor_nodes = neighbors(&j.node);
             if !neighbor_nodes.is_empty() {
-                next[i] = neighbor_nodes.into_iter().map(|child| P::new(BreadthFirstSearchJob { node: child, parent: Some(j) })).collect();
+                next[i] = neighbor_nodes
+                    .into_iter()
+                    .map(|child| P::new(BreadthFirstSearchJob { node: child, parent: Some(j) }))
+                    .collect();
             }
         }
 
@@ -139,14 +140,13 @@ pub fn breadth_first_search_parallel_ex<K: Hash + Eq + Clone, N: Clone + 'static
             }
         }
 
-        let count = next.iter().map(|n| n.len()).sum();
-        let mut next_jobs: OrderedMap<K, P<BreadthFirstSearchJob<N>>> = new_ordered_map_with_size_hint(count);
+        let count = next.iter().map(std::vec::Vec::len).sum();
+        let mut next_jobs: OrderedMap<K, P<BreadthFirstSearchJob<N>>> =
+            new_ordered_map_with_size_hint(count);
         for jobs in next {
             for j in jobs {
                 let key = get_key(&j.node);
-                if !next_jobs.has(&key) {
-                    next_jobs.set(key, j);
-                }
+                next_jobs.entry(key).or_insert(j);
             }
         }
         level = next_jobs;
@@ -159,7 +159,9 @@ mod tests {
     use super::*;
     use rustc_hash::FxHashMap;
 
-    fn graph(edges: &[(&'static str, &[&'static str])]) -> FxHashMap<&'static str, Vec<&'static str>> {
+    fn graph(
+        edges: &[(&'static str, &[&'static str])],
+    ) -> FxHashMap<&'static str, Vec<&'static str>> {
         edges.iter().map(|(k, v)| (*k, v.to_vec())).collect()
     }
 
@@ -178,8 +180,8 @@ mod tests {
             (false, false)
         });
         assert!(!result.stopped);
-        assert!(result.path.is_empty());
-        visited_nodes.sort();
+        assert_eq!(result.path, [] as [&str; 0]);
+        visited_nodes.sort_unstable();
         assert_eq!(visited_nodes, vec!["A", "B", "C", "D"]);
 
         // early termination

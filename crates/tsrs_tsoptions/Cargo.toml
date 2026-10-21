@@ -2,7 +2,9 @@
 name = "tsrs_tsoptions"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
+publish.workspace = true
 
 [lints]
 workspace = true
@@ -18,3 +20,6 @@ tsrs_vfs.workspace = true
 tsrs_module.workspace = true
 rustc-hash.workspace = true
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
+
+[lib]
+doctest = false

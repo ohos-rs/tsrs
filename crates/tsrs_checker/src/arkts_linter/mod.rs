@@ -1,4 +1,5 @@
-//! Dynamic ArkTS 1.1 linter, ported from OH checker/arkts_linter.go.
+//! Dynamic `ArkTS` 1.1 linter, ported from OH `checker/arkts_linter.go`.
+#![expect(clippy::unused_self, reason = "ported Go receiver methods keep their receiver")]
 use crate::*;
 use tsrs_core::{ScriptKind, TextRange, tspath};
 use tsrs_scanner::{get_error_range_for_node, get_token_pos_of_node};
@@ -50,33 +51,51 @@ impl ArkTsLinter<'_> {
     fn add(&mut self, node: P<Node>, fault: Fault) {
         let Some((code, category, message)) = fault.attribute() else { return; };
         let mut start = get_token_pos_of_node(node, self.file, false);
-        let mut end = node.end();
+        let mut end = node.end().source_offset().unwrap_or(start);
         match fault {
             Fault::VarDeclaration => end = (start + 3).min(end),
             Fault::DeleteOperator | Fault::TypeQuery => end = (start + 6).min(end),
             Fault::WithStatement => {
-                end = get_error_range_for_node(self.file, node.as_with_statement().statement).pos() - 1;
+                end = get_error_range_for_node(self.file, node.as_with_statement().statement)
+                    .pos()
+                    .source_offset()
+                    .unwrap_or(0)
+                    .saturating_sub(1);
             }
             Fault::ForInStatement => {
                 let s = node.as_for_in_or_of_statement();
-                start = s.initializer.end() + 1; end = s.expression.pos() - 1;
+                start = s.initializer.end().source_offset().unwrap_or(0) + 1;
+                end = s.expression.pos().source_offset().unwrap_or(0).saturating_sub(1);
             }
             Fault::CatchWithUnsupportedType => if let Some(declaration) = node.as_catch_clause().variable_declaration {
-                let loc = get_error_range_for_node(self.file, declaration); start = loc.pos(); end = loc.end();
+                let loc = get_error_range_for_node(self.file, declaration);
+                start = loc.pos().source_offset().unwrap_or(0);
+                end = loc.end().source_offset().unwrap_or(0);
             },
             Fault::DeclWithDuplicateName => if let Some(name) = node.name() {
-                let loc = get_error_range_for_node(self.file, name); start = loc.pos(); end = loc.end();
+                let loc = get_error_range_for_node(self.file, name);
+                start = loc.pos().source_offset().unwrap_or(0);
+                end = loc.end().source_offset().unwrap_or(0);
             },
             Fault::ObjectLiteralNoContextType => end = (start + 1).min(end),
             Fault::InstanceofUnsupported => {
-                start = get_error_range_for_node(self.file, node.as_binary_expression().operator_token).pos(); end = start + 10;
+                start = get_error_range_for_node(self.file, node.as_binary_expression().operator_token)
+                    .pos()
+                    .source_offset()
+                    .unwrap_or(0);
+                end = start + 10;
             }
             Fault::ConstAssertion => {
                 if ast::is_as_expression(node) {
-                    start = node.expression().unwrap().end() + 1;
-                    end = get_error_range_for_node(self.file, node.type_node().unwrap()).pos() - 1;
+                    start = node.expression().unwrap().end().source_offset().unwrap_or(0) + 1;
+                    end = get_error_range_for_node(self.file, node.type_node().unwrap())
+                        .pos()
+                        .source_offset()
+                        .unwrap_or(0)
+                        .saturating_sub(1);
                 } else if node.kind() == Kind::TypeAssertionExpression {
-                    start = node.expression().unwrap().end() + 1; end = node.type_node().unwrap().end() + 1;
+                    start = node.expression().unwrap().end().source_offset().unwrap_or(0) + 1;
+                    end = node.type_node().unwrap().end().source_offset().unwrap_or(0) + 1;
                 }
             }
             Fault::LimitedReturnTypeInference => {
@@ -85,18 +104,29 @@ impl ArkTsLinter<'_> {
                     Kind::FunctionDeclaration | Kind::MethodDeclaration => node.name(),
                     _ => None,
                 };
-                if let Some(target) = target { let loc = get_error_range_for_node(self.file, target); start = loc.pos(); end = loc.end(); }
+                if let Some(target) = target {
+                    let loc = get_error_range_for_node(self.file, target);
+                    start = loc.pos().source_offset().unwrap_or(0);
+                    end = loc.end().source_offset().unwrap_or(0);
+                }
             }
             Fault::LocalFunction => end = (start + 8).min(end),
             Fault::FunctionApplyCall | Fault::FunctionBind => {
-                if let Some(point) = self.file.text()[start as usize..end as usize].rfind('.') { start += point as i32 + 1; }
+                if let Some(point) = self.file.text()[start as usize..end as usize].rfind('.') {
+                    start += point as u32 + 1;
+                }
             }
             Fault::ClassExpression => end = (start + 5).min(end),
             Fault::MultipleStaticBlocks => end = (start + 6).min(end),
             Fault::SendableDefiniteAssignment => if let Some(name) = node.name() {
-                end = name.end();
-                if let Some(token) = node.as_property_declaration().postfix_token().filter(|t| t.kind() == Kind::ExclamationToken) { end = token.end(); }
-                start = get_error_range_for_node(self.file, name).pos();
+                end = name.end().source_offset().unwrap_or(start);
+                if let Some(token) = node.as_property_declaration().postfix_token().filter(|t| t.kind() == Kind::ExclamationToken) {
+                    end = token.end().source_offset().unwrap_or(end);
+                }
+                start = get_error_range_for_node(self.file, name)
+                    .pos()
+                    .source_offset()
+                    .unwrap_or(0);
             },
             _ => {}
         }
@@ -174,7 +204,9 @@ impl ArkTsLinter<'_> {
             Kind::ModuleDeclaration => self.handle_module_declaration(node),
             Kind::TypeAssertionExpression => {
                 let start = get_token_pos_of_node(node, self.file, false) as usize;
-                if self.file.text()[start..node.end() as usize].starts_with("</") {
+                if self.file.text()[start..node.end().source_offset().unwrap_or(start as u32) as usize]
+                    .starts_with("</")
+                {
                     let line_start = self.file.text()[..start].rfind('\n').map_or(0, |i| i + 1);
                     if self.file.text()[line_start..start].trim().is_empty() { return; }
                 }
@@ -226,11 +258,16 @@ impl ArkTsLinter<'_> {
             _ => {}
         }
     }
-    fn filter_strict_diagnostics(&mut self, code: i32, begin: i32, end: i32) {
-        self.strict_diagnostics.retain(|d| !(d.code() == code && d.pos() >= begin && d.pos() <= end));
+    fn filter_strict_diagnostics(&mut self, code: i32, begin: u32, end: u32) {
+        self.strict_diagnostics.retain(|d| {
+            !(d.code() == code && d.pos().is_some_and(|pos| pos >= begin && pos <= end))
+        });
     }
     fn node_text(&self, node: P<Node>) -> &'static str {
         let start = get_token_pos_of_node(node, self.file, false);
-        self.file.text().get(start as usize..node.end() as usize).unwrap_or_default()
+        self.file
+            .text()
+            .get(start as usize..node.end().source_offset().unwrap_or(start) as usize)
+            .unwrap_or_default()
     }
 }

@@ -2,7 +2,7 @@
 
 use std::rc::Rc;
 
-use bitflags::bitflags;
+use crate::direct_bitflags as bitflags;
 
 use crate::*;
 
@@ -16,7 +16,7 @@ bitflags! {
     }
 }
 
-#[repr(i32)]
+#[repr(u32)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Default)]
 pub enum JsxReferenceKind {
     #[default]
@@ -31,7 +31,7 @@ pub struct JsxElementLinks {
     pub resolved_jsx_element_attributes_type: Cell<Option<P<Type>>>, // Resolved element attributes type of a JSX opening-like element
     pub jsx_namespace: Cell<Option<P<Symbol>>>, // Resolved JSX namespace symbol for this node
     pub jsx_implicit_import_container: Cell<Option<P<Symbol>>>, // Resolved module symbol the implicit JSX import of this file should refer to
-    pub first_jsx_tag_in_file: Cell<Option<P<Node>>>, // The first JSX tag in the file
+    pub first_jsx_tag_in_file: Cell<Option<P<Node>>>,           // The first JSX tag in the file
 }
 
 pub struct JsxNamesStruct {

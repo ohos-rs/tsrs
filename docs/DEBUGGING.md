@@ -13,8 +13,10 @@ this repository.
 - You get a private git worktree `$TSRS_WORK/wt/<agent-name>` on branch `fix/<agent-name>`,
   created from `origin/main`. Work only there (never in the main checkout `$TSRS_WORK/tsrs`
   or another agent's worktree). `ts-ref` inside it is a symlink to the Go reference checkout.
-- Build with your own target dir: `CARGO_TARGET_DIR=$PWD/target cargo build --release -p tsrs_testrunner -p tsrs_cli`
-  (release: the suite runs in ~25 s; a debug build is much slower to run).
+- Build with your own target dir: `CARGO_TARGET_DIR=$PWD/target cargo build --profile dev -p tsrs_testrunner -p tsrs_cli`
+  (`dev`: release optimization without LTO, incremental; a checker edit rebuilds in about 5 s, and the suite runs as
+  fast as on a `--release` build, notes/dev-loop-build.md. A debug build is much slower to run. Build `--release`
+  only to measure performance.)
 
 ## Landing changes (trunk-based, through GitHub)
 
@@ -23,8 +25,8 @@ Land small, often — every coherent fix, not one big drop at the end:
 ```sh
 git add -A . && git commit -m "<area>: <what and why>"
 git fetch -q origin main && git rebase origin/main        # resolve conflicts if any, keep both sides' intent
-CARGO_TARGET_DIR=$PWD/target cargo check --workspace      # must be 0 errors, 0 warnings after the rebase
-tools/lint/ratchet.py                                     # no new clippy findings (docs/RUST.md)
+CARGO_TARGET_DIR=$PWD/target cargo check                  # must be 0 errors, 0 warnings after the rebase
+cargo clippy --all-targets --config 'build.warnings="deny"'
 # re-run the tests you touched, and before every push a full-suite run to check for regressions (see below)
 git push -q origin HEAD:main                              # if rejected: fetch, rebase, check, push again
 ```
@@ -34,7 +36,7 @@ understand, read both versions and the Go source; do not blindly take one side.
 
 ## Running tests
 
-- Full suite: `./target/release/tsrs-test run --suite all` -> summary table; per-class name lists in
+- Full suite: `./target/debug/tsrs-test run --suite all` -> summary table; per-class name lists in
   `target/test-results/{pass,codes,fail,crash,timeout}.txt`; `summary.json` has the first difference per test.
 - One test / a cluster: `tsrs-test run --filter <substring|regex>`, `tsrs-test show <suite/name>` (expected vs actual),
   `tsrs-test crashes --top 20` (panics grouped by location).
@@ -63,9 +65,11 @@ With more than one checker, tsrs assigns files to checkers by directory locality
 (`--checkerAssignment locality`, notes/mem-assignment.md); Go uses FENNEL over single files. Diagnostics and emitted
 files do not depend on the assignment (notes/perf-order-independence.md), but multi-checker
 symbol/type/instantiation counters and peak memory do: compare them against `tsgo-ref` with `--checkerAssignment go`
-(or `TSRS_CHECKER_ASSIGNMENT=go`). `go` also restores Go's check history in the one cache where tsgo's output depends on
-what a checker saw first (`tsrs_core::compat`), so it is the mode for byte-identity with tsgo. The conformance,
-fourslash and tsc harnesses run in it; set `TSRS_CHECKER_ASSIGNMENT=locality` to run them in the default mode.
+(or `TSRS_CHECKER_ASSIGNMENT=go`). `go` also preserves Go's checker history (`tsrs_core::compat`), so it is the mode
+for byte-identity with tsgo (with `--noLazyMembers`
+where an instantiation depth limit is reached: lazy members change which instantiations a checker has cached,
+notes/open-history-dependence.md section 6). The conformance, fourslash and tsc harnesses run in it; set
+`TSRS_CHECKER_ASSIGNMENT=locality` to run them in the default mode.
 `TSRS_CHECKER_ASSIGNMENT=random:<seed>` puts each file on a random checker with a random visit order in each checker:
 the default mode must print the same text for every seed and checker count. Single-threaded runs have no assignment.
 Without a named assignment the type-check pass also steals work: a checker that has run out of files takes unstarted
@@ -77,13 +81,15 @@ Each checker begins the type-check pass with the files of its queue whose static
 checker's share, heaviest first, then the rest in program order (notes/perf-checker-64.md,
 notes/perf-heavy-first-threshold.md); `TSRS_HEAVY_SHARE_DIVISOR=<n>` changes the divisor for experiments.
 `--checkerCostCache <file>` (opt-in, locality only) balances the checkers on the previous run's per-file CPU times
-(notes/perf-balance.md); `TSRS_ASSIGNMENT_STATS=times` prints per-checker wall and CPU seconds.
+(notes/perf-balance.md).
 From 16 checkers on, the locality placement also counts the modules (files and their imports, library declaration
 files included) a group shares with each checker, then moves groups while that lowers the modules held per checker
 (notes/perf-clustered-assignment.md); `TSRS_MODULE_AFFINITY=off` restores the placement by import edges alone, and
 `TSRS_MODULE_AFFINITY=<mu>`, `TSRS_MODULE_AFFINITY_GAMMA=<g>` and `TSRS_MODULE_AFFINITY_PASSES=<n>` are for experiments.
 From 16 checkers on, a thief also keeps stealing from the checker it stole from last while that checker has at least
-half the busiest one's work left; `TSRS_STEAL_STICKY=0` picks the busiest checker for every file.
+half the busiest one's work left; `TSRS_STEAL_STICKY=0` picks the busiest checker for every file. From 8 to 15
+checkers at most a quarter of the checkers take files from any one checker at a time (notes/perf-icount-assign.md);
+`TSRS_STEAL_MAX_THIEVES=<m>` sets that limit at every checker count, `0` for none.
 
 ## Why a TS2590 comes and goes: `TSRS_TRACE_UNION_REDUCTION`
 
@@ -183,58 +189,22 @@ anything that writes (mutation testing, scripts that create files) uses the disp
 `$TSRS_WORK/project-clone`. Before you finish, run `git -C <pristine root> status --short`
 (read-only) and confirm it prints nothing.
 
-## The census free-gate (run it after any memory or layout change)
+## Arena recycling checks
 
-tsrs gives some arena memory back (free lists for dead mappers, inference contexts, type lists, flow labels;
-parser rewinds; language-server regions; notes/mem-recycle.md, notes/lsp-mem.md). A freed block that something
-still points to is a use-after-free. The alloc-profile build checks that at exit: frees are recorded, never reused,
-and every freed block must be unreachable.
-
-The census decodes 48-bit words as pointers, so it needs plain pointers (compressed handles are 32-bit offsets,
-notes/mem-pointer-compression.md); a compressed build refuses `TSRS_CENSUS=1`.
+`TSRS_ARENA_POISON=1` fills freed arena blocks, rewound ranges and released regions with poison and keeps their
+memory mapped. Run the recycling and language-server lifetime regressions after changes to arena ownership:
 
 ```sh
-CARGO_TARGET_DIR=$PWD/target/prof cargo build --release -p tsrs_cli --features alloc-profile,tsrs_core/plain-ptrs
-cd $PWD/target && TSRS_CENSUS=1 TSRS_CENSUS_VERIFY=1 TSRS_CENSUS_TOP=5 \
-  ./prof/release/tsrs -p $PRIVATE_PROJECT/tsconfig.json --noEmit --checkers 1 2> census.err
-grep -E "census verify \(recycling\)|strongly reachable freed blocks|violation class" census.err
+cargo build --profile dev -p tsrs_cli -p tsrs_testrunner
+cargo test -p tsrs_core
+cargo test -p tsrs_cli --test recycle_checkers --test free_leaf_files --test lsp_edit_resolutions
 ```
 
-Both numbers must be 0: the precise walk (`census verify (recycling): ... 0 to freed or rewound blocks`) and the
-strong mark (`strongly reachable freed blocks (violations): 0`). Also run `--checkers 4` and `TSRS_LAZY_MEMBERS=0`.
-A run takes 2-3 minutes and ~15 GB (more with 4 checkers): run one at a time. `TSRS_CENSUS_ASSERT=1` exits with
-status 3 on a violation; `TSRS_CENSUS_CHAINS=N` prints N referrer chains (default 20); `TSRS_CENSUS_FRAMES=N` sets the
-frames of the "<- caller" tables (default 2 for heap blocks, 3 for arena blocks). Without the census, the
-alloc-profile build prints the free lists of each arena ("arena free lists": bytes on them at exit and at their peak,
-reissued, and bumped by recycling sites that found their list empty).
+The CLI regressions exercise normal and poison modes. These checks exercise stale accesses; they do not scan the
+object graph for all references to freed memory.
 
-Each `violation class` line names the freed block's site and the referrer's type and field offset. Look the offset
-up in the referrer's current layout (`offset_of!`) before believing it: the strong mark reads every 4-byte step as a
-48-bit pointer unless the type registered its padding, scalar, tagged and x8-encoded words with
-`tsrs_core::census_layout` (`tsrs_checker::types::census_layouts`, `tsrs_ast::census_layouts`). **A layout change
-must update those registrations** (they are computed with `offset_of!`, so reordering fields is covered, but a new
-packed word, flag bits above an address or a new enum payload is not). Stale registrations both invent violations
-(padding read as pointers) and hide real ones (pointer fields skipped); notes/census-regress.md is what happened
-when they were hard-coded offsets. A violation that survives that check is a real bug: fix the escape tracking or
-stop freeing that class.
-
-## What each checker holds on the heap: the heap census
-
-`TSRS_HEAP_CENSUS=1` with `--extendedDiagnostics` prints, per checker on stderr, every hash table and vector the
-checker owns directly (cache maps, relation caches, link stores, lazy member tables, ...) with entries, capacity,
-bytes per slot, load factor and heap bytes (`crates/tsrs_checker/src/heapcensus.rs`, notes/mem-checker-heap.md).
-`TSRS_HEAP_CENSUS_MIN=<bytes>` sets the smallest row (default 1 MiB). It works in any build. Containers owned by
-arena objects are attributed by the heap sampler of the alloc-profile build instead:
-
-```sh
-CARGO_PROFILE_RELEASE_STRIP=none CARGO_PROFILE_RELEASE_DEBUG=line-tables-only CARGO_TARGET_DIR=target/prof \
-  cargo build --release -p tsrs_cli --features alloc-profile
-TSRS_HEAP_PROFILE=1 TSRS_HEAP_PROFILE_RATE=65536 TSRS_HEAP_PROFILE_TSV=/tmp/heap.tsv target/prof/release/tsrs -p . --noEmit --checkers 8
-```
-
-The TSV has one row per sampled stack and thread group (`main`, `checker-N`, `other`) with live, at-peak and
-cumulative bytes. Symbols come from `atos` on macOS and `addr2line` on Linux; the `release` profile strips symbols and
-has no debug info, hence the two `CARGO_PROFILE_RELEASE_*` overrides in the build command.
+The `alloc-profile` feature, heap sampler and reachability census have been removed. Older measurements in the
+[engineering notes](../notes/README.md) describe the instrumentation available at the recorded revision.
 
 ## What the resident memory is: the memory split
 
@@ -246,8 +216,30 @@ stacks; and on Linux `/proc/self/status` and `/proc/self/smaps` summed into the 
 heap and other anonymous memory, and file-backed pages, with a one-line split `arena used + arena unused resident |
 heap live + heap retained (in pages, outside pages) | stacks | file` (`crates/tsrs_core/src/memsplit.rs`,
 notes/mem-linux-residency-32.md). `TSRS_MEM_SPLIT=purge` also has mimalloc purge its freed memory after `check end`
-(`mi_collect(true)`) and prints the split again. `tools/perf/slackprobe.sh` runs it on the selected Depot runner
-(`.depot/workflows/perf-probe.yml`, 32 vCPU by default) with interleaved timed reps.
+(`mi_collect(true)`) and prints the split again. `tools/perf/slackprobe.sh` runs it on the selected GitHub-hosted runner
+with interleaved timed reps when the disabled `.github/workflows/perf-probe.yml.bak` is restored to `perf-probe.yml`
+(`ubuntu-24.04` by default).
+
+## Optional build features
+
+For tooling builds, append these arguments to `cargo build --profile dev -p tsrs_cli` (use `--release` for
+performance measurements). Features live on the crate that controls the instrumentation:
+
+| Tool | Additional build arguments |
+| --- | --- |
+| Creation-site counters | `-p tsrs_checker --features tsrs_checker/site-counts` |
+| Checker work census | `-p tsrs_checker --features tsrs_checker/work-census` |
+| AST sizing | `--features tsrs_ast/ast-sizing` |
+| Shared checker graph | `--features tsrs_core/shared-graph` |
+
+The CLI and compiler aliases for these features have been removed. Creation-site counters also live entirely in
+`tsrs_checker`; the `tsrs_core/site-counts` feature has been removed.
+Selecting `tsrs_checker` alongside `tsrs_cli` lets Cargo enable its features without a direct CLI dependency.
+The `system-alloc` CLI feature selects the system allocator instead of mimalloc.
+
+Pointer compression is automatic on Unix. Use `--features tsrs_core/plain-ptrs` to disable it;
+`--no-default-features` no longer disables compression, and the `compressed-ptrs` feature has been removed.
+Non-Unix targets continue to use plain pointers.
 
 ## Where checker time goes by source pattern: the work census
 
@@ -259,10 +251,11 @@ by target symbol and relation kind (cache hit rates, pairs compared under severa
 for union targets exits), flow walks by function (steps per walk, sampled re-walks), union construction /
 `removeSubtypes` / indexed access / `keyof` by size, export-assignment and initializer types.
 
-It is compiled in only with `--features work-census` (the runtime test alone costs 0.3-0.5% instructions):
+It is compiled in only with `-p tsrs_checker --features tsrs_checker/work-census` (the runtime test alone costs
+0.3-0.5% instructions):
 
 ```sh
-CARGO_TARGET_DIR=target/census cargo build --release -p tsrs_cli --features work-census
+CARGO_TARGET_DIR=target/census cargo build --release -p tsrs_cli -p tsrs_checker --features tsrs_checker/work-census
 cd <project> && TSRS_WORK_CENSUS=/tmp/census.md target/census/release/tsrs -p . --noEmit --incremental false --extendedDiagnostics --checkers 1
 ```
 
@@ -273,6 +266,13 @@ rows per table (default 60); `TSRS_WORK_CENSUS_SLOW=<ms>` prints every mapped-ty
 the type. Use one checker: with several, each checker's spans are merged and wall time is shared. The census adds
 about 18% instructions; its span cost is calibrated and subtracted, but patterns made of many short spans (unions,
 relations, indexed access) still read a little high.
+
+## Compilation statistics
+
+Compilation timings are collected only when `--diagnostics` or `--extendedDiagnostics` is enabled. Config-read
+timing requires the flag on the command line, before the config is read. The report-only flow-memo, lazy-list,
+filesystem-call and reclaimed-page counters have been removed; their old statistics switches no longer report
+those counts.
 
 ## The flow memo and its shadow mode
 
@@ -286,10 +286,6 @@ output. Environment switches, read once per process:
   panics with the reference, the flow node, and where the stored answer came from. Output equals `TSRS_FLOW_MEMO=0`.
   Run it over the suite (`TSRS_FLOW_MEMO=shadow tsrs-test run --suite all --baselines types,symbols --panic-summary`)
   and the corpora after any change to the checker that could affect what a flow walk reads.
-- `TSRS_FLOW_MEMO_STATS=1` with `--extendedDiagnostics`: one line per checker on stderr: walks, consults, answers
-  found / blocked (by an active loop analysis, the instantiation counters, another `flowTypeCache`, transient
-  `sharedFlows` values) / used, height misses (answers not used near the depth limit), stores, frames not stored and
-  why, walks redone after the depth limit (`aborts`), shadow checks.
 - `TSRS_FLOW_MEMO_BITS=<8..24>`: log2 of the table's slots (default 12, 32 bytes each).
 
 testdata/flow-memo holds the hazard cases (each with tsgo's output); `cargo test -p tsrs_cli --test flow_memo` runs
@@ -336,6 +332,16 @@ notes/perf-heavy-files-infer-memo.md).
 | `TSRS_INFER_MEMO_STATS` | `1` | at exit, one line on stderr: lookups, hits, the `inferFromTypes` steps the hits skipped, stores, and why long walks were not stored (shadow mode prints it too) |
 | `TSRS_INFER_MEMO_MIN_STEPS` | default `16` | the shortest walk (in `inferFromTypes` steps) that is stored; lower stores more walks (more memory, more lookups that pay) |
 
+## The relater stacks' recursion identities and their shadow mode: `TSRS_DEEP_NESTED`
+
+Each entry of a relater's source and target stacks keeps its recursion identity once a deeply-nested test has
+computed it (`RelaterStackEntry`, `is_deeply_nested_on_stack` in `crates/tsrs_checker/src/relater_1.rs`); the first
+walk to reach an entry computes it as `hasMatchingRecursionIdentity` would.
+
+| variable | values | effect |
+| --- | --- | --- |
+| `TSRS_DEEP_NESTED` | unset, `shadow` | `shadow` also makes every such test with a fresh walk (`is_deeply_nested_type`) and recomputes every kept identity, and panics on a difference (the panic names the type id and the stack length) |
+
 ## Freeing checked leaf files: `TSRS_FREE_LEAVES`
 
 A CLI `--noEmit` check with at most 16 checkers (`MAX_DEFAULT_CHECKERS`: above that it costs vscode 2.4-3.9% wall time,
@@ -347,14 +353,13 @@ only its own declarations; on vscode 2,289 of the 2,337 leaves are predicted (99
 are parsed into the thread arenas as before. The text, the `SourceFile` and the diagnostics are kept, so the report is
 the same. It is off with declaration emit (`declaration`, `composite`), `--explainFiles`, `--incremental`, `--build`,
 `--checkerAssignment go`, in the language server, the API and the test harnesses, under the debug modes that walk
-files or checker tables after the check (`TSRS_FILE_TIMES`, `TSRS_ASSIGNMENT_STATS`, the work and heap censuses,
-`TSRS_CENSUS=1`), and in builds without compressed pointers (`plain-ptrs`, non-unix): there a freed region's memory
-stays mapped and the heap its values owned is reused, so a stale read would see a live object, and nothing would be
+files or checker tables after the check (`TSRS_FILE_TIMES` and the work census),
+and in builds without compressed pointers (`plain-ptrs`, non-unix): there a freed region's memory stays mapped and the heap its values owned is reused, so a stale read would see a live object, and nothing would be
 saved. Asking a program for one freed leaf's diagnostics after the pass panics (the tree is gone); the CLI never does.
 
 | variable | values | effect |
 | --- | --- | --- |
-| `TSRS_FREE_LEAVES` | a comma list of: unset (free with at most 16 checkers), `1` (free at any count), `0`, `keep`, `stats`, `all` | `0`: no file regions (the layout before). `keep` (any count): file regions and the leaf marks, nothing freed (what the regions alone cost). `all` (any count): every TypeScript root file gets a region, not only the predicted ones (frees every leaf, but moves every tree out of the huge-page thread arenas: +6-9% wall time on vscode at 32 checkers on Linux against +2.5-5% predicted). `stats`: one line on stderr: the leaves freed and the ones the prediction missed (with their share of the leaves' nodes), the bytes their regions used, all file regions' bytes, the pages given back and in how many system calls, and the arena address space the run used. Example: `TSRS_FREE_LEAVES=all,stats` |
+| `TSRS_FREE_LEAVES` | a comma list of: unset (free with at most 16 checkers), `1` (free at any count), `0`, `keep`, `stats`, `all` | `0`: no file regions (the layout before). `keep` (any count): file regions and the leaf marks, nothing freed (what the regions alone cost). `all` (any count): every TypeScript root file gets a region, not only the predicted ones (frees every leaf, but moves every tree out of the huge-page thread arenas: +6-9% wall time on vscode at 32 checkers on Linux against +2.5-5% predicted). `stats`: one line on stderr: the leaves freed and the ones the prediction missed (with their share of the leaves' nodes), the bytes their regions used, all file regions' bytes, and the arena address space the run used. Example: `TSRS_FREE_LEAVES=all,stats` |
 
 After a change that reads a file after the check pass (a new report, a new whole-program loop in the checker, such as
 `getAlternativeContainingModules`'s), run a corpus with `TSRS_ARENA_POISON=1`: a freed region is then filled with
@@ -373,11 +378,11 @@ reader of the list's nodes or of the owner symbol's members parses and binds it 
 reference directives and what they reference) and of interfaces merged into the global scope are forced in parallel,
 so that the checkers do not wait for one another on them (`force_shared_lists`; `TSRS_LAZY_DTS_SHARED=0` skips the
 global libraries). Output is the same; `--extendedDiagnostics` `Symbols` counts only the lists that were bound. Off in the language server, the
-API and the test harnesses, and under `TSRS_CENSUS=1` and `TSRS_CHECK_SHARED=1`.
+API and the test harnesses, and under `TSRS_CHECK_SHARED=1`.
 
 | variable | values | effect |
 | --- | --- | --- |
-| `TSRS_LAZY_DTS` | unset (on when it applies), `0`/`off`, `stats`, `force` (`tsrs-test` only) | `stats`: one line on stderr: lists made lazy, deferred by the binder, never reached by it, parsed again (and how many while their file was bound). `force` in `tsrs-test`: every declaration file's lists are lazy, checked files included, so the checker and the `.types` / `.symbols` walks force them all: the result trees must equal a run without it (`TSRS_LAZY_DTS_STATS_FILE=<file>` collects the workers' counts) |
+| `TSRS_LAZY_DTS` | unset (on when it applies), `0`/`off`, `force` (`tsrs-test` only) | `force` in `tsrs-test`: every declaration file's lists are lazy, checked files included, so the checker and the `.types` / `.symbols` walks force them all: the result trees must equal a run without it |
 
 After a change to what the binder does for members of interfaces, classes or type literals, or to what a member list
 can contain, run the suite with `TSRS_LAZY_DTS=force` (also with `TS_TEST_PROGRAM_SINGLE_THREADED=false`) and a corpus
@@ -410,17 +415,37 @@ suite in the default checker mode with forced splits and compare its lists with 
 330 test programs are split). `cargo test -p tsrs_cli --test split_check` runs testdata/split-check in every mode
 against tsgo-ref's output.
 
+## Data races: ThreadSanitizer (`tools/ci/tsan.sh`)
+
+`P<T>` is `Send`/`Sync` by decree (`tsrs_core::ptr`): nothing in the type system stops two threads from writing the same
+arena value. Build tsrs with ThreadSanitizer and run `tools/ci/tsan.sh`, which fails on
+any report: type checks at 2 and 8 checkers, emit, `-b` on a generated graph of 12 projects, `--watch` and `-b --watch`
+with edits, and a language-server session. To run it locally (about 2 minutes on an M3 Max after a 2.5-minute build):
+
+```sh
+RUSTFLAGS=-Zsanitizer=thread CARGO_PROFILE_RELEASE_STRIP=false CARGO_PROFILE_RELEASE_DEBUG=line-tables-only \
+  CARGO_TARGET_DIR=target/tsan cargo +nightly-2026-10-04 build --release -p tsrs_cli -Zbuild-std \
+  --features tsrs_core/plain-ptrs,tsrs_cli/system-alloc --target "$(rustc -vV | sed -n 's/^host: //p')"
+tools/ci/tsan.sh target/tsan/<host triple>/release/tsrs
+```
+
+`plain-ptrs` because ThreadSanitizer's shadow memory takes the compressed handles' address range; `system-alloc`
+because it cannot see mimalloc reuse memory across threads (with mimalloc it reports about 120 races that are not).
+On Linux, ThreadSanitizer needs `sudo sysctl vm.mmap_rnd_bits=28` on kernels that randomize 32 bits. A failing run
+prints each race once with one full report (`tools/ci/tsan_summary.py`) and keeps the logs. `tools/ci/tsan.supp` lists
+reports that are not tsrs races, each with its reason; anything else is a race to fix.
+
 ## Profiling
 
-Profile the `dist` profile. It inherits `release` (fat LTO, one codegen unit, symbols stripped, no debug info);
-release binaries also add PGO, and BOLT on Linux (`.github/workflows/release.yml`). Keep the symbols
-(`CARGO_PROFILE_DIST_STRIP=none`, as CI does for BOLT) and, for reliable stacks on Linux x86-64, frame pointers, in a
+Profile the `release` profile (fat LTO, one codegen unit, symbols stripped, no debug info); release binaries also add
+PGO, and BOLT on Linux (`.github/workflows/release.yml`). Keep the symbols (`CARGO_PROFILE_RELEASE_STRIP=none`, as CI
+does for BOLT) and, for reliable stacks on Linux x86-64, frame pointers, in a
 separate target directory (Apple arm64 always keeps frame pointers):
 
 ```sh
-CARGO_PROFILE_DIST_STRIP=none RUSTFLAGS="-C force-frame-pointers=yes" CARGO_TARGET_DIR=target/profiling \
-  cargo build --profile dist -p tsrs_cli
-samply record ./target/profiling/dist/tsrs -p <project> --noEmit --incremental false
+CARGO_PROFILE_RELEASE_STRIP=none RUSTFLAGS="-C force-frame-pointers=yes" CARGO_TARGET_DIR=target/profiling \
+  cargo build --release -p tsrs_cli
+samply record ./target/profiling/release/tsrs -p <project> --noEmit --incremental false
 ```
 
 For before/after numbers, compare instruction counts, not wall time: `python3 bench/count.py out.json -- <tsrs command>`
@@ -428,7 +453,8 @@ on Linux (single-threaded, with `--singleThreaded` and `RAYON_NUM_THREADS=1`, co
 `/usr/bin/time -l` on macOS. Per-function counts: `valgrind --tool=callgrind --callgrind-out-file=cg.out <tsrs command>`
 on a `--release` build with symbols (`CARGO_PROFILE_RELEASE_STRIP=none`), then
 `callgrind_annotate --inclusive=no --tree=none cg.out` (`--tree=none`, or call-graph lines are counted twice). The
-bench flags regressions on main by itself (`bench/README.md`, "Regression flag").
+benchmark regression tools remain available locally (`bench/README.md`, "Regression flag"); automatic measurement
+and reporting are disabled in the saved `.yml.bak` workflows.
 
 ## Where Go reports an error: an instrumented reference with `go build -overlay`
 
@@ -437,7 +463,7 @@ Build the Go reference with a patched copy of one Go file, without editing `ts-r
 overlay JSON that maps *both* the symlinked and the real path of the file to the copy. Then, in `ts-ref/tsc`, run
 `GOTOOLCHAIN=auto go build -overlay <overlay.json> -o <bin> ./cmd/tsrs-oracle-testrunner` (the copy of
 `tools/oracle/testrunner/main.go`, placed as docs/PORTING.md "Reference tooling" describes) and `<bin> diags <regexp>`
-(one JSON line per variant of each test whose file name matches). notes/fix-compiler.md has an example.
+(one JSON line per variant of each test whose file name matches).
 
 ## How to fix
 
@@ -453,3 +479,11 @@ overlay JSON that maps *both* the symlinked and the real path of the file to the
   resolve). It is committed with your work and read by the other agents.
 - Do not stop at the first fix. Work through your cluster until it is done or what remains is blocked on something
   outside your scope — then say exactly what.
+
+## Test-runner backend
+
+`tsrs-test` always uses the Rust compiler and its option tables. The bootstrap `compiler` / `tsoptions` Cargo
+features, `--oracle`, `--options`, `TSRS_TEST_OPTIONS`, and early-port `--syntax-only` mode have been retired.
+Use normal conformance runs for diagnostics and `--baselines types,symbols,js,jsmap,sourcemap` for extra baselines.
+Go-captured diagnostic rendering remains a unit test; the Go oracle's `names` and `diags` commands remain available
+for comparisons. Its bootstrap `options` export has been removed.

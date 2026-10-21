@@ -3,8 +3,8 @@
 // serialized by a write lock. A thread per request (rather than a bounded pool) is deliberate: a
 // handler blocked in a client callback must never prevent a nested client request from running.
 
-use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::thread::JoinHandle;
@@ -13,10 +13,12 @@ use std::time::Instant;
 use rustc_hash::FxHashMap;
 
 use crate::conn_sync::ConnOptions;
-use crate::handler::{panic_message, Caller, CancellationToken, Handler, RequestContext};
+use crate::handler::{Caller, CancellationToken, Handler, RequestContext, panic_message};
 use crate::message::{Id, Message, Response, ResponseError, TransportError};
 use crate::protocol::{ProtocolReader, ProtocolWriter};
-use crate::timing::{server_timing_snapshot, TimingCollector, METHOD_GET_SERVER_TIMING, METHOD_RESET_SERVER_TIMING};
+use crate::timing::{
+    METHOD_GET_SERVER_TIMING, METHOD_RESET_SERVER_TIMING, TimingCollector, server_timing_snapshot,
+};
 
 /// Stack size for request handler threads. The checker recurses deeply; the reservation is virtual.
 pub const DEFAULT_HANDLER_STACK_SIZE: usize = 256 << 20;
@@ -25,6 +27,10 @@ pub const DEFAULT_HANDLER_STACK_SIZE: usize = 256 << 20;
 struct Pending {
     calls: FxHashMap<Id, mpsc::SyncSender<Message>>,
     /// Some once the connection is terminal; the inner value is the recorded cause, if any.
+    #[expect(
+        clippy::option_option,
+        reason = "Distinguishes an open connection, a normal close, and a close with a recorded error."
+    )]
     terminal: Option<Option<String>>,
 }
 
@@ -61,7 +67,7 @@ pub struct AsyncConn {
     handler: Arc<dyn Handler>,
     timing: Option<TimingCollector>,
     cancel: CancellationToken,
-    seq: AtomicI64,
+    seq: AtomicU64,
     pending: Mutex<Pending>,
     request_error: Mutex<Option<TransportError>>,
     /// Closes the underlying stream (Go: rwc.Close) after a fatal write error so the reader unblocks.
@@ -71,7 +77,7 @@ pub struct AsyncConn {
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(|e| e.into_inner())
+    m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 impl AsyncConn {
@@ -87,13 +93,16 @@ impl AsyncConn {
             writer: Mutex::new(writer),
             handler,
             timing: options.collect_timing.then(TimingCollector::default),
-            cancel: CancellationToken::new(),
-            seq: AtomicI64::new(0),
+            cancel: options.shutdown.child(),
+            seq: AtomicU64::new(0),
             pending: Mutex::new(Pending::default()),
             request_error: Mutex::new(None),
             closer,
             handler_stack_size: DEFAULT_HANDLER_STACK_SIZE,
-            callbacks: Arc::new(crate::reentrancy::CallbackState::new(false, options.reentrancy_grace)),
+            callbacks: Arc::new(crate::reentrancy::CallbackState::new(
+                false,
+                options.reentrancy_grace,
+            )),
         })
     }
 
@@ -110,7 +119,9 @@ impl AsyncConn {
     /// returning, so no handler outlives the connection.
     pub fn run(self: &Arc<Self>) -> Result<(), TransportError> {
         let Some(mut reader) = lock(&self.reader).take() else {
-            return Err(TransportError::Unexpected("ipc: connection is already running".to_string()));
+            return Err(TransportError::Unexpected(
+                "ipc: connection is already running".to_string(),
+            ));
         };
         let mut handles: Vec<JoinHandle<()>> = Vec::new();
         let result = loop {
@@ -142,7 +153,7 @@ impl AsyncConn {
             }
             // Messages that are none of the three kinds (no id and no method) are ignored, as in Go.
         };
-        let cause = result.as_ref().err().map(|e| e.to_string());
+        let cause = result.as_ref().err().map(std::string::ToString::to_string);
         {
             let mut pending = lock(&self.pending);
             pending.record_terminal(cause);
@@ -163,8 +174,15 @@ impl AsyncConn {
 
     fn dispatch(&self, msg: &Message) {
         if msg.is_notification() {
-            let cx = RequestContext { cancel: self.cancel.clone(), depth: 0, callbacks: Arc::clone(&self.callbacks), state: Default::default() };
-            let _ = catch_unwind(AssertUnwindSafe(|| self.handler.handle_notification(&cx, &msg.method, msg.params_bytes())));
+            let cx = RequestContext {
+                cancel: self.cancel.clone(),
+                depth: 0,
+                callbacks: Arc::clone(&self.callbacks),
+                state: std::sync::Arc::default(),
+            };
+            let _ = catch_unwind(AssertUnwindSafe(|| {
+                self.handler.handle_notification(&cx, &msg.method, msg.params_bytes());
+            }));
             return;
         }
         if let Err(e) = self.handle_request(msg) {
@@ -193,7 +211,11 @@ impl AsyncConn {
         }
     }
 
-    fn write_result(&self, id: &Id, result: &Result<Response, ResponseError>) -> Result<(), TransportError> {
+    fn write_result(
+        &self,
+        id: &Id,
+        result: &Result<Response, ResponseError>,
+    ) -> Result<(), TransportError> {
         let mut w = lock(&self.writer);
         let written = match result {
             Ok(response) => match w.write_response(id, response) {
@@ -202,14 +224,17 @@ impl AsyncConn {
             },
             Err(err) => w.write_error(id, err),
         };
-        written.map_err(|e| TransportError::Io(std::io::Error::other(format!("ipc: failed to write response: {e}"))))
+        written.map_err(|e| {
+            TransportError::Io(std::io::Error::other(format!("ipc: failed to write response: {e}")))
+        })
     }
 
     fn handle_request(&self, msg: &Message) -> Result<(), TransportError> {
         let id = msg.id.as_ref().expect("requests have an id");
         match msg.method.as_str() {
             METHOD_GET_SERVER_TIMING => {
-                let json = serde_json::to_vec(&server_timing_snapshot(self.timing.as_ref())).expect("timing serializes");
+                let json = serde_json::to_vec(&server_timing_snapshot(self.timing.as_ref()))
+                    .expect("timing serializes");
                 return self.write_result(id, &Ok(Response::Json(json)));
             }
             METHOD_RESET_SERVER_TIMING => {
@@ -221,9 +246,16 @@ impl AsyncConn {
             _ => {}
         }
         let start = self.timing.as_ref().map(|_| Instant::now());
-        let cx = RequestContext { cancel: self.cancel.clone(), depth: 0, callbacks: Arc::clone(&self.callbacks), state: Default::default() };
+        let cx = RequestContext {
+            cancel: self.cancel.clone(),
+            depth: 0,
+            callbacks: Arc::clone(&self.callbacks),
+            state: std::sync::Arc::default(),
+        };
         let outcome = catch_unwind(AssertUnwindSafe(|| {
-            crate::reentrancy::with_request(&cx, || self.handler.handle_request(&cx, &msg.method, msg.params_bytes()))
+            crate::reentrancy::with_request(&cx, || {
+                self.handler.handle_request(&cx, &msg.method, msg.params_bytes())
+            })
         }));
         if let (Some(t), Some(start)) = (&self.timing, start) {
             t.record(&msg.method, start.elapsed());

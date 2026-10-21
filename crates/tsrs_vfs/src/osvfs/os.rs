@@ -3,50 +3,10 @@ use std::io;
 use std::sync::LazyLock;
 use std::time::SystemTime;
 
-use tsrs_core::tspath;
+use tsrs_core::{stringutil, tspath};
 
 use crate::internal::{self, Common, IoDirEntry, IoFS};
-use crate::{Entries, FileInfo, FileMode, FsError, FS};
-
-// tsrs-only: file system calls made through this FS, printed as `--extendedDiagnostics` rows.
-static STAT_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-static READ_FILE_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-static READ_DIR_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-static LSTAT_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-fn count(c: &std::sync::atomic::AtomicU64) {
-    c.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-}
-
-/// Counts a call that another file system over the OS made (the WebAssembly build's host file system), in the same
-/// rows.
-pub fn count_stat_call() {
-    count(&STAT_CALLS);
-}
-
-pub fn count_read_file_call() {
-    count(&READ_FILE_CALLS);
-}
-
-pub fn count_read_dir_call() {
-    count(&READ_DIR_CALLS);
-}
-
-/// Adds the calls counted since the last call to the phase rows.
-pub fn record_call_counts() {
-    use std::sync::atomic::Ordering::Relaxed;
-    for (name, c) in [
-        ("FS: stat", &STAT_CALLS),
-        ("FS: read file", &READ_FILE_CALLS),
-        ("FS: read dir", &READ_DIR_CALLS),
-        ("FS: realpath lstat", &LSTAT_CALLS),
-    ] {
-        let n = c.swap(0, Relaxed);
-        if n > 0 {
-            tsrs_core::phases::count(name, n);
-        }
-    }
-}
+use crate::{Entries, FS, FileInfo, FileMode, FsError};
 
 // FS creates a new FS from the OS file system.
 pub fn fs() -> &'static dyn FS {
@@ -55,7 +15,9 @@ pub fn fs() -> &'static dyn FS {
 
 static OS_VFS: LazyLock<OsFS> = LazyLock::new(|| OsFS {
     common: Common {
-        root_for: Box::new(|root: &str| Some(Box::new(DirFS { dir: root.to_string() }) as Box<dyn IoFS>)),
+        root_for: Box::new(|root: &str| {
+            Some(Box::new(DirFS { dir: root.to_string() }) as Box<dyn IoFS>)
+        }),
         is_reparse_point: Some(is_reparse_point),
     },
 });
@@ -81,7 +43,7 @@ static IS_FILE_SYSTEM_CASE_SENSITIVE: LazyLock<bool> = LazyLock::new(|| {
     // but this is largely good enough for our purposes (and what sys.ts used to do with __filename).
     let exe = match std::env::current_exe() {
         Ok(exe) => exe,
-        Err(err) => panic!("vfs: failed to get executable path: {}", err),
+        Err(err) => panic!("vfs: failed to get executable path: {err}"),
     };
     let exe = exe.to_string_lossy().into_owned();
 
@@ -91,40 +53,24 @@ static IS_FILE_SYSTEM_CASE_SENSITIVE: LazyLock<bool> = LazyLock::new(|| {
         if err.kind() == io::ErrorKind::NotFound {
             return true;
         }
-        panic!("vfs: failed to stat {:?}: {}", swapped, err);
+        panic!("vfs: failed to stat {swapped:?}: {err}");
     }
     false
 });
 
 // Convert all lowercase chars to uppercase, and vice-versa
 fn swap_case(str: &str) -> String {
-    str.chars()
-        .map(|r| {
-            let upper = simple_to_upper(r);
-            if upper == r {
-                simple_to_lower(r)
-            } else {
-                upper
-            }
-        })
-        .collect()
-}
-
-// unicode.ToUpper / unicode.ToLower map a rune to a single rune.
-fn simple_to_upper(r: char) -> char {
-    let mut it = r.to_uppercase();
-    match (it.next(), it.next()) {
-        (Some(c), None) => c,
-        _ => r,
+    let mut out = String::with_capacity(str.len());
+    for r in str.chars() {
+        let r = r as stringutil::Rune;
+        let upper = stringutil::unicode_to_upper(r);
+        if upper == r {
+            stringutil::push_rune(&mut out, stringutil::unicode_to_lower(r));
+        } else {
+            stringutil::push_rune(&mut out, upper);
+        }
     }
-}
-
-fn simple_to_lower(r: char) -> char {
-    let mut it = r.to_lowercase();
-    match (it.next(), it.next()) {
-        (Some(c), None) => c,
-        _ => r,
-    }
+    out
 }
 
 impl FS for OsFS {
@@ -157,11 +103,11 @@ impl FS for OsFS {
     }
 
     fn write_file(&self, path: &str, content: &str) -> Result<(), String> {
-        self.write_file_ensuring_dir(path, content, false)
+        Self::write_file_ensuring_dir(path, content, false)
     }
 
     fn append_file(&self, path: &str, content: &str) -> Result<(), String> {
-        self.write_file_ensuring_dir(path, content, true)
+        Self::write_file_ensuring_dir(path, content, true)
     }
 
     fn remove(&self, path: &str) -> Result<(), String> {
@@ -170,8 +116,13 @@ impl FS for OsFS {
     }
 
     fn chtimes(&self, path: &str, a_time: SystemTime, m_time: SystemTime) -> Result<(), String> {
-        let file = fs::File::options().write(true).open(path).or_else(|_| fs::File::open(path)).map_err(|e| e.to_string())?;
-        file.set_times(fs::FileTimes::new().set_accessed(a_time).set_modified(m_time)).map_err(|e| e.to_string())
+        let file = fs::File::options()
+            .write(true)
+            .open(path)
+            .or_else(|_| fs::File::open(path))
+            .map_err(|e| e.to_string())?;
+        file.set_times(fs::FileTimes::new().set_accessed(a_time).set_modified(m_time))
+            .map_err(|e| e.to_string())
     }
 }
 
@@ -180,23 +131,17 @@ fn os_fs_realpath(path: &str) -> String {
 
     let orig = path;
     let path = from_slash(path);
-    let path = match native_realpath(&path) {
-        Ok(p) => p,
-        Err(_) => return orig.to_string(),
+    let Ok(path) = native_realpath(&path) else {
+        return orig.to_string();
     };
-    let path = match abs(&path) {
-        Ok(p) => p,
-        Err(_) => return orig.to_string(),
+    let Ok(path) = abs(&path) else {
+        return orig.to_string();
     };
     tspath::normalize_slashes(&path)
 }
 
 fn from_slash(path: &str) -> String {
-    if cfg!(windows) {
-        path.replace('/', "\\")
-    } else {
-        path.to_string()
-    }
+    if cfg!(windows) { path.replace('/', "\\") } else { path.to_string() }
 }
 
 // nativepath.Realpath: on Linux the kernel-resolved path (Go reads /proc/self/fd
@@ -240,13 +185,9 @@ fn walk_symlinks(path: &str) -> io::Result<String> {
     let mut start = vol_len;
     while start < path.len() {
         let b = path.as_bytes();
-        while start < b.len() && is_sep(b[start]) {
-            start += 1;
-        }
+        start += (start..b.len()).take_while(|&index| is_sep(b[index])).count();
         let mut end = start;
-        while end < b.len() && !is_sep(b[end]) {
-            end += 1;
-        }
+        end += (end..b.len()).take_while(|&index| !is_sep(b[index])).count();
 
         // The next path component is in path[start:end].
         if end == start {
@@ -296,8 +237,6 @@ fn walk_symlinks(path: &str) -> io::Result<String> {
         dest.push_str(&path[start..end]);
 
         // Resolve symlink.
-
-        count(&LSTAT_CALLS);
         let fi = fs::symlink_metadata(&dest)?;
 
         if !fi.file_type().is_symlink() {
@@ -354,7 +293,7 @@ fn abs(path: &str) -> io::Result<String> {
         return Ok(clean(path));
     }
     let wd = std::env::current_dir()?.to_string_lossy().into_owned();
-    Ok(clean(&format!("{}/{}", wd, path)))
+    Ok(clean(&format!("{wd}/{path}")))
 }
 
 // path.Clean (Unix semantics; on Windows the realpath result is already clean).
@@ -392,9 +331,7 @@ pub(crate) fn clean(path: &str) -> String {
             if out.len() > dotdot {
                 // can backtrack
                 let mut w = out.len() - 1;
-                while w > dotdot && out[w] != b'/' {
-                    w -= 1;
-                }
+                w -= (dotdot + 1..=w).rev().take_while(|&i| out[i] != b'/').count();
                 out.truncate(w);
             } else if !rooted {
                 // cannot backtrack, but not rooted, so append .. element.
@@ -411,10 +348,9 @@ pub(crate) fn clean(path: &str) -> String {
                 out.push(b'/');
             }
             // copy element
-            while r < n && b[r] != b'/' {
-                out.push(b[r]);
-                r += 1;
-            }
+            let end = r + b[r..n].iter().take_while(|&&byte| byte != b'/').count();
+            out.extend_from_slice(&b[r..end]);
+            r = end;
         }
     }
 
@@ -423,7 +359,7 @@ pub(crate) fn clean(path: &str) -> String {
         return ".".to_string();
     }
 
-    String::from_utf8(out).unwrap()
+    tsrs_core::utf8::into_string(out).unwrap()
 }
 
 fn is_reparse_point(path: &str) -> bool {
@@ -443,7 +379,7 @@ fn remove_all(path: &str) -> io::Result<()> {
 }
 
 impl OsFS {
-    fn write_file_with_flag(&self, path: &str, content: &str, append: bool) -> io::Result<()> {
+    fn write_file_with_flag(path: &str, content: &str, append: bool) -> io::Result<()> {
         use std::io::Write;
         let mut options = fs::File::options();
         options.write(true).create(true);
@@ -456,17 +392,18 @@ impl OsFS {
         file.write_all(content.as_bytes())
     }
 
-    fn ensure_directory_exists(&self, directory_path: &str) -> io::Result<()> {
+    fn ensure_directory_exists(directory_path: &str) -> io::Result<()> {
         fs::create_dir_all(directory_path)
     }
 
-    fn write_file_ensuring_dir(&self, path: &str, content: &str, append: bool) -> Result<(), String> {
+    fn write_file_ensuring_dir(path: &str, content: &str, append: bool) -> Result<(), String> {
         let _ = internal::root_length(path); // Assert path is rooted
-        if self.write_file_with_flag(path, content, append).is_ok() {
+        if Self::write_file_with_flag(path, content, append).is_ok() {
             return Ok(());
         }
-        self.ensure_directory_exists(&tspath::get_directory_path(&tspath::normalize_path(path))).map_err(|e| e.to_string())?;
-        self.write_file_with_flag(path, content, append).map_err(|e| e.to_string())
+        Self::ensure_directory_exists(&tspath::get_directory_path(&tspath::normalize_path(path)))
+            .map_err(|e| e.to_string())?;
+        Self::write_file_with_flag(path, content, append).map_err(|e| e.to_string())
     }
 }
 
@@ -499,7 +436,10 @@ impl DirFS {
     }
 }
 
-#[expect(clippy::needless_pass_by_value, reason = "passed as `map_err(io_error)`, which hands over the error by value")]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "passed as `map_err(io_error)`, which hands over the error by value"
+)]
 fn io_error(e: io::Error) -> FsError {
     match e.kind() {
         io::ErrorKind::NotFound => FsError::NotExist,
@@ -509,6 +449,10 @@ fn io_error(e: io::Error) -> FsError {
     }
 }
 
+#[expect(
+    clippy::filetype_is_file,
+    reason = "regular files must remain distinct from the special-file modes handled below"
+)]
 fn file_type_mode(ft: fs::FileType) -> FileMode {
     if ft.is_dir() {
         return FileMode::Dir;
@@ -578,7 +522,6 @@ fn base(path: &str) -> String {
 impl IoFS for DirFS {
     fn stat(&self, name: &str) -> Result<FileInfo, FsError> {
         let full = self.join(name)?;
-        count(&STAT_CALLS);
         let md = fs::metadata(&full).map_err(io_error)?;
         Ok(FileInfo {
             name: base(&full),
@@ -588,9 +531,13 @@ impl IoFS for DirFS {
         })
     }
 
+    fn file_type(&self, name: &str) -> Result<FileMode, FsError> {
+        let full = self.join(name)?;
+        metadata_file_type(&full)
+    }
+
     fn read_dir(&self, name: &str) -> Result<Vec<IoDirEntry>, FsError> {
         let full = self.join(name)?;
-        count(&READ_DIR_CALLS);
         let mut entries = Vec::new();
         for entry in fs::read_dir(&full).map_err(io_error)? {
             let entry = entry.map_err(io_error)?;
@@ -599,10 +546,8 @@ impl IoFS for DirFS {
                 Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
                 Err(e) => return Err(io_error(e)),
             };
-            entries.push(IoDirEntry {
-                name: entry.file_name().to_string_lossy().into_owned(),
-                type_,
-            });
+            entries
+                .push(IoDirEntry { name: entry.file_name().to_string_lossy().into_owned(), type_ });
         }
         entries.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(entries)
@@ -610,9 +555,29 @@ impl IoFS for DirFS {
 
     fn read_file(&self, name: &str) -> Result<Vec<u8>, FsError> {
         let full = self.join(name)?;
-        count(&READ_FILE_CALLS);
         fs::read(&full).map_err(io_error)
     }
+}
+
+#[cfg(target_os = "linux")]
+fn metadata_file_type(path: &str) -> Result<FileMode, FsError> {
+    use rustix::fs::{AtFlags, CWD, FileType, StatxFlags};
+
+    match rustix::fs::statx(CWD, path, AtFlags::empty(), StatxFlags::TYPE) {
+        Ok(statx) => {
+            let file_type = FileType::from_raw_mode(statx.stx_mode.into());
+            Ok(if file_type.is_dir() { FileMode::Dir } else { FileMode::None })
+        }
+        Err(rustix::io::Errno::NOSYS) => {
+            fs::metadata(path).map(|md| file_type_mode(md.file_type())).map_err(io_error)
+        }
+        Err(err) => Err(io_error(err.into())),
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn metadata_file_type(path: &str) -> Result<FileMode, FsError> {
+    fs::metadata(path).map(|md| file_type_mode(md.file_type())).map_err(io_error)
 }
 
 #[cfg(test)]

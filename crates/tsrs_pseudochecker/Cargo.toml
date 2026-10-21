@@ -2,7 +2,9 @@
 name = "tsrs_pseudochecker"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
+publish.workspace = true
 
 [lints]
 workspace = true
@@ -10,3 +12,7 @@ workspace = true
 [dependencies]
 tsrs_core.workspace = true
 tsrs_ast.workspace = true
+
+[lib]
+test = false
+doctest = false

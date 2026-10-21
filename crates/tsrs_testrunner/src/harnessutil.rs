@@ -82,16 +82,25 @@ pub fn get_config_name_from_file_name(filename: &str) -> String {
     String::new()
 }
 
-pub fn enumerate_files(folder: &Path, test_regex: &Regex, recursive: bool) -> std::io::Result<Vec<String>> {
+pub fn enumerate_files(
+    folder: &Path,
+    test_regex: &Regex,
+    recursive: bool,
+) -> std::io::Result<Vec<String>> {
     let mut paths = Vec::new();
     list_files_worker(test_regex, recursive, folder, &mut paths)?;
     Ok(paths)
 }
 
-fn list_files_worker(spec: &Regex, recursive: bool, folder: &Path, paths: &mut Vec<String>) -> std::io::Result<()> {
+fn list_files_worker(
+    spec: &Regex,
+    recursive: bool,
+    folder: &Path,
+    paths: &mut Vec<String>,
+) -> std::io::Result<()> {
     let mut entries: Vec<_> = std::fs::read_dir(folder)?.collect::<Result<_, _>>()?;
     // os.ReadDir returns entries sorted by filename.
-    entries.sort_by_key(|e| e.file_name());
+    entries.sort_by_key(std::fs::DirEntry::file_name);
     for entry in entries {
         let path = entry.path();
         if !entry.file_type()?.is_dir() {
@@ -108,14 +117,16 @@ fn list_files_worker(spec: &Regex, recursive: bool, folder: &Path, paths: &mut V
 
 fn get_file_based_test_configuration_description(config: &TestConfiguration) -> String {
     let mut output = String::new();
-    for (i, (key, value)) in config.iter().enumerate() {
+    output = config.iter().enumerate().fold(output, |mut output, (i, (key, value))| {
         if i > 0 {
             output.push(',');
         }
         output.push_str(key);
         output.push('=');
         output.push_str(&value.to_lowercase());
-    }
+
+        output
+    });
     output
 }
 
@@ -133,7 +144,8 @@ pub fn get_file_based_test_configurations(
             if entries.len() > 1 {
                 variation_count *= entries.len();
                 if variation_count > 25 {
-                    return Err("Provided test options exceeded the maximum number of variations".to_string());
+                    return Err("Provided test options exceeded the maximum number of variations"
+                        .to_string());
                 }
                 let mut e = vec![option.clone()];
                 e.extend(entries);
@@ -150,17 +162,17 @@ pub fn get_file_based_test_configurations(
     let mut configurations = Vec::new();
     if !option_entries.is_empty() {
         // Merge varying and non-varying options
-        let varying_configurations = compute_file_based_test_configuration_variations(variation_count, &option_entries);
-        for mut varying_config in varying_configurations {
+        let varying_configurations =
+            compute_file_based_test_configuration_variations(variation_count, &option_entries);
+        configurations.extend(varying_configurations.into_iter().map(|mut varying_config| {
             let description = get_file_based_test_configuration_description(&varying_config);
-            for (k, v) in &non_varying_options {
-                varying_config.insert(k.clone(), v.clone());
-            }
-            configurations.push(NamedTestConfiguration { name: description, config: varying_config });
-        }
+            varying_config.extend(non_varying_options.iter().map(|(k, v)| (k.clone(), v.clone())));
+            NamedTestConfiguration { name: description, config: varying_config }
+        }));
     } else if !non_varying_options.is_empty() {
         // Only non-varying options
-        configurations.push(NamedTestConfiguration { name: String::new(), config: non_varying_options });
+        configurations
+            .push(NamedTestConfiguration { name: String::new(), config: non_varying_options });
     }
     Ok(configurations)
 }
@@ -171,7 +183,11 @@ pub fn get_file_based_test_configurations(
 //	splitOptionValues("esnext, es2015, es6", "target") => ["esnext", "es2015"]
 //	splitOptionValues("*", "strict") => ["true", "false"]
 //	splitOptionValues("*, -true", "strict") => ["false"]
-fn split_option_values(value: &str, option: &str, table: &OptionTable) -> Result<Vec<String>, String> {
+fn split_option_values(
+    value: &str,
+    option: &str,
+    table: &OptionTable,
+) -> Result<Vec<String>, String> {
     if value.is_empty() {
         return Ok(Vec::new());
     }
@@ -235,12 +251,21 @@ fn split_option_values(value: &str, option: &str, table: &OptionTable) -> Result
     Ok(variations.into_iter().map(|(_, include)| include).collect())
 }
 
-fn get_value_of_option_string(option: &str, value: &str, table: &OptionTable) -> Result<String, String> {
-    try_get_value_of_option_string(option, value, table).ok_or_else(|| format!("Unknown value '{value}' for option '{option}'"))
+fn get_value_of_option_string(
+    option: &str,
+    value: &str,
+    table: &OptionTable,
+) -> Result<String, String> {
+    try_get_value_of_option_string(option, value, table)
+        .ok_or_else(|| format!("Unknown value '{value}' for option '{option}'"))
 }
 
 // Returns an identity for the normalized option value (Go compares tsoptions.CompilerOptionsValue).
-fn try_get_value_of_option_string(option: &str, value: &str, table: &OptionTable) -> Option<String> {
+fn try_get_value_of_option_string(
+    option: &str,
+    value: &str,
+    table: &OptionTable,
+) -> Option<String> {
     let option_decl = table.get_command_line_option(option)?;
     match &option_decl.kind {
         OptKind::Enum(map) => {
@@ -267,9 +292,17 @@ fn get_all_values_for_option(option: &str, table: &OptionTable) -> Vec<String> {
     }
 }
 
-fn compute_file_based_test_configuration_variations(variation_count: usize, option_entries: &[Vec<String>]) -> Vec<TestConfiguration> {
+fn compute_file_based_test_configuration_variations(
+    variation_count: usize,
+    option_entries: &[Vec<String>],
+) -> Vec<TestConfiguration> {
     let mut configurations = Vec::with_capacity(variation_count);
-    compute_file_based_test_configuration_variations_worker(&mut configurations, option_entries, 0, &mut TestConfiguration::new());
+    compute_file_based_test_configuration_variations_worker(
+        &mut configurations,
+        option_entries,
+        0,
+        &mut TestConfiguration::new(),
+    );
     configurations
 }
 
@@ -288,6 +321,11 @@ fn compute_file_based_test_configuration_variations_worker(
     for entry in &option_entries[index][1..] {
         // set or overwrite the variation, then compute the next variation
         variation_state.insert(option_key.clone(), entry.clone());
-        compute_file_based_test_configuration_variations_worker(configurations, option_entries, index + 1, variation_state);
+        compute_file_based_test_configuration_variations_worker(
+            configurations,
+            option_entries,
+            index + 1,
+            variation_state,
+        );
     }
 }

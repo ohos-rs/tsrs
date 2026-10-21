@@ -7,7 +7,7 @@ use tsrs_core::stringutil;
 use tsrs_core::*;
 use tsrs_scanner as scanner;
 
-use crate::textwriter::{textWriter, get_default_indent_size};
+use crate::textwriter::{get_default_indent_size, textWriter};
 use crate::{EmitTextWriter, PrintHandlers};
 
 // changetrackerwriter.go:19 (Go interface `*ast.Node | *ast.NodeList`, compared by pointer)
@@ -20,9 +20,9 @@ enum triviaPositionKey {
 // The fields Go's `GetPrintHandlers` closures share with the writer through the `*ChangeTrackerWriter` pointer.
 #[derive(Default)]
 struct changeTrackerPositions {
-    last_non_trivia_position: i32,
-    pos: FxHashMap<triviaPositionKey, i32>,
-    end: FxHashMap<triviaPositionKey, i32>,
+    last_non_trivia_position: u32,
+    pos: FxHashMap<triviaPositionKey, u32>,
+    end: FxHashMap<triviaPositionKey, u32>,
 }
 
 // changetrackerwriter.go:12
@@ -32,9 +32,8 @@ pub struct ChangeTrackerWriter {
 }
 
 // changetrackerwriter.go:24
-pub fn new_change_tracker_writer(newline: &str, indent_size: i32) -> ChangeTrackerWriter {
-    // TODO: Callers passing -1 should pass actual indent options once indent-related formatting is ported.
-    let indent_size = if indent_size < 0 { get_default_indent_size() } else { indent_size as usize };
+pub fn new_change_tracker_writer(newline: &str, indent_size: Option<usize>) -> ChangeTrackerWriter {
+    let indent_size = indent_size.unwrap_or_else(get_default_indent_size);
     let mut ctw = ChangeTrackerWriter {
         text_writer: textWriter::new_with(newline, indent_size),
         positions: Rc::new(RefCell::new(changeTrackerPositions::default())),
@@ -89,7 +88,7 @@ impl ChangeTrackerWriter {
     }
 
     // changetrackerwriter.go:90
-    fn set_last_non_trivia_position(&mut self, s: &str, force: bool) {
+    fn set_last_non_trivia_position(&self, s: &str, force: bool) {
         if force || scanner::skip_trivia(s, 0) as usize != s.len() {
             let mut last = self.text_writer.get_text_pos();
             // trim trailing whitespaces
@@ -102,7 +101,9 @@ impl ChangeTrackerWriter {
                     break;
                 }
             }
-            last -= (s.len() - pos) as i32;
+            last = last
+                .checked_sub((s.len() - pos) as u32)
+                .expect("trailing whitespace exceeds written text");
             self.positions.borrow_mut().last_non_trivia_position = last;
         }
     }
@@ -117,21 +118,41 @@ impl ChangeTrackerWriter {
         let p_modifiers = Rc::clone(&positions);
         let modifiers_factory = factory.clone();
         let mut visitor = new_node_visitor(
-            Some(Rc::new(move |v: &mut NodeVisitor, n: P<Node>| assign_positions_to_node_worker(&p_visit, Some(n), v))),
+            Some(Rc::new(move |v: &mut NodeVisitor, n: P<Node>| {
+                assign_positions_to_node_worker(&p_visit, Some(n), v)
+            })),
             Some(factory.clone()),
             NodeVisitorHooks {
-                visit_node: Some(Rc::new(move |n: Option<P<Node>>, v: &mut NodeVisitor| assign_positions_to_node_worker(&p_node, n, v))),
-                visit_nodes: Some(Rc::new(move |nodes: Option<P<NodeList>>, v: &mut NodeVisitor| assign_positions_to_node_array(&p_nodes, nodes, v))),
-                visit_token: Some(Rc::new(move |n: Option<P<Node>>, v: &mut NodeVisitor| assign_positions_to_node_worker(&p_token, n, v))),
-                visit_modifiers: Some(Rc::new(move |modifiers: Option<P<ModifierList>>, v: &mut NodeVisitor| {
-                    if let Some(modifiers) = modifiers {
-                        let new_node_list = assign_positions_to_node_array(&p_modifiers, Some(P::from_static(&modifiers.get().list)), v).unwrap();
-                        // Return a new ModifierList so that VisitEachChild/Update detects the
-                        // change and creates a new node with reassigned child positions.
-                        return Some(modifiers_factory.new_modifier_list_from_slice(new_node_list.nodes()));
-                    }
-                    modifiers
+                visit_node: Some(Rc::new(move |n: Option<P<Node>>, v: &mut NodeVisitor| {
+                    assign_positions_to_node_worker(&p_node, n, v)
                 })),
+                visit_nodes: Some(Rc::new(
+                    move |nodes: Option<P<NodeList>>, v: &mut NodeVisitor| {
+                        assign_positions_to_node_array(&p_nodes, nodes, v)
+                    },
+                )),
+                visit_token: Some(Rc::new(move |n: Option<P<Node>>, v: &mut NodeVisitor| {
+                    assign_positions_to_node_worker(&p_token, n, v)
+                })),
+                visit_modifiers: Some(Rc::new(
+                    move |modifiers: Option<P<ModifierList>>, v: &mut NodeVisitor| {
+                        if let Some(modifiers) = modifiers {
+                            let new_node_list = assign_positions_to_node_array(
+                                &p_modifiers,
+                                Some(P::from_static(&modifiers.get().list)),
+                                v,
+                            )
+                            .unwrap();
+                            // Return a new ModifierList so that VisitEachChild/Update detects the
+                            // change and creates a new node with reassigned child positions.
+                            return Some(
+                                modifiers_factory
+                                    .new_modifier_list_from_slice(new_node_list.nodes()),
+                            );
+                        }
+                        modifiers
+                    },
+                )),
                 ..Default::default()
             },
         );
@@ -154,17 +175,21 @@ fn set_end(positions: &Rc<RefCell<changeTrackerPositions>>, node: triviaPosition
 }
 
 // changetrackerwriter.go:82
-fn get_pos(positions: &Rc<RefCell<changeTrackerPositions>>, node: triviaPositionKey) -> i32 {
+fn get_pos(positions: &Rc<RefCell<changeTrackerPositions>>, node: triviaPositionKey) -> u32 {
     positions.borrow().pos.get(&node).copied().unwrap_or(0)
 }
 
 // changetrackerwriter.go:86
-fn get_end(positions: &Rc<RefCell<changeTrackerPositions>>, node: triviaPositionKey) -> i32 {
+fn get_end(positions: &Rc<RefCell<changeTrackerPositions>>, node: triviaPositionKey) -> u32 {
     positions.borrow().end.get(&node).copied().unwrap_or(0)
 }
 
 // changetrackerwriter.go:130
-fn assign_positions_to_node_worker(positions: &Rc<RefCell<changeTrackerPositions>>, node: Option<P<Node>>, v: &mut NodeVisitor) -> Option<P<Node>> {
+fn assign_positions_to_node_worker(
+    positions: &Rc<RefCell<changeTrackerPositions>>,
+    node: Option<P<Node>>,
+    v: &mut NodeVisitor,
+) -> Option<P<Node>> {
     let node = node?;
     let visited = node.visit_each_child(v);
     // Assigning positions must not mutate the caller's node: it may be printed again (a change in a
@@ -180,12 +205,19 @@ fn assign_positions_to_node_worker(positions: &Rc<RefCell<changeTrackerPositions
         child.set_parent(Some(new_node));
         true
     });
-    new_node.set_loc(TextRange::new(get_pos(positions, triviaPositionKey::Node(node)), get_end(positions, triviaPositionKey::Node(node))));
+    new_node.set_loc(TextRange::new(
+        get_pos(positions, triviaPositionKey::Node(node)),
+        get_end(positions, triviaPositionKey::Node(node)),
+    ));
     Some(new_node)
 }
 
 // changetrackerwriter.go:154
-fn assign_positions_to_node_array(positions: &Rc<RefCell<changeTrackerPositions>>, nodes: Option<P<NodeList>>, v: &mut NodeVisitor) -> Option<P<NodeList>> {
+fn assign_positions_to_node_array(
+    positions: &Rc<RefCell<changeTrackerPositions>>,
+    nodes: Option<P<NodeList>>,
+    v: &mut NodeVisitor,
+) -> Option<P<NodeList>> {
     let visited = v.visit_nodes(nodes)?;
     let Some(nodes) = nodes else {
         // Debug.assert(nodes);
@@ -197,7 +229,10 @@ fn assign_positions_to_node_array(positions: &Rc<RefCell<changeTrackerPositions>
         node_array = visited.clone_list(&v.factory);
     }
 
-    node_array.loc.set(TextRange::new(get_pos(positions, triviaPositionKey::NodeList(nodes)), get_end(positions, triviaPositionKey::NodeList(nodes))));
+    node_array.loc.set(TextRange::new(
+        get_pos(positions, triviaPositionKey::NodeList(nodes)),
+        get_end(positions, triviaPositionKey::NodeList(nodes)),
+    ));
     Some(node_array)
 }
 
@@ -215,7 +250,7 @@ impl EmitTextWriter for ChangeTrackerWriter {
     }
     // changetrackerwriter.go:185
     fn write_comment(&mut self, text: &str) {
-        self.text_writer.write_comment(text)
+        self.text_writer.write_comment(text);
     }
     // changetrackerwriter.go:186
     fn write_keyword(&mut self, text: &str) {
@@ -266,19 +301,19 @@ impl EmitTextWriter for ChangeTrackerWriter {
     }
     // changetrackerwriter.go:225
     fn write_line(&mut self) {
-        self.text_writer.write_line()
+        self.text_writer.write_line();
     }
     // changetrackerwriter.go:226
     fn write_line_force(&mut self, force: bool) {
-        self.text_writer.write_line_force(force)
+        self.text_writer.write_line_force(force);
     }
     // changetrackerwriter.go:227
     fn increase_indent(&mut self) {
-        self.text_writer.increase_indent()
+        self.text_writer.increase_indent();
     }
     // changetrackerwriter.go:228
     fn decrease_indent(&mut self) {
-        self.text_writer.decrease_indent()
+        self.text_writer.decrease_indent();
     }
     // changetrackerwriter.go:229
     fn clear(&mut self) {
@@ -301,11 +336,11 @@ impl EmitTextWriter for ChangeTrackerWriter {
         self.set_last_non_trivia_position(s, true);
     }
     // changetrackerwriter.go:240
-    fn get_text_pos(&self) -> i32 {
+    fn get_text_pos(&self) -> u32 {
         self.text_writer.get_text_pos()
     }
     // changetrackerwriter.go:241
-    fn get_line(&self) -> i32 {
+    fn get_line(&self) -> u32 {
         self.text_writer.get_line()
     }
     // changetrackerwriter.go:242
@@ -313,7 +348,7 @@ impl EmitTextWriter for ChangeTrackerWriter {
         self.text_writer.get_column()
     }
     // changetrackerwriter.go:243
-    fn get_indent(&self) -> i32 {
+    fn get_indent(&self) -> u32 {
         self.text_writer.get_indent()
     }
     // changetrackerwriter.go:244

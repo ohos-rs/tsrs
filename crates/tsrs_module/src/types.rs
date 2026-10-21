@@ -3,7 +3,7 @@ use std::fmt;
 use bitflags::bitflags;
 use tsrs_ast::Diagnostic;
 use tsrs_core::tspath;
-use tsrs_core::{CompilerOptions, ResolutionMode, P};
+use tsrs_core::{CompilerOptions, P, ResolutionMode};
 use tsrs_vfs::FS;
 
 use crate::cache::ResolutionData;
@@ -51,7 +51,7 @@ pub trait ResolvedProjectReference: Send + Sync {
 
 bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
-    pub struct NodeResolutionFeatures: i32 {
+    pub struct NodeResolutionFeatures: u32 {
         const Imports = 1 << 0;
         const SelfName = 1 << 1;
         const Exports = 1 << 2;
@@ -129,7 +129,7 @@ impl ResolvedTypeReferenceDirective {
 
 bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
-    pub(crate) struct Extensions: i32 {
+    pub(crate) struct Extensions: u32 {
         const TypeScript = 1 << 0;
         const JavaScript = 1 << 1;
         const Declaration = 1 << 2;

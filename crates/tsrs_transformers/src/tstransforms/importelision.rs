@@ -8,14 +8,27 @@ pub struct ImportElisionTransformer {
 }
 
 // importelision.go:17
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "Transformer factories share an optional result so disabled transforms can return None."
+)]
 pub fn new_import_elision_transformer(opt: &TransformOptions) -> Option<P<Transformer>> {
     let compiler_options = opt.compiler_options;
     let emit_context = opt.context;
-    if compiler_options.verbatim_module_syntax.is_true() {
-        panic!("ImportElisionTransformer should not be used with VerbatimModuleSyntax");
-    }
-    let tx = P::new(ImportElisionTransformer { base: Transformer::default(), compiler_options, current_source_file: Cell::new(None), emit_resolver: opt.emit_resolver });
-    Some(tx.get().base.new_transformer(Rc::new(move |_: &mut NodeVisitor, n: P<Node>| tx.visit(n)), Some(emit_context)))
+    assert!(
+        !compiler_options.verbatim_module_syntax.is_true(),
+        "ImportElisionTransformer should not be used with VerbatimModuleSyntax"
+    );
+    let tx = P::new(ImportElisionTransformer {
+        base: Transformer::default(),
+        compiler_options,
+        current_source_file: Cell::new(None),
+        emit_resolver: opt.emit_resolver,
+    });
+    Some(tx.get().base.new_transformer(
+        Rc::new(move |_: &mut NodeVisitor, n: P<Node>| tx.visit(n)),
+        Some(emit_context),
+    ))
 }
 
 impl ImportElisionTransformer {
@@ -27,7 +40,9 @@ impl ImportElisionTransformer {
     fn visit(&self, node: P<Node>) -> Option<P<Node>> {
         if ast::is_source_file(node) {
             if let Some(emit_resolver) = self.emit_resolver {
-                emit_resolver.mark_linked_references_recursively(self.emit_context().most_original(Some(node)).unwrap().as_source_file_p());
+                emit_resolver.mark_linked_references_recursively(
+                    self.emit_context().most_original(Some(node)).unwrap().as_source_file_p(),
+                );
             }
         }
 
@@ -50,7 +65,13 @@ impl ImportElisionTransformer {
                 //  import "foo";
                 if let Some(import_clause) = n.import_clause {
                     let import_clause = v.visit_node(Some(import_clause))?;
-                    return Some(f.update_import_declaration(node, node.modifiers(), Some(import_clause), n.module_specifier, v.visit_node(n.attributes())));
+                    return Some(f.update_import_declaration(
+                        node,
+                        node.modifiers(),
+                        Some(import_clause),
+                        n.module_specifier,
+                        v.visit_node(n.attributes()),
+                    ));
                 }
                 v.visit_each_child(Some(node))
             }
@@ -88,7 +109,9 @@ impl ImportElisionTransformer {
                 Some(node)
             }
             Kind::ExportAssignment => {
-                if !self.compiler_options.verbatim_module_syntax.is_true() && !self.is_value_alias_declaration(node) {
+                if !self.compiler_options.verbatim_module_syntax.is_true()
+                    && !self.is_value_alias_declaration(node)
+                {
                     // elide unused import
                     return None;
                 }
@@ -99,12 +122,16 @@ impl ImportElisionTransformer {
                 let mut export_clause: Option<P<Node>> = None;
                 if let Some(c) = n.export_clause {
                     export_clause = v.visit_node(Some(c));
-                    if export_clause.is_none() {
-                        // all export bindings were elided
-                        return None;
-                    }
+                    export_clause?;
                 }
-                Some(f.update_export_declaration(node, None /*modifiers*/, false /*isTypeOnly*/, export_clause, v.visit_node(n.module_specifier), v.visit_node(n.attributes())))
+                Some(f.update_export_declaration(
+                    node,
+                    None,  /*modifiers*/
+                    false, /*isTypeOnly*/
+                    export_clause,
+                    v.visit_node(n.module_specifier),
+                    v.visit_node(n.attributes()),
+                ))
             }
             Kind::NamedExports => {
                 let n = node.as_named_exports();
@@ -144,7 +171,9 @@ impl ImportElisionTransformer {
         // preserve old compiler's behavior: emit import declaration (even if we do not consider them referenced) when
         // - current file is not external module
         // - import declaration is top level and target is value imported by entity name
-        self.should_emit_alias_declaration(node) || (!ast::is_external_module(self.current_source_file.get().unwrap()) && self.is_top_level_value_import_equals_with_entity_name(node))
+        self.should_emit_alias_declaration(node)
+            || (!ast::is_external_module(self.current_source_file.get().unwrap())
+                && self.is_top_level_value_import_equals_with_entity_name(node))
     }
 
     // importelision.go:135

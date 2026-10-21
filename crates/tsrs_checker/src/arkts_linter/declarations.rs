@@ -35,7 +35,7 @@ impl ArkTsLinter<'_> {
     }
     pub(super) fn filter_method_return_diagnostic(&mut self, node: P<Node>) {
         if !self.decorators(node).any(|d| matches!(self.decorator_name(d), "AnimatableExtend" | "Builder" | "Extend" | "Styles")) { return; }
-        let begin = node.parameter_list().unwrap().end();
+        let begin = node.parameter_list().unwrap().end().source_offset().unwrap_or(0);
         let end = node.body().map_or(begin, |body| get_token_pos_of_node(body, self.file, false));
         self.filter_strict_diagnostics(2366, begin, end);
     }
@@ -65,12 +65,18 @@ impl ArkTsLinter<'_> {
         }
     }
     pub(super) fn function_has_decorator_in_overloads(&mut self, node: P<Node>, name: &str) -> bool {
-        let symbol = node.symbol().or_else(|| node.name().and_then(|n| self.checker.get_symbol_at_location(n, false)));
+        let symbol = node.symbol().or_else(|| {
+            let name = node.name()?;
+            self.checker.get_symbol_at_location(name, false)
+        });
         let Some(symbol) = symbol else { return self.has_decorator(node, name); };
         symbol.declarations().iter().any(|&d| ast::is_function_declaration(d) && self.has_decorator(d, name))
     }
     pub(super) fn handle_standalone_this(&mut self, node: P<Node>, body: Option<P<Node>>) {
-        if !node.parent().is_some_and(|p| ast::find_ancestor(p, |n| ast::is_class_like(n) || ast::is_interface_declaration(n)).is_some()) { self.report_this_keywords(body); }
+        if node.parent().is_none_or(|p| {
+            ast::find_ancestor(p, |n| ast::is_class_like(n) || ast::is_interface_declaration(n))
+                .is_none()
+        }) { self.report_this_keywords(body); }
     }
     pub(super) fn report_this_keywords(&mut self, scope: Option<P<Node>>) {
         fn visit(l: &mut ArkTsLinter<'_>, node: P<Node>, scope: P<Node>) {
@@ -258,7 +264,13 @@ pub(super) fn reduce_reference(typ: P<Type>) -> P<Type> {
 }
 pub(super) fn node_text(node: P<Node>) -> &'static str {
     let Some(file) = ast::get_source_file_of_node(node) else { return ""; };
-    file.text().get(get_token_pos_of_node(node, file, false) as usize..node.end() as usize).unwrap_or_default()
+    file
+        .text()
+        .get(
+            get_token_pos_of_node(node, file, false) as usize
+                ..node.end().source_offset().unwrap_or(0) as usize,
+        )
+        .unwrap_or_default()
 }
 pub(super) fn asterisk_token(node: P<Node>) -> Option<P<Node>> {
     match node.kind() {

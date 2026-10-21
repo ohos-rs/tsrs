@@ -1,7 +1,7 @@
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -9,22 +9,33 @@ use tsrs_core::Locale;
 use tsrs_spanmap::{Feature, Kind, Segment};
 use tsrs_tsoptions::{Manifest, Mapper};
 
-use crate::{new_host, new_host_with_options, spawn_process, HostOptions, ProcessSpawner, Request};
+use crate::{HostOptions, ProcessSpawner, Request, new_host, new_host_with_options, spawn_process};
 
 const LAUNCHER_ARG: &str = "child-process-launcher";
 const DESCENDANT_ARG: &str = "child-process-descendant";
-const CLOSE_TEST: &str = "process_test::test_child_process_close_does_not_wait_for_launcher_descendants";
+const CLOSE_TEST: &str =
+    "process_test::test_child_process_close_does_not_wait_for_launcher_descendants";
 
 // The test binary re-run as a launcher or descendant process: libtest takes the trailing role argument as one more
 // name filter, which `--exact` keeps from matching anything else.
 fn self_command(role: &str) -> Vec<String> {
     let exe = std::env::current_exe().unwrap().to_string_lossy().into_owned();
-    vec![exe, CLOSE_TEST.to_string(), "--exact".to_string(), "--nocapture".to_string(), role.to_string()]
+    vec![
+        exe,
+        CLOSE_TEST.to_string(),
+        "--exact".to_string(),
+        "--nocapture".to_string(),
+        role.to_string(),
+    ]
 }
 
 // Go `isProcessAlive` (cmd/tsc/isprocessalive_unix.go): signal 0.
 fn is_process_alive(pid: u32) -> bool {
-    Command::new("kill").args(["-0", &pid.to_string()]).stderr(Stdio::null()).status().is_ok_and(|status| status.success())
+    Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
 }
 
 fn kill(pid: u32) {
@@ -35,7 +46,7 @@ fn kill(pid: u32) {
 // the same stdout first, where Go's test binary is silent.)
 #[test]
 fn test_child_process_close_does_not_wait_for_launcher_descendants() {
-    match std::env::args().last().as_deref() {
+    match std::env::args().next_back().as_deref() {
         Some(LAUNCHER_ARG) => {
             let command = self_command(DESCENDANT_ARG);
             let mut cmd = Command::new(&command[0]).args(&command[1..]).spawn().unwrap();
@@ -50,7 +61,8 @@ fn test_child_process_close_does_not_wait_for_launcher_descendants() {
         _ => {}
     }
 
-    let process = spawn_process(&self_command(LAUNCHER_ARG), "", Some(Box::new(Vec::<u8>::new()))).unwrap();
+    let process =
+        spawn_process(&self_command(LAUNCHER_ARG), "", Some(Box::new(Vec::<u8>::new()))).unwrap();
     // Go's bufio.Reader keeps the pipe open, and so does this one until the end of the test: a descendant whose stdout
     // is closed dies at its next write.
     let mut stdout = BufReader::new(process.reader);
@@ -70,19 +82,19 @@ fn test_child_process_close_does_not_wait_for_launcher_descendants() {
         let _ = done_tx.send(closer.close());
     });
 
-    let completed = match done.recv_timeout(Duration::from_secs(2)) {
-        Ok(result) => {
-            result.unwrap();
-            true
-        }
-        Err(_) => {
-            kill(descendant_pid);
-            let _ = done.recv();
-            false
-        }
+    let completed = if let Ok(result) = done.recv_timeout(Duration::from_secs(2)) {
+        result.unwrap();
+        true
+    } else {
+        kill(descendant_pid);
+        let _ = done.recv();
+        false
     };
     assert!(completed, "child process shutdown waited for a launcher descendant");
-    assert!(is_process_alive(descendant_pid), "the descendant had already exited, so the close did not wait on it");
+    assert!(
+        is_process_alive(descendant_pid),
+        "the descendant had already exited, so the close did not wait on it"
+    );
     kill(descendant_pid);
     drop(stdout);
 }
@@ -92,7 +104,8 @@ fn test_child_process_close_does_not_wait_for_launcher_descendants() {
 const HEADER: &str = "// synthesized by header-mapper\nexport {};\n";
 
 fn header_mapper_directory() -> String {
-    let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata/contentmapper/header-mapper");
+    let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../testdata/contentmapper/header-mapper");
     directory.canonicalize().unwrap().to_string_lossy().into_owned()
 }
 
@@ -101,7 +114,7 @@ fn header_mapper(exec: &[&str]) -> &'static Mapper {
         manifest: Manifest {
             name: "header-mapper".to_string(),
             version: "1.0.0".to_string(),
-            exec: exec.iter().map(|arg| arg.to_string()).collect(),
+            exec: exec.iter().map(std::string::ToString::to_string).collect(),
             ..Default::default()
         },
         package_directory: header_mapper_directory(),
@@ -111,7 +124,8 @@ fn header_mapper(exec: &[&str]) -> &'static Mapper {
 
 // These tests run a real mapper process, which needs `node` on PATH.
 fn node_available() -> bool {
-    let available = Command::new("node").arg("--version").output().is_ok_and(|output| output.status.success());
+    let available =
+        Command::new("node").arg("--version").output().is_ok_and(|output| output.status.success());
     if !available {
         eprintln!("skipping: the header-mapper test needs `node` on PATH");
     }
@@ -132,18 +146,20 @@ fn test_process_spawner_runs_header_mapper() {
     let result = host.transform(mapper, Request { file_name: "/project/a.hdr", content }).unwrap();
     assert_eq!(result.text, format!("{HEADER}{content}"));
     assert_eq!(result.virtual_extension, ".ts");
+    let header_len = u32::try_from(HEADER.len()).expect("test header fits in a source position");
+    let content_len = u32::try_from(content.len()).expect("test content fits in a source position");
     assert_eq!(
         result.mappings.unwrap().segments(),
         vec![Segment {
-            virtual_start: HEADER.len() as i32,
-            virtual_end: (HEADER.len() + content.len()) as i32,
+            virtual_start: header_len,
+            virtual_end: header_len + content_len,
             original_start: 0,
-            original_end: content.len() as i32,
+            original_end: content_len,
             kind: Kind::Verbatim,
             features: Feature::All,
         }]
     );
-    assert!(result.diagnostics.is_empty());
+    assert_eq!(result.diagnostics, [] as [tsrs_core::P<tsrs_ast::Diagnostic>; 0]);
 
     let content = "const y = 2;\n//!mapper-error\n";
     let result = host.transform(mapper, Request { file_name: "/project/b.hdr", content }).unwrap();
@@ -152,8 +168,13 @@ fn test_process_spawner_runs_header_mapper() {
     let diagnostic = result.diagnostics[0];
     assert_eq!(diagnostic.source(), "header");
     assert_eq!(diagnostic.code(), 7);
-    assert_eq!(diagnostic.pos(), content.find("//!mapper-error").unwrap() as i32);
-    assert_eq!(diagnostic.end(), diagnostic.pos() + "//!mapper-error".len() as i32);
+    let expected_start = u32::try_from(content.find("//!mapper-error").unwrap())
+        .expect("test diagnostic offset fits in a source position");
+    let expected_end = expected_start
+        + u32::try_from("//!mapper-error".len())
+            .expect("test diagnostic length fits in a source position");
+    assert_eq!(diagnostic.pos(), Some(expected_start));
+    assert_eq!(diagnostic.end(), Some(expected_end));
 
     host.close().unwrap();
 }
@@ -172,8 +193,13 @@ fn test_host_close_does_not_wait_for_mapper_descendants() {
         let logs = Arc::clone(&logs);
         Arc::new(move |message: &str| logs.lock().unwrap().push(message.to_string()))
     };
-    let host = new_host_with_options(Arc::new(ProcessSpawner), Locale::DEFAULT, HostOptions { logger: Some(logger) });
-    let mapper = header_mapper(&["sh", "-c", "sleep 30 & echo background:$! >&2; exec node mapper.mjs"]);
+    let host = new_host_with_options(
+        Arc::new(ProcessSpawner),
+        Locale::DEFAULT,
+        HostOptions { logger: Some(logger) },
+    );
+    let mapper =
+        header_mapper(&["sh", "-c", "sleep 30 & echo background:$! >&2; exec node mapper.mjs"]);
     let content = "export {};\n";
     let result = host.transform(mapper, Request { file_name: "/project/a.hdr", content }).unwrap();
     assert_eq!(result.text, format!("{HEADER}{content}"));
@@ -181,7 +207,12 @@ fn test_host_close_does_not_wait_for_mapper_descendants() {
         .lock()
         .unwrap()
         .iter()
-        .find_map(|line| line.strip_prefix("[content mapper: header-mapper] stderr: background:")?.trim().parse::<u32>().ok())
+        .find_map(|line| {
+            line.strip_prefix("[content mapper: header-mapper] stderr: background:")?
+                .trim()
+                .parse::<u32>()
+                .ok()
+        })
         .expect("the mapper reported its background process");
 
     let start = Instant::now();
@@ -190,5 +221,8 @@ fn test_host_close_does_not_wait_for_mapper_descendants() {
     let alive = is_process_alive(background_pid);
     kill(background_pid);
     assert!(alive, "the background process had already exited, so the close did not wait on it");
-    assert!(elapsed < Duration::from_secs(2), "closing the host waited {elapsed:?} for a mapper descendant");
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "closing the host waited {elapsed:?} for a mapper descendant"
+    );
 }

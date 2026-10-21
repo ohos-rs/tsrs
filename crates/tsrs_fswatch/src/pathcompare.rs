@@ -1,5 +1,6 @@
-use std::sync::Mutex;
 use rustc_hash::FxHashMap;
+use std::sync::Mutex;
+use tsrs_core::stringutil::equal_fold;
 
 use crate::canonicalize::{fold_native_path, nativePathFolding};
 use crate::watcher::{is_in_directory_or_self, join_path_suffix, rebase_path};
@@ -67,7 +68,11 @@ impl pathComparer {
     }
 
     // pathcompare.go:61
-    pub(crate) fn suffix_prepared(self, root: &comparisonPath, path: &mut comparisonPath) -> Option<String> {
+    pub(crate) fn suffix_prepared(
+        self,
+        root: &comparisonPath,
+        path: &mut comparisonPath,
+    ) -> Option<String> {
         if is_in_directory_or_self(&root.path, &path.path) {
             return Some(path.path[root.path.len()..].to_string());
         }
@@ -78,11 +83,14 @@ impl pathComparer {
         if !unicode {
             return suffix;
         }
-        self.suffix_unicode(root, path)
+        Self::suffix_unicode(root, path)
     }
 
     // pathcompare.go:75
-    pub(crate) fn suffix_unicode(self, root: &comparisonPath, path: &mut comparisonPath) -> Option<String> {
+    pub(crate) fn suffix_unicode(
+        root: &comparisonPath,
+        path: &mut comparisonPath,
+    ) -> Option<String> {
         if !nativePathFolding {
             return path_suffix_fold_unicode(&root.path, &path.path);
         }
@@ -132,7 +140,12 @@ impl pathComparer {
     }
 
     // pathcompare.go:176
-    pub(crate) fn rebase_prepared(self, path: &mut comparisonPath, from: &comparisonPath, to: &str) -> Option<String> {
+    pub(crate) fn rebase_prepared(
+        self,
+        path: &mut comparisonPath,
+        from: &comparisonPath,
+        to: &str,
+    ) -> Option<String> {
         if is_in_directory_or_self(&from.path, &path.path) {
             return Some(rebase_path(&path.path, &from.path, to));
         }
@@ -141,7 +154,7 @@ impl pathComparer {
         }
         let (mut suffix, unicode) = path_suffix_ascii(&from.path, &path.path);
         if unicode {
-            suffix = self.suffix_unicode(from, path);
+            suffix = Self::suffix_unicode(from, path);
         }
         let suffix = suffix?;
         Some(join_path_suffix(to, &suffix))
@@ -210,43 +223,4 @@ fn cut(s: &str, sep: char) -> (&str, &str, bool) {
         Some(i) => (&s[..i], &s[i + sep.len_utf8()..], true),
         None => (s, "", false),
     }
-}
-
-// Go `strings.EqualFold`: simple Unicode case folding, rune by rune.
-pub(crate) fn equal_fold(a: &str, b: &str) -> bool {
-    let mut ai = a.chars();
-    let mut bi = b.chars();
-    loop {
-        match (ai.next(), bi.next()) {
-            (None, None) => return true,
-            (Some(x), Some(y)) => {
-                if x == y {
-                    continue;
-                }
-                if simple_fold_eq(x, y) {
-                    continue;
-                }
-                return false;
-            }
-            _ => return false,
-        }
-    }
-}
-
-fn simple_fold_eq(x: char, y: char) -> bool {
-    let lower = |c: char| {
-        let mut l = c.to_lowercase();
-        match (l.next(), l.next()) {
-            (Some(l0), None) => l0,
-            _ => c,
-        }
-    };
-    let upper = |c: char| {
-        let mut u = c.to_uppercase();
-        match (u.next(), u.next()) {
-            (Some(u0), None) => u0,
-            _ => c,
-        }
-    };
-    lower(x) == lower(y) || upper(x) == upper(y)
 }

@@ -100,7 +100,7 @@ impl ArkTsLinter<'_> {
     fn is_element_access_allowed(&mut self, typ: P<Type>, argument: P<Type>) -> bool {
         if typ.is_union() { return typ.types().iter().all(|&t| self.is_element_access_allowed(t, argument)); }
         if self.is_or_derived_from(typ, |l, t| t.symbol().is_some_and(|s| s.name() == "BitVector" && l.is_arkts_collections_declaration(s.declarations()))) { return argument.flags().intersects(TypeFlags::NumberLike); }
-        is_type_any(Some(typ)) || self.is_library_type(typ) || self.is_or_derived_from(typ, |l, t| l.is_indexable_array_type(t)) || self.is_or_derived_from(typ, |_, t| t.is_tuple_type()) || self.is_or_derived_from(typ, |l, t| l.is_std_record_type(t)) || typ.flags().intersects(TypeFlags::String | TypeFlags::EnumLike | TypeFlags::NonPrimitive) || self.is_named_global_type(typ, "Map") || is_es_object_type(typ)
+        is_type_any(Some(typ)) || self.is_library_type(typ) || self.is_or_derived_from(typ, |l, t| l.is_indexable_array_type(t)) || self.is_or_derived_from(typ, |_, t| t.is_tuple_type()) || self.is_or_derived_from(typ, Self::is_std_record_type) || typ.flags().intersects(TypeFlags::String | TypeFlags::EnumLike | TypeFlags::NonPrimitive) || self.is_named_global_type(typ, "Map") || is_es_object_type(typ)
     }
     fn handle_call_argument_assignments(&mut self, call: P<Node>, signature: P<Signature>) {
         let parameters = signature.parameters(); if parameters.is_empty() { return; }
@@ -134,7 +134,13 @@ impl ArkTsLinter<'_> {
         }
     }
     fn variable_declaration_type_node(&mut self, node: P<Node>) -> Option<P<Node>> {
-        self.true_symbol_at_location(node).and_then(|s| s.declarations().first().copied()).filter(|d| ast::is_variable_declaration(*d)).and_then(|d| d.type_node())
+        let symbol = self.true_symbol_at_location(node)?;
+        let declaration = symbol
+            .declarations()
+            .first()
+            .copied()
+            .filter(|d| ast::is_variable_declaration(*d))?;
+        declaration.type_node()
     }
     pub(super) fn handle_es_object_assignment(&mut self, node: P<Node>, declared_type: Option<P<Node>>, initializer: P<Node>, property: bool) {
         let Some(declared_type) = declared_type else { return; };

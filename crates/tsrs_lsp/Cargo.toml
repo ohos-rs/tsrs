@@ -2,7 +2,9 @@
 name = "tsrs_lsp"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
+publish.workspace = true
 
 [lints]
 workspace = true
@@ -18,3 +20,6 @@ tsrs_project.workspace = true
 tsrs_fswatch = { path = "../tsrs_fswatch" }
 rustc-hash.workspace = true
 indexmap.workspace = true
+
+[lib]
+doctest = false

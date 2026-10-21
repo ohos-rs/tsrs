@@ -217,9 +217,10 @@ pub struct SdkPluginRequest {
     pub args: Vec<Value>,
 }
 
-/// A batch registers all full descriptors/sources/configs before evaluating
-/// callbacks, including registrations on short-circuited requests. Responses
-/// retain request order; an `after` dependency stops on false/invoke error.
+/// A batch registers all full descriptors/sources/configs before evaluating callbacks.
+///
+/// This includes registrations on short-circuited requests. Responses retain request order; an `after`
+/// dependency stops on false/invoke error.
 pub type SdkPluginCompletion = Box<dyn FnOnce(Result<Vec<OhSdkPluginResponse>, String>) + Send>;
 
 pub trait SdkPluginHost: Send + Sync {

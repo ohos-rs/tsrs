@@ -22,7 +22,7 @@ impl Checker {
                     continue;
                 }
                 let name = call.expression().unwrap().text();
-                if tsrs_core::ets_contains(&options.extend.decorator, name) || options.extend.decorator.is_none() && "Extend".contains(name)
+                if tsrs_core::ets_contains(options.extend.decorator.as_deref(), name) || options.extend.decorator.is_none() && "Extend".contains(name)
                 {
                     last = call.arguments()[0].text();
                 }

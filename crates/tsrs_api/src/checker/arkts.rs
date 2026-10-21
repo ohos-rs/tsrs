@@ -57,8 +57,8 @@ impl Setup<'_> {
         collect_nodes(file.as_node(), &mut nodes);
         let positions = file.get_position_map();
         for node in nodes {
-            let range = Obj::new().set("pos", Value::Number(positions.utf8_to_utf16(node.pos()) as f64))
-                .set("end", Value::Number(positions.utf8_to_utf16(node.end()) as f64));
+            let range = Obj::new().set("pos", Value::Number(positions.utf8_to_utf16(node.pos().source_offset().unwrap_or(0)) as f64))
+                .set("end", Value::Number(positions.utf8_to_utf16(node.end().source_offset().unwrap_or(0)) as f64));
             if ast::is_annotation_declaration(node) || ast::is_decorator(node) {
                 if let Some(info) = self.c().get_annotation_info(node) {
                     let runtime = ast::is_decorator(node) && node.parent().is_some_and(|owner|
@@ -118,7 +118,7 @@ pub(crate) fn get_transform_type_facts(host: &dyn CheckerHost, p: &Params) -> Ch
         queries.push(ArktsTransformTypeQuery { file: query.document("file")?.to_file_name().into(),
             properties: ranges("properties")?, builder_accesses: ranges("builderAccesses")?, member_accesses: ranges("memberAccesses")? });
     }
-    let sdk_files: Vec<_> = p.documents("sdkApiUseFiles")?.iter().map(|d| d.to_file_name()).collect();
+    let sdk_files: Vec<_> = p.documents("sdkApiUseFiles")?.iter().map(super::params::DocumentIdentifier::to_file_name).collect();
     let facts = crate::embedded::queries::transform_type_facts(sd.program()?, &queries, &sdk_files, &host.context()).map_err(super::from_api_error)?;
     Ok(Value::Array(facts.iter().map(|f| {
         let properties = f.properties.iter().map(|p| Obj::new().set("namePos", Value::Number(p.name_pos as f64))

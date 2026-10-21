@@ -4,7 +4,7 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{LazyLock, OnceLock};
 
-use bitflags::bitflags;
+use crate::direct_bitflags as bitflags;
 
 use crate::*;
 use tsrs_core::PSliceCell;
@@ -58,8 +58,8 @@ impl From<P<Signature>> for TypeSystemEntity {
     }
 }
 
-#[repr(i32)]
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Default)]
+#[repr(u32)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub enum TypeSystemPropertyName {
     #[default]
     Type,
@@ -102,7 +102,7 @@ pub struct InferenceContextInfo {
 
 // WideningKind
 
-#[repr(i32)]
+#[repr(u32)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Default)]
 pub enum WideningKind {
     #[default]
@@ -130,7 +130,7 @@ pub struct EnumRelationKey {
 
 // TypeCacheKind
 
-#[repr(i32)]
+#[repr(u32)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Default)]
 pub enum CachedTypeKind {
     #[default]
@@ -314,7 +314,7 @@ bitflags! {
 #[derive(Default)]
 pub struct InferenceContext {
     pub inferences: PSliceCell<P<InferenceInfo>>, // Inferences made for each type parameter
-    pub flags: Cell<InferenceFlags>, // Inference flags
+    pub flags: Cell<InferenceFlags>,              // Inference flags
     pub signature: Cell<Option<P<Signature>>>, // Generic signature for which inferences are made (if any)
     pub compare_types: Cell<Option<TypeComparer>>, // Type comparer function
     // Mapper that fixes inferences / that doesn't: created on first use with `TSRS_LAZY_INFERENCE_MAPPERS` (`mapper()`,
@@ -329,7 +329,9 @@ pub struct InferenceContext {
 const RARE_ESCAPED: usize = 1;
 
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(std::mem::size_of::<InferenceContext>() == if tsrs_core::COMPRESSED_PTRS { 48 } else { 64 });
+const _: () = assert!(
+    std::mem::size_of::<InferenceContext>() == if tsrs_core::COMPRESSED_PTRS { 48 } else { 64 }
+);
 #[cfg(target_pointer_width = "32")]
 const _: () = assert!(std::mem::size_of::<InferenceContext>() == 36);
 
@@ -342,7 +344,12 @@ pub(crate) struct InferenceContextRare {
 }
 
 impl InferenceContext {
-    pub(crate) fn new(inferences: &'static [P<InferenceInfo>], signature: Option<P<Signature>>, flags: InferenceFlags, compare_types: TypeComparer) -> InferenceContext {
+    pub(crate) fn new(
+        inferences: &'static [P<InferenceInfo>],
+        signature: Option<P<Signature>>,
+        flags: InferenceFlags,
+        compare_types: TypeComparer,
+    ) -> InferenceContext {
         InferenceContext {
             inferences: PSliceCell::new(inferences),
             signature: Cell::new(signature),
@@ -370,11 +377,20 @@ impl InferenceContext {
 
     /// Marks the context escaped, with every mapper it holds (an escaped context's mappers may be used through it).
     pub(crate) fn escape(&self) {
-        if self.escaped() {
+        // As for mappers (`escape_mapper`): a frozen seed context is never recycled by a fork.
+        if self.escaped() || tsrs_core::sharedgraph::frozen(self) {
             return;
         }
         self.rare.set(self.rare.get() | RARE_ESCAPED);
-        for m in [self.mapper.get(), self.non_fixing_mapper.get(), self.return_mapper(), self.outer_return_mapper()].into_iter().flatten() {
+        for m in [
+            self.mapper.get(),
+            self.non_fixing_mapper.get(),
+            self.return_mapper(),
+            self.outer_return_mapper(),
+        ]
+        .into_iter()
+        .flatten()
+        {
             escape_mapper(m);
         }
     }
@@ -417,17 +433,16 @@ impl InferenceContext {
     }
 
     fn rare_for_write(&self) -> P<InferenceContextRare> {
-        match self.rare() {
-            Some(rare) => rare,
-            None => {
-                let rare = P::new_recycled(InferenceContextRare::default());
-                self.rare.set(rare.to_bits() | (self.rare.get() & RARE_ESCAPED));
-                rare
-            }
+        if let Some(rare) = self.rare() {
+            rare
+        } else {
+            let rare = P::new_recycled(InferenceContextRare::default());
+            self.rare.set(rare.to_bits() | (self.rare.get() & RARE_ESCAPED));
+            rare
         }
     }
     pub fn return_mapper(&self) -> Option<P<TypeMapper>> {
-        self.rare().and_then(|r| r.return_mapper.get())
+        self.rare()?.return_mapper.get()
     }
     // The return mappers live and die with the context: they escape when it does (`escape` walks them), and
     // `recycle` frees them with it (notes/mem-scoped-arenas.md).
@@ -442,7 +457,7 @@ impl InferenceContext {
         }
     }
     pub fn outer_return_mapper(&self) -> Option<P<TypeMapper>> {
-        self.rare().and_then(|r| r.outer_return_mapper.get())
+        self.rare()?.outer_return_mapper.get()
     }
     pub fn set_outer_return_mapper(&self, mapper: Option<P<TypeMapper>>) {
         if mapper.is_some() || self.rare().is_some() {
@@ -541,15 +556,18 @@ impl InferenceContext {
             return;
         }
         if let TypeMapperData::Inference { n, .. } = m.data() {
-            debug_assert!(n.mapper.get() == Some(m));
+            debug_assert_eq!(n.mapper.get(), Some(m));
             InferenceContext::recycle(n);
         }
     }
 }
 
-/// A Go slice field that most of its owners leave empty (inference candidate lists, 1.78M of them on the private monorepo, 64%
-/// never get a covariant and 98% never a contravariant candidate): 8 bytes, and the list lives in an arena
-/// `RefCell<Vec>` allocated by the first `push` or a non-empty `from_vec`. Reads of an absent list see it empty.
+/// Defers allocating vector storage until a slice field needs values.
+///
+/// A Go slice field that most of its owners leave empty: 8 bytes, with the list stored in an arena
+/// `RefCell<Vec>` allocated by the first `push` or a non-empty `from_vec`.
+///
+/// Reads of an absent list see it empty.
 pub struct LazyVec<T: 'static>(Cell<Option<P<RefCell<Vec<T>>>>>);
 
 impl<T> Default for LazyVec<T> {
@@ -606,35 +624,104 @@ pub struct InferenceInfo {
     pub contra_candidates: LazyVec<P<Type>>, // Candidates in contravariant positions
     pub inferred_type: Cell<Option<P<Type>>>, // Cache for resolved inferred type
     pub priority: Cell<InferencePriority>, // Priority of current inference set
-    pub top_level: Cell<bool>, // True if all inferences are to top level occurrences
-    pub is_fixed: Cell<bool>, // True if inferences are fixed
-    pub implied_arity: Cell<i32>, // Implied arity (or -1)
+    pub top_level: Cell<bool>,        // True if all inferences are to top level occurrences
+    pub is_fixed: Cell<bool>,         // True if inferences are fixed
+    pub implied_arity: OptionalCountCell,
 }
 
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(std::mem::size_of::<InferenceInfo>() == if tsrs_core::COMPRESSED_PTRS { 28 } else { 48 });
+const _: () = assert!(
+    std::mem::size_of::<InferenceInfo>() == if tsrs_core::COMPRESSED_PTRS { 28 } else { 48 }
+);
 #[cfg(target_pointer_width = "32")]
 const _: () = assert!(std::mem::size_of::<InferenceInfo>() == 28);
 
-bitflags! {
-    #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Default)]
-    pub struct InferencePriority: i32 {
-        const None = 0;
-        const NakedTypeVariable = 1 << 0; // Naked type variable in union or intersection type
-        const SpeculativeTuple = 1 << 1; // Speculative tuple inference
-        const SubstituteSource = 1 << 2; // Source of inference originated within a substitution type's substitute
-        const HomomorphicMappedType = 1 << 3; // Reverse inference for homomorphic mapped type
-        const PartialHomomorphicMappedType = 1 << 4; // Partial reverse inference for homomorphic mapped type
-        const MappedTypeConstraint = 1 << 5; // Reverse inference for mapped type
-        const ContravariantConditional = 1 << 6; // Conditional type in contravariant position
-        const ReturnType = 1 << 7; // Inference made from return type of generic function
-        const LiteralKeyof = 1 << 8; // Inference made from a string literal to a keyof T
-        const NoConstraints = 1 << 9; // Don't infer from constraints of instantiable types
-        const AlwaysStrict = 1 << 10; // Always use strict rules for contravariant inferences
-        const MaxValue = 1 << 11; // Seed for inference priority tracking
-        const Circularity = -1; // Inference circularity (value less than all other priorities)
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+enum InferencePriorityRepr {
+    Circularity,
+    // Store bits + 1 so zero remains the niche for `Circularity` and the wrapper stays four bytes.
+    Bits(std::num::NonZeroU32),
+}
 
-        const PriorityImpliesCombination = Self::ReturnType.bits() | Self::MappedTypeConstraint.bits() | Self::LiteralKeyof.bits(); // These priorities imply that the resulting type should be a combination of all candidates
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct InferencePriority(InferencePriorityRepr);
+
+#[expect(non_upper_case_globals, reason = "names match the upstream inference priorities")]
+impl InferencePriority {
+    pub const Circularity: Self = Self(InferencePriorityRepr::Circularity);
+    pub const None: Self = Self::from_bits(0);
+    pub const NakedTypeVariable: Self = Self::from_bits(1 << 0); // Naked type variable in union or intersection type
+    pub const SpeculativeTuple: Self = Self::from_bits(1 << 1); // Speculative tuple inference
+    pub const SubstituteSource: Self = Self::from_bits(1 << 2); // Source of inference originated within a substitution type's substitute
+    pub const HomomorphicMappedType: Self = Self::from_bits(1 << 3); // Reverse inference for homomorphic mapped type
+    pub const PartialHomomorphicMappedType: Self = Self::from_bits(1 << 4); // Partial reverse inference for homomorphic mapped type
+    pub const MappedTypeConstraint: Self = Self::from_bits(1 << 5); // Reverse inference for mapped type
+    pub const ContravariantConditional: Self = Self::from_bits(1 << 6); // Conditional type in contravariant position
+    pub const ReturnType: Self = Self::from_bits(1 << 7); // Inference made from return type of generic function
+    pub const LiteralKeyof: Self = Self::from_bits(1 << 8); // Inference made from a string literal to a keyof T
+    // These priorities imply that the resulting type should be a combination of all candidates.
+    pub const PriorityImpliesCombination: Self = Self::from_bits((1 << 7) | (1 << 5) | (1 << 8));
+    pub const NoConstraints: Self = Self::from_bits(1 << 9); // Don't infer from constraints of instantiable types
+    pub const AlwaysStrict: Self = Self::from_bits(1 << 10); // Always use strict rules for contravariant inferences
+    pub const MaxValue: Self = Self::from_bits(1 << 11); // Seed for inference priority tracking
+
+    const fn from_bits(bits: u32) -> Self {
+        // SAFETY: every priority bit is below `MaxValue`, so adding one cannot overflow or produce zero.
+        Self(InferencePriorityRepr::Bits(unsafe { std::num::NonZeroU32::new_unchecked(bits + 1) }))
+    }
+
+    const fn bits(self) -> Option<u32> {
+        match self.0 {
+            InferencePriorityRepr::Circularity => None,
+            InferencePriorityRepr::Bits(bits) => Some(bits.get() - 1),
+        }
+    }
+
+    pub fn intersects(self, other: Self) -> bool {
+        match (self.bits(), other.bits()) {
+            (Some(left), Some(right)) => left & right != 0,
+            _ => false,
+        }
+    }
+
+    pub(crate) fn memo_bits(self) -> u32 {
+        self.bits().unwrap_or(u32::MAX)
+    }
+}
+
+impl Default for InferencePriority {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+const _: () = assert!(std::mem::size_of::<InferencePriority>() == 4);
+
+impl Ord for InferencePriority {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match (self.bits(), other.bits()) {
+            (None, None) => std::cmp::Ordering::Equal,
+            (None, Some(_)) => std::cmp::Ordering::Less,
+            (Some(_), None) => std::cmp::Ordering::Greater,
+            (Some(left), Some(right)) => left.cmp(&right),
+        }
+    }
+}
+
+impl PartialOrd for InferencePriority {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl std::ops::BitOr for InferencePriority {
+    type Output = Self;
+
+    fn bitor(self, rhs: Self) -> Self::Output {
+        match (self.bits(), rhs.bits()) {
+            (Some(left), Some(right)) => Self::from_bits(left | right),
+            _ => Self::Circularity,
+        }
     }
 }
 
@@ -659,7 +746,7 @@ bitflags! {
 
 bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Default)]
-    pub struct DeclarationSpaces: i32 {
+    pub struct DeclarationSpaces: u32 {
         const None = 0;
         const ExportValue = 1 << 0;
         const ExportType = 1 << 1;
@@ -669,7 +756,7 @@ bitflags! {
 
 // IntrinsicTypeKind
 
-#[repr(i32)]
+#[repr(u32)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Default)]
 pub enum IntrinsicTypeKind {
     #[default]
@@ -681,15 +768,16 @@ pub enum IntrinsicTypeKind {
     NoInfer,
 }
 
-pub static intrinsicTypeKinds: LazyLock<FxHashMap<&'static str, IntrinsicTypeKind>> = LazyLock::new(|| {
-    FxHashMap::from_iter([
-        ("Uppercase", IntrinsicTypeKind::Uppercase),
-        ("Lowercase", IntrinsicTypeKind::Lowercase),
-        ("Capitalize", IntrinsicTypeKind::Capitalize),
-        ("Uncapitalize", IntrinsicTypeKind::Uncapitalize),
-        ("NoInfer", IntrinsicTypeKind::NoInfer),
-    ])
-});
+pub static intrinsicTypeKinds: LazyLock<FxHashMap<&'static str, IntrinsicTypeKind>> =
+    LazyLock::new(|| {
+        FxHashMap::from_iter([
+            ("Uppercase", IntrinsicTypeKind::Uppercase),
+            ("Lowercase", IntrinsicTypeKind::Lowercase),
+            ("Capitalize", IntrinsicTypeKind::Capitalize),
+            ("Uncapitalize", IntrinsicTypeKind::Uncapitalize),
+            ("NoInfer", IntrinsicTypeKind::NoInfer),
+        ])
+    });
 
 bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Default)]
@@ -701,7 +789,7 @@ bitflags! {
     }
 }
 
-#[repr(i32)]
+#[repr(u32)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Default)]
 pub enum MappedTypeNameTypeKind {
     #[default]
@@ -710,7 +798,7 @@ pub enum MappedTypeNameTypeKind {
     Remapping,
 }
 
-#[repr(i32)]
+#[repr(u32)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Default)]
 pub enum ReferenceHint {
     #[default]
@@ -842,7 +930,7 @@ pub struct IterationTypes {
     pub next_type: Option<P<Type>>,
 }
 
-#[repr(i32)]
+#[repr(u32)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Default)]
 pub enum IterationTypeKind {
     #[default]
@@ -863,44 +951,85 @@ pub struct IterationTypesResolver {
 
 impl IterationTypesResolver {
     pub fn get_global_iterator_type(&self, c: &mut Checker) -> P<Type> {
-        if self.is_async { c.get_global_async_iterator_type() } else { c.get_global_iterator_type() }
+        if self.is_async {
+            c.get_global_async_iterator_type()
+        } else {
+            c.get_global_iterator_type()
+        }
     }
     pub fn get_global_iterable_type(&self, c: &mut Checker) -> P<Type> {
-        if self.is_async { c.get_global_async_iterable_type() } else { c.get_global_iterable_type() }
+        if self.is_async {
+            c.get_global_async_iterable_type()
+        } else {
+            c.get_global_iterable_type()
+        }
     }
     pub fn get_global_iterable_type_checked(&self, c: &mut Checker) -> P<Type> {
-        if self.is_async { c.get_global_async_iterable_type_checked() } else { c.get_global_iterable_type_checked() }
+        if self.is_async {
+            c.get_global_async_iterable_type_checked()
+        } else {
+            c.get_global_iterable_type_checked()
+        }
     }
     pub fn get_global_iterable_iterator_type(&self, c: &mut Checker) -> P<Type> {
-        if self.is_async { c.get_global_async_iterable_iterator_type() } else { c.get_global_iterable_iterator_type() }
+        if self.is_async {
+            c.get_global_async_iterable_iterator_type()
+        } else {
+            c.get_global_iterable_iterator_type()
+        }
     }
     pub fn get_global_iterable_iterator_type_checked(&self, c: &mut Checker) -> P<Type> {
-        if self.is_async { c.get_global_async_iterable_iterator_type_checked() } else { c.get_global_iterable_iterator_type_checked() }
+        if self.is_async {
+            c.get_global_async_iterable_iterator_type_checked()
+        } else {
+            c.get_global_iterable_iterator_type_checked()
+        }
     }
     pub fn get_global_iterator_object_type(&self, c: &mut Checker) -> P<Type> {
-        if self.is_async { c.get_global_async_iterator_object_type() } else { c.get_global_iterator_object_type() }
+        if self.is_async {
+            c.get_global_async_iterator_object_type()
+        } else {
+            c.get_global_iterator_object_type()
+        }
     }
     pub fn get_global_generator_type(&self, c: &mut Checker) -> P<Type> {
-        if self.is_async { c.get_global_async_generator_type() } else { c.get_global_generator_type() }
+        if self.is_async {
+            c.get_global_async_generator_type()
+        } else {
+            c.get_global_generator_type()
+        }
     }
     pub fn get_global_builtin_iterator_types(&self, c: &mut Checker) -> &'static [P<Type>] {
         if self.is_async {
             if let Some(types) = c.global_builtin_async_iterator_types_cache {
                 return types;
             }
-            let types = c.get_global_types(&["ReadableStreamAsyncIterator"], 1, false /*reportErrors*/);
+            let types = c.get_global_types(
+                &["ReadableStreamAsyncIterator"],
+                1,
+                false, /*reportErrors*/
+            );
             c.global_builtin_async_iterator_types_cache = Some(types);
             types
         } else {
             if let Some(types) = c.global_builtin_iterator_types_cache {
                 return types;
             }
-            let types = c.get_global_types(&["ArrayIterator", "MapIterator", "SetIterator", "StringIterator"], 1, false /*reportErrors*/);
+            let types = c.get_global_types(
+                &["ArrayIterator", "MapIterator", "SetIterator", "StringIterator"],
+                1,
+                false, /*reportErrors*/
+            );
             c.global_builtin_iterator_types_cache = Some(types);
             types
         }
     }
-    pub fn resolve_iteration_type(&self, c: &mut Checker, t: P<Type>, error_node: Option<P<Node>>) -> Option<P<Type>> {
+    pub fn resolve_iteration_type(
+        &self,
+        c: &mut Checker,
+        t: P<Type>,
+        error_node: Option<P<Node>>,
+    ) -> Option<P<Type>> {
         if self.is_async {
             return c.get_awaited_type_ex(
                 t,
@@ -916,7 +1045,7 @@ impl IterationTypesResolver {
 #[derive(Default)]
 pub struct WideningContext {
     pub parent: Cell<Option<P<WideningContext>>>, // Parent context
-    pub property_name: Cell<&'static str>, // Name of property in parent
+    pub property_name: Cell<&'static str>,        // Name of property in parent
     pub siblings: Cell<Option<&'static [P<Type>]>>, // Types of siblings (nil = not computed)
     pub resolved_properties: Cell<Option<&'static [P<Symbol>]>>, // Properties occurring in sibling object literals (nil = not computed)
     pub child_contexts: GoMap<String, P<WideningContext>>,
@@ -929,7 +1058,7 @@ pub struct VarianceStackEntry {
     pub type_parameters: &'static [P<Type>],
 }
 
-pub const maxSerializationLevel: i32 = 2;
+pub const maxSerializationLevel: u32 = 2;
 
 // Checker
 
@@ -943,19 +1072,21 @@ pub struct Checker {
     pub program: &'static dyn Program,
     pub compiler_options: P<CompilerOptions>,
     pub files: &'static [P<SourceFile>],
-    pub file_index_map: FxHashMap<P<SourceFile>, i32>,
-    /// ets-loader getFullyQualifiedName: outer results only, on the ArkTS linter checker.
+    pub file_index_map: FxHashMap<P<SourceFile>, usize>,
+    /// `source_file_and_index_of_node` (utilities.rs): (node key, file key, file index); key 0 is an empty slot.
+    pub(crate) node_file_cache: Vec<(tsrs_core::ptr::PKey, tsrs_core::ptr::PKey, usize)>,
+    /// ets-loader `getFullyQualifiedName`: outer results only, on the `ArkTS` linter checker.
     pub(crate) qualified_name_cache: Option<FxHashMap<P<Symbol>, String>>,
     pub type_count: u32,
     pub symbol_count: u32,
     pub signature_count: u32,
     pub total_instantiation_count: u32,
     pub instantiation_count: u32,
-    /// TSRS_WORK_CENSUS (workcensus.rs); None unless the variable is set.
+    /// `TSRS_WORK_CENSUS` (workcensus.rs); None unless the variable is set.
     pub census: Option<Box<crate::workcensus::Census>>,
-    /// TSRS_UNION_CACHE (unioncache.rs; on by default, off under Go-compatible history).
+    /// `TSRS_UNION_CACHE` (unioncache.rs; on by default, off under Go-compatible history).
     pub(crate) union_front_cache: crate::unioncache::UnionFrontCache,
-    /// TSRS_INFER_MEMO (infermemo.rs; on by default, off under Go-compatible history).
+    /// `TSRS_INFER_MEMO` (infermemo.rs; on by default, off under Go-compatible history).
     pub(crate) infer_memo: crate::infermemo::InferMemo,
     /// Calls of `add_diagnostic` and `add_suggestion_diagnostic`, duplicates included (wrapping): the inference memo
     /// stores only walks that added none.
@@ -972,8 +1103,8 @@ pub struct Checker {
     pub(crate) expression_checks: u32,
     pub instantiation_stack: Vec<P<Type>>,
     pub conditional_constraint_depth: u32,
-    pub inline_level: i32,
-    pub serialization_level: i32,
+    pub inline_level: u32,
+    pub serialization_level: u32,
     pub current_node: Option<P<Node>>,
     /// tsrs-only: the file `check_source_file` is checking. The one check leaf (`SourceFile::is_check_leaf`) whose tree
     /// this checker may read.
@@ -1014,7 +1145,9 @@ pub struct Checker {
     pub bigint_literal_types: FxHashMap<PseudoBigInt, P<Type>>,
     pub enum_literal_types: FxHashMap<EnumLiteralKey, P<Type>>,
     pub enum_nan_literal_types: FxHashMap<P<Symbol>, P<Type>>,
-    pub indexed_access_types: PackedMap<CacheHashKey, P<Type>>,
+    pub indexed_access_types: crate::basedmap::Based<PackedMap<CacheHashKey, P<Type>>>,
+    /// `get_indexed_access_type_by_union_memoized` (`checker_13.rs`).
+    pub(crate) indexed_access_union_memo: FxHashMap<(P<Type>, P<Type>, u32), Option<P<Type>>>,
     pub template_literal_types: PackedMap<CacheHashKey, P<Type>>,
     pub string_mapping_types: FxHashMap<StringMappingKey, P<Type>>,
     pub unique_es_symbol_types: FxHashMap<P<Symbol>, P<Type>>,
@@ -1053,14 +1186,15 @@ pub struct Checker {
     pub name_resolver: P<NameResolver<Checker>>,
     /// Go `resolveNameForSymbolSuggestion`; call through `resolve_name_for_symbol_suggestion`.
     pub name_resolver_for_suggestion: P<NameResolver<Checker>>,
-    pub tuple_types: PackedMap<CacheHashKey, P<Type>>,
-    pub union_types: PackedMap<CacheHashKey, P<Type>>,
-    pub union_of_union_types: FxHashMap<UnionOfUnionKey, P<Type>>,
-    pub intersection_types: PackedMap<CacheHashKey, P<Type>>,
+    pub tuple_types: crate::basedmap::Based<PackedMap<CacheHashKey, P<Type>>>,
+    pub union_types: crate::basedmap::Based<PackedMap<CacheHashKey, P<Type>>>,
+    pub union_of_union_types:
+        crate::basedmap::Based<FxHashMap<UnionOfUnionKey, P<Type>>, UnionOfUnionKey>,
+    pub intersection_types: crate::basedmap::Based<PackedMap<CacheHashKey, P<Type>>>,
     pub properties_types: FxHashMap<PropertiesTypesKey, P<Type>>,
     pub diagnostics: ast::DiagnosticsCollection,
     pub suggestion_diagnostics: ast::DiagnosticsCollection,
-    pub merged_symbols: FxHashMap<P<Symbol>, P<Symbol>>,
+    pub merged_symbols: crate::merged_symbols::MergedSymbols,
     pub factory: ast::NodeFactory,
     pub node_links: LinkStore<Node, NodeLinks>,
     pub signature_links: KeyedLinkStore<Node, SignatureLinks>,
@@ -1095,17 +1229,28 @@ pub struct Checker {
     pub source_file_links: LinkStore<SourceFile, SourceFileLinks>,
     pub reg_exp_scanner: Option<Box<Scanner>>,
     pub pattern_for_type: FxHashMap<P<Type>, P<Node>>,
-    pub(crate) lazy_member_tables: FxHashMap<P<Type>, P<LazyMemberTable>>,
+    pub(crate) lazy_member_tables:
+        crate::basedmap::Based<FxHashMap<P<Type>, P<LazyMemberTable>>, P<Type>>,
+    /// Per generic target, what `prepare_lazy_members` learned about its declared members for good
+    /// (`lazy_unaffected_members`).
+    pub(crate) lazy_unaffected: FxHashMap<P<Type>, crate::checker_09::LazyUnaffected>,
     // Go `StructuredType.objectTypeWithoutAbstractConstructSignatures`: set only by the node builder, for few types,
     // so kept here instead of in every object, union and intersection type.
     pub(crate) object_types_without_abstract_construct_signatures: FxHashMap<P<Type>, P<Type>>,
     // Go `StructuredType.resolvedBaseConstraint` (see `resolved_base_constraint_of`).
     pub(crate) structured_type_base_constraints: FxHashMap<P<Type>, P<Type>>,
     // Go `ObjectType.instantiations` of object types that are not interfaces or tuples (see `ObjectType`).
-    pub(crate) object_type_instantiations: FxHashMap<P<Type>, PackedMap<CacheHashKey, P<Type>>>,
-    pub(crate) lazy_mapped_tables: FxHashMap<P<Type>, std::rc::Rc<LazyMappedTable>>,
-    /// tsrs_core::lazymembers::enabled() (default on; `--noLazyMembers` / `TSRS_LAZY_MEMBERS=0`): no lazy table is created when false.
+    pub(crate) object_type_instantiations:
+        crate::basedmap::Based<FxHashMap<P<Type>, PackedMap<CacheHashKey, P<Type>>>, P<Type>>,
+    pub(crate) lazy_mapped_tables:
+        crate::basedmap::Based<FxHashMap<P<Type>, std::rc::Rc<LazyMappedTable>>, P<Type>>,
+    /// `tsrs_core::lazymembers::enabled()` (default on; `--noLazyMembers` / `TSRS_LAZY_MEMBERS=0`): no lazy
+    /// table is created when false.
     pub lazy_members: bool,
+    /// `TSRS_DEEP_NESTED=shadow`: every deeply-nested test on a relater stack is also made without the
+    /// stack's kept recursion identities, and the kept identities are recomputed; any difference panics
+    /// (`relater_1.rs`).
+    pub(crate) deep_nested_shadow: bool,
     /// notes/mem-lazy.md L1: tuple references get lazy member tables too.
     pub lazy_tuples: bool,
     /// site-counts profile: creation site of each instantiated symbol until its type is resolved.
@@ -1125,9 +1270,35 @@ pub struct Checker {
     /// The member names of `Function`, `CallableFunction`, `NewableFunction` and `Object`, once all four are
     /// resolved (`may_be_augment_member`).
     pub(crate) augment_filter: Option<tsrs_ast::NameFilter>,
-    /// Instrumentation (feature `assignment-stats`): every type / symbol this checker created.
-    #[cfg(feature = "assignment-stats")]
-    pub stats_created: (Vec<P<Type>>, Vec<P<Symbol>>),
+    /// Reused buffers for `get_unmatched_property_recording` (`relater_1.rs`), one per nested
+    /// `propertiesRelatedTo`.
+    #[expect(
+        clippy::option_option,
+        reason = "The outer option records whether a result is available; the inner option records an absent value."
+    )]
+    pub(crate) unmatched_found_pool: Vec<Vec<Option<Option<P<Symbol>>>>>,
+    /// Reused buffers for `some_property_reduces_to_never` (`checker_11.rs`), one per nested call.
+    pub(crate) name_counts_pool: Vec<crate::checker_11::NameCounts>,
+    /// `contextual_property_type_of_large_union` (`checker_15.rs`): per (union, name hash), the name, the
+    /// `members_reset_epoch` it was computed in and the positions of the constituents that can contribute.
+    pub(crate) contextual_relevant:
+        FxHashMap<(P<Type>, u32), Vec<(&'static str, u32, std::rc::Rc<[u32]>)>>,
+    /// `discriminant_property_types` (`relater_1.rs`): per (union, name hash), the name, the
+    /// `members_reset_epoch` it was computed in and, by constituent, the property type when known for good.
+    pub(crate) discriminant_property_types:
+        FxHashMap<(P<Type>, u32), Vec<(&'static str, u32, std::rc::Rc<[Option<Option<P<Type>>>]>)>>,
+    /// `constituent_flags` (`checker_13.rs`): the flags of the constituents of a large union or intersection,
+    /// nested ones included.
+    pub(crate) constituent_flags: FxHashMap<P<Type>, TypeFlags>,
+    /// `intersection_recursion_ids` (`relater_1.rs`): the recursion identities of an intersection's
+    /// constituents.
+    pub(crate) intersection_recursion_ids: FxHashMap<P<Type>, &'static [u64]>,
+    /// Bumped whenever a type's resolved members are reset (`get_base_types`, `canonicalize_base_type_cycles`).
+    pub(crate) members_reset_epoch: u32,
+    /// Structured type member resolutions in progress: while any is, a member table may be incomplete.
+    pub(crate) members_resolving: u32,
+    /// The last `program.get_emit_module_format_of_file` answer (`emit_module_format_of_file`).
+    pub(crate) last_emit_module_format: Option<(P<SourceFile>, ModuleKind)>,
     pub context_free_types: FxHashMap<P<Node>, P<Type>>,
     pub any_type: P<Type>,
     pub auto_type: P<Type>,
@@ -1226,10 +1397,10 @@ pub struct Checker {
     pub base_types_depth: u32,
     pub base_types_resolved_log: Vec<P<Type>>,
     pub base_types_circular: Vec<P<Type>>,
-    pub resolution_start: i32,
+    pub resolution_start: usize,
     pub variance_stack: Vec<VarianceStackEntry>,
     pub call_resolution_stack: Vec<P<Node>>,
-    pub apparent_argument_count: Option<i32>,
+    pub apparent_argument_count: Option<usize>,
     pub last_get_combined_node_flags_node: Option<P<Node>>,
     pub last_get_combined_node_flags_result: NodeFlags,
     pub last_get_combined_modifier_flags_node: Option<P<Node>>,
@@ -1241,7 +1412,7 @@ pub struct Checker {
     pub shared_flows: Vec<SharedFlow>,
     pub antecedent_types: Vec<P<Type>>,
     pub flow_analysis_disabled: bool,
-    pub flow_invocation_count: i32,
+    pub flow_invocation_count: u32,
     pub flow_type_cache: Option<FxHashMap<P<Node>, P<Type>>>, // Go nil map, saved/restored as a whole
     /// The flow memo (flowmemo.rs). Boxed: the checker's hot fields keep their offsets.
     pub flow_memo: Box<crate::flowmemo::FlowMemo>,
@@ -1268,24 +1439,68 @@ pub struct Checker {
     pub get_global_import_meta_type_cache: Option<P<Type>>,
     pub get_global_import_attributes_type_cache: Option<P<Type>>,
     pub get_global_import_attributes_type_checked_cache: Option<P<Type>>,
+    #[expect(
+        clippy::option_option,
+        reason = "The outer option records whether a result is available; the inner option records an absent value."
+    )]
     pub get_global_non_nullable_type_alias_or_nil_cache: Option<Option<P<Symbol>>>,
+    #[expect(
+        clippy::option_option,
+        reason = "The outer option records whether a result is available; the inner option records an absent value."
+    )]
     pub get_global_extract_symbol_cache: Option<Option<P<Symbol>>>,
     pub get_global_disposable_type_cache: Option<P<Type>>,
     pub get_global_async_disposable_type_cache: Option<P<Type>>,
+    #[expect(
+        clippy::option_option,
+        reason = "The outer option records whether a result is available; the inner option records an absent value."
+    )]
     pub get_global_awaited_symbol_cache: Option<Option<P<Symbol>>>,
+    #[expect(
+        clippy::option_option,
+        reason = "The outer option records whether a result is available; the inner option records an absent value."
+    )]
     pub get_global_awaited_symbol_or_nil_cache: Option<Option<P<Symbol>>>,
+    #[expect(
+        clippy::option_option,
+        reason = "The outer option records whether a result is available; the inner option records an absent value."
+    )]
     pub get_global_nan_symbol_or_nil_cache: Option<Option<P<Symbol>>>,
+    #[expect(
+        clippy::option_option,
+        reason = "The outer option records whether a result is available; the inner option records an absent value."
+    )]
     pub get_global_record_symbol_cache: Option<Option<P<Symbol>>>,
     pub get_global_template_strings_array_type_cache: Option<P<Type>>,
+    #[expect(
+        clippy::option_option,
+        reason = "The outer option records whether a result is available; the inner option records an absent value."
+    )]
     pub get_global_es_symbol_constructor_symbol_or_nil_cache: Option<Option<P<Symbol>>>,
+    #[expect(
+        clippy::option_option,
+        reason = "The outer option records whether a result is available; the inner option records an absent value."
+    )]
     pub get_global_es_symbol_constructor_type_symbol_or_nil_cache: Option<Option<P<Symbol>>>,
     pub get_global_import_call_options_type_cache: Option<P<Type>>,
     pub get_global_import_call_options_type_checked_cache: Option<P<Type>>,
     pub get_global_promise_type_cache: Option<P<Type>>,
     pub get_global_promise_type_checked_cache: Option<P<Type>>,
     pub get_global_promise_like_type_cache: Option<P<Type>>,
+    #[expect(
+        clippy::option_option,
+        reason = "The outer option records whether a result is available; the inner option records an absent value."
+    )]
     pub get_global_promise_constructor_symbol_cache: Option<Option<P<Symbol>>>,
+    #[expect(
+        clippy::option_option,
+        reason = "The outer option records whether a result is available; the inner option records an absent value."
+    )]
     pub get_global_promise_constructor_symbol_or_nil_cache: Option<Option<P<Symbol>>>,
+    #[expect(
+        clippy::option_option,
+        reason = "The outer option records whether a result is available; the inner option records an absent value."
+    )]
     pub get_global_omit_symbol_cache: Option<Option<P<Symbol>>>,
     pub get_global_iterator_type_cache: Option<P<Type>>,
     pub get_global_iterable_type_cache: Option<P<Type>>,
@@ -1316,8 +1531,8 @@ pub struct Checker {
     pub global_builtin_async_iterator_types_cache: Option<&'static [P<Type>]>,
     pub sync_iteration_types_resolver: P<IterationTypesResolver>,
     pub async_iteration_types_resolver: P<IterationTypesResolver>,
-    pub _jsx_namespace: String,
-    pub _jsx_factory_entity: Option<P<Node>>,
+    pub jsx_namespace: String,
+    pub jsx_factory_entity: Option<P<Node>>,
     pub skip_direct_inference_nodes: Set<P<Node>>,
     pub ctx: Option<Context>, // Go nil until checkSourceFile
     pub active_mappers: Vec<P<TypeMapper>>,
@@ -1329,6 +1544,8 @@ pub struct Checker {
     pub scratch_mapper_lists: Vec<(P<TypeMapper>, &'static [P<Type>])>,
     pub free_type_mapper_caches: Vec<PackedMap<CacheHashKey, P<Type>>>, // Rust-only: cleared maps for reuse (Go keeps them in the slice capacity)
     pub free_type_lists: Vec<Vec<P<Type>>>, // Rust-only: empty buffers for `instantiate_types_changed`
+    pub free_strings: Vec<String>, // Rust-only: empty buffers for text built and dropped in one call
+    pub free_name_sets: Vec<FxHashSet<&'static str>>, // Rust-only: empty sets for names seen during one walk
     pub ambient_modules_once: bool, // Go sync.Once: true once ambient_modules has been computed
     pub ambient_modules: Vec<P<Symbol>>,
     pub within_unreachable_code: bool,
@@ -1351,6 +1568,12 @@ pub struct Checker {
     /// (`forget_scratch_keyed_caches`, notes/mem-emit-regions.md).
     pub scratch_keyed_chain_cache: Vec<(P<Symbol>, accessibleChainCacheKey)>,
     pub emit_resolver: Option<P<EmitResolver>>, // Go `emitResolver` + `emitResolverOnce`: None until `get_emit_resolver`
+    /// Shared graph (`tsrs_core::sharedgraph`): this checker's values for lazy fields of frozen objects.
+    pub overlay: Box<tsrs_core::sharedgraph::Overlay>,
+    /// Shared graph: this checker is the seed whose graph will be frozen (symbol ids are assigned eagerly).
+    pub seed_mode: bool,
+    /// Shared graph: made by `fork` from the frozen seed.
+    pub is_fork: bool,
 }
 
 // checker.go:911
@@ -1359,7 +1582,7 @@ pub fn new_checker(program: &'static dyn Program) -> Box<Checker> {
     new_checker_with_options(program, program.options(), false)
 }
 
-/// The ArkTS linter checks the same bound program with exactly four strict overrides.
+/// The `ArkTS` linter checks the same bound program with exactly four strict overrides.
 pub fn new_arkts_linter_checker(program: &'static dyn Program) -> Box<Checker> {
     let mut options = (*program.options()).clone();
     options.strict_null_checks = Tristate::True;
@@ -1371,10 +1594,10 @@ pub fn new_arkts_linter_checker(program: &'static dyn Program) -> Box<Checker> {
 
 fn new_checker_with_options(program: &'static dyn Program, compiler_options: P<CompilerOptions>, for_arkts_linter: bool) -> Box<Checker> {
     program.bind_source_files();
-    crate::types::census_layouts();
 
     // Placeholders for pointer fields Go leaves nil until they are assigned below.
-    let dummy_type = Type::alloc(TypeFlags::None, ObjectFlags::None, TypeId(0), IntrinsicType::default());
+    let dummy_type =
+        Type::alloc(TypeFlags::None, ObjectFlags::None, TypeId(0), IntrinsicType::default());
     let dummy_symbol = P::new(Symbol::default());
     let dummy_mapper = new_simple_type_mapper(dummy_type, dummy_type);
     let dummy_signature = P::new(Signature::default());
@@ -1395,6 +1618,7 @@ fn new_checker_with_options(program: &'static dyn Program, compiler_options: P<C
         compiler_options,
         files,
         file_index_map: create_file_index_map(files),
+        node_file_cache: Vec::new(),
         qualified_name_cache: for_arkts_linter.then(FxHashMap::default),
         type_count: 0,
         symbol_count: 0,
@@ -1425,26 +1649,37 @@ fn new_checker_with_options(program: &'static dyn Program, compiler_options: P<C
         is_inference_partially_blocked: false,
         legacy_decorators: compiler_options.experimental_decorators == Tristate::True,
         emit_standard_class_fields: compiler_options.get_emit_standard_class_fields(),
-        strict_null_checks: compiler_options.get_strict_option_value(compiler_options.strict_null_checks),
-        strict_function_types: compiler_options.get_strict_option_value(compiler_options.strict_function_types),
-        strict_bind_call_apply: compiler_options.get_strict_option_value(compiler_options.strict_bind_call_apply),
-        strict_property_initialization: compiler_options.get_strict_option_value(compiler_options.strict_property_initialization),
-        strict_builtin_iterator_return: compiler_options.get_strict_option_value(compiler_options.strict_builtin_iterator_return),
+        strict_null_checks: compiler_options
+            .get_strict_option_value(compiler_options.strict_null_checks),
+        strict_function_types: compiler_options
+            .get_strict_option_value(compiler_options.strict_function_types),
+        strict_bind_call_apply: compiler_options
+            .get_strict_option_value(compiler_options.strict_bind_call_apply),
+        strict_property_initialization: compiler_options
+            .get_strict_option_value(compiler_options.strict_property_initialization),
+        strict_builtin_iterator_return: compiler_options
+            .get_strict_option_value(compiler_options.strict_builtin_iterator_return),
         no_implicit_any: compiler_options.get_strict_option_value(compiler_options.no_implicit_any),
-        no_implicit_this: compiler_options.get_strict_option_value(compiler_options.no_implicit_this),
-        use_unknown_in_catch_variables: compiler_options.get_strict_option_value(compiler_options.use_unknown_in_catch_variables),
-        exact_optional_property_types: compiler_options.exact_optional_property_types == Tristate::True,
-        can_collect_symbol_alias_accessibility_data: compiler_options.verbatim_module_syntax.is_false_or_unknown(),
+        no_implicit_this: compiler_options
+            .get_strict_option_value(compiler_options.no_implicit_this),
+        use_unknown_in_catch_variables: compiler_options
+            .get_strict_option_value(compiler_options.use_unknown_in_catch_variables),
+        exact_optional_property_types: compiler_options.exact_optional_property_types
+            == Tristate::True,
+        can_collect_symbol_alias_accessibility_data: compiler_options
+            .verbatim_module_syntax
+            .is_false_or_unknown(),
         was_canceled: false,
         array_variances: alloc_slice(&[VarianceFlags::Covariant]),
-        globals: SymbolTable::with_capacity(count_global_symbols(files) as usize),
+        globals: SymbolTable::with_capacity(count_global_symbols(files)),
         string_literal_types: StringLiteralTypes::default(),
         number_literal_types: FxHashMap::default(),
         nan_type: None,
         bigint_literal_types: FxHashMap::default(),
         enum_literal_types: FxHashMap::default(),
         enum_nan_literal_types: FxHashMap::default(),
-        indexed_access_types: PackedMap::default(),
+        indexed_access_types: crate::basedmap::Based::default(),
+        indexed_access_union_memo: FxHashMap::default(),
         template_literal_types: PackedMap::default(),
         string_mapping_types: FxHashMap::default(),
         unique_es_symbol_types: FxHashMap::default(),
@@ -1478,14 +1713,14 @@ fn new_checker_with_options(program: &'static dyn Program, compiler_options: P<C
         class_expression_name_tables: FxHashMap::default(),
         name_resolver: dummy_resolver,
         name_resolver_for_suggestion: dummy_resolver,
-        tuple_types: PackedMap::default(),
-        union_types: PackedMap::default(),
-        union_of_union_types: FxHashMap::default(),
-        intersection_types: PackedMap::default(),
+        tuple_types: crate::basedmap::Based::default(),
+        union_types: crate::basedmap::Based::default(),
+        union_of_union_types: crate::basedmap::Based::default(),
+        intersection_types: crate::basedmap::Based::default(),
         properties_types: FxHashMap::default(),
         diagnostics: ast::DiagnosticsCollection::default(),
         suggestion_diagnostics: ast::DiagnosticsCollection::default(),
-        merged_symbols: FxHashMap::default(),
+        merged_symbols: crate::merged_symbols::MergedSymbols::default(),
         factory: ast::NodeFactory::default(),
         node_links: LinkStore::default(),
         signature_links: KeyedLinkStore::default(),
@@ -1520,12 +1755,14 @@ fn new_checker_with_options(program: &'static dyn Program, compiler_options: P<C
         source_file_links: LinkStore::default(),
         reg_exp_scanner: None,
         pattern_for_type: FxHashMap::default(),
-        lazy_member_tables: FxHashMap::default(),
+        lazy_member_tables: crate::basedmap::Based::default(),
+        lazy_unaffected: FxHashMap::default(),
         object_types_without_abstract_construct_signatures: FxHashMap::default(),
         structured_type_base_constraints: FxHashMap::default(),
-        object_type_instantiations: FxHashMap::default(),
-        lazy_mapped_tables: FxHashMap::default(),
+        object_type_instantiations: crate::basedmap::Based::default(),
+        lazy_mapped_tables: crate::basedmap::Based::default(),
         lazy_members: tsrs_core::lazymembers::enabled(),
+        deep_nested_shadow: std::env::var("TSRS_DEEP_NESTED").is_ok_and(|v| v == "shadow"),
         lazy_tuples: tsrs_core::lazymembers::lazy_tuples(),
         #[cfg(feature = "site-counts")]
         inst_symbol_sites: FxHashMap::default(),
@@ -1534,10 +1771,17 @@ fn new_checker_with_options(program: &'static dyn Program, compiler_options: P<C
         lazy_has_prop: tsrs_core::lazymembers::lazy_has_prop(),
         lazy_unmatched: tsrs_core::lazymembers::lazy_unmatched(),
         lazy_empty: tsrs_core::lazymembers::lazy_empty(),
-        lazy_member_stats: Default::default(),
+        lazy_member_stats: tsrs_core::lazymembers::LazyMemberStats::default(),
         augment_filter: None,
-        #[cfg(feature = "assignment-stats")]
-        stats_created: Default::default(),
+        unmatched_found_pool: Vec::new(),
+        name_counts_pool: Vec::new(),
+        contextual_relevant: FxHashMap::default(),
+        discriminant_property_types: FxHashMap::default(),
+        constituent_flags: FxHashMap::default(),
+        intersection_recursion_ids: FxHashMap::default(),
+        members_reset_epoch: 0,
+        members_resolving: 0,
+        last_emit_module_format: None,
         context_free_types: FxHashMap::default(),
         any_type: dummy_type,
         auto_type: dummy_type,
@@ -1723,8 +1967,8 @@ fn new_checker_with_options(program: &'static dyn Program, compiler_options: P<C
         global_builtin_async_iterator_types_cache: None,
         sync_iteration_types_resolver: dummy_iteration_resolver,
         async_iteration_types_resolver: dummy_iteration_resolver,
-        _jsx_namespace: String::new(),
-        _jsx_factory_entity: None,
+        jsx_namespace: String::new(),
+        jsx_factory_entity: None,
         skip_direct_inference_nodes: Set::new(),
         ctx: None,
         active_mappers: Vec::new(),
@@ -1734,6 +1978,8 @@ fn new_checker_with_options(program: &'static dyn Program, compiler_options: P<C
         scratch_mapper_lists: Vec::new(),
         free_type_mapper_caches: Vec::new(),
         free_type_lists: Vec::new(),
+        free_strings: Vec::new(),
+        free_name_sets: Vec::new(),
         ambient_modules_once: false,
         ambient_modules: Vec::new(),
         within_unreachable_code: false,
@@ -1741,12 +1987,15 @@ fn new_checker_with_options(program: &'static dyn Program, compiler_options: P<C
         non_existent_properties: Set::new(),
         deferred_diagnostic_callbacks: Vec::new(),
         exports_by_target_index: FxHashMap::default(),
-        module_export_index: Default::default(),
+        module_export_index: ModuleExportIndex::default(),
         alias_cache_blockers: 1,
         unassigned_type: dummy_type,
         type_to_string_nodebuilder: None,
         scratch_keyed_chain_cache: Vec::new(),
         emit_resolver: None,
+        overlay: Box::default(),
+        seed_mode: false,
+        is_fork: false,
     });
     c.undefined_symbol = c.new_symbol(SymbolFlags::Property, "undefined");
     c.arguments_symbol = c.new_symbol(SymbolFlags::Property, "arguments");
@@ -1763,57 +2012,82 @@ fn new_checker_with_options(program: &'static dyn Program, compiler_options: P<C
     c.blocked_string_type = c.new_intrinsic_type(TypeFlags::Any, "any");
     c.error_type = c.new_intrinsic_type(TypeFlags::Any, "error");
     c.unresolved_type = c.new_intrinsic_type(TypeFlags::Any, "unresolved");
-    c.non_inferrable_any_type = c.new_intrinsic_type_ex(TypeFlags::Any, "any", ObjectFlags::ContainsWideningType);
+    c.non_inferrable_any_type =
+        c.new_intrinsic_type_ex(TypeFlags::Any, "any", ObjectFlags::ContainsWideningType);
     c.intrinsic_marker_type = c.new_intrinsic_type(TypeFlags::Any, "intrinsic");
     c.unknown_type = c.new_intrinsic_type(TypeFlags::Unknown, "unknown");
     c.undefined_type = c.new_intrinsic_type(TypeFlags::Undefined, "undefined");
     c.undefined_widening_type = c.create_widening_type(c.undefined_type);
     c.missing_type = c.new_intrinsic_type(TypeFlags::Undefined, "undefined");
-    c.undefined_or_missing_type = if c.exact_optional_property_types { c.missing_type } else { c.undefined_type };
+    c.undefined_or_missing_type =
+        if c.exact_optional_property_types { c.missing_type } else { c.undefined_type };
     c.optional_type = c.new_intrinsic_type(TypeFlags::Undefined, "undefined");
     c.null_type = c.new_intrinsic_type(TypeFlags::Null, "null");
     c.null_widening_type = c.create_widening_type(c.null_type);
     c.string_type = c.new_intrinsic_type(TypeFlags::String, "string");
     c.number_type = c.new_intrinsic_type(TypeFlags::Number, "number");
     c.bigint_type = c.new_intrinsic_type(TypeFlags::BigInt, "bigint");
-    c.regular_false_type = c.new_literal_type(TypeFlags::BooleanLiteral, Some(LiteralValue::Boolean(false)), None);
-    c.false_type = c.new_literal_type(TypeFlags::BooleanLiteral, Some(LiteralValue::Boolean(false)), Some(c.regular_false_type));
+    c.regular_false_type =
+        c.new_literal_type(TypeFlags::BooleanLiteral, Some(LiteralValue::Boolean(false)), None);
+    c.false_type = c.new_literal_type(
+        TypeFlags::BooleanLiteral,
+        Some(LiteralValue::Boolean(false)),
+        Some(c.regular_false_type),
+    );
     c.regular_false_type.as_literal_type().fresh_type.set(Some(c.false_type));
     c.false_type.as_literal_type().fresh_type.set(Some(c.false_type));
-    c.regular_true_type = c.new_literal_type(TypeFlags::BooleanLiteral, Some(LiteralValue::Boolean(true)), None);
-    c.true_type = c.new_literal_type(TypeFlags::BooleanLiteral, Some(LiteralValue::Boolean(true)), Some(c.regular_true_type));
+    c.regular_true_type =
+        c.new_literal_type(TypeFlags::BooleanLiteral, Some(LiteralValue::Boolean(true)), None);
+    c.true_type = c.new_literal_type(
+        TypeFlags::BooleanLiteral,
+        Some(LiteralValue::Boolean(true)),
+        Some(c.regular_true_type),
+    );
     c.regular_true_type.as_literal_type().fresh_type.set(Some(c.true_type));
     c.true_type.as_literal_type().fresh_type.set(Some(c.true_type));
     c.boolean_type = c.get_union_type(&[c.regular_false_type, c.regular_true_type]);
     c.es_symbol_type = c.new_intrinsic_type(TypeFlags::ESSymbol, "symbol");
     c.void_type = c.new_intrinsic_type(TypeFlags::Void, "void");
     c.never_type = c.new_intrinsic_type(TypeFlags::Never, "never");
-    c.silent_never_type = c.new_intrinsic_type_ex(TypeFlags::Never, "never", ObjectFlags::NonInferrableType);
+    c.silent_never_type =
+        c.new_intrinsic_type_ex(TypeFlags::Never, "never", ObjectFlags::NonInferrableType);
     c.implicit_never_type = c.new_intrinsic_type(TypeFlags::Never, "never");
     c.unreachable_never_type = c.new_intrinsic_type(TypeFlags::Never, "never");
     c.non_primitive_type = c.new_intrinsic_type(TypeFlags::NonPrimitive, "object");
     c.string_or_number_type = c.get_union_type(&[c.string_type, c.number_type]);
-    c.string_number_symbol_type = c.get_union_type(&[c.string_type, c.number_type, c.es_symbol_type]);
+    c.string_number_symbol_type =
+        c.get_union_type(&[c.string_type, c.number_type, c.es_symbol_type]);
     c.number_or_big_int_type = c.get_union_type(&[c.number_type, c.bigint_type]);
     c.numeric_string_type = c.get_template_literal_type(&["", ""], &[c.number_type]); // The `${number}` type
-    c.template_constraint_type = c.get_union_type(&[c.string_type, c.number_type, c.boolean_type, c.bigint_type, c.null_type, c.undefined_type]);
+    c.template_constraint_type = c.get_union_type(&[
+        c.string_type,
+        c.number_type,
+        c.boolean_type,
+        c.bigint_type,
+        c.null_type,
+        c.undefined_type,
+    ]);
     c.unique_literal_type = c.new_intrinsic_type(TypeFlags::Never, "never"); // Special `never` flagged by union reduction to behave as a literal
-    c.unique_literal_mapper = new_function_type_mapper(|c, t| c.get_unique_literal_type_for_type_parameter(t));
-    c.report_unreliable_mapper = new_function_type_mapper(|c, t| c.report_unreliable_worker(t));
-    c.report_unmeasurable_mapper = new_function_type_mapper(|c, t| c.report_unmeasurable_worker(t));
-    c.restrictive_mapper = new_function_type_mapper(|c, t| c.restrictive_mapper_worker(t));
-    c.permissive_mapper = new_function_type_mapper(|c, t| c.permissive_mapper_worker(t));
+    c.unique_literal_mapper =
+        new_function_type_mapper(Checker::get_unique_literal_type_for_type_parameter);
+    c.report_unreliable_mapper = new_function_type_mapper(Checker::report_unreliable_worker);
+    c.report_unmeasurable_mapper = new_function_type_mapper(Checker::report_unmeasurable_worker);
+    c.restrictive_mapper = new_function_type_mapper(Checker::restrictive_mapper_worker);
+    c.permissive_mapper = new_function_type_mapper(Checker::permissive_mapper_worker);
     c.empty_object_type = c.new_anonymous_type(None /*symbol*/, None, &[], &[], &[]);
     c.empty_jsx_object_type = c.new_anonymous_type(None /*symbol*/, None, &[], &[], &[]);
     c.empty_fresh_jsx_object_type = c.new_anonymous_type(None /*symbol*/, None, &[], &[], &[]);
     let type_literal_symbol = c.new_symbol(SymbolFlags::TypeLiteral, ast::InternalSymbolNameType);
-    c.empty_type_literal_type = c.new_anonymous_type(Some(type_literal_symbol), None, &[], &[], &[]);
+    c.empty_type_literal_type =
+        c.new_anonymous_type(Some(type_literal_symbol), None, &[], &[], &[]);
     c.unknown_empty_object_type = c.new_anonymous_type(None /*symbol*/, None, &[], &[], &[]);
     c.unknown_union_type = c.create_unknown_union_type();
     c.empty_generic_type = c.new_anonymous_type(None /*symbol*/, None, &[], &[], &[]);
     c.object_type_instantiations.insert(c.empty_generic_type, PackedMap::default());
     c.any_function_type = c.new_anonymous_type(None /*symbol*/, None, &[], &[], &[]);
-    c.any_function_type.object_flags.set(c.any_function_type.object_flags.get() | ObjectFlags::NonInferrableType);
+    c.any_function_type
+        .object_flags
+        .set(c.any_function_type.object_flags.get_lazy() | ObjectFlags::NonInferrableType);
     c.no_constraint_type = c.new_anonymous_type(None /*symbol*/, None, &[], &[], &[]);
     c.circular_constraint_type = c.new_anonymous_type(None /*symbol*/, None, &[], &[], &[]);
     c.resolving_default_type = c.new_anonymous_type(None /*symbol*/, None, &[], &[], &[]);
@@ -1823,17 +2097,32 @@ fn new_checker_with_options(program: &'static dyn Program, compiler_options: P<C
     c.marker_other_type = c.new_type_parameter(None);
     c.marker_super_type_for_check = c.new_type_parameter(None);
     c.marker_sub_type_for_check = c.new_type_parameter(None);
-    c.marker_sub_type_for_check.as_type_parameter().constraint.set(Some(c.marker_super_type_for_check));
+    c.marker_sub_type_for_check
+        .as_type_parameter()
+        .constraint
+        .set(Some(c.marker_super_type_for_check));
     c.no_type_predicate = P::new(TypePredicate {
         kind: Cell::new(TypePredicateKind::Identifier),
-        parameter_index: Cell::new(0),
+        parameter_index: Cell::new(Some(0)),
         parameter_name: Cell::new("<<unresolved>>"),
         t: Cell::new(Some(c.any_type)),
     });
-    c.any_signature = c.new_signature(SignatureFlags::None, None, &[], None, &[], Some(c.any_type), None, 0);
-    c.unknown_signature = c.new_signature(SignatureFlags::None, None, &[], None, &[], Some(c.error_type), None, 0);
-    c.resolving_signature = c.new_signature(SignatureFlags::None, None, &[], None, &[], Some(c.any_type), None, 0);
-    c.silent_never_signature = c.new_signature(SignatureFlags::None, None, &[], None, &[], Some(c.silent_never_type), None, 0);
+    c.any_signature =
+        c.new_signature(SignatureFlags::None, None, &[], None, &[], Some(c.any_type), None, 0);
+    c.unknown_signature =
+        c.new_signature(SignatureFlags::None, None, &[], None, &[], Some(c.error_type), None, 0);
+    c.resolving_signature =
+        c.new_signature(SignatureFlags::None, None, &[], None, &[], Some(c.any_type), None, 0);
+    c.silent_never_signature = c.new_signature(
+        SignatureFlags::None,
+        None,
+        &[],
+        None,
+        &[],
+        Some(c.silent_never_type),
+        None,
+        0,
+    );
     c.enum_number_index_info = P::new(IndexInfo {
         key_type: Cell::new(Some(c.number_type)),
         value_type: Cell::new(Some(c.string_type)),
@@ -1851,7 +2140,8 @@ fn new_checker_with_options(program: &'static dyn Program, compiler_options: P<C
     c.zero_big_int_type = c.get_big_int_literal_type(PseudoBigInt::default());
     let mut typeof_names: Vec<&'static str> = typeofNEFacts.keys().copied().collect();
     typeof_names.sort_unstable();
-    let typeof_types: Vec<P<Type>> = typeof_names.iter().map(|name| c.get_string_literal_type(name)).collect();
+    let typeof_types: Vec<P<Type>> =
+        typeof_names.iter().map(|name| c.get_string_literal_type(name)).collect();
     c.typeof_type = c.get_union_type(&typeof_types);
     c.oh_sdk.enabled = !for_arkts_linter || compiler_options.strict_checker_only == Tristate::True;
     c.initialize_ets_lib_files();
@@ -1865,11 +2155,466 @@ fn new_checker_with_options(program: &'static dyn Program, compiler_options: P<C
 // Methods for Go's function-valued Checker fields.
 
 impl Checker {
-    pub(crate) fn compare_symbols(&mut self, s1: Option<P<Symbol>>, s2: Option<P<Symbol>>) -> i32 {
+    /// Shared graph (`tsrs_core::sharedgraph`): a checker whose history is the frozen seed `base`'s, then
+    /// its own. Interning and identity maps are cloned (their keys and values point into the frozen graph), pure memos
+    /// start empty, link stores read through to the base's and copy a record on first access, stacks start empty.
+    pub fn fork(base: &'static Checker) -> Box<Checker> {
+        base.assert_freezable();
+        let mut c = Box::new(Checker {
+            // Relaxed: the counter only hands out distinct ids (as in new_checker).
+            id: nextCheckerID.fetch_add(1, Ordering::Relaxed) + 1,
+            program: base.program,
+            compiler_options: base.compiler_options,
+            files: base.files,
+            file_index_map: base.file_index_map.clone(),
+            type_count: base.type_count,
+            symbol_count: base.symbol_count,
+            signature_count: base.signature_count,
+            total_instantiation_count: base.total_instantiation_count,
+            instantiation_count: base.instantiation_count,
+            census: crate::workcensus::census_path().map(|_| crate::workcensus::Census::new()),
+            union_front_cache: crate::unioncache::UnionFrontCache::new(),
+            infer_memo: crate::infermemo::InferMemo::new(),
+            // A fork's history is the seed's, then its own (`fork`): it continues the seed's TS2590 bookkeeping and
+            // shares its tuple element type parameters (frozen types).
+            too_complex_reports: base.too_complex_reports,
+            too_complex_nodes: base.too_complex_nodes.clone(),
+            too_complex_reported: base.too_complex_reported.clone(),
+            tuple_elements: base.tuple_elements.clone(),
+            diagnostic_adds: base.diagnostic_adds,
+            expression_checks: base.expression_checks,
+            instantiation_stack: Vec::new(),
+            conditional_constraint_depth: base.conditional_constraint_depth,
+            inline_level: base.inline_level,
+            serialization_level: base.serialization_level,
+            current_node: None,
+            checking_file: None,
+            statements_checked_in_pieces: None,
+            // The seed's history: its checks deferred to files it did not check run in the fork that checks them.
+            deferred_type_argument_checks: base.deferred_type_argument_checks.clone(),
+            variance_type_parameter: None,
+            language_version: base.language_version,
+            module_kind: base.module_kind,
+            module_resolution_kind: base.module_resolution_kind,
+            is_inference_partially_blocked: base.is_inference_partially_blocked,
+            legacy_decorators: base.legacy_decorators,
+            emit_standard_class_fields: base.emit_standard_class_fields,
+            strict_null_checks: base.strict_null_checks,
+            strict_function_types: base.strict_function_types,
+            strict_bind_call_apply: base.strict_bind_call_apply,
+            strict_property_initialization: base.strict_property_initialization,
+            strict_builtin_iterator_return: base.strict_builtin_iterator_return,
+            no_implicit_any: base.no_implicit_any,
+            no_implicit_this: base.no_implicit_this,
+            use_unknown_in_catch_variables: base.use_unknown_in_catch_variables,
+            exact_optional_property_types: base.exact_optional_property_types,
+            can_collect_symbol_alias_accessibility_data: base
+                .can_collect_symbol_alias_accessibility_data,
+            was_canceled: base.was_canceled,
+            array_variances: base.array_variances,
+            globals: base.globals,
+            string_literal_types: base.string_literal_types.fork(),
+            number_literal_types: base.number_literal_types.clone(),
+            nan_type: base.nan_type,
+            bigint_literal_types: base.bigint_literal_types.clone(),
+            enum_literal_types: base.enum_literal_types.clone(),
+            enum_nan_literal_types: base.enum_nan_literal_types.clone(),
+            indexed_access_types: crate::basedmap::Based::over(&base.indexed_access_types),
+            node_file_cache: Vec::new(),
+            qualified_name_cache: None,
+            oh_sdk: if base.oh_sdk.enabled {
+                crate::oh_sdk_jsdoc::OhSdkState::new()
+            } else {
+                crate::oh_sdk_jsdoc::OhSdkState::default()
+            },
+            ets_lib_files: base.ets_lib_files.clone(),
+            throws: None,
+            annotation_links: LinkStore::default(),
+            last_emit_module_format: None,
+            indexed_access_union_memo: FxHashMap::default(),
+            template_literal_types: base.template_literal_types.clone(),
+            string_mapping_types: base.string_mapping_types.clone(),
+            unique_es_symbol_types: base.unique_es_symbol_types.clone(),
+            this_expando_kinds: base.this_expando_kinds.clone(),
+            this_expando_locations: base.this_expando_locations.clone(),
+            subtype_reduction_cache: base.subtype_reduction_cache.clone(),
+            cached_types: base.cached_types.clone(),
+            cached_signatures: base.cached_signatures.clone(),
+            undefined_properties: base.undefined_properties.clone(),
+            undefined_properties_by_prop: base.undefined_properties_by_prop.clone(),
+            narrowed_types: base.narrowed_types.clone(),
+            assignment_reduced_types: base.assignment_reduced_types.clone(),
+            discriminated_contextual_types: base.discriminated_contextual_types.clone(),
+            instantiation_expression_types: base.instantiation_expression_types.clone(),
+            substitution_types: base.substitution_types.clone(),
+            reverse_mapped_cache: base.reverse_mapped_cache.clone(),
+            reverse_homomorphic_mapped_cache: base.reverse_homomorphic_mapped_cache.clone(),
+            iteration_types_cache: base.iteration_types_cache.clone(),
+            marker_types: base.marker_types.clone(),
+            resolving_explicit_type_of_symbol: base.resolving_explicit_type_of_symbol.clone(),
+            undefined_symbol: base.undefined_symbol,
+            arguments_symbol: base.arguments_symbol,
+            require_symbol: base.require_symbol,
+            unknown_symbol: base.unknown_symbol,
+            unresolved_symbols: base.unresolved_symbols.clone(),
+            error_types: base.error_types.clone(),
+            module_symbols: base.module_symbols.clone(),
+            resolved_module_source_files: base.resolved_module_source_files.clone(),
+            global_this_symbol: base.global_this_symbol,
+            symbol_table_alias_cache: base.symbol_table_alias_cache.clone(),
+            class_expression_name_tables: base.class_expression_name_tables.clone(),
+            name_resolver: base.name_resolver,
+            name_resolver_for_suggestion: base.name_resolver_for_suggestion,
+            tuple_types: crate::basedmap::Based::over(&base.tuple_types),
+            union_types: crate::basedmap::Based::over(&base.union_types),
+            union_of_union_types: crate::basedmap::Based::over(&base.union_of_union_types),
+            intersection_types: crate::basedmap::Based::over(&base.intersection_types),
+            properties_types: base.properties_types.clone(),
+            diagnostics: base.diagnostics.clone(),
+            suggestion_diagnostics: base.suggestion_diagnostics.clone(),
+            merged_symbols: base.merged_symbols.clone(),
+            factory: ast::NodeFactory::default(),
+            node_links: base.node_links.fork(),
+            signature_links: base.signature_links.fork(),
+            symbol_node_links: base.symbol_node_links.fork(),
+            type_node_links: base.type_node_links.fork(),
+            enum_member_links: base.enum_member_links.fork(),
+            assertion_links: base.assertion_links.fork(),
+            array_literal_links: base.array_literal_links.fork(),
+            switch_statement_links: base.switch_statement_links.fork(),
+            jsx_element_links: base.jsx_element_links.fork(),
+            computed_name_links: base.computed_name_links.fork(),
+            symbol_reference_links: base.symbol_reference_links.fork(),
+            value_symbol_links: base.value_symbol_links.fork(),
+            mapped_symbol_links: base.mapped_symbol_links.fork(),
+            deferred_symbol_links: base.deferred_symbol_links.fork(),
+            alias_symbol_links: base.alias_symbol_links.fork(),
+            module_symbol_links: base.module_symbol_links.fork(),
+            late_bound_links: base.late_bound_links.fork(),
+            export_type_links: base.export_type_links.fork(),
+            members_and_exports_links: base.members_and_exports_links.fork(),
+            type_alias_links: base.type_alias_links.fork(),
+            declared_type_links: base.declared_type_links.fork(),
+            spread_links: base.spread_links.fork(),
+            variance_links: base.variance_links.fork(),
+            reverse_mapped_symbol_links: base.reverse_mapped_symbol_links.fork(),
+            marked_assignment_symbol_links: base.marked_assignment_symbol_links.fork(),
+            symbol_container_links: base.symbol_container_links.fork(),
+            source_file_links: base.source_file_links.fork(),
+            reg_exp_scanner: None,
+            pattern_for_type: base.pattern_for_type.clone(),
+            lazy_member_tables: crate::basedmap::Based::over(&base.lazy_member_tables),
+            lazy_unaffected: FxHashMap::default(),
+            object_types_without_abstract_construct_signatures: base
+                .object_types_without_abstract_construct_signatures
+                .clone(),
+            structured_type_base_constraints: base.structured_type_base_constraints.clone(),
+            object_type_instantiations: crate::basedmap::Based::over(
+                &base.object_type_instantiations,
+            ),
+            lazy_mapped_tables: crate::basedmap::Based::over(&base.lazy_mapped_tables),
+            lazy_members: base.lazy_members,
+            deep_nested_shadow: base.deep_nested_shadow,
+            lazy_tuples: base.lazy_tuples,
+            #[cfg(feature = "site-counts")]
+            inst_symbol_sites: base.inst_symbol_sites.clone(),
+            lazy_cond_mapper: base.lazy_cond_mapper,
+            lazy_prop_cache: base.lazy_prop_cache,
+            lazy_has_prop: base.lazy_has_prop,
+            lazy_unmatched: base.lazy_unmatched,
+            lazy_empty: base.lazy_empty,
+            lazy_member_stats: base.lazy_member_stats,
+            augment_filter: base.augment_filter,
+            unmatched_found_pool: Vec::new(),
+            name_counts_pool: Vec::new(),
+            contextual_relevant: FxHashMap::default(),
+            discriminant_property_types: FxHashMap::default(),
+            constituent_flags: FxHashMap::default(),
+            intersection_recursion_ids: FxHashMap::default(),
+            members_reset_epoch: 0,
+            members_resolving: 0,
+            context_free_types: base.context_free_types.clone(),
+            any_type: base.any_type,
+            auto_type: base.auto_type,
+            wildcard_type: base.wildcard_type,
+            blocked_string_type: base.blocked_string_type,
+            error_type: base.error_type,
+            unresolved_type: base.unresolved_type,
+            non_inferrable_any_type: base.non_inferrable_any_type,
+            intrinsic_marker_type: base.intrinsic_marker_type,
+            unknown_type: base.unknown_type,
+            undefined_type: base.undefined_type,
+            undefined_widening_type: base.undefined_widening_type,
+            missing_type: base.missing_type,
+            undefined_or_missing_type: base.undefined_or_missing_type,
+            optional_type: base.optional_type,
+            null_type: base.null_type,
+            null_widening_type: base.null_widening_type,
+            string_type: base.string_type,
+            number_type: base.number_type,
+            bigint_type: base.bigint_type,
+            regular_false_type: base.regular_false_type,
+            false_type: base.false_type,
+            regular_true_type: base.regular_true_type,
+            true_type: base.true_type,
+            boolean_type: base.boolean_type,
+            es_symbol_type: base.es_symbol_type,
+            void_type: base.void_type,
+            never_type: base.never_type,
+            silent_never_type: base.silent_never_type,
+            implicit_never_type: base.implicit_never_type,
+            unreachable_never_type: base.unreachable_never_type,
+            non_primitive_type: base.non_primitive_type,
+            string_or_number_type: base.string_or_number_type,
+            string_number_symbol_type: base.string_number_symbol_type,
+            number_or_big_int_type: base.number_or_big_int_type,
+            template_constraint_type: base.template_constraint_type,
+            numeric_string_type: base.numeric_string_type,
+            unique_literal_type: base.unique_literal_type,
+            unique_literal_mapper: base.unique_literal_mapper,
+            reliability_flags: base.reliability_flags,
+            report_unreliable_mapper: base.report_unreliable_mapper,
+            report_unmeasurable_mapper: base.report_unmeasurable_mapper,
+            restrictive_mapper: base.restrictive_mapper,
+            permissive_mapper: base.permissive_mapper,
+            empty_object_type: base.empty_object_type,
+            empty_jsx_object_type: base.empty_jsx_object_type,
+            empty_fresh_jsx_object_type: base.empty_fresh_jsx_object_type,
+            empty_type_literal_type: base.empty_type_literal_type,
+            unknown_empty_object_type: base.unknown_empty_object_type,
+            unknown_union_type: base.unknown_union_type,
+            empty_generic_type: base.empty_generic_type,
+            any_function_type: base.any_function_type,
+            no_constraint_type: base.no_constraint_type,
+            circular_constraint_type: base.circular_constraint_type,
+            resolving_default_type: base.resolving_default_type,
+            marker_super_type: base.marker_super_type,
+            marker_sub_type: base.marker_sub_type,
+            marker_other_type: base.marker_other_type,
+            marker_super_type_for_check: base.marker_super_type_for_check,
+            marker_sub_type_for_check: base.marker_sub_type_for_check,
+            no_type_predicate: base.no_type_predicate,
+            any_signature: base.any_signature,
+            unknown_signature: base.unknown_signature,
+            resolving_signature: base.resolving_signature,
+            silent_never_signature: base.silent_never_signature,
+            cached_arguments_referenced: base.cached_arguments_referenced.clone(),
+            enum_number_index_info: base.enum_number_index_info,
+            any_base_type_index_info: base.any_base_type_index_info,
+            pattern_ambient_modules: base.pattern_ambient_modules.clone(),
+            pattern_ambient_module_augmentations: base.pattern_ambient_module_augmentations,
+            pattern_ambient_module_augmentation_targets: base
+                .pattern_ambient_module_augmentation_targets,
+            module_import_attributes_types: base.module_import_attributes_types.clone(),
+            global_object_type: base.global_object_type,
+            global_function_type: base.global_function_type,
+            global_callable_function_type: base.global_callable_function_type,
+            global_newable_function_type: base.global_newable_function_type,
+            global_array_type: base.global_array_type,
+            global_readonly_array_type: base.global_readonly_array_type,
+            global_string_type: base.global_string_type,
+            global_number_type: base.global_number_type,
+            global_boolean_type: base.global_boolean_type,
+            global_reg_exp_type: base.global_reg_exp_type,
+            global_this_type: base.global_this_type,
+            any_array_type: base.any_array_type,
+            auto_array_type: base.auto_array_type,
+            any_readonly_array_type: base.any_readonly_array_type,
+            deferred_global_import_meta_expression_type: base
+                .deferred_global_import_meta_expression_type,
+            contextual_binding_patterns: Vec::new(),
+            empty_string_type: base.empty_string_type,
+            zero_type: base.zero_type,
+            zero_big_int_type: base.zero_big_int_type,
+            typeof_type: base.typeof_type,
+            // Not always empty between files (webpack: 102 left on the stack); a fork continues the seed's history.
+            type_resolutions: base.type_resolutions.clone(),
+            base_types_depth: base.base_types_depth,
+            base_types_resolved_log: Vec::new(),
+            base_types_circular: Vec::new(),
+            resolution_start: base.resolution_start,
+            variance_stack: Vec::new(),
+            call_resolution_stack: Vec::new(),
+            apparent_argument_count: base.apparent_argument_count,
+            last_get_combined_node_flags_node: None,
+            last_get_combined_node_flags_result: NodeFlags::None,
+            last_get_combined_modifier_flags_node: None,
+            last_get_combined_modifier_flags_result: ModifierFlags::None,
+            freeinference_state: None,
+            free_flow_state: None,
+            flow_loop_cache: FxHashMap::default(),
+            flow_loop_stack: Vec::new(),
+            shared_flows: Vec::new(),
+            antecedent_types: Vec::new(),
+            flow_analysis_disabled: base.flow_analysis_disabled,
+            flow_invocation_count: base.flow_invocation_count,
+            flow_type_cache: None,
+            flow_memo: Box::new(crate::flowmemo::FlowMemo::new()),
+            last_flow_node: None,
+            last_flow_node_reachable: false,
+            flow_node_reachable: FxHashMap::default(),
+            flow_node_post_super: FxHashMap::default(),
+            renamed_binding_elements_in_types: Vec::new(),
+            contextual_infos: Vec::new(),
+            inference_context_infos: Vec::new(),
+            awaited_type_stack: Vec::new(),
+            reverse_mapped_source_stack: Vec::new(),
+            reverse_mapped_target_stack: Vec::new(),
+            reverse_expanding_flags: base.reverse_expanding_flags,
+            free_relater: None,
+            subtype_relation: P::new(Relation::default()),
+            strict_subtype_relation: P::new(Relation::default()),
+            assignable_relation: P::new(Relation::default()),
+            comparable_relation: P::new(Relation::default()),
+            identity_relation: P::new(Relation::default()),
+            enum_relation: base.enum_relation.clone(),
+            get_global_es_symbol_type_cache: base.get_global_es_symbol_type_cache,
+            get_global_big_int_type_cache: base.get_global_big_int_type_cache,
+            get_global_import_meta_type_cache: base.get_global_import_meta_type_cache,
+            get_global_import_attributes_type_cache: base.get_global_import_attributes_type_cache,
+            get_global_import_attributes_type_checked_cache: base
+                .get_global_import_attributes_type_checked_cache,
+            get_global_non_nullable_type_alias_or_nil_cache: base
+                .get_global_non_nullable_type_alias_or_nil_cache,
+            get_global_extract_symbol_cache: base.get_global_extract_symbol_cache,
+            get_global_disposable_type_cache: base.get_global_disposable_type_cache,
+            get_global_async_disposable_type_cache: base.get_global_async_disposable_type_cache,
+            get_global_awaited_symbol_cache: base.get_global_awaited_symbol_cache,
+            get_global_awaited_symbol_or_nil_cache: base.get_global_awaited_symbol_or_nil_cache,
+            get_global_nan_symbol_or_nil_cache: base.get_global_nan_symbol_or_nil_cache,
+            get_global_record_symbol_cache: base.get_global_record_symbol_cache,
+            get_global_template_strings_array_type_cache: base
+                .get_global_template_strings_array_type_cache,
+            get_global_es_symbol_constructor_symbol_or_nil_cache: base
+                .get_global_es_symbol_constructor_symbol_or_nil_cache,
+            get_global_es_symbol_constructor_type_symbol_or_nil_cache: base
+                .get_global_es_symbol_constructor_type_symbol_or_nil_cache,
+            get_global_import_call_options_type_cache: base
+                .get_global_import_call_options_type_cache,
+            get_global_import_call_options_type_checked_cache: base
+                .get_global_import_call_options_type_checked_cache,
+            get_global_promise_type_cache: base.get_global_promise_type_cache,
+            get_global_promise_type_checked_cache: base.get_global_promise_type_checked_cache,
+            get_global_promise_like_type_cache: base.get_global_promise_like_type_cache,
+            get_global_promise_constructor_symbol_cache: base
+                .get_global_promise_constructor_symbol_cache,
+            get_global_promise_constructor_symbol_or_nil_cache: base
+                .get_global_promise_constructor_symbol_or_nil_cache,
+            get_global_omit_symbol_cache: base.get_global_omit_symbol_cache,
+            get_global_iterator_type_cache: base.get_global_iterator_type_cache,
+            get_global_iterable_type_cache: base.get_global_iterable_type_cache,
+            get_global_iterable_type_checked_cache: base.get_global_iterable_type_checked_cache,
+            get_global_iterable_iterator_type_cache: base.get_global_iterable_iterator_type_cache,
+            get_global_iterable_iterator_type_checked_cache: base
+                .get_global_iterable_iterator_type_checked_cache,
+            get_global_iterator_object_type_cache: base.get_global_iterator_object_type_cache,
+            get_global_generator_type_cache: base.get_global_generator_type_cache,
+            get_global_async_iterator_type_cache: base.get_global_async_iterator_type_cache,
+            get_global_async_iterable_type_cache: base.get_global_async_iterable_type_cache,
+            get_global_async_iterable_type_checked_cache: base
+                .get_global_async_iterable_type_checked_cache,
+            get_global_async_iterable_iterator_type_cache: base
+                .get_global_async_iterable_iterator_type_cache,
+            get_global_async_iterable_iterator_type_checked_cache: base
+                .get_global_async_iterable_iterator_type_checked_cache,
+            get_global_async_iterator_object_type_cache: base
+                .get_global_async_iterator_object_type_cache,
+            get_global_async_generator_type_cache: base.get_global_async_generator_type_cache,
+            get_global_iterator_yield_result_type_cache: base
+                .get_global_iterator_yield_result_type_cache,
+            get_global_iterator_return_result_type_cache: base
+                .get_global_iterator_return_result_type_cache,
+            get_global_typed_property_descriptor_type_cache: base
+                .get_global_typed_property_descriptor_type_cache,
+            get_global_class_decorator_context_type_cache: base
+                .get_global_class_decorator_context_type_cache,
+            get_global_class_method_decorator_context_type_cache: base
+                .get_global_class_method_decorator_context_type_cache,
+            get_global_class_getter_decorator_context_type_cache: base
+                .get_global_class_getter_decorator_context_type_cache,
+            get_global_class_setter_decorator_context_type_cache: base
+                .get_global_class_setter_decorator_context_type_cache,
+            get_global_class_accessor_decorator_context_type_cache: base
+                .get_global_class_accessor_decorator_context_type_cache,
+            get_global_class_accessor_decorator_target_type_cache: base
+                .get_global_class_accessor_decorator_target_type_cache,
+            get_global_class_accessor_decorator_result_type_cache: base
+                .get_global_class_accessor_decorator_result_type_cache,
+            get_global_class_field_decorator_context_type_cache: base
+                .get_global_class_field_decorator_context_type_cache,
+            global_builtin_iterator_types_cache: base.global_builtin_iterator_types_cache,
+            global_builtin_async_iterator_types_cache: base
+                .global_builtin_async_iterator_types_cache,
+            sync_iteration_types_resolver: base.sync_iteration_types_resolver,
+            async_iteration_types_resolver: base.async_iteration_types_resolver,
+            jsx_namespace: base.jsx_namespace.clone(),
+            jsx_factory_entity: base.jsx_factory_entity,
+            skip_direct_inference_nodes: base.skip_direct_inference_nodes.clone(),
+            ctx: None,
+            active_mappers: Vec::new(),
+            active_type_mappers_caches: Vec::new(),
+            scratch_mappers: Vec::new(),
+            scratch_contexts: Vec::new(),
+            scratch_mapper_lists: Vec::new(),
+            free_type_mapper_caches: Vec::new(),
+            free_type_lists: Vec::new(),
+            free_strings: Vec::new(),
+            free_name_sets: Vec::new(),
+            ambient_modules_once: base.ambient_modules_once,
+            ambient_modules: base.ambient_modules.clone(),
+            within_unreachable_code: base.within_unreachable_code,
+            reported_unreachable_nodes: base.reported_unreachable_nodes.clone(),
+            non_existent_properties: base.non_existent_properties.clone(),
+            deferred_diagnostic_callbacks: Vec::new(),
+            exports_by_target_index: FxHashMap::default(),
+            module_export_index: ModuleExportIndex::default(),
+            alias_cache_blockers: base.alias_cache_blockers,
+            unassigned_type: base.unassigned_type,
+            type_to_string_nodebuilder: None,
+            scratch_keyed_chain_cache: Vec::new(),
+            emit_resolver: None,
+            overlay: Box::default(),
+            seed_mode: false,
+            is_fork: true,
+        });
+        c.name_resolver = c.create_name_resolver();
+        c.name_resolver_for_suggestion = c.create_name_resolver_for_suggestion();
+        c
+    }
+
+    /// Shared graph: the checker is between files, so its graph can be frozen.
+    pub fn assert_freezable(&self) {
+        assert!(
+            self.instantiation_stack.is_empty()
+                && self.variance_stack.is_empty()
+                && self.call_resolution_stack.is_empty()
+                && self.flow_loop_stack.is_empty()
+                && self.current_node.is_none()
+                && self.deferred_diagnostic_callbacks.is_empty(),
+            "shared graph: the seed checker is not at a file boundary: resolutions {} instantiations {} variances {} calls {} flow loops {} node {} deferred {}",
+            self.type_resolutions.len(),
+            self.instantiation_stack.len(),
+            self.variance_stack.len(),
+            self.call_resolution_stack.len(),
+            self.flow_loop_stack.len(),
+            self.current_node.is_some(),
+            self.deferred_diagnostic_callbacks.len()
+        );
+    }
+
+    pub(crate) fn compare_symbols(
+        &mut self,
+        s1: Option<P<Symbol>>,
+        s2: Option<P<Symbol>>,
+    ) -> std::cmp::Ordering {
         self.compare_symbols_worker(s1, s2)
     }
 
-    pub(crate) fn compare_symbol_chains(&mut self, a: &[P<Symbol>], b: &[P<Symbol>]) -> i32 {
+    pub(crate) fn compare_symbol_chains(
+        &mut self,
+        a: &[P<Symbol>],
+        b: &[P<Symbol>],
+    ) -> std::cmp::Ordering {
         self.compare_symbol_chains_worker(a, b)
     }
 
@@ -1901,15 +2646,23 @@ impl Checker {
 
     /// Go `c.evaluate = evaluator.NewEvaluator(c.evaluateEntity, ast.OEKParentheses)`.
     pub(crate) fn evaluate(&mut self, expr: P<Node>, location: P<Node>) -> evaluator::Result {
-        evaluator::evaluate(self, |c, expr, location| c.evaluate_entity(expr, Some(location)), ast::OuterExpressionKinds::Parentheses, expr, location)
+        evaluator::evaluate(
+            self,
+            |c, expr, location| c.evaluate_entity(expr, Some(location)),
+            ast::OuterExpressionKinds::Parentheses,
+            expr,
+            location,
+        )
     }
 
     pub(crate) fn is_primitive_or_object_or_empty_type(&mut self, t: P<Type>) -> bool {
-        t.flags().intersects(TypeFlags::Primitive | TypeFlags::NonPrimitive) || self.is_empty_anonymous_object_type(t)
+        t.flags().intersects(TypeFlags::Primitive | TypeFlags::NonPrimitive)
+            || self.is_empty_anonymous_object_type(t)
     }
 
-    pub(crate) fn contains_missing_type(&mut self, t: P<Type>) -> bool {
-        t == self.missing_type || t.flags().intersects(TypeFlags::Union) && t.types()[0] == self.missing_type
+    pub(crate) fn contains_missing_type(&self, t: P<Type>) -> bool {
+        t == self.missing_type
+            || t.flags().intersects(TypeFlags::Union) && t.types()[0] == self.missing_type
     }
 
     /// The worker's two cached answers inline (most calls); the worker repeats them.
@@ -1918,7 +2671,7 @@ impl Checker {
         if !t.flags().intersects(TypeFlags::StructuredOrInstantiable) {
             return false;
         }
-        let object_flags = t.object_flags();
+        let object_flags = t.object_flags_lazy();
         if object_flags.intersects(ObjectFlags::CouldContainTypeVariablesComputed) {
             return object_flags.intersects(ObjectFlags::CouldContainTypeVariables);
         }
@@ -1933,18 +2686,37 @@ impl Checker {
         self.mark_node_assignments_worker(node)
     }
 
-    pub(crate) fn compare_types_assignable(&mut self, source: P<Type>, target: P<Type>, report_errors: bool) -> Ternary {
+    pub(crate) fn compare_types_assignable(
+        &mut self,
+        source: P<Type>,
+        target: P<Type>,
+        report_errors: bool,
+    ) -> Ternary {
         self.compare_types_assignable_worker(source, target, report_errors)
     }
 
-    /// `c.compareTypesAssignable` used as a value (`TypeComparer`).
-    pub(crate) fn compare_types_assignable_comparer(&self) -> TypeComparer {
-        type_comparer(|c, s, t, report_errors| c.compare_types_assignable(s, t, report_errors))
+    /// `c.compareTypesAssignable` used as a value (`TypeComparer`): a function item, so no arena allocation per call.
+    pub(crate) fn compare_types_assignable_comparer() -> TypeComparer {
+        fn compare_types_assignable(
+            c: &mut Checker,
+            s: P<Type>,
+            t: P<Type>,
+            report_errors: bool,
+        ) -> Ternary {
+            c.compare_types_assignable(s, t, report_errors)
+        }
+        &compare_types_assignable
     }
 
     /// The closure built by Go `getGlobalTypesResolver(names, arity, reportErrors)`.
-    pub(crate) fn get_global_types(&mut self, names: &[&str], arity: i32, report_errors: bool) -> &'static [P<Type>] {
-        let types: Vec<P<Type>> = names.iter().map(|name| self.get_global_type(name, arity, report_errors)).collect();
+    pub(crate) fn get_global_types(
+        &mut self,
+        names: &[&str],
+        arity: usize,
+        report_errors: bool,
+    ) -> &'static [P<Type>] {
+        let types: Vec<P<Type>> =
+            names.iter().map(|name| self.get_global_type(name, arity, report_errors)).collect();
         alloc_slice(&types)
     }
 
@@ -1981,7 +2753,8 @@ impl Checker {
         if let Some(t) = self.get_global_import_attributes_type_cache {
             return t;
         }
-        let t = self.get_global_type("ImportAttributes", 0 /*arity*/, false /*reportErrors*/);
+        let t =
+            self.get_global_type("ImportAttributes", 0 /*arity*/, false /*reportErrors*/);
         self.get_global_import_attributes_type_cache = Some(t);
         t
     }
@@ -1990,7 +2763,8 @@ impl Checker {
         if let Some(t) = self.get_global_import_attributes_type_checked_cache {
             return t;
         }
-        let t = self.get_global_type("ImportAttributes", 0 /*arity*/, true /*reportErrors*/);
+        let t =
+            self.get_global_type("ImportAttributes", 0 /*arity*/, true /*reportErrors*/);
         self.get_global_import_attributes_type_checked_cache = Some(t);
         t
     }
@@ -1999,7 +2773,11 @@ impl Checker {
         if let Some(s) = self.get_global_non_nullable_type_alias_or_nil_cache {
             return s;
         }
-        let s = self.get_global_type_alias_symbol("NonNullable", 1 /*arity*/, false /*reportErrors*/);
+        let s = self.get_global_type_alias_symbol(
+            "NonNullable",
+            1,     /*arity*/
+            false, /*reportErrors*/
+        );
         self.get_global_non_nullable_type_alias_or_nil_cache = Some(s);
         s
     }
@@ -2008,7 +2786,8 @@ impl Checker {
         if let Some(s) = self.get_global_extract_symbol_cache {
             return s;
         }
-        let s = self.get_global_type_alias_symbol("Extract", 2 /*arity*/, true /*reportErrors*/);
+        let s = self
+            .get_global_type_alias_symbol("Extract", 2 /*arity*/, true /*reportErrors*/);
         self.get_global_extract_symbol_cache = Some(s);
         s
     }
@@ -2026,7 +2805,8 @@ impl Checker {
         if let Some(t) = self.get_global_async_disposable_type_cache {
             return t;
         }
-        let t = self.get_global_type("AsyncDisposable", 0 /*arity*/, true /*reportErrors*/);
+        let t =
+            self.get_global_type("AsyncDisposable", 0 /*arity*/, true /*reportErrors*/);
         self.get_global_async_disposable_type_cache = Some(t);
         t
     }
@@ -2035,7 +2815,8 @@ impl Checker {
         if let Some(s) = self.get_global_awaited_symbol_cache {
             return s;
         }
-        let s = self.get_global_type_alias_symbol("Awaited", 1 /*arity*/, true /*reportErrors*/);
+        let s = self
+            .get_global_type_alias_symbol("Awaited", 1 /*arity*/, true /*reportErrors*/);
         self.get_global_awaited_symbol_cache = Some(s);
         s
     }
@@ -2044,7 +2825,8 @@ impl Checker {
         if let Some(s) = self.get_global_awaited_symbol_or_nil_cache {
             return s;
         }
-        let s = self.get_global_type_alias_symbol("Awaited", 1 /*arity*/, false /*reportErrors*/);
+        let s = self
+            .get_global_type_alias_symbol("Awaited", 1 /*arity*/, false /*reportErrors*/);
         self.get_global_awaited_symbol_or_nil_cache = Some(s);
         s
     }
@@ -2053,7 +2835,11 @@ impl Checker {
         if let Some(s) = self.get_global_nan_symbol_or_nil_cache {
             return s;
         }
-        let s = self.get_global_symbol("NaN", SymbolFlags::Value, if false { Some(&diagnostics::Cannot_find_global_value_0) } else { None });
+        let s = self.get_global_symbol(
+            "NaN",
+            SymbolFlags::Value,
+            if false { Some(&diagnostics::Cannot_find_global_value_0) } else { None },
+        );
         self.get_global_nan_symbol_or_nil_cache = Some(s);
         s
     }
@@ -2062,7 +2848,8 @@ impl Checker {
         if let Some(s) = self.get_global_record_symbol_cache {
             return s;
         }
-        let s = self.get_global_type_alias_symbol("Record", 2 /*arity*/, true /*reportErrors*/);
+        let s = self
+            .get_global_type_alias_symbol("Record", 2 /*arity*/, true /*reportErrors*/);
         self.get_global_record_symbol_cache = Some(s);
         s
     }
@@ -2071,7 +2858,11 @@ impl Checker {
         if let Some(t) = self.get_global_template_strings_array_type_cache {
             return t;
         }
-        let t = self.get_global_type("TemplateStringsArray", 0 /*arity*/, true /*reportErrors*/);
+        let t = self.get_global_type(
+            "TemplateStringsArray",
+            0,    /*arity*/
+            true, /*reportErrors*/
+        );
         self.get_global_template_strings_array_type_cache = Some(t);
         t
     }
@@ -2080,16 +2871,26 @@ impl Checker {
         if let Some(s) = self.get_global_es_symbol_constructor_symbol_or_nil_cache {
             return s;
         }
-        let s = self.get_global_symbol("Symbol", SymbolFlags::Value, if false { Some(&diagnostics::Cannot_find_global_value_0) } else { None });
+        let s = self.get_global_symbol(
+            "Symbol",
+            SymbolFlags::Value,
+            if false { Some(&diagnostics::Cannot_find_global_value_0) } else { None },
+        );
         self.get_global_es_symbol_constructor_symbol_or_nil_cache = Some(s);
         s
     }
 
-    pub(crate) fn get_global_es_symbol_constructor_type_symbol_or_nil(&mut self) -> Option<P<Symbol>> {
+    pub(crate) fn get_global_es_symbol_constructor_type_symbol_or_nil(
+        &mut self,
+    ) -> Option<P<Symbol>> {
         if let Some(s) = self.get_global_es_symbol_constructor_type_symbol_or_nil_cache {
             return s;
         }
-        let s = self.get_global_symbol("SymbolConstructor", SymbolFlags::Type, if false { Some(&diagnostics::Cannot_find_global_type_0) } else { None });
+        let s = self.get_global_symbol(
+            "SymbolConstructor",
+            SymbolFlags::Type,
+            if false { Some(&diagnostics::Cannot_find_global_type_0) } else { None },
+        );
         self.get_global_es_symbol_constructor_type_symbol_or_nil_cache = Some(s);
         s
     }
@@ -2098,7 +2899,11 @@ impl Checker {
         if let Some(t) = self.get_global_import_call_options_type_cache {
             return t;
         }
-        let t = self.get_global_type("ImportCallOptions", 0 /*arity*/, false /*reportErrors*/);
+        let t = self.get_global_type(
+            "ImportCallOptions",
+            0,     /*arity*/
+            false, /*reportErrors*/
+        );
         self.get_global_import_call_options_type_cache = Some(t);
         t
     }
@@ -2107,7 +2912,8 @@ impl Checker {
         if let Some(t) = self.get_global_import_call_options_type_checked_cache {
             return t;
         }
-        let t = self.get_global_type("ImportCallOptions", 0 /*arity*/, true /*reportErrors*/);
+        let t =
+            self.get_global_type("ImportCallOptions", 0 /*arity*/, true /*reportErrors*/);
         self.get_global_import_call_options_type_checked_cache = Some(t);
         t
     }
@@ -2143,7 +2949,11 @@ impl Checker {
         if let Some(s) = self.get_global_promise_constructor_symbol_cache {
             return s;
         }
-        let s = self.get_global_symbol("Promise", SymbolFlags::Value, if true { Some(&diagnostics::Cannot_find_global_value_0) } else { None });
+        let s = self.get_global_symbol(
+            "Promise",
+            SymbolFlags::Value,
+            if true { Some(&diagnostics::Cannot_find_global_value_0) } else { None },
+        );
         self.get_global_promise_constructor_symbol_cache = Some(s);
         s
     }
@@ -2152,7 +2962,11 @@ impl Checker {
         if let Some(s) = self.get_global_promise_constructor_symbol_or_nil_cache {
             return s;
         }
-        let s = self.get_global_symbol("Promise", SymbolFlags::Value, if false { Some(&diagnostics::Cannot_find_global_value_0) } else { None });
+        let s = self.get_global_symbol(
+            "Promise",
+            SymbolFlags::Value,
+            if false { Some(&diagnostics::Cannot_find_global_value_0) } else { None },
+        );
         self.get_global_promise_constructor_symbol_or_nil_cache = Some(s);
         s
     }
@@ -2161,7 +2975,8 @@ impl Checker {
         if let Some(s) = self.get_global_omit_symbol_cache {
             return s;
         }
-        let s = self.get_global_type_alias_symbol("Omit", 2 /*arity*/, true /*reportErrors*/);
+        let s =
+            self.get_global_type_alias_symbol("Omit", 2 /*arity*/, true /*reportErrors*/);
         self.get_global_omit_symbol_cache = Some(s);
         s
     }
@@ -2197,7 +3012,11 @@ impl Checker {
         if let Some(t) = self.get_global_iterable_iterator_type_cache {
             return t;
         }
-        let t = self.get_global_type("IterableIterator", if self.compiler_options.ets_loader_path.is_empty() { 3 } else { 1 } /* OH 4.9 arity */, false /*reportErrors*/);
+        let t = self.get_global_type(
+            "IterableIterator",
+            if self.compiler_options.ets_loader_path.is_empty() { 3 } else { 1 }, // OH 4.9 arity
+            false, /*reportErrors*/
+        );
         self.get_global_iterable_iterator_type_cache = Some(t);
         t
     }
@@ -2206,7 +3025,11 @@ impl Checker {
         if let Some(t) = self.get_global_iterable_iterator_type_checked_cache {
             return t;
         }
-        let t = self.get_global_type("IterableIterator", if self.compiler_options.ets_loader_path.is_empty() { 3 } else { 1 } /* OH 4.9 arity */, true /*reportErrors*/);
+        let t = self.get_global_type(
+            "IterableIterator",
+            if self.compiler_options.ets_loader_path.is_empty() { 3 } else { 1 }, // OH 4.9 arity
+            true, /*reportErrors*/
+        );
         self.get_global_iterable_iterator_type_checked_cache = Some(t);
         t
     }
@@ -2215,7 +3038,8 @@ impl Checker {
         if let Some(t) = self.get_global_iterator_object_type_cache {
             return t;
         }
-        let t = self.get_global_type("IteratorObject", 3 /*arity*/, false /*reportErrors*/);
+        let t =
+            self.get_global_type("IteratorObject", 3 /*arity*/, false /*reportErrors*/);
         self.get_global_iterator_object_type_cache = Some(t);
         t
     }
@@ -2233,7 +3057,8 @@ impl Checker {
         if let Some(t) = self.get_global_async_iterator_type_cache {
             return t;
         }
-        let t = self.get_global_type("AsyncIterator", 3 /*arity*/, false /*reportErrors*/);
+        let t =
+            self.get_global_type("AsyncIterator", 3 /*arity*/, false /*reportErrors*/);
         self.get_global_async_iterator_type_cache = Some(t);
         t
     }
@@ -2242,7 +3067,11 @@ impl Checker {
         if let Some(t) = self.get_global_async_iterable_type_cache {
             return t;
         }
-        let t = self.get_global_type("AsyncIterable", if self.compiler_options.ets_loader_path.is_empty() { 3 } else { 1 } /* OH 4.9 arity */, false /*reportErrors*/);
+        let t = self.get_global_type(
+            "AsyncIterable",
+            if self.compiler_options.ets_loader_path.is_empty() { 3 } else { 1 }, // OH 4.9 arity
+            false, /*reportErrors*/
+        );
         self.get_global_async_iterable_type_cache = Some(t);
         t
     }
@@ -2260,7 +3089,11 @@ impl Checker {
         if let Some(t) = self.get_global_async_iterable_iterator_type_cache {
             return t;
         }
-        let t = self.get_global_type("AsyncIterableIterator", if self.compiler_options.ets_loader_path.is_empty() { 3 } else { 1 } /* OH 4.9 arity */, false /*reportErrors*/);
+        let t = self.get_global_type(
+            "AsyncIterableIterator",
+            if self.compiler_options.ets_loader_path.is_empty() { 3 } else { 1 }, // OH 4.9 arity
+            false, /*reportErrors*/
+        );
         self.get_global_async_iterable_iterator_type_cache = Some(t);
         t
     }
@@ -2269,7 +3102,11 @@ impl Checker {
         if let Some(t) = self.get_global_async_iterable_iterator_type_checked_cache {
             return t;
         }
-        let t = self.get_global_type("AsyncIterableIterator", if self.compiler_options.ets_loader_path.is_empty() { 3 } else { 1 } /* OH 4.9 arity */, true /*reportErrors*/);
+        let t = self.get_global_type(
+            "AsyncIterableIterator",
+            if self.compiler_options.ets_loader_path.is_empty() { 3 } else { 1 }, // OH 4.9 arity
+            true, /*reportErrors*/
+        );
         self.get_global_async_iterable_iterator_type_checked_cache = Some(t);
         t
     }
@@ -2278,7 +3115,11 @@ impl Checker {
         if let Some(t) = self.get_global_async_iterator_object_type_cache {
             return t;
         }
-        let t = self.get_global_type("AsyncIteratorObject", 3 /*arity*/, false /*reportErrors*/);
+        let t = self.get_global_type(
+            "AsyncIteratorObject",
+            3,     /*arity*/
+            false, /*reportErrors*/
+        );
         self.get_global_async_iterator_object_type_cache = Some(t);
         t
     }
@@ -2287,7 +3128,8 @@ impl Checker {
         if let Some(t) = self.get_global_async_generator_type_cache {
             return t;
         }
-        let t = self.get_global_type("AsyncGenerator", 3 /*arity*/, false /*reportErrors*/);
+        let t =
+            self.get_global_type("AsyncGenerator", 3 /*arity*/, false /*reportErrors*/);
         self.get_global_async_generator_type_cache = Some(t);
         t
     }
@@ -2296,7 +3138,11 @@ impl Checker {
         if let Some(t) = self.get_global_iterator_yield_result_type_cache {
             return t;
         }
-        let t = self.get_global_type("IteratorYieldResult", 1 /*arity*/, false /*reportErrors*/);
+        let t = self.get_global_type(
+            "IteratorYieldResult",
+            1,     /*arity*/
+            false, /*reportErrors*/
+        );
         self.get_global_iterator_yield_result_type_cache = Some(t);
         t
     }
@@ -2305,7 +3151,11 @@ impl Checker {
         if let Some(t) = self.get_global_iterator_return_result_type_cache {
             return t;
         }
-        let t = self.get_global_type("IteratorReturnResult", 1 /*arity*/, false /*reportErrors*/);
+        let t = self.get_global_type(
+            "IteratorReturnResult",
+            1,     /*arity*/
+            false, /*reportErrors*/
+        );
         self.get_global_iterator_return_result_type_cache = Some(t);
         t
     }
@@ -2314,7 +3164,11 @@ impl Checker {
         if let Some(t) = self.get_global_typed_property_descriptor_type_cache {
             return t;
         }
-        let t = self.get_global_type("TypedPropertyDescriptor", 1 /*arity*/, true /*reportErrors*/);
+        let t = self.get_global_type(
+            "TypedPropertyDescriptor",
+            1,    /*arity*/
+            true, /*reportErrors*/
+        );
         self.get_global_typed_property_descriptor_type_cache = Some(t);
         t
     }
@@ -2323,7 +3177,11 @@ impl Checker {
         if let Some(t) = self.get_global_class_decorator_context_type_cache {
             return t;
         }
-        let t = self.get_global_type("ClassDecoratorContext", 1 /*arity*/, true /*reportErrors*/);
+        let t = self.get_global_type(
+            "ClassDecoratorContext",
+            1,    /*arity*/
+            true, /*reportErrors*/
+        );
         self.get_global_class_decorator_context_type_cache = Some(t);
         t
     }
@@ -2332,7 +3190,11 @@ impl Checker {
         if let Some(t) = self.get_global_class_method_decorator_context_type_cache {
             return t;
         }
-        let t = self.get_global_type("ClassMethodDecoratorContext", 2 /*arity*/, true /*reportErrors*/);
+        let t = self.get_global_type(
+            "ClassMethodDecoratorContext",
+            2,    /*arity*/
+            true, /*reportErrors*/
+        );
         self.get_global_class_method_decorator_context_type_cache = Some(t);
         t
     }
@@ -2341,7 +3203,11 @@ impl Checker {
         if let Some(t) = self.get_global_class_getter_decorator_context_type_cache {
             return t;
         }
-        let t = self.get_global_type("ClassGetterDecoratorContext", 2 /*arity*/, true /*reportErrors*/);
+        let t = self.get_global_type(
+            "ClassGetterDecoratorContext",
+            2,    /*arity*/
+            true, /*reportErrors*/
+        );
         self.get_global_class_getter_decorator_context_type_cache = Some(t);
         t
     }
@@ -2350,7 +3216,11 @@ impl Checker {
         if let Some(t) = self.get_global_class_setter_decorator_context_type_cache {
             return t;
         }
-        let t = self.get_global_type("ClassSetterDecoratorContext", 2 /*arity*/, true /*reportErrors*/);
+        let t = self.get_global_type(
+            "ClassSetterDecoratorContext",
+            2,    /*arity*/
+            true, /*reportErrors*/
+        );
         self.get_global_class_setter_decorator_context_type_cache = Some(t);
         t
     }
@@ -2359,7 +3229,11 @@ impl Checker {
         if let Some(t) = self.get_global_class_accessor_decorator_context_type_cache {
             return t;
         }
-        let t = self.get_global_type("ClassAccessorDecoratorContext", 2 /*arity*/, true /*reportErrors*/);
+        let t = self.get_global_type(
+            "ClassAccessorDecoratorContext",
+            2,    /*arity*/
+            true, /*reportErrors*/
+        );
         self.get_global_class_accessor_decorator_context_type_cache = Some(t);
         t
     }
@@ -2368,7 +3242,11 @@ impl Checker {
         if let Some(t) = self.get_global_class_accessor_decorator_target_type_cache {
             return t;
         }
-        let t = self.get_global_type("ClassAccessorDecoratorTarget", 2 /*arity*/, true /*reportErrors*/);
+        let t = self.get_global_type(
+            "ClassAccessorDecoratorTarget",
+            2,    /*arity*/
+            true, /*reportErrors*/
+        );
         self.get_global_class_accessor_decorator_target_type_cache = Some(t);
         t
     }
@@ -2377,7 +3255,11 @@ impl Checker {
         if let Some(t) = self.get_global_class_accessor_decorator_result_type_cache {
             return t;
         }
-        let t = self.get_global_type("ClassAccessorDecoratorResult", 2 /*arity*/, true /*reportErrors*/);
+        let t = self.get_global_type(
+            "ClassAccessorDecoratorResult",
+            2,    /*arity*/
+            true, /*reportErrors*/
+        );
         self.get_global_class_accessor_decorator_result_type_cache = Some(t);
         t
     }
@@ -2386,31 +3268,41 @@ impl Checker {
         if let Some(t) = self.get_global_class_field_decorator_context_type_cache {
             return t;
         }
-        let t = self.get_global_type("ClassFieldDecoratorContext", 2 /*arity*/, true /*reportErrors*/);
+        let t = self.get_global_type(
+            "ClassFieldDecoratorContext",
+            2,    /*arity*/
+            true, /*reportErrors*/
+        );
         self.get_global_class_field_decorator_context_type_cache = Some(t);
         t
     }
 }
 
-/// Go `var primitiveTypeAliasSuggestions = sync.OnceValue(...)`. Go builds a map and ranges over it in random order;
-/// a list in declaration order gives the spelling suggestion one answer when two of these tie.
+/// Go `var primitiveTypeAliasSuggestions = sync.OnceValue(...)`.
+///
+/// Go builds a map and ranges over it in random order; a list in declaration order gives the spelling
+/// suggestion one answer when two of these tie.
 pub fn primitive_type_alias_suggestions() -> &'static [(&'static str, P<Symbol>)] {
     static MAP: OnceLock<Vec<(&'static str, P<Symbol>)>> = OnceLock::new();
     MAP.get_or_init(|| {
         // Process-wide: never in a freeable region (language server).
         let _arena = tsrs_core::arena::enter_thread_arena();
         let mut result = Vec::new();
-        for (primitive, builtin) in [
-            ("string", "String"),
-            ("number", "Number"),
-            ("boolean", "Boolean"),
-            ("object", "Object"),
-            ("bigint", "BigInt"),
-            ("symbol", "Symbol"),
-        ] {
-            let sym = Symbol::new(SymbolFlags::TypeAlias | SymbolFlags::Transient, primitive);
-            result.push((builtin, sym));
-        }
+        result.extend(
+            ([
+                ("string", "String"),
+                ("number", "Number"),
+                ("boolean", "Boolean"),
+                ("object", "Object"),
+                ("bigint", "BigInt"),
+                ("symbol", "Symbol"),
+            ])
+            .into_iter()
+            .map(|(primitive, builtin)| {
+                let sym = Symbol::new(SymbolFlags::TypeAlias | SymbolFlags::Transient, primitive);
+                (builtin, sym)
+            }),
+        );
         result
     })
 }
@@ -2421,7 +3313,7 @@ pub struct InheritanceInfo {
     pub containing_type: P<Type>,
 }
 
-#[repr(i32)]
+#[repr(u32)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Default)]
 pub enum UnusedKind {
     #[default]
@@ -2461,9 +3353,11 @@ bitflags! {
     }
 }
 
-/// Go `*ExportCollision` in `ExportCollisionTable`: owned by the table here. The table is local to one
-/// `getExportsOfModuleWorker` visit and nothing keeps a record past it, so an arena record (never freed) would only
-/// leak; owned records and their strings are dropped with the table (notes/mem-export-star-scratch.md).
+/// Go `*ExportCollision` in `ExportCollisionTable`: owned by the table here.
+///
+/// The table is local to one `getExportsOfModuleWorker` visit and nothing keeps a record past it, so an arena
+/// record (never freed) would only leak; owned records and their strings are dropped with the table
+/// (notes/mem-export-star-scratch.md).
 pub struct ExportCollision {
     pub specifier_text: String,
     pub exports_with_duplicate: Vec<P<Node>>,
@@ -2492,9 +3386,9 @@ impl CacheHashKey {
     }
 }
 
-/// Go `keyBuilder`; its methods are in checker_09.rs.
+/// Go `keyBuilder`; its methods are in `checker_09.rs`.
 pub struct keyBuilder {
-    pub inline_length: i32,
+    pub inline_length: usize,
     pub overflow_buffer: Option<Vec<u8>>, // Go nil slice = no overflow yet
     pub inline_buffer: [u8; 192],
 }
@@ -2505,12 +3399,12 @@ impl Default for keyBuilder {
     }
 }
 
-#[repr(i32)]
+#[repr(u32)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Default)]
 pub enum thisAssignmentDeclarationKind {
     #[default]
     None, // not (all) this.property assignments
-    Typed, // typed; use the type annotation
+    Typed,       // typed; use the type annotation
     Constructor, // at least one in the constructor; use control flow
     Method, // methods only; look in base first, and if not found, union all declaration types plus undefined
 }
@@ -2520,12 +3414,12 @@ pub enum thisAssignmentDeclarationKind {
 pub struct TupleNormalizer {
     pub types: Vec<P<Type>>,
     pub infos: Vec<TupleElementInfo>,
-    pub last_required_index: i32,
-    pub first_rest_index: i32,
-    pub last_optional_or_rest_index: i32,
+    pub last_required_index: Option<usize>,
+    pub first_rest_index: Option<usize>,
+    pub last_optional_or_rest_index: Option<usize>,
 }
 
-#[repr(i32)]
+#[repr(u32)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Default)]
 pub enum UnionReduction {
     #[default]
@@ -2546,8 +3440,8 @@ bitflags! {
 // Limits on the size of a template literal type produced by getTemplateLiteralType. Recursive instantiations
 // such as `Recur<any, `${S}_${S}`>` double the text (or the number of placeholders) on every iteration and
 // exhaust memory long before the tail recursion limit in getConditionalType is reached (see #63271).
-pub const maxTemplateLiteralTypeLength: i32 = 50_000_000;
-pub const maxTemplateLiteralTypeSpans: i32 = 100_000;
+pub const maxTemplateLiteralTypeLength: usize = 50_000_000;
+pub const maxTemplateLiteralTypeSpans: usize = 100_000;
 
 /// Go `ObjectLiteralDiscriminator`; the `c` field is dropped (methods take `c: &mut Checker`).
 #[derive(Default)]
@@ -2556,20 +3450,31 @@ pub struct ObjectLiteralDiscriminator {
     pub members: Vec<P<Symbol>>,
 }
 
-
 impl Checker {
     /// tsrs-only (`--maxMemory`, notes/mem-recycle-checkers.md): entries in the relation caches.
     pub fn relation_cache_entries(&self) -> usize {
-        [self.subtype_relation, self.strict_subtype_relation, self.assignable_relation, self.comparable_relation, self.identity_relation]
-            .iter()
-            .map(|r| r.size() as usize)
-            .sum()
+        [
+            self.subtype_relation,
+            self.strict_subtype_relation,
+            self.assignable_relation,
+            self.comparable_relation,
+            self.identity_relation,
+        ]
+        .iter()
+        .map(|r| r.size())
+        .sum()
     }
 
     /// tsrs-only (`--maxMemory`): empties the relation caches between two files (results are recomputed on
     /// demand).
-    pub fn clear_relation_caches(&mut self) {
-        for r in [self.subtype_relation, self.strict_subtype_relation, self.assignable_relation, self.comparable_relation, self.identity_relation] {
+    pub fn clear_relation_caches(&self) {
+        for r in [
+            self.subtype_relation,
+            self.strict_subtype_relation,
+            self.assignable_relation,
+            self.comparable_relation,
+            self.identity_relation,
+        ] {
             r.clear();
         }
     }

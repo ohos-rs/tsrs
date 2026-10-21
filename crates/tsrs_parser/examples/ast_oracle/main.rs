@@ -14,6 +14,7 @@ struct CountingAlloc;
 
 static HEAP_ALLOCS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+// SAFETY: every operation delegates unchanged to MiMalloc; the atomic counter neither allocates nor alters its pointer/layout contracts.
 unsafe impl std::alloc::GlobalAlloc for CountingAlloc {
     unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
         HEAP_ALLOCS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -39,9 +40,12 @@ mod fields;
 use std::fmt::Write as _;
 use std::io::{BufRead, Write as _};
 
-use tsrs_ast::{set_external_module_indicator, Diagnostic, ExternalModuleIndicatorOptions, FileReference, Kind, ModifierList, Node, NodeList, SourceFile, SourceFileParseOptions, TokenFlags};
-use tsrs_core::tspath::Path;
+use tsrs_ast::{
+    Diagnostic, ExternalModuleIndicatorOptions, FileReference, Kind, ModifierList, Node, NodeList,
+    SourceFile, SourceFileParseOptions, TokenFlags, set_external_module_indicator,
+};
 use tsrs_core::P;
+use tsrs_core::tspath::Path;
 
 pub(crate) struct Dumper {
     sb: String,
@@ -54,14 +58,14 @@ fn escape(sb: &mut String, s: &str) {
         if (0x20..0x7f).contains(&b) && b != b'\\' && b != b'"' {
             sb.push(b as char);
         } else {
-            let _ = write!(sb, "\\x{:02x}", b);
+            let _ = write!(sb, "\\x{b:02x}");
         }
     }
     sb.push('"');
 }
 
 fn kind_name(k: Kind) -> String {
-    format!("{:?}", k)
+    format!("{k:?}")
 }
 
 pub(crate) trait ListArg {
@@ -107,7 +111,14 @@ impl Dumper {
         match l {
             None => self.sb.push('-'),
             Some(l) => {
-                let _ = write!(self.sb, "[{},{},{},{:x}]", l.pos(), l.end(), l.nodes().len(), l.modifier_flags.bits());
+                let _ = write!(
+                    self.sb,
+                    "[{},{},{},{:x}]",
+                    l.pos(),
+                    l.end(),
+                    l.nodes().len(),
+                    l.modifier_flags.bits()
+                );
             }
         }
     }
@@ -149,7 +160,7 @@ impl Dumper {
 
     pub(crate) fn field_tokenflags(&mut self, name: &str, v: TokenFlags) {
         self.name(name);
-        let _ = write!(self.sb, "={:x}", v.bits() as u32);
+        let _ = write!(self.sb, "={:x}", { v.bits() });
     }
 
     pub(crate) fn field_kind(&mut self, name: &str, v: Kind) {
@@ -160,7 +171,16 @@ impl Dumper {
 
     fn node(&mut self, n: P<Node>, depth: usize, parent: Option<P<Node>>, tag: char) {
         self.sb.push(tag);
-        let _ = write!(self.sb, "{} {} {} {} {:x} sf={:x}", depth, kind_name(n.kind()), n.pos(), n.end(), n.flags().bits(), n.subtree_facts().bits());
+        let _ = write!(
+            self.sb,
+            "{} {} {} {} {:x} sf={:x}",
+            depth,
+            kind_name(n.kind()),
+            n.pos(),
+            n.end(),
+            n.flags().bits(),
+            n.subtree_facts().bits()
+        );
         fields::dump_fields(&n, self);
         if n.parent() != parent {
             let r = self.node_ref(n.parent());
@@ -179,11 +199,25 @@ impl Dumper {
 
     fn diagnostics(&mut self, tag: &str, diags: &[P<Diagnostic>]) {
         for diag in diags {
-            let _ = write!(self.sb, "{} {} {} {} {} ", tag, diag.code(), diag.category() as i32, diag.pos(), diag.len());
+            let _ = write!(
+                self.sb,
+                "{} {} {} {} {} ",
+                tag,
+                diag.code(),
+                diag.category() as i32,
+                diag.pos().map_or(-1_i64, i64::from),
+                diag.len().map_or(-1_i64, i64::from)
+            );
             escape(&mut self.sb, diag.message_text());
             let _ = write!(self.sb, " C{} R", diag.message_chain().len());
             for r in diag.related_information() {
-                let _ = write!(self.sb, " {}:{}:{}", r.code(), r.pos(), r.len());
+                let _ = write!(
+                    self.sb,
+                    " {}:{}:{}",
+                    r.code(),
+                    r.pos().map_or(-1_i64, i64::from),
+                    r.len().map_or(-1_i64, i64::from)
+                );
             }
             self.sb.push('\n');
         }
@@ -208,12 +242,21 @@ fn read(path: &str) -> Option<String> {
 }
 
 fn parse_options(path: &str, flags: &str) -> SourceFileParseOptions {
-    SourceFileParseOptions { file_name: path.to_string(), path: Path::new(path.to_string()), external_module_indicator_options: parse_flags(flags), ..Default::default() }
+    SourceFileParseOptions {
+        file_name: path.to_string(),
+        path: Path::new(path.to_string()),
+        external_module_indicator_options: parse_flags(flags),
+        ..Default::default()
+    }
 }
 
 fn dump(path: &str, flags: &str) -> Result<String, String> {
-    let text = read(path).ok_or_else(|| format!("cannot read {}", path))?;
-    let file = tsrs_parser::parse_source_file(parse_options(path, flags), &text, tsrs_core::ensure_script_kind_from_file_name(path));
+    let text = read(path).ok_or_else(|| format!("cannot read {path}"))?;
+    let file = tsrs_parser::parse_source_file(
+        parse_options(path, flags),
+        &text,
+        tsrs_core::ensure_script_kind_from_file_name(path),
+    );
     let file: &'static SourceFile = file.get();
     let mut d = Dumper { sb: String::new(), file };
     let _ = writeln!(
@@ -257,10 +300,18 @@ fn dump(path: &str, flags: &str) -> Result<String, String> {
     }
     for &rc in file.reparsed_clones.get() {
         let r = d.node_ref(Some(rc));
-        let _ = writeln!(d.sb, "RC {}", r);
+        let _ = writeln!(d.sb, "RC {r}");
     }
     for p in file.pragmas.get() {
-        let _ = write!(d.sb, "PRAGMA {} {} {} {} {}", p.name, p.comment_range.kind as i16, p.comment_range.pos(), p.comment_range.end(), p.comment_range.has_trailing_new_line);
+        let _ = write!(
+            d.sb,
+            "PRAGMA {} {} {} {} {}",
+            p.name,
+            p.comment_range.kind as i16,
+            p.comment_range.pos(),
+            p.comment_range.end(),
+            p.comment_range.has_trailing_new_line
+        );
         let mut keys: Vec<&String> = p.args.keys().collect();
         keys.sort();
         for k in keys {
@@ -280,23 +331,23 @@ fn dump(path: &str, flags: &str) -> Result<String, String> {
         let _ = writeln!(d.sb, "CHECKJS {} {} {}", c.enabled, c.range.pos(), c.range.end());
     }
     let r = d.node_ref(file.common_js_module_indicator.get());
-    let _ = writeln!(d.sb, "CJS {}", r);
+    let _ = writeln!(d.sb, "CJS {r}");
     let r = d.node_ref(file.external_module_indicator.get());
-    let _ = writeln!(d.sb, "EMI {}", r);
+    let _ = writeln!(d.sb, "EMI {r}");
     set_external_module_indicator(file, ExternalModuleIndicatorOptions { jsx: true, force: false });
     let r = d.node_ref(file.external_module_indicator.get());
-    let _ = writeln!(d.sb, "EMI_J {}", r);
+    let _ = writeln!(d.sb, "EMI_J {r}");
     set_external_module_indicator(file, ExternalModuleIndicatorOptions { jsx: false, force: true });
     let r = d.node_ref(file.external_module_indicator.get());
-    let _ = writeln!(d.sb, "EMI_F {}", r);
+    let _ = writeln!(d.sb, "EMI_F {r}");
     Ok(d.sb)
 }
 
 fn fnv64a(data: &[u8]) -> u64 {
-    let mut h: u64 = 0xcbf29ce484222325;
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for &b in data {
         h ^= b as u64;
-        h = h.wrapping_mul(0x100000001b3);
+        h = h.wrapping_mul(0x0100_0000_01b3);
     }
     h
 }
@@ -313,13 +364,13 @@ fn run() {
     let args: Vec<String> = std::env::args().collect();
     match args[1].as_str() {
         "dump" => {
-            let flags = args.get(3).map(|s| s.as_str()).unwrap_or("-");
+            let flags = args.get(3).map_or("-", std::string::String::as_str);
             match dump(&args[2], flags) {
                 Ok(out) => {
                     std::io::stdout().write_all(out.as_bytes()).unwrap();
                 }
                 Err(e) => {
-                    eprintln!("{}", e);
+                    eprintln!("{e}");
                     std::process::exit(1);
                 }
             }
@@ -337,9 +388,9 @@ fn run() {
                     Ok(Ok(out)) => {
                         let _ = writeln!(w, "{:016x} {}", fnv64a(out.as_bytes()), path);
                     }
-                    Ok(Err(e)) => eprintln!("{}", e),
+                    Ok(Err(e)) => eprintln!("{e}"),
                     Err(_) => {
-                        let _ = writeln!(w, "PANIC {}", path);
+                        let _ = writeln!(w, "PANIC {path}");
                     }
                 }
                 let _ = w.flush();
@@ -362,12 +413,17 @@ fn run() {
                 let start = std::time::Instant::now();
                 let mut nodes = 0usize;
                 for (path, text, opts) in &inputs {
-                    let f = tsrs_parser::parse_source_file(opts.clone(), text, tsrs_core::ensure_script_kind_from_file_name(path));
+                    let f = tsrs_parser::parse_source_file(
+                        opts.clone(),
+                        text,
+                        tsrs_core::ensure_script_kind_from_file_name(path),
+                    );
                     nodes += f.node_count.get();
                 }
                 let el = start.elapsed().as_secs_f64();
                 let (end_instructions, end_cycles) = process_counters();
-                let (instructions, cycles) = (end_instructions - start_instructions, end_cycles - start_cycles);
+                let (instructions, cycles) =
+                    (end_instructions - start_instructions, end_cycles - start_cycles);
                 let allocs = HEAP_ALLOCS.load(std::sync::atomic::Ordering::Relaxed) - start_allocs;
                 println!(
                     "rust: {} files, {:.1} MB, {} nodes, {:.3} s, {:.1} MB/s, {:.3} G instructions, {:.3} G cycles, {} heap allocations",
@@ -382,7 +438,7 @@ fn run() {
                 );
             }
         }
-        other => panic!("unknown command {}", other),
+        other => panic!("unknown command {other}"),
     }
 }
 
@@ -397,11 +453,7 @@ fn process_counters() -> (u64, u64) {
     let mut buf = [0u64; 64];
     // SAFETY: the buffer is larger than struct rusage_info_v4 (flavor 4).
     let rc = unsafe { proc_pid_rusage(std::process::id() as i32, 4, buf.as_mut_ptr()) };
-    if rc == 0 {
-        (buf[31], buf[32])
-    } else {
-        (0, 0)
-    }
+    if rc == 0 { (buf[31], buf[32]) } else { (0, 0) }
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -410,8 +462,11 @@ fn process_counters() -> (u64, u64) {
 }
 
 fn main() {
+    #[cfg(all(target_os = "linux", not(miri)))]
+    tsrs_core::allocator::init_mimalloc();
     // TSRS_ORACLE_STACK_MB overrides the stack size, to measure the parser's stack use per nesting level.
-    let stack_mb: usize = std::env::var("TSRS_ORACLE_STACK_MB").ok().and_then(|s| s.parse().ok()).unwrap_or(4096);
+    let stack_mb: usize =
+        std::env::var("TSRS_ORACLE_STACK_MB").ok().and_then(|s| s.parse().ok()).unwrap_or(4096);
     let child = std::thread::Builder::new().stack_size(stack_mb << 20).spawn(run).unwrap();
     if child.join().is_err() {
         std::process::exit(101);

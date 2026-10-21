@@ -1,9 +1,15 @@
-use tsrs_contentmapper::{MappedOutput, ProtocolJson, TransformParams, TransformResult, METHOD_INITIALIZE, METHOD_TRANSFORM};
+use tsrs_contentmapper::{
+    METHOD_INITIALIZE, METHOD_TRANSFORM, MappedOutput, ProtocolJson, TransformParams,
+    TransformResult,
+};
 use tsrs_core::json::Value;
 use tsrs_ipc as ipc;
 use tsrs_spanmap::{Feature, Kind, Segment};
 
-use crate::protocol::{initialize_result, marshal_span_map, no_notifications, testHandler, unexpected_method, unmarshal_params};
+use crate::protocol::{
+    initialize_result, marshal_span_map, no_notifications, testHandler, unexpected_method,
+    unmarshal_params,
+};
 
 // component.go:15
 pub(crate) struct componentHandler;
@@ -19,7 +25,12 @@ impl ipc::Handler for componentHandler {
                 let p: TransformParams = unmarshal_params(params)?;
                 let (text, mappings) = transform_component(&p.content)?;
                 Ok(TransformResult {
-                    mapped_output: MappedOutput { text, extension: ".ts".to_string(), mappings: Some(mappings), ..Default::default() },
+                    mapped_output: MappedOutput {
+                        text,
+                        extension: ".ts".to_string(),
+                        mappings: Some(mappings),
+                        ..Default::default()
+                    },
                     ..Default::default()
                 }
                 .marshal_json())
@@ -28,7 +39,11 @@ impl ipc::Handler for componentHandler {
         }
     }
 
-    fn handle_notification(&self, _method: &str, _params: Option<&Value>) -> Result<(), ipc::Error> {
+    fn handle_notification(
+        &self,
+        _method: &str,
+        _params: Option<&Value>,
+    ) -> Result<(), ipc::Error> {
         no_notifications()
     }
 }
@@ -48,13 +63,13 @@ impl componentWriter {
 
     // component.go:43
     fn write_mapped(&mut self, text: &str, original_start: usize, original_end: usize, kind: Kind) {
-        let virtual_start = self.virtual_.len() as i32;
+        let virtual_start = self.virtual_.len() as u32;
         self.virtual_.push_str(text);
         self.segments.push(Segment {
             virtual_start,
-            virtual_end: self.virtual_.len() as i32,
-            original_start: original_start as i32,
-            original_end: original_end as i32,
+            virtual_end: self.virtual_.len() as u32,
+            original_start: original_start as u32,
+            original_end: original_end as u32,
             kind,
             features: Feature::All,
         });
@@ -62,13 +77,13 @@ impl componentWriter {
 
     // component.go:55
     fn write_anchored(&mut self, text: &str, original_position: usize, features: Feature) {
-        let virtual_start = self.virtual_.len() as i32;
+        let virtual_start = self.virtual_.len() as u32;
         self.virtual_.push_str(text);
         self.segments.push(Segment {
             virtual_start,
-            virtual_end: self.virtual_.len() as i32,
-            original_start: original_position as i32,
-            original_end: original_position as i32,
+            virtual_end: self.virtual_.len() as u32,
+            original_start: original_position as u32,
+            original_end: original_position as u32,
             kind: Kind::Atom,
             features,
         });
@@ -88,7 +103,12 @@ fn transform_component(content: &str) -> Result<(String, Value), ipc::Error> {
             return Err(ipc::Error::new("contentmappertest: missing </script> tag"));
         };
         let script_end = script_start + close_rel;
-        w.write_mapped(&content[script_start..script_end], script_start, script_end, Kind::Verbatim);
+        w.write_mapped(
+            &content[script_start..script_end],
+            script_start,
+            script_end,
+            Kind::Verbatim,
+        );
     }
 
     w.write_synthesized("\nfunction __render() {\n");
@@ -107,14 +127,12 @@ fn transform_component(content: &str) -> Result<(String, Value), ipc::Error> {
         let mut pos = expr_start;
         while pos < expr_end {
             if !is_identifier_start(bytes[pos]) {
-                w.write_synthesized(&content[pos..pos + 1]);
+                w.write_synthesized(&content[pos..=pos]);
                 pos += 1;
                 continue;
             }
             let mut end = pos + 1;
-            while end < expr_end && is_identifier_part(bytes[end]) {
-                end += 1;
-            }
+            end += (end..expr_end).take_while(|&index| is_identifier_part(bytes[index])).count();
             w.write_mapped(&content[pos..end], pos, end, Kind::Atom);
             pos = end;
         }

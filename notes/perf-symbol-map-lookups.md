@@ -1,6 +1,6 @@
 # perf-symbol-map-lookups: the checker's symbol table lookups
 
-Follow-up to notes/perf-checker-cpu4.md "Profile", where `SymbolMap::search` (2.9%) and `SymbolMap::position` (2.0%)
+Follow-up to the checker CPU round 4 profile, where `SymbolMap::search` (2.9%) and `SymbolMap::position` (2.0%)
 were the largest self costs of the vscode check that are not an algorithm. Same rules as notes/perf-checker-cpu3.md:
 representation and code shape only, identical diagnostics, baselines and `--extendedDiagnostics` counters, no change to
 which symbols or types exist or to the order a table iterates in. Base: origin/main 6baca34.
@@ -16,7 +16,7 @@ nothing is interned.
 
 ## Census
 
-Site counts (`--features site-counts` with a local patch on `SymbolTable::lookup` / `get` / `has` / `lookup_entry`,
+Site counts (`-p tsrs_checker --features tsrs_checker/site-counts` with a local patch on `SymbolTable::lookup` / `get` / `has` / `lookup_entry`,
 not committed), Mac, single-threaded, whole run:
 
 | | vscode | t3code-server | supabase-studio |

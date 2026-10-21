@@ -69,6 +69,10 @@ impl ArkTsLinter<'_> {
             if !self.is_sendable_type_node(default_type, false, &mut FxHashSet::default()) { self.add(default_type, Fault::SendableGenericTypes); }
         }
     }
+    #[expect(
+        clippy::float_cmp,
+        reason = "SDK versions are exact configuration values, compared as in the Go source"
+    )]
     pub(super) fn sendable_function_or_alias_available(&mut self, node: P<Node>) -> bool {
         let version = self.checker.compiler_options.compatible_sdk_version.unwrap_or(12.0);
         let stage = &self.checker.compiler_options.compatible_sdk_version_stage;
@@ -111,7 +115,9 @@ impl ArkTsLinter<'_> {
         let Some(file) = ast::get_source_file_of_node(declaration).filter(|f| f.file_name() == self.file.file_name()) else { return; };
         let position = get_token_pos_of_node(declaration, file, false);
         let scope_start = get_token_pos_of_node(scope, self.file, false);
-        if position >= scope_start && position < scope.end() || self.is_exported_declaration(declaration) || self.is_allowed_top_level_sendable_closure(declaration) { return; }
+        if position >= scope_start
+            && position < scope.end().source_offset().unwrap_or(u32::MAX)
+            || self.is_exported_declaration(declaration) || self.is_allowed_top_level_sendable_closure(declaration) { return; }
         if matches!(declaration.kind(), Kind::VariableDeclaration | Kind::FunctionDeclaration | Kind::ClassDeclaration | Kind::InterfaceDeclaration | Kind::EnumDeclaration | Kind::ModuleDeclaration | Kind::Parameter) { self.add(node, fault); }
     }
     fn is_allowed_top_level_sendable_closure(&mut self, node: P<Node>) -> bool {
@@ -268,7 +274,10 @@ impl ArkTsLinter<'_> {
         if !self.in_shared_module() || declaration.parent().is_some_and(ast::is_module_block) { return; }
         match declaration.kind() {
             Kind::EnumDeclaration => {
-                let symbol = declaration.symbol().or_else(|| declaration.name().and_then(|n| self.true_symbol_at_location(n)));
+                let symbol = declaration.symbol().or_else(|| {
+                let name = declaration.name()?;
+                self.true_symbol_at_location(name)
+            });
                 if !symbol.is_some_and(is_const_enum_symbol) { self.add(declaration.name().unwrap(), Fault::SharedModuleExports); }
             }
             Kind::InterfaceDeclaration | Kind::FunctionDeclaration | Kind::ClassDeclaration => {

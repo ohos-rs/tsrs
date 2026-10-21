@@ -10,16 +10,16 @@ use std::sync::Arc;
 
 use tsrs_ast::Symbol;
 use tsrs_compiler::Program;
-use tsrs_core::context::{with_checker_lifetime, CheckerLifetime, Context};
-use tsrs_core::json::Value;
 use tsrs_core::P;
+use tsrs_core::context::{CheckerLifetime, Context, with_checker_lifetime};
+use tsrs_core::json::Value;
 use tsrs_ls::autoimport::ProjectID as LsProjectID;
 use tsrs_project::Snapshot;
 
-use super::host::{CheckerError, CheckerHost, CheckerResult};
+use super::host::{CheckerError, CheckerErrorKind, CheckerHost, CheckerResult};
 use super::json::obj;
 use super::params::{Params, SymbolReference};
-use super::setup::{resolve_symbol_for_program, SnapshotCtx};
+use super::setup::{SnapshotCtx, resolve_symbol_for_program};
 
 fn snapshot_ctx<'h>(host: &'h dyn CheckerHost, p: &Params) -> CheckerResult<SnapshotCtx<'h>> {
     SnapshotCtx::new(host, p.u64("snapshot")?, p.project()?)
@@ -34,7 +34,12 @@ fn program_of(snapshot: &Snapshot, project: &str) -> CheckerResult<&'static Prog
 }
 
 /// Go `setupLanguageService`.
-fn language_service(snapshot: &Arc<Snapshot>, program: &'static Program, project: &str, active_file: &str) -> CheckerResult<tsrs_ls::LanguageService> {
+fn language_service(
+    snapshot: &Arc<Snapshot>,
+    program: &'static Program,
+    project: &str,
+    active_file: &str,
+) -> CheckerResult<tsrs_ls::LanguageService> {
     if snapshot.project_collection.get_project(&tsrs_project::ID(project.to_string())).is_none() {
         return Err(CheckerError::client(format!("project {project} not found")));
     }
@@ -52,36 +57,50 @@ pub(crate) fn get_signature_usages(host: &dyn CheckerHost, p: &Params) -> Checke
         return Ok(Value::Array(Vec::new())); // Go nil slice: json/v2 encodes []
     }
     let mut out = Vec::with_capacity(usages.len());
-    for usage in usages {
+    out = usages.into_iter().try_fold(out, |mut out, usage| {
         let mut o = obj();
         o.set("name", Value::String(host.node_handle(usage.name)?));
         if let Some(call) = usage.call {
             o.set("call", Value::String(host.node_handle(call)?));
         }
         out.push(o.build());
-    }
+
+        Ok::<_, CheckerError>(out)
+    })?;
     Ok(Value::Array(out))
 }
 
-pub(crate) fn get_referenced_symbols_for_node(host: &dyn CheckerHost, p: &Params) -> CheckerResult<Value> {
+pub(crate) fn get_referenced_symbols_for_node(
+    host: &dyn CheckerHost,
+    p: &Params,
+) -> CheckerResult<Value> {
     let sd = snapshot_ctx(host, p)?;
     let program = sd.program()?;
     let node = host.resolve_node_handle(program, p.string("node")?)?;
-    let position = p.i32("position")?;
+    let position = p.u32("position")?;
     let ls = language_service(&sd.scope.snapshot, program, &sd.project, "")?;
-    let entries = ls.get_referenced_symbols_for_node_exported(&host.context(), position, node, program.get_source_files());
+    let entries = ls.get_referenced_symbols_for_node_exported(
+        &host.context(),
+        position,
+        node,
+        program.get_source_files(),
+    );
     if entries.is_empty() {
         return Ok(Value::Array(Vec::new())); // Go nil slice: json/v2 encodes []
     }
     let mut out = Vec::new();
     for entry in &entries {
-        let Some(def) = entry.definition_node() else { continue };
+        let Some(def) = entry.definition_node() else {
+            continue;
+        };
         let mut refs = Vec::new();
-        for r in entry.references() {
+        refs = entry.references().iter().try_fold(refs, |mut refs, r| {
             if let Some(n) = r.node() {
                 refs.push(Value::String(host.node_handle(n)?));
             }
-        }
+
+            Ok::<_, CheckerError>(refs)
+        })?;
         let mut o = obj();
         o.set("definition", Value::String(host.node_handle(def)?));
         if let Some(sym) = entry.definition_symbol() {
@@ -97,7 +116,10 @@ pub(crate) fn get_referenced_symbols_for_node(host: &dyn CheckerHost, p: &Params
     Ok(Value::Array(out))
 }
 
-pub(crate) fn get_completions_at_position(host: &dyn CheckerHost, p: &Params) -> CheckerResult<Value> {
+pub(crate) fn get_completions_at_position(
+    host: &dyn CheckerHost,
+    p: &Params,
+) -> CheckerResult<Value> {
     let include_symbol = p.bool("includeSymbol")?;
     let mut ctx = host.context();
     if include_symbol {
@@ -110,14 +132,19 @@ pub(crate) fn get_completions_at_position(host: &dyn CheckerHost, p: &Params) ->
     let trigger = match p.raw("triggerCharacter") {
         None => None,
         Some(Value::String(s)) => Some(s.as_str()),
-        Some(_) => return Err(CheckerError::invalid("field \"triggerCharacter\": expected a string")),
+        Some(_) => {
+            return Err(CheckerError::invalid("field \"triggerCharacter\": expected a string"));
+        }
     };
-    let run = |snapshot: &Arc<Snapshot>, program: &'static Program, ctx: &Context| -> CheckerResult<Result<Option<tsrs_ls::CompletionList>, tsrs_lsproto::Error>> {
+    let run = |snapshot: &Arc<Snapshot>,
+               program: &'static Program,
+               ctx: &Context|
+     -> CheckerResult<Result<Option<tsrs_ls::CompletionList>, tsrs_lsproto::Error>> {
         let Some(source_file) = program.get_source_file(&file_name) else {
             return Ok(Ok(None));
         };
         let ls = language_service(snapshot, program, &sd.project, "")?;
-        let internal = source_file.get_position_map().utf16_to_utf8(i32::try_from(position).unwrap_or(i32::MAX));
+        let internal = source_file.get_position_map().utf16_to_utf8(position);
         // With includeSymbol the language service takes the API checker itself (Go: same).
         let _lease = if include_symbol { Some(super::lease::acquire(program)?) } else { None };
         Ok(ls.get_completions_at_position(ctx, source_file, internal, trigger, include_symbol))
@@ -128,7 +155,8 @@ pub(crate) fn get_completions_at_position(host: &dyn CheckerHost, p: &Params) ->
     let mut result = run(&sd.scope.snapshot, program, &ctx)?;
     if matches!(&result, Err(e) if tsrs_ls::is_err_needs_auto_imports(e)) {
         let snapshot = host.clone_snapshot_with_auto_imports(&sd.scope.snapshot, &file_name)?;
-        let outcome = program_of(&snapshot, &sd.project).and_then(|program| run(&snapshot, program, &ctx));
+        let outcome =
+            program_of(&snapshot, &sd.project).and_then(|program| run(&snapshot, program, &ctx));
         prepared = Some(snapshot);
         result = match outcome {
             Ok(r) => r,
@@ -151,7 +179,8 @@ pub(crate) fn get_completions_at_position(host: &dyn CheckerHost, p: &Params) ->
         }
         Err(e) => {
             release_prepared(prepared);
-            return Err(CheckerError::client(e.message));
+            // Go returns the language service's error as is (ErrNeedsAutoImports, a cancelled context).
+            return Err(CheckerError { kind: CheckerErrorKind::Internal, message: e.message });
         }
     };
     let mut entries = Vec::with_capacity(list.items.len());
@@ -163,7 +192,12 @@ pub(crate) fn get_completions_at_position(host: &dyn CheckerHost, p: &Params) ->
         // encoding/json v2 `omitempty`: a uint32 0 is still emitted; `*string` pointing at "" and an
         // all-empty labelDetails object ({}) are omitted.
         o.num("kind", ci.kind.as_ref().map_or(0, |k| k.0) as f64);
-        for (key, value) in [("sortText", &ci.sort_text), ("insertText", &ci.insert_text), ("filterText", &ci.filter_text), ("detail", &ci.detail)] {
+        for (key, value) in [
+            ("sortText", &ci.sort_text),
+            ("insertText", &ci.insert_text),
+            ("filterText", &ci.filter_text),
+            ("detail", &ci.detail),
+        ] {
             if let Some(v) = value {
                 o.str_nonempty(key, v);
             }
@@ -204,7 +238,9 @@ pub(crate) fn get_import_adder_edits(host: &dyn CheckerHost, p: &Params) -> Chec
     let file = p.document("file")?;
     let file_name = file.to_file_name();
     let mut program = sd.program()?;
-    let mut source_file = program.get_source_file(&file_name).ok_or_else(|| CheckerError::client(format!("source file not found: {}", file.display())))?;
+    let mut source_file = program.get_source_file(&file_name).ok_or_else(|| {
+        CheckerError::client(format!("source file not found: {}", file.display()))
+    })?;
     let project_id = LsProjectID(sd.project.clone());
 
     // Decode actions like Go's unmarshalling of `[]ImportAdderAction` (before the handler runs, so a decode
@@ -217,50 +253,73 @@ pub(crate) fn get_import_adder_edits(host: &dyn CheckerHost, p: &Params) -> Chec
         valid: bool,
     }
     let mut actions: Vec<Action> = Vec::new();
-    for action in p.array("actions")? {
+    actions = (p.array("actions")?).iter().try_fold(actions, |mut actions, action| {
         if matches!(action, Value::Null) {
             actions.push(Action { kind: String::new(), symbol: None, valid: true });
-            continue;
+            return Ok::<_, CheckerError>(actions);
         }
         let a = Params::new(action, "getImportAdderEdits")?;
         let valid = match a.raw("isValidTypeOnlyUseSite") {
             None => true,
             Some(Value::Bool(b)) => *b,
-            Some(_) => return Err(CheckerError::invalid("field \"isValidTypeOnlyUseSite\": expected a boolean")),
+            Some(_) => {
+                return Err(CheckerError::invalid(
+                    "field \"isValidTypeOnlyUseSite\": expected a boolean",
+                ));
+            }
         };
         let symbol = match a.raw("symbol") {
             None => None,
             Some(_) => Some(a.symbol_ref("symbol")?),
         };
         actions.push(Action { kind: a.string("kind")?.to_string(), symbol, valid });
-    }
+
+        Ok::<_, CheckerError>(actions)
+    })?;
     // Go `handleGetImportAdderEdits`: the per-action checks run inside the action loop, after the working
     // snapshot (possibly a fresh auto-import clone) exists.
-    let validate = |sd: &SnapshotCtx, program: &'static Program| -> CheckerResult<Vec<(P<Symbol>, bool)>> {
-        let mut out = Vec::with_capacity(actions.len());
-        for (i, action) in actions.iter().enumerate() {
-            match action.kind.as_str() {
-                "importSymbol" => {
-                    let Some(r) = &action.symbol else {
-                        return Err(CheckerError::client(format!("import adder action {i} missing symbol")));
-                    };
-                    out.push((resolve_symbol_for_program(sd, program, r)?, action.valid));
+    let validate =
+        |sd: &SnapshotCtx, program: &'static Program| -> CheckerResult<Vec<(P<Symbol>, bool)>> {
+            let mut out = Vec::with_capacity(actions.len());
+            out = actions.iter().enumerate().try_fold(out, |mut out, (i, action)| {
+                match action.kind.as_str() {
+                    "importSymbol" => {
+                        let Some(r) = &action.symbol else {
+                            return Err(CheckerError::client(format!(
+                                "import adder action {i} missing symbol"
+                            )));
+                        };
+                        out.push((resolve_symbol_for_program(sd, program, r)?, action.valid));
+                    }
+                    kind => {
+                        return Err(CheckerError::client(format!(
+                            "unknown import adder action kind {kind:?}"
+                        )));
+                    }
                 }
-                kind => return Err(CheckerError::client(format!("unknown import adder action kind {kind:?}"))),
-            }
-        }
-        Ok(out)
-    };
+
+                Ok::<_, CheckerError>(out)
+            })?;
+            Ok(out)
+        };
 
     let mut working = Arc::clone(&sd.scope.snapshot);
     let mut prepared: Option<Arc<Snapshot>> = None;
-    let prepared_for_file = working.auto_import_registry().is_some_and(|r| r.is_prepared_for_importing_file(source_file.file_name(), &project_id, working.user_preferences()));
+    let prepared_for_file = working.auto_import_registry().is_some_and(|r| {
+        r.is_prepared_for_importing_file(
+            source_file.file_name(),
+            &project_id,
+            working.user_preferences(),
+        )
+    });
     if !prepared_for_file {
         let snapshot = host.clone_snapshot_with_auto_imports(&working, &file_name)?;
         prepared = Some(Arc::clone(&snapshot));
         working = snapshot;
         let resolved = program_of(&working, &sd.project).and_then(|prog| {
-            let sf = prog.get_source_file(&file_name).ok_or_else(|| CheckerError::client(format!("source file not found: {}", file.display())))?;
+            let sf = prog.get_source_file(&file_name).ok_or_else(|| {
+                CheckerError::client(format!("source file not found: {}", file.display()))
+            })?;
             Ok((prog, sf))
         });
         match resolved {
@@ -305,9 +364,26 @@ fn import_adder_edits(
     let ctx = host.context();
     let mut checker = program.get_type_checker(&ctx);
     let preferences = working.user_preferences().clone();
-    let view = tsrs_ls::autoimport::new_view(Some(registry), source_file, project_id, program, &mut checker, preferences.module_specifier_preferences());
-    let format = tsrs_ls::Host::get_preferences(working.as_ref(), source_file.file_name()).format_code_settings;
-    let mut adder = tsrs_ls::autoimport::new_import_adder(&ctx, program, &mut checker, source_file, view, format, working.converters(), preferences);
+    let view = tsrs_ls::autoimport::new_view(
+        Some(registry),
+        source_file,
+        project_id,
+        program,
+        &mut checker,
+        preferences.module_specifier_preferences(),
+    );
+    let format = tsrs_ls::Host::get_preferences(working.as_ref(), source_file.file_name())
+        .format_code_settings;
+    let mut adder = tsrs_ls::autoimport::new_import_adder(
+        &ctx,
+        program,
+        &mut checker,
+        source_file,
+        view,
+        format,
+        working.converters(),
+        preferences,
+    );
     for (symbol, valid) in symbols {
         adder.add_import_from_exported_symbol(symbol, valid);
     }
@@ -321,7 +397,10 @@ fn import_adder_edits(
 }
 
 /// Go `toAPITextEdits` (+ `originalTextOffset`): LSP line/character → original-text offsets → UTF-16.
-fn to_api_text_edits(source_file: P<tsrs_ast::SourceFile>, edits: &[tsrs_lsproto::TextEdit]) -> Value {
+fn to_api_text_edits(
+    source_file: P<tsrs_ast::SourceFile>,
+    edits: &[tsrs_lsproto::TextEdit],
+) -> Value {
     let original = source_file.original_text();
     let line_map = tsrs_ls::lsconv::compute_lsp_line_starts(original);
     let position_map = tsrs_ast::compute_position_map(original);
@@ -332,15 +411,31 @@ fn to_api_text_edits(source_file: P<tsrs_ast::SourceFile>, edits: &[tsrs_lsproto
         (off >= start && off <= original.len() as i64).then_some(off)
     };
     let mut out = Vec::with_capacity(edits.len());
-    for edit in edits {
+    out = match edits.iter().try_fold(out, |mut out, edit| {
         let (Some(start), Some(end)) = (offset(&edit.range.start), offset(&edit.range.end)) else {
-            return Value::Null;
+            return std::ops::ControlFlow::Break(Value::Null);
         };
         let mut o = obj();
-        o.num("pos", position_map.utf8_to_utf16(start as i32) as f64);
-        o.num("end", position_map.utf8_to_utf16(end as i32) as f64);
+        o.num(
+            "pos",
+            f64::from(
+                position_map
+                    .utf8_to_utf16(u32::try_from(start).expect("edit position exceeds u32")),
+            ),
+        );
+        o.num(
+            "end",
+            f64::from(
+                position_map.utf8_to_utf16(u32::try_from(end).expect("edit position exceeds u32")),
+            ),
+        );
         o.set("newText", Value::String(edit.new_text.clone()));
         out.push(o.build());
-    }
+
+        std::ops::ControlFlow::Continue(out)
+    }) {
+        std::ops::ControlFlow::Continue(value) => value,
+        std::ops::ControlFlow::Break(value) => return value,
+    };
     Value::Array(out)
 }

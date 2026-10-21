@@ -19,8 +19,13 @@ Answer: nothing beyond what release.yml already does is worth its build time.
 
 ## Method
 
-`.depot/workflows/perf-layout-probe.yml` (run with `depot ci run`) builds every variant in one job from one
-instrumented build (`tools/perf/layout-build.sh`), then measures them interleaved (`tools/perf/layout-measure.py`):
+The experiment's workflow and `tools/perf/layout-build.sh` have been removed; their last versions are available
+at commit `b620e8e5` (the workflow was saved as `.github/workflows/perf-layout-probe.yml.bak`).
+Use `.github/scripts/pgo-train.sh` and `.github/scripts/bolt.sh` for the current release build steps, and
+`tools/perf/layout-measure.py --bin base=<path> --bin new=<path>` to compare supplied binaries.
+
+The original `.depot/workflows/perf-layout-probe.yml` (run with `depot ci run`) built every variant in one job from one
+instrumented build (`tools/perf/layout-build.sh`), then measured them interleaved (`tools/perf/layout-measure.py`):
 every bench project (`bench/run.py` `project_path`), `-p <project> --noEmit --incremental false --pretty false
 --extendedDiagnostics`, default checker count (32 here) and `--checkers 4`, 7 rounds per run with the binary order
 rotating each round. Wall time and peak RSS come from `wait4`. Then the full stdout without `--extendedDiagnostics`
@@ -37,7 +42,7 @@ Variants, all built from the same source:
 | name | how |
 | --- | --- |
 | A0 | main between #143 and #153: the PGO profile has only the suite and fourslash counts (the tsrs runs wrote 0-byte profiles) |
-| A | today's bench binary: `pgo-train.sh` with the tsrs profiles written, `cargo build --profile dist` |
+| A | today's bench binary: `pgo-train.sh` with the tsrs profiles written, `cargo build --release` |
 | B | A's profile plus tsrs on vscode, t3code-server and formbricks-web at 4 and 32 checkers |
 | R | A linked with `--emit-relocs`, then BOLT exactly as `bolt.sh`: instrumented, trained on xstate-main + webpack |
 | Rv | R with the BOLT training extended by vscode at 4 checkers |
@@ -48,8 +53,9 @@ Variants, all built from the same source:
 ## 1. The training runs of tsrs wrote nothing (fixed in #153 and #155)
 
 Status (2026-10-10): the `_exit` exit path was reverted in #191 (docs/STATUS.md). `crates/tsrs_cli/src/main.rs`
-ends with `std::process::exit`, so the exit handlers that write PGO and BOLT profiles always run; `bolt.sh` and
-`tools/perf/layout-build.sh` keep `MIMALLOC_SHOW_STATS=1` as a leftover. The mechanism below is history.
+ends with `std::process::exit`, so the exit handlers that write PGO and BOLT profiles always run. The obsolete
+`MIMALLOC_SHOW_STATS=1` workaround was removed from `bolt.sh` and `tools/perf/layout-build.sh` in #274.
+The mechanism below is history.
 
 `tsrs` ends a command-line run with `libc::_exit` since #143. Both the LLVM profile runtime and BOLT's
 instrumentation runtime write their data from exit handlers, which `_exit` skips; the LLVM runtime does create the

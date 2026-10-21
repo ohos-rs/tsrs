@@ -1,4 +1,190 @@
-# Status
+# Release notes
+
+Release entries describe changes and evidence recorded for that version. Measurements from an individual
+change are identified separately from measurements of the packaged release. For current support and known gaps,
+see the [compatibility table](COMPATIBILITY.md); detailed investigations are indexed in the
+[engineering notes](../notes/README.md). The early development log follows the release entries.
+
+## 2026-10-19: 0.18.0 release
+
+All seven packages use `0.18.0-ts7.1.0-dev.20260929`. The TypeScript pin remains `b85298b6a81f`; release binaries
+report the matching nightly `7.1.0-dev.20260930.4`.
+
+Release publishing allows 30 minutes for each package to become available on npm and 90 minutes for the publish
+job. Re-runs skip versions npm reports as already staged or published, even when they are not yet visible to
+registry queries; metadata, tarballs and `latest` tags must still become available before the release completes
+(#615). Compiler behavior, supported platforms and the recorded conformance results are unchanged from 0.17.0.
+
+The workflow publishes the [GitHub release notes](releases/0.18.0.md) under the title `0.18.0`.
+Bumping the root `package.json` version on `main` triggers publishing.
+
+## 2026-10-19: 0.17.0 release
+
+All seven packages use `0.17.0-ts7.1.0-dev.20260929`. The TypeScript pin remains `b85298b6a81f`; release binaries
+report the matching nightly `7.1.0-dev.20260930.4`.
+
+`tsrs -b` frees each project's program after building it, fixing arena exhaustion on large project graphs (#607).
+The same change fixes a use-after-free in incremental builds and build watch mode. The
+[change's measurements](../notes/mem-build-free-programs.md) show a synthetic 7,500-project graph completing at
+4.8 GB peak RSS with `--builders 64 --checkers 1`, where the previous code exhausted the arena range.
+These are measurements of that change, not a packaged-release comparison.
+
+Native npm binaries omit duplicate embedded TypeScript libraries and use the copies shipped beside the executable
+(#578). Compiler maintenance removes dormant instrumentation, collects diagnostic timings only when requested,
+uses compact generated Unicode casing tables and shares compiler-option change traversal (#584, #585, #590,
+#592, #602, #610). Native binaries using mimalloc share the CLI's allocator policy (#612).
+
+CI and release validation now use the pinned upstream Go fourslash harness against the Rust server (#594).
+The [recorded harness validation](../tools/go-fourslash/README.md#validation-2026-10-18) has 4,074 passing groups
+and 472 skips, including all 4,066 passes from the former translated suite; eight additional groups use Go-built
+fixtures. The browser playground deploys after successful releases (#526, #587).
+
+The workflow publishes the [GitHub release notes](releases/0.17.0.md) under the title `0.17.0`, without a prefix.
+Bumping the root `package.json` version on `main` triggers publishing.
+
+## 2026-10-16: 0.16.0 release
+
+All seven packages use `0.16.0-ts7.1.0-dev.20260929`. The TypeScript pin remains `b85298b6a81f`; release binaries
+report the matching nightly `7.1.0-dev.20260930.4`.
+
+Scoped packages move from `@ts-rs` to `@tsrs` (#512). The main package remains `tsrs` and selects its platform
+package automatically. Update direct platform and WebAssembly dependencies to the new scope.
+
+Parser, binder, AST and checker optimizations reduce redundant work (#532, #533, #535, #547, #548, #549, #552,
+#554, #557). These changes have individual measurements; no new packaged-release performance comparison is claimed.
+
+Removed the `alloc-profile` build feature, its counting allocator, heap sampler and reachability census.
+The remaining memory reports and arena recycling checks are documented in the [debugging guide](DEBUGGING.md).
+
+Verification on macOS arm64: workspace/WASI checks, Clippy, source checks and all eight generators pass; both
+compiler conformance gates meet their thresholds (13,458 error baselines; 12,779 type and symbol baselines in
+Go-history mode, 12,778 in default mode). Emit matches all 13,392 `.js`, 149 `.js.map` and 156 `.sourcemap.txt`
+baselines. Fourslash remains at 4,066 passes,
+63 known failures and 417 skips. All 36 regression cases, Rust unit/integration checks (including all 16 macOS watch
+cases), all 906 upstream JS API checks and the 24 installed-package CLI/API smoke steps pass. The SDK copy matches
+the pinned upstream sources. The watch checks require FSEvents access outside the sandbox. The cross-platform
+release dry run on `d5682df5` (before the version bump)
+[passed](https://github.com/oxc-project/tsrs/actions/runs/38918398638): all five native targets, WebAssembly and the
+packaging/publish dry run. The local 0.16.0 binary was rebuilt with the nightly stamp; both conformance gates and
+the packed CLI/API smoke pass with no lost passing baselines. Bumping the root `package.json` version on `main`
+triggers `release.yml`; it must match the npm version derived from `Cargo.toml`. The workflow publishes the
+[GitHub release notes](releases/0.16.0.md) with `gh release create` after all npm packages are available.
+
+## 2026-10-14: 0.15.0 release
+
+All seven packages use `0.15.0-ts7.1.0-dev.20260929`. The TypeScript pin is unchanged (`b85298b6`, 7.1.0-dev.20260929).
+
+**Watch mode.** `--watch` and `-b --watch` now work on Linux and macOS (#363). Windows reports "not supported". On
+vscode, a one-file edit is rechecked in about 50 ms, against 0.5–20 s for tsgo, and memory stays at 1.5–2.7 GB,
+against 10–15 GB for tsgo (#363, #391, #392).
+
+**Language server.** Fixed crashes on bad client input and unusual files (#400, #404, #513), a memory leak from
+canceled requests (#400), and wrong `willRenameFiles` and formatting edits (#513). Cheap requests no longer wait
+behind slow ones (#404). On macOS, file watching no longer floods the log with overflow warnings (#403).
+
+**Fixes.** An emit crash and build-info diagnostic output, both regressions in 0.14.0 (#362).
+
+**Memory safety.** Fixed a data race found by ThreadSanitizer (#510) and aliasing bugs Miri found in plain-pointer
+builds (#401, #405, #515). The default build was not affected by the aliasing bugs.
+
+## 2026-10-13: 0.14.1 release
+
+Highlights:
+
+- Fix false diagnostics involving merged interfaces, lazy mapped types and nested instantiation limits.
+- Ship default libraries beside the native binary and report the matching TypeScript nightly version.
+- Stop the language-server and API processes on SIGINT/SIGTERM, and preserve control characters in user strings.
+
+Known limitations: the repository-conformance smoke run still differs on opencode (member order in a message),
+n8n (an export name) and dify (a missing TS2578). The fixes below do not resolve those cases.
+
+Implementation and validation details:
+
+Fixes since 0.14.0. All seven packages use `0.14.1-ts7.1.0-dev.20260929`; the TypeScript source pin remains
+`b85298b6a81f772d080b0455de0ca9d744cd6fd6` (7.1.0-dev.20260929). Release binaries now report the nightly built from
+that commit instead of `7.1.0-dev`, so tsbuildinfo files and `typesVersions` ranges match the npm `tsgo` (#358).
+
+Checker: merged interfaces no longer report extra TS2320/TS2430 errors in supabase and stagehand; default CLI mode
+reports at tsgo's four-checker sites, API builds keep per-file diagnostics and Go-shaped build info, and incremental
+builds refresh interface errors when file order, imports or skip flags change (#349). Lazy mapped types no longer
+raise false TS5115/TS2456 cycles (#348), a nested check no longer leaves its instantiation count in the caller and
+adds a false TS2589 (#352), and user strings starting with DEL print as written (#351). Measurements are in
+[the incremental diagnostic note](../notes/fix-history-dependent-diagnostics.md); warm incremental wall time on
+stagehand was about 7% higher locally.
+
+Parity with tsgo: the npm packages ship the default libraries beside the binary (#354); a non-array `paths`
+substitution reports TS5063 (#355); `--traceResolution` loads programs in Go's single-threaded order (#356); a closed
+stdout ends the process with SIGPIPE (#357); `--lsp` and `--api` stop on SIGINT/SIGTERM (#360); API `objectFlags` omit
+tsrs-only bits (#359) and the completion error comes back unwrapped (#361).
+
+CI: the release workflow waits for optional dependencies before publishing `tsrs` (#333), Clippy is enforced without
+a baseline (#342) and a 400-repository conformance workflow compares tsrs with tsgo (#345, #350). Its 20-repository
+smoke run is identical on 59 of 62 projects; the three known differences are listed above.
+
+Scanner and binder hot-path changes (#336, #337, #338, #339) and the round-4 checker change (#319) were merged
+without new release measurements.
+
+## 2026-10-11: 0.14.0 release
+
+Linux x64/arm64 packages gain explicit `-gnu` and `-musl` suffixes, static musl builds and libc-aware binary selection
+(#312). All seven packages (`tsrs`, `@ts-rs/darwin-arm64`, `@ts-rs/linux-x64-gnu`, `@ts-rs/linux-arm64-gnu`,
+`@ts-rs/linux-x64-musl`, `@ts-rs/linux-arm64-musl` and `@ts-rs/wasm`) use `0.14.0-ts7.1.0-dev.20260929`.
+Install with `pnpm add -D tsrs`; direct Linux platform-package dependencies need the appropriate libc suffix.
+The TypeScript source pin remains `b85298b6a81f772d080b0455de0ca9d744cd6fd6` (7.1.0-dev.20260929).
+
+Checker improvements (#301, #304, #327) reuse contextual types, property lookups and instantiations, reduce
+allocation churn and limit contention in work stealing. The measurements recorded for #327 in
+`notes/perf-icount-round4.md` show 9.4% fewer instructions in locality mode and 10.1% fewer in default mode at
+8 checkers on a large private monorepo, with identical diagnostics. Those compare plain release builds against
+`98d8d60e`, not 0.13.0 or the PGO/BOLT npm binaries. The same note records unchanged conformance pass lists in
+three modes, 29 passing regression cases and matching diagnostics on four public projects; these are the merged
+change's measurements, not new release measurements.
+
+The front end avoids redundant numeric-cache entries, builds transformed scanner text in its arena, searches
+block-comment tails by substring, reuses module path buffers and probes lightweight filesystem metadata
+(#285, #294, #315, #316, #321, #328). Internal integer and enum cleanup and suitable iterator conversions are
+included (#306, #317, #322); measured relation traversal loops are preserved (#325). Rust source builds now
+require 1.99 (#318). PGO instrumentation uses ThinLTO (#298); GNU release builds retain PGO/BOLT, while musl
+builds are static without PGO/BOLT. The shared checker seed remains opt-in with `tsrs_core/shared-graph` and
+`TSRS_SHARED_GRAPH=1`.
+
+## 2026-10-10: 0.13.0 release
+
+Walker Boyle's checker optimizations (#299): faster union construction and membership, caching of long union
+keys and indexed accesses, fewer type-relation and property lookups, and less allocation in checker and front-end
+paths. Module affinity and sticky work stealing now apply from 8 checkers on programs with at least 24,000 checked
+files; smaller programs retain the existing threshold.
+
+The measurements in `notes/perf-icount-hillclimb.md` compare plain release builds on Linux x64 with 8 checkers:
+the 38k-file codebase uses 38.7% fewer user-space instructions, checks about 24% faster (42.44–42.50 s to
+31.78–32.49 s over three runs each), and uses about 3.3% less peak RSS, with identical diagnostics. These are
+workload-specific measurements of #299, not new measurements of the PGO/BOLT npm binaries. Its pre-release
+validation preserved the conformance pass lists, passed all 29 regression cases, and found matching diagnostics
+in all 102 public-project verification cells.
+
+Release tooling now uses pinned pnpm 12.10.1 for installation, packing and direct OIDC publication (#295).
+All five packages (`tsrs`, `@ts-rs/darwin-arm64`, `@ts-rs/linux-x64`, `@ts-rs/linux-arm64` and `@ts-rs/wasm`)
+use `0.13.0-ts7.1.0-dev.20260929`. The TypeScript source pin remains
+`b85298b6a81f772d080b0455de0ca9d744cd6fd6` (7.1.0-dev.20260929). The shared checker seed still requires
+the `tsrs_core/shared-graph` Cargo feature and `TSRS_SHARED_GRAPH=1`; npm binaries use the default Cargo features.
+
+## 2026-10-10: 0.12.0 release
+
+The native compiler and JS API move to `tsrs`, the native binaries to `@ts-rs/darwin-arm64`, `@ts-rs/linux-x64`
+and `@ts-rs/linux-arm64`, and WebAssembly to `@ts-rs/wasm` (#288). All five packages use
+`0.12.0-ts7.1.0-dev.20260929`, published directly by the release workflow using npm trusted publishing (OIDC).
+Install with `pnpm add -D tsrs`; JS API consumers change imports from `@maschwenk/tsrs/unstable/*` to
+`tsrs/unstable/*`. Earlier releases remain under `@maschwenk`. The TypeScript source pin remains
+`b85298b6a81f772d080b0455de0ca9d744cd6fd6` (7.1.0-dev.20260929).
+
+Native checking now uses every core up to 16, then at least 16 or half the cores, with at most 32 checkers
+and the existing small-program cap; build mode still uses four (#270, notes/perf-default-checkers-16.md).
+Scanner byte dispatch (#287) and SIMD UTF-8 validation (#280) improve the front end. Identifier classification
+pins Unicode 15.1 to match the reference (#279), and Unicode uppercasing now follows Go's simple mapping (#275).
+
+The shared checker seed under `--maxMemory` (#281) remains an opt-in source-build experiment: it requires the
+`tsrs_core/shared-graph` Cargo feature and `TSRS_SHARED_GRAPH=1` (notes/spike-shared-graph.md). The npm release uses the
+default Cargo features. Dependency cleanup and documentation corrections are also included.
 
 ## 2026-10-11: in-process compiler integration
 
@@ -177,7 +363,7 @@ error count as 0.8.0. The `--extendedDiagnostics` `Symbols` counter drops where 
 never bound (#202).
 
 WebAssembly (#203, notes/wasm-build.md): `crates/tsrs_wasm` builds tsc as a `wasm32-wasip1` module over a host file
-system, and `@maschwenk/tsrs-wasm` runs it in Node 22 or later (`npx -y @maschwenk/tsrs-wasm -p .` on the real file
+system, and `@maschwenk/tsrs-wasm` runs it in Node 22 or later (`pnpm dlx @maschwenk/tsrs-wasm -p .` on the real file
 system, or `tsc(args, { files })` over in-memory files with JSON diagnostics) and in browsers (a Web Worker over
 in-memory files). The module is 9.15 MB, 2.58 MB gzip, 1.74 MB brotli. It is single-threaded: `--checkers` is
 accepted and everything runs on one thread. Its output is byte-identical to native `tsrs --singleThreaded` on the
@@ -301,8 +487,11 @@ thieves keep stealing from one queue (#171, instructions -3 to -15% at 16-32 che
 
 Diagnostics: tsgo runs the merged-interface checks (TS2320, TS2430, index constraints) once per checker, so a merged
 interface declared in several files reported in files that depended on which files shared a checker. By default tsrs
-now runs them at the first declaration of the symbol in each file (#165, notes/fix-history-dependent-diagnostics.md);
-`--checkerAssignment go` keeps Go's placement for byte-identity.
+runs them at the first declaration of the symbol in each file (#165), and reports TS2320 / TS2430 only at the
+declarations where pinned tsgo at its default four checkers does, whatever tsrs's own checker count and assignment
+(notes/fix-history-dependent-diagnostics.md). tsgo at another `--checkers` count can differ; `--checkerAssignment go`
+keeps Go's placement for byte-identity there. Project/API pools retain per-file reporting in default mode. Incremental
+builds refresh interface-file diagnostics when program inputs or file order change, since those can move the report sites.
 
 Front end and start-up: the config is parsed on the worker pool and a CLI run creates no rayon global pool (#156, -64
 threads and -50 MB peak on vscode); checkers are created while files are assigned (#162) and program diagnostics are
@@ -373,8 +562,8 @@ Memory: compressed 32-bit pointers on unix and scoped arenas (perf round 2, #37-
 -26 to -36%, page faults 0.9M -> 30K), and the checker-heap stack (#99, #105-#110: lazy member tables in the arena
 with one-word slices, CacheHashKey caches in a 20-byte PackedMap, a string literal cache without key copies, flat
 export indexes, 16-bit link store slot offsets): peak -3.3% / -6.4% at 1 / 8 checkers on the 38k-file codebase with
-instructions flat (-0.004% with PGO). `TSRS_HEAP_CENSUS=1` with `--extendedDiagnostics` prints what each checker
-owns; the heap sampler symbolizes on Linux. The emit print backlog is bounded at 2,048 files.
+instructions flat (-0.004% with PGO). The now-removed `TSRS_HEAP_CENSUS=1` instrumentation measured what each
+checker owned; the heap sampler symbolized on Linux. The emit print backlog is bounded at 2,048 files.
 
 Safety and build: a panic=abort crash in the arena is fixed (#103; a freed `&[T]` parameter let LLVM drop the
 free-list link) and guarded by a source check, Miri tests and an arena-safety CI job (#104, leak checking off because
@@ -382,9 +571,10 @@ the arena leaks its chunks by design). The Linux release binaries are BOLT-optim
 gates run on the optimized binaries (#101; -1 to -3% wall; notes/perf-build-level.md records the build-level space:
 text huge pages, panic=abort, allocators, opt-level, PGO training, #102). CI and the Linux Node API jobs run on
 Depot CI, macOS stays on GitHub; nightly differential parser fuzzing against tsgo (#76); the bench flags instruction
-and peak-memory regressions on main (#74); Rust is pinned at 1.99.0 (#78); the clippy ratchet and the unused-code
-ratchet were paid down across the workspace (#53, #57-#72, #79-#87) and generated code is checked against its
-generators. notes/perf-round3.md indexes what landed, what was rejected and what is open (2026-10-10: with a dated status of each open item).
+and peak-memory regressions on main (#74); Rust is pinned at 1.99.0 (#78); the Clippy and unused-code backlogs were
+paid down across the workspace (#53, #57-#72, #79-#87), Clippy is now denied with no baseline, and generated code is
+checked against its generators. notes/perf-round3.md indexes what landed, what was rejected and what is open
+(2026-10-10: with a dated status of each open item).
 
 ## 2026-10-03: 0.3.0 release
 
@@ -483,7 +673,7 @@ lost). 60 of the 62 fails are declaration-emit diagnostics (TS4xxx/TS9xxx/TS7056
 other 2 fails (`mutuallyRecursiveInference`, `recursiveMappedTypes`) and both codes tests are harness artifacts: the Go
 harness runs JS emit, whose const-enum inliner type-checks every property access, before collecting diagnostics, so
 errors are first reported from a different current node; the `tsgo` CLI reports what we report. Details and the
-clustering tool (`tools/cluster-diffs.py`): `notes/fix-nb-integrate.md`.
+clustering tool (`tools/cluster-diffs.py`).
 
 The private monorepo (release, 0 errors): counters now equal the reference exactly; peak memory unchanged versus main (19.5 vs
 19.4 GB single-threaded, measured back to back).
@@ -520,7 +710,7 @@ with Go's per-file cache, `emithost.rs`, `emitter::get_declaration_diagnostics`)
 called it at Go's points (harness: after semantic/global/suggestion diagnostics when `GetEmitDeclarations()`; CLI:
 `GetDiagnosticsOfAnyProgram` under `--noEmit`, only when no earlier diagnostics were found). Design notes:
 `crates/tsrs_declarations/src/lib.rs`, `crates/tsrs_transformers/src/resolver.rs` (the checker is lent to the transformer through a `CheckerSlot`;
-Go's `checkerMu`-locking resolver methods borrow it per call), `notes/fix-decl-diagnostics.md`.
+Go's `checkerMu`-locking resolver methods borrow it per call).
 
 Conformance: **13,458 pass / 2 codes / 2 fail / 0 timeout / 0 crash** (was 13,398 / 2 / 62; all 60 declaration-
 diagnostic fails pass, no previous pass lost; same with `TS_TEST_PROGRAM_SINGLE_THREADED=false`). `.types` now
@@ -551,8 +741,8 @@ the private monorepo depends on: types and symbols identical (1,526 files), coun
 
 The private monorepo's peak footprint is now below the Go reference: 15.35 GB `--singleThreaded` (was 19.5; tsgo 16.7) and
 23.35 GB with 4 checkers (was 28.3; tsgo 24.4), counters and conformance unchanged. The largest item was lazy JSDoc
-parsing copying the whole file text per node (3 GB). Opt-in arena/heap allocation profile:
-`--features alloc-profile` on `tsrs_cli` (+ `TSRS_HEAP_PROFILE=1`). Details: `notes/fix-perf-memory.md`.
+parsing copying the whole file text per node (3 GB). These measurements used the arena/heap allocation profiler
+that has since been removed.
 
 ## 2026-09-30 (later): lazy member resolution on by default
 
@@ -602,7 +792,7 @@ The private monorepo (go -> locality, same commit 52ef5a9, medians of 3): 4 chec
 -4% to -13% peak, faster at every count; 3 checkers with locality beat Go's 4 on both axes) in the notes.
 Single-threaded unchanged (no assignment with one checker). Of the remaining multi-checker excess, most is library instantiations (zod,
 MikroORM, lib) that every checker needs. Measurements, duplication breakdown, instrumentation
-(`TSRS_ASSIGNMENT_STATS`, feature `assignment-stats`): `notes/mem-assignment.md`.
+(the now-removed `TSRS_ASSIGNMENT_STATS` instrumentation): `notes/mem-assignment.md`.
 
 ## 2026-10-01: data-layout pass (peak memory)
 
@@ -613,7 +803,7 @@ index only past 8 entries, rarely set `ValueSymbolLinks` and `Symbol` fields in 
 stores paged by id. The private monorepo, reference mode (isolates these changes; medians of 3, interleaved): single-threaded
 peak 13.94 -> 11.08 GB, check 21.2 -> 18.2 s; 4 checkers 21.21 -> 17.06 GB, check 10.07 -> 8.66 s. Default mode
 (with lazy tuples and locality assignment landed meanwhile): 10.80 -> 8.39 GB / 20.0 -> 17.1 s single, 16.09 ->
-11.33 GB / 9.1 -> 6.7 s on 4 checkers. Details and per-change numbers: `notes/mem-layout.md`.
+11.33 GB / 9.1 -> 6.7 s on 4 checkers.
 
 ## 2026-10-01: frontend wall time (program construction, config, statistics)
 
@@ -674,7 +864,7 @@ interleaved, base dc59d8e): single-threaded peak 7.02 -> 6.02 GiB (-14.2%), 4 ch
 
 ## 2026-10-01: PGO release binaries
 
-Release binaries are built with PGO + fat LTO + one codegen unit (profile `dist`; training on the conformance suite
+Release binaries are built with PGO + fat LTO + one codegen unit (profile `release`; training on the conformance suite
 and two open-source bench projects; `cargo build --release` unchanged). The private monorepo: CPU -6.9% single /
 -10.5% on 4 checkers, instructions -13.5% / -13.7%, cycles -8.4% / -13.2%; vscode and mui-docs -11% / -14% CPU;
 output and counters identical. Details, x86_64 handling and build cost: `notes/perf-pgo.md`.
@@ -686,7 +876,7 @@ no Actions history); all tags were kept. Commit SHAs from before this date no lo
 
 ## 2026-10-01: memory census (garbage at exit)
 
-`TSRS_CENSUS=1` (alloc-profile build) marks what is reachable at exit: on the private monorepo with one checker, 661 of 4,572 MB arena and 82 of 1,592 MB live heap are unreachable (~0.7 of 6.3 GiB peak), led by inference contexts (~210 MB), scratch mappers and type lists (~175 MB), and object literal types from overload re-checks (~165 MB). Method, tables and a ranked recycling list: `notes/mem-census.md`.
+The historical reachability census measured what was reachable at exit: on the private monorepo with one checker, 661 of 4,572 MB arena and 82 of 1,592 MB live heap are unreachable (~0.7 of 6.3 GiB peak), led by inference contexts (~210 MB), scratch mappers and type lists (~175 MB), and object literal types from overload re-checks (~165 MB). Method, tables and a ranked recycling list: `notes/mem-census.md`.
 
 ## 2026-10-01: parse CPU (scanner, parser, AST construction)
 

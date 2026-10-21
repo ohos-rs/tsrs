@@ -231,9 +231,11 @@ impl ToOptionsValue for Option<Vec<tsrs_core::OhSdkConfig>> {
                     .iter()
                     .map(|c| {
                         CompilerOptionsValue::Object(
-                            [("apiPaths".to_string(), CompilerOptionsValue::StringArray(c.api_paths.clone()))]
-                                .into_iter()
-                                .collect(),
+                            std::iter::once((
+                                "apiPaths".to_string(),
+                                CompilerOptionsValue::StringArray(c.api_paths.clone()),
+                            ))
+                            .collect(),
                         )
                     })
                     .collect(),

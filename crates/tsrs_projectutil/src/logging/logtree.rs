@@ -1,10 +1,10 @@
 use std::fmt;
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::SystemTime;
 
 use super::logcollector::LogCollector;
-use super::logger::{format_time, Logger};
+use super::logger::{Logger, format_time};
 
 struct logEntry {
     time: SystemTime,
@@ -26,12 +26,12 @@ struct logTreeNode {
     logs: Mutex<Vec<logEntry>>,
     // None on the root itself (Go: `root == self`).
     root: Option<Weak<logTreeNode>>,
-    level: i32,
+    level: usize,
     verbose: AtomicBool,
 
     // Only set on root
-    count: AtomicI32,
-    string_length: AtomicI32,
+    count: AtomicUsize,
+    string_length: AtomicUsize,
 }
 
 // logtree.go:44
@@ -42,8 +42,8 @@ pub fn new_log_tree(name: &str) -> LogTree {
         root: None,
         level: 0,
         verbose: AtomicBool::new(false),
-        count: AtomicI32::new(0),
-        string_length: AtomicI32::new(0),
+        count: AtomicUsize::new(0),
+        string_length: AtomicUsize::new(0),
     })))
 }
 
@@ -61,7 +61,7 @@ impl logTreeNode {
     // logtree.go:52
     fn add(self: &Arc<Self>, log: logEntry) {
         // indent + header + message + newline
-        let len = self.level + 15 + log.message.len() as i32 + 1;
+        let len = self.level + 15 + log.message.len() + 1;
         self.with_root(|root| {
             root.string_length.fetch_add(len, Ordering::Relaxed);
             root.count.fetch_add(1, Ordering::Relaxed);
@@ -111,6 +111,7 @@ impl LogTree {
 
     // logtree.go:77
     pub fn is_verbose(&self) -> bool {
+        // Relaxed: verbosity is an independent flag; it does not publish other data.
         self.0.as_ref().is_some_and(|c| c.verbose.load(Ordering::Relaxed))
     }
 
@@ -122,8 +123,10 @@ impl LogTree {
     }
 
     // logtree.go:88
+    #[must_use]
     pub fn verbose(&self) -> LogTree {
         match &self.0 {
+            // Relaxed: this is a logging preference; it does not publish log entries or other data.
             Some(c) if c.verbose.load(Ordering::Relaxed) => self.clone(),
             _ => LogTree::nil(),
         }
@@ -148,6 +151,7 @@ impl LogTree {
     }
 
     // logtree.go:130
+    #[must_use]
     pub fn fork(&self, message: &str) -> LogTree {
         let Some(c) = &self.0 else {
             return LogTree::nil();
@@ -162,8 +166,8 @@ impl LogTree {
             root: Some(root),
             level: c.level + 1,
             verbose: AtomicBool::new(c.verbose.load(Ordering::Relaxed)),
-            count: AtomicI32::new(0),
-            string_length: AtomicI32::new(0),
+            count: AtomicUsize::new(0),
+            string_length: AtomicUsize::new(0),
         })));
         c.add(new_log_entry(child.clone(), message.to_string()));
         child
@@ -172,11 +176,10 @@ impl LogTree {
     // logtree.go:140
     pub fn string(&self) -> String {
         let c = self.0.as_ref().expect("String called on nil LogTree");
-        if c.root.is_some() {
-            panic!("can only call String on root LogTree");
-        }
+        assert!(c.root.is_none(), "can only call String on root LogTree");
         let header = format!("======== {} ========\n", c.name);
-        let mut builder = String::with_capacity(c.string_length.load(Ordering::Relaxed).max(0) as usize + header.len());
+        let mut builder =
+            String::with_capacity(c.string_length.load(Ordering::Relaxed) + header.len());
         builder.push_str(&header);
         c.write_logs_recursive(&mut builder, "");
         builder
@@ -186,33 +189,33 @@ impl LogTree {
 impl Logger for LogTree {
     // logtree.go:95
     fn error(&self, msg: &str) {
-        self.log(msg)
+        self.log(msg);
     }
     // logtree.go:99
     fn errorf(&self, args: fmt::Arguments<'_>) {
-        self.logf(args)
+        self.logf(args);
     }
     // logtree.go:103
     fn warn(&self, msg: &str) {
-        self.log(msg)
+        self.log(msg);
     }
     // logtree.go:107
     fn warnf(&self, args: fmt::Arguments<'_>) {
-        self.logf(args)
+        self.logf(args);
     }
     // logtree.go:111
     fn info(&self, msg: &str) {
-        self.log(msg)
+        self.log(msg);
     }
     // logtree.go:115
     fn infof(&self, args: fmt::Arguments<'_>) {
-        self.logf(args)
+        self.logf(args);
     }
     fn log(&self, msg: &str) {
-        LogTree::log(self, msg)
+        LogTree::log(self, msg);
     }
     fn logf(&self, args: fmt::Arguments<'_>) {
-        LogTree::logf(self, args)
+        LogTree::logf(self, args);
     }
     fn verbose(&self) -> Option<&dyn Logger> {
         if self.is_nil() || !LogTree::is_verbose(self) {
@@ -224,7 +227,7 @@ impl Logger for LogTree {
         LogTree::is_verbose(self)
     }
     fn set_verbose(&self, verbose: bool) {
-        LogTree::set_verbose(self, verbose)
+        LogTree::set_verbose(self, verbose);
     }
 }
 

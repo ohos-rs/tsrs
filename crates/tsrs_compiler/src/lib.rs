@@ -1,12 +1,11 @@
-#[cfg(feature = "checker")]
+mod affinity;
 mod checker_program;
 mod checkerpool;
-#[cfg(feature = "checker")]
-mod checkerpool_stats;
+#[cfg(test)]
+mod contentmapper_test;
 pub mod diagnosticwriter;
-mod emitter;
-#[cfg(feature = "checker")]
 mod emithost;
+mod emitter;
 mod file_include;
 mod fileloader;
 mod fileregions;
@@ -15,45 +14,56 @@ mod host;
 mod kitimports;
 pub use kitimports::KitImportProcessor;
 mod includeprocessor;
-mod affinity;
+#[cfg(test)]
+mod modulespecifiers_oracle_test;
 mod outputpaths;
 mod processing_diagnostic;
 mod program;
-#[cfg(feature = "checker")]
 mod program_emit;
-#[cfg(feature = "checker")]
+#[cfg(test)]
+mod program_test;
 mod programlike;
-mod splitcheck;
+mod programregions;
 mod projectreferencedtsfakinghost;
 mod projectreferencefilemapper;
 mod projectreferenceparser;
-#[cfg(all(test, feature = "checker"))]
-mod program_test;
-#[cfg(all(test, feature = "checker"))]
-mod contentmapper_test;
-#[cfg(all(test, feature = "checker"))]
-mod modulespecifiers_oracle_test;
+mod sharedgraph;
+mod splitcheck;
 
-pub use checkerpool::{assignment_stats_enabled, checker_count_upper_bound, set_checker_assignment_from_cli, set_checker_cost_cache_from_cli, parse_memory_size, set_max_memory_from_cli, use_go_default_checker_count, Checker, CheckerHandle, CheckerPool, Context, PooledChecker};
-#[cfg(feature = "checker")]
+pub use checkerpool::{
+    Checker, CheckerHandle, CheckerPool, Context, PooledChecker, checker_count_upper_bound,
+    parse_memory_size, set_checker_assignment_from_cli, set_checker_cost_cache_from_cli,
+    set_max_memory_from_cli, use_go_default_checker_count,
+};
 pub use emitter::EmitOnly;
-#[cfg(feature = "checker")]
-pub use programlike::{get_diagnostics_of_any_program_like, ProgramLike};
-#[cfg(feature = "checker")]
-pub use program_emit::{combine_emit_results, handle_no_emit_options, EmitOptions, EmitResult, SourceMapEmitResult, WriteFile, WriteFileData};
 pub use file_include::FileIncludeReason;
-pub use fileregions::{enable as enable_file_regions, enable_lazy_dts, lazy_dts_allowed, leaf_settings_from_env, stats_report as leaf_stats_report, LeafMode, LeafSettings};
 pub use fileloader::{
-    content_mapper_initialization_diagnostic, content_mapper_project_diagnostic, content_mapper_project_error_diagnostic, DuplicateSourceFile, LibFile,
+    DuplicateSourceFile, LibFile, content_mapper_initialization_diagnostic,
+    content_mapper_project_diagnostic, content_mapper_project_error_diagnostic,
 };
-pub use host::{get_content_mapped_source_files_with, new_cached_fs_compiler_host, new_compiler_host, CompilerHost, TraceFn};
+pub use fileregions::{
+    LeafMode, LeafSettings, bind_in_file_regions, enable as enable_file_regions, enable_lazy_dts,
+    lazy_dts_allowed, leaf_settings_from_env, stats_report as leaf_stats_report,
+};
+pub use host::{
+    CompilerHost, TraceFn, get_content_mapped_source_files_with, new_cached_fs_compiler_host,
+    new_compiler_host,
+};
 pub use program::{
-    filter_no_emit_semantic_diagnostics, free_program, free_unshared_program, shared_program_data, SharedProgramData, get_diagnostics_of_any_program, new_program, sort_and_deduplicate_diagnostics, CreateCheckerPool,
-    CreateModuleResolver, Program, ProgramConfig, ProgramOptions, worker_pool,
+    CreateCheckerPool, CreateModuleResolver, Program, ProgramConfig, ProgramOptions,
+    SharedProgramData, filter_no_emit_semantic_diagnostics, free_program, free_unshared_program,
+    get_diagnostics_of_any_program, new_program, shared_program_data,
+    sort_and_deduplicate_diagnostics, worker_pool,
 };
+pub use program_emit::{
+    EmitOptions, EmitResult, SourceMapEmitResult, WriteFile, WriteFileData, combine_emit_results,
+    handle_no_emit_options,
+};
+pub use programlike::{ProgramLike, get_diagnostics_of_any_program_like};
+pub use programregions::ProgramRegions;
+pub use tsrs_checker::sitecount::dump as dump_site_counts;
 
-#[cfg(feature = "checker")]
 pub use program::{ArkTsBuildDiagnostics, ArkTsDiagnosticKeys, ArkTsNormalDiagnostics};
 
-#[cfg(all(test, feature = "checker"))]
+#[cfg(test)]
 mod kitimports_test;

@@ -1,7 +1,7 @@
 //! Port of `internal/transformers/declarations` (TypeScript 7). The transformer base it builds on
-//! (`internal/transformers`) lives in tsrs_transformers and is re-exported.
+//! (`internal/transformers`) lives in `tsrs_transformers` and is re-exported.
 //!
-//! Used both for declaration emit (tsrs_compiler `run_declaration_transformers` in emitter.rs) and for declaration
+//! Used both for declaration emit (`tsrs_compiler` `run_declaration_transformers` in emitter.rs) and for declaration
 //! diagnostics (`tsc` reports them whenever `declaration`/`composite` is on). The transform is ported faithfully:
 //! which nodes are visited, in what order and with which node-builder flags decides which diagnostics fire.
 //! Diagnostics entry point: `get_declaration_diagnostics` (Go `compiler.getDeclarationDiagnostics`) is in
@@ -10,9 +10,9 @@
 //!
 //! Layout (one Rust file per Go file; transform.go is split by line range):
 //! - types.rs: the hand-ported data model of all Go files (structs, host trait, constants).
-//! - `Resolver` and `Transformer` come from tsrs_transformers (re-exported).
+//! - `Resolver` and `Transformer` come from `tsrs_transformers` (re-exported).
 //! - transform_{1,2,3}.rs (transform.go 1–1339, 1340–2327, 2328–end), diagnostics_.rs, tracker.rs, util.rs,
-//!   supplementalreferences.rs: hand-ported function bodies (scaffolded as stubs by tools/gosig, declarations.json).
+//!   supplementalreferences.rs: hand-ported function bodies.
 
 pub(crate) use std::cell::{Cell, OnceCell, RefCell};
 pub(crate) use std::fmt::Display;
@@ -20,16 +20,18 @@ pub(crate) use std::rc::Rc;
 
 pub(crate) use rustc_hash::FxHashMap;
 pub(crate) use tsrs_ast::{self as ast, *};
-pub(crate) use tsrs_checker::{self as checker, Checker, SymbolAccessibility, SymbolAccessibilityResult, SymbolTracker};
+pub(crate) use tsrs_checker::{
+    self as checker, Checker, SymbolAccessibility, SymbolAccessibilityResult, SymbolTracker,
+};
 pub(crate) use tsrs_core::collections::Set;
 pub(crate) use tsrs_core::tspath;
-pub(crate) use tsrs_core::{alloc_str, alloc_vec, CompilerOptions, P};
+pub(crate) use tsrs_core::{CompilerOptions, P, alloc_str, alloc_vec};
 pub(crate) use tsrs_diagnostics::{self as diagnostics, Message};
 pub(crate) use tsrs_modulespecifiers::ModuleSpecifierGenerationHost;
 pub(crate) use tsrs_printer::{self as printer, EmitContext};
 pub(crate) use tsrs_scanner as scanner;
-pub(crate) use tsrs_tsoptions::outputpaths::OutputPaths;
 pub(crate) use tsrs_transformers as transformers;
+pub(crate) use tsrs_tsoptions::outputpaths::OutputPaths;
 
 /// Go package `nodebuilder` (flags only).
 pub(crate) mod nodebuilder {
@@ -40,7 +42,10 @@ mod types;
 
 // Go: `declarations` imports `transformers`; the base types moved to tsrs_transformers and are re-exported here so
 // existing paths keep compiling.
-pub use tsrs_transformers::{is_original_node_single_line, is_simple_copiable_expression, is_simple_inlineable_expression, Resolver, Transformer};
+pub use tsrs_transformers::{
+    Resolver, Transformer, is_original_node_single_line, is_simple_copiable_expression,
+    is_simple_inlineable_expression,
+};
 pub use types::*;
 
 mod diagnostics_;

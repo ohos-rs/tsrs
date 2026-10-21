@@ -3,14 +3,16 @@ use std::sync::Arc;
 use tsrs_ast::{self as ast, Diagnostic, Node, SourceFile, Symbol, SymbolFlags};
 use tsrs_checker::Checker;
 use tsrs_core::context::Context;
-use tsrs_core::{tspath, CompilerOptions, JsxEmit, TextRange, P};
+use tsrs_core::{CompilerOptions, JsxEmit, P, tspath};
 use tsrs_diagnostics as diagnostics;
 use tsrs_lsproto as lsproto;
 use tsrs_scanner as scanner;
 
 use crate::astnav;
 use crate::autoimport::{self, ImportAdder, QueryKind, View};
-use crate::codeactions::{is_fixable_diagnostic, CodeAction, CodeFixContext, CodeFixProvider, CombinedCodeActions};
+use crate::codeactions::{
+    CodeAction, CodeFixContext, CodeFixProvider, CombinedCodeActions, is_fixable_diagnostic,
+};
 
 // codeactions_importfixes.go:20
 fn import_fix_error_codes() -> &'static [i32] {
@@ -47,12 +49,13 @@ const IMPORT_FIX_ID: &str = "fixMissingImport";
 
 // codeactions_importfixes.go:48
 // ImportFixProvider is the CodeFixProvider for import-related fixes
-pub(crate) static IMPORT_FIX_PROVIDER: std::sync::LazyLock<CodeFixProvider> = std::sync::LazyLock::new(|| CodeFixProvider {
-    error_codes: import_fix_error_codes(),
-    get_code_actions: get_import_code_actions,
-    fix_ids: &[IMPORT_FIX_ID],
-    get_all_code_actions: Some(get_all_import_code_actions),
-});
+pub(crate) static IMPORT_FIX_PROVIDER: std::sync::LazyLock<CodeFixProvider> =
+    std::sync::LazyLock::new(|| CodeFixProvider {
+        error_codes: import_fix_error_codes(),
+        get_code_actions: get_import_code_actions,
+        fix_ids: &[IMPORT_FIX_ID],
+        get_all_code_actions: Some(get_all_import_code_actions),
+    });
 
 // codeactions_importfixes.go:55 (Go's errorIdentifierText field is never read)
 struct fixInfo {
@@ -62,16 +65,24 @@ struct fixInfo {
 }
 
 // codeactions_importfixes.go:62
-fn get_import_code_actions(ctx: &Context, fix_context: &CodeFixContext) -> Result<Vec<CodeAction>, lsproto::Error> {
+fn get_import_code_actions(
+    ctx: &Context,
+    fix_context: &CodeFixContext,
+) -> Result<Vec<CodeAction>, lsproto::Error> {
     let mut ch = fix_context.program.get_type_checker(ctx);
 
-    let info = get_fix_infos(&mut ch, fix_context, fix_context.error_code, fix_context.span.pos())?;
+    let info = get_fix_infos(
+        &mut ch,
+        fix_context,
+        fix_context.error_code,
+        fix_context.span.pos().expect_source("code-fix spans have source positions"),
+    )?;
     if info.is_empty() {
         return Ok(Vec::new());
     }
 
     let mut actions = Vec::new();
-    for fix_info in &info {
+    actions.extend(info.iter().filter_map(|fix_info| {
         let (edits, description, ok) = fix_info.fix.edits(
             ctx,
             fix_context.source_file,
@@ -82,31 +93,37 @@ fn get_import_code_actions(ctx: &Context, fix_context: &CodeFixContext) -> Resul
         );
 
         if ok {
-            actions.push(CodeAction {
+            Some(CodeAction {
                 description,
                 changes: edits,
                 fix_id: IMPORT_FIX_ID.to_string(),
                 fix_all_description: diagnostics::Add_all_missing_imports.localize(&[]),
-            });
+            })
+        } else {
+            None
         }
-    }
+    }));
     Ok(actions)
 }
 
 // codeactions_importfixes.go:96
-fn get_all_import_code_actions(ctx: &Context, fix_context: &CodeFixContext) -> Result<Option<CombinedCodeActions>, lsproto::Error> {
+fn get_all_import_code_actions(
+    ctx: &Context,
+    fix_context: &CodeFixContext,
+) -> Result<Option<CombinedCodeActions>, lsproto::Error> {
     if tspath::is_dynamic_file_name(fix_context.source_file.file_name()) {
         return Ok(None);
     }
 
-    let all_diagnostics = fix_context.program.get_semantic_diagnostics(ctx, Some(fix_context.source_file));
+    let all_diagnostics =
+        fix_context.program.get_semantic_diagnostics(ctx, Some(fix_context.source_file));
 
     let mut import_diags: Vec<P<Diagnostic>> = Vec::new();
-    for diag in all_diagnostics {
-        if is_fixable_diagnostic(diag, import_fix_error_codes()) {
-            import_diags.push(diag);
-        }
-    }
+    import_diags.extend(
+        all_diagnostics
+            .into_iter()
+            .filter(|&diag| is_fixable_diagnostic(diag, import_fix_error_codes())),
+    );
 
     if import_diags.is_empty() {
         return Ok(None);
@@ -136,7 +153,10 @@ fn get_all_import_code_actions(ctx: &Context, fix_context: &CodeFixContext) -> R
         return Ok(None);
     }
 
-    Ok(Some(CombinedCodeActions { description: diagnostics::Add_all_missing_imports.localize(&[]), changes: import_adder.edits() }))
+    Ok(Some(CombinedCodeActions {
+        description: diagnostics::Add_all_missing_imports.localize(&[]),
+        changes: import_adder.edits(),
+    }))
 }
 
 // codeactions_importfixes.go:150
@@ -147,9 +167,12 @@ fn add_import_from_diagnostic(
     diag: P<Diagnostic>,
     fix_context: &CodeFixContext,
 ) -> Result<(), lsproto::Error> {
+    let Some(diag_loc) = diag.loc() else {
+        return Ok(());
+    };
     let diag_fix_context = CodeFixContext {
         source_file: fix_context.source_file,
-        span: TextRange::new(diag.pos(), diag.end()),
+        span: diag_loc,
         error_code: diag.code(),
         program: fix_context.program,
         ls: fix_context.ls,
@@ -157,7 +180,12 @@ fn add_import_from_diagnostic(
         params: None,
     };
 
-    let infos = get_fix_infos(ch, &diag_fix_context, diag.code(), diag.pos())?;
+    let infos = get_fix_infos(
+        ch,
+        &diag_fix_context,
+        diag.code(),
+        diag.pos().expect("diagnostic location was checked above"),
+    )?;
     if !infos.is_empty() {
         import_adder.add_import_fix(&infos[0].fix);
     }
@@ -165,7 +193,12 @@ fn add_import_from_diagnostic(
 }
 
 // codeactions_importfixes.go:169
-fn get_fix_infos(ch: &mut Checker, fix_context: &CodeFixContext, error_code: i32, pos: i32) -> Result<Vec<fixInfo>, lsproto::Error> {
+fn get_fix_infos(
+    ch: &mut Checker,
+    fix_context: &CodeFixContext,
+    error_code: i32,
+    pos: u32,
+) -> Result<Vec<fixInfo>, lsproto::Error> {
     // Can't compute import fixes for dynamic/untitled files since they don't have real file paths
     if tspath::is_dynamic_file_name(fix_context.source_file.file_name()) {
         return Ok(Vec::new());
@@ -190,18 +223,12 @@ fn get_fix_infos(ch: &mut Checker, fix_context: &CodeFixContext, error_code: i32
         let symbol_names = get_symbol_names_to_import(fix_context.source_file, ch, symbol_token, &compiler_options);
 
         let mut all_type_only_fixes: Vec<fixInfo> = Vec::new();
-        for sn in &symbol_names {
+        all_type_only_fixes.extend(symbol_names.iter().filter_map(|sn| {
             if !sn.is_type_only {
-                continue;
+                return None;
             }
-            if let Some(fix) = get_type_only_promotion_fix(fix_context.source_file, symbol_token, &sn.name, ch) {
-                all_type_only_fixes.push(fixInfo {
-                    fix: Arc::new(fix),
-                    symbol_name: sn.name.clone(),
-                    is_jsx_namespace_fix: false,
-                });
-            }
-        }
+            get_type_only_promotion_fix(fix_context.source_file, symbol_token, &sn.name, ch).map(|fix| fixInfo { fix: Arc::new(fix), symbol_name: sn.name.clone(), is_jsx_namespace_fix: false })
+        }));
 
         // For JSX opening tags, there can be separate type-only errors for both the tag name
         // identifier and the JSX namespace identifier. When both produce valid fixes, we
@@ -230,7 +257,9 @@ fn get_fix_infos(ch: &mut Checker, fix_context: &CodeFixContext, error_code: i32
     }
 
     // Sort fixes by preference
-    let view = view.unwrap_or_else(|| fix_context.ls.get_current_auto_import_view(fix_context.source_file, ch));
+    let view = view.unwrap_or_else(|| {
+        fix_context.ls.get_current_auto_import_view(fix_context.source_file, ch)
+    });
     Ok(sort_fix_info(info, &view))
 }
 
@@ -245,9 +274,11 @@ fn get_fixes_info_for_umd_import(token: P<Node>, view: &View, ch: &mut Checker) 
     let is_valid_type_only_use_site = ast::is_valid_type_only_alias_use_site(token);
 
     let mut result = Vec::new();
-    for fix in view.get_fixes(&export, false, is_valid_type_only_use_site, None) {
-        result.push(fixInfo { fix, symbol_name: umd_symbol.name().to_string(), is_jsx_namespace_fix: false });
-    }
+    result.extend(
+        view.get_fixes(&export, false, is_valid_type_only_use_site, None).into_iter().map(|fix| {
+            fixInfo { fix, symbol_name: umd_symbol.name().to_string(), is_jsx_namespace_fix: false }
+        }),
+    );
     result
 }
 
@@ -264,10 +295,17 @@ fn get_umd_symbol(token: P<Node>, ch: &mut Checker) -> Option<P<Symbol>> {
 
     // The error wasn't for the symbolAtLocation, it was for the JSX tag itself, which needs access to e.g. `React`.
     let parent = token.parent().unwrap();
-    if (ast::is_jsx_opening_like_element(parent) && parent.tag_name() == token) || ast::is_jsx_opening_fragment(parent) {
+    if (ast::is_jsx_opening_like_element(parent) && parent.tag_name() == token)
+        || ast::is_jsx_opening_fragment(parent)
+    {
         let location = if ast::is_jsx_opening_like_element(parent) { token } else { parent };
         let jsx_namespace = ch.get_jsx_namespace_exported(parent);
-        let parent_symbol = ch.resolve_name_exported(&jsx_namespace, location, SymbolFlags::Value, false /* excludeGlobals */);
+        let parent_symbol = ch.resolve_name_exported(
+            &jsx_namespace,
+            location,
+            SymbolFlags::Value,
+            false, /* excludeGlobals */
+        );
         if is_umd_export_symbol(parent_symbol) {
             return parent_symbol;
         }
@@ -277,20 +315,30 @@ fn get_umd_symbol(token: P<Node>, ch: &mut Checker) -> Option<P<Symbol>> {
 
 // codeactions_importfixes.go:291
 fn is_umd_export_symbol(symbol: Option<P<Symbol>>) -> bool {
-    symbol.is_some_and(|s| !s.declarations().is_empty() && ast::is_namespace_export_declaration(s.declarations()[0]))
+    symbol.is_some_and(|s| {
+        !s.declarations().is_empty() && ast::is_namespace_export_declaration(s.declarations()[0])
+    })
 }
 
 // codeactions_importfixes.go:297
-fn get_fixes_info_for_non_umd_import(fix_context: &CodeFixContext, symbol_token: P<Node>, view: &View, ch: &mut Checker) -> Vec<fixInfo> {
+fn get_fixes_info_for_non_umd_import(
+    fix_context: &CodeFixContext,
+    symbol_token: P<Node>,
+    view: &View,
+    ch: &mut Checker,
+) -> Vec<fixInfo> {
     let compiler_options = fix_context.program.options();
 
     let is_valid_type_only_use_site = ast::is_valid_type_only_alias_use_site(symbol_token);
-    let symbol_names = get_symbol_names_to_import(fix_context.source_file, ch, symbol_token, &compiler_options);
+    let symbol_names =
+        get_symbol_names_to_import(fix_context.source_file, ch, symbol_token, &compiler_options);
     let mut all_info: Vec<fixInfo> = Vec::new();
 
     // Compute usage position for JSDoc import type fixes
-    let (usage_position, fidelity) =
-        fix_context.ls.converters.to_lsp_position(&fix_context.source_file, scanner::get_token_pos_of_node(symbol_token, fix_context.source_file, false));
+    let (usage_position, fidelity) = fix_context.ls.converters.to_lsp_position(
+        &fix_context.source_file,
+        scanner::get_token_pos_of_node(symbol_token, fix_context.source_file, false).into(),
+    );
     if !fidelity.is_exact() {
         return Vec::new();
     }
@@ -307,7 +355,8 @@ fn get_fixes_info_for_non_umd_import(fix_context: &CodeFixContext, symbol_token:
             continue;
         }
 
-        let is_jsx_tag_name = symbol_name == symbol_token.text() && ast::is_jsx_tag_name(symbol_token);
+        let is_jsx_tag_name =
+            symbol_name == symbol_token.text() && ast::is_jsx_tag_name(symbol_token);
         let mut query_kind = QueryKind::ExactMatch;
         if is_jsx_tag_name {
             query_kind = QueryKind::CaseInsensitiveMatch;
@@ -319,14 +368,17 @@ fn get_fixes_info_for_non_umd_import(fix_context: &CodeFixContext, symbol_token:
                 continue;
             }
 
-            let fixes = view.get_fixes(export, is_jsx_tag_name, is_valid_type_only_use_site, Some(usage_position));
-            for fix in fixes {
-                all_info.push(fixInfo {
-                    fix,
-                    symbol_name: symbol_name.clone(),
-                    is_jsx_namespace_fix: symbol_name != symbol_token.text(),
-                });
-            }
+            let fixes = view.get_fixes(
+                export,
+                is_jsx_tag_name,
+                is_valid_type_only_use_site,
+                Some(usage_position),
+            );
+            all_info.extend(fixes.into_iter().map(|fix| fixInfo {
+                fix,
+                symbol_name: symbol_name.clone(),
+                is_jsx_namespace_fix: symbol_name != symbol_token.text(),
+            }));
         }
     }
 
@@ -334,9 +386,19 @@ fn get_fixes_info_for_non_umd_import(fix_context: &CodeFixContext, symbol_token:
 }
 
 // codeactions_importfixes.go:351
-fn get_type_only_promotion_fix(source_file: P<SourceFile>, symbol_token: P<Node>, symbol_name: &str, ch: &mut Checker) -> Option<autoimport::Fix> {
+fn get_type_only_promotion_fix(
+    source_file: P<SourceFile>,
+    symbol_token: P<Node>,
+    symbol_name: &str,
+    ch: &mut Checker,
+) -> Option<autoimport::Fix> {
     // Get the symbol at the token location
-    let symbol = ch.resolve_name_exported(symbol_name, symbol_token, SymbolFlags::Value, true /* excludeGlobals */)?;
+    let symbol = ch.resolve_name_exported(
+        symbol_name,
+        symbol_token,
+        SymbolFlags::Value,
+        true, /* excludeGlobals */
+    )?;
 
     // Get the type-only alias declaration
     let type_only_alias_declaration = ch.get_type_only_alias_declaration(symbol)?;
@@ -345,7 +407,10 @@ fn get_type_only_promotion_fix(source_file: P<SourceFile>, symbol_token: P<Node>
     }
 
     Some(autoimport::Fix {
-        auto_import_fix: lsproto::AutoImportFix { kind: lsproto::AutoImportFixKind::PromoteTypeOnly, ..Default::default() },
+        auto_import_fix: lsproto::AutoImportFix {
+            kind: lsproto::AutoImportFixKind::PromoteTypeOnly,
+            ..Default::default()
+        },
         type_only_alias_declaration: Some(type_only_alias_declaration),
         ..Default::default()
     })
@@ -358,7 +423,12 @@ struct symbolNameInfo {
 }
 
 // codeactions_importfixes.go:377
-fn get_symbol_names_to_import(source_file: P<SourceFile>, ch: &mut Checker, symbol_token: P<Node>, compiler_options: &CompilerOptions) -> Vec<symbolNameInfo> {
+fn get_symbol_names_to_import(
+    source_file: P<SourceFile>,
+    ch: &mut Checker,
+    symbol_token: P<Node>,
+    compiler_options: &CompilerOptions,
+) -> Vec<symbolNameInfo> {
     let parent = symbol_token.parent().unwrap();
     if (ast::is_jsx_opening_like_element(parent) || ast::is_jsx_closing_element(parent))
         && parent.tag_name() == symbol_token
@@ -368,18 +438,34 @@ fn get_symbol_names_to_import(source_file: P<SourceFile>, ch: &mut Checker, symb
         if needs_jsx_namespace_fix(&jsx_namespace, symbol_token, ch) {
             let mut result = Vec::new();
             if !scanner::is_intrinsic_jsx_name(symbol_token.text()) {
-                let comp_symbol = ch.resolve_name_exported(symbol_token.text(), symbol_token, SymbolFlags::Value, false /* excludeGlobals */);
+                let comp_symbol = ch.resolve_name_exported(
+                    symbol_token.text(),
+                    symbol_token,
+                    SymbolFlags::Value,
+                    false, /* excludeGlobals */
+                );
                 match comp_symbol {
-                    None => result.push(symbolNameInfo { name: symbol_token.text().to_string(), is_type_only: false }),
+                    None => result.push(symbolNameInfo {
+                        name: symbol_token.text().to_string(),
+                        is_type_only: false,
+                    }),
                     Some(comp_symbol) => {
                         if ch.get_type_only_alias_declaration(comp_symbol).is_some() {
-                            result.push(symbolNameInfo { name: symbol_token.text().to_string(), is_type_only: true });
+                            result.push(symbolNameInfo {
+                                name: symbol_token.text().to_string(),
+                                is_type_only: true,
+                            });
                         }
                     }
                 }
             }
             let mut ns_is_type_only = false;
-            if let Some(ns_symbol) = ch.resolve_name_exported(&jsx_namespace, symbol_token, SymbolFlags::Value, true /* excludeGlobals */) {
+            if let Some(ns_symbol) = ch.resolve_name_exported(
+                &jsx_namespace,
+                symbol_token,
+                SymbolFlags::Value,
+                true, /* excludeGlobals */
+            ) {
                 ns_is_type_only = ch.get_type_only_alias_declaration(ns_symbol).is_some();
             }
             result.push(symbolNameInfo { name: jsx_namespace, is_type_only: ns_is_type_only });
@@ -387,7 +473,12 @@ fn get_symbol_names_to_import(source_file: P<SourceFile>, ch: &mut Checker, symb
         }
     }
     let mut token_is_type_only = false;
-    if let Some(sym) = ch.resolve_name_exported(symbol_token.text(), symbol_token, SymbolFlags::Value, true /* excludeGlobals */) {
+    if let Some(sym) = ch.resolve_name_exported(
+        symbol_token.text(),
+        symbol_token,
+        SymbolFlags::Value,
+        true, /* excludeGlobals */
+    ) {
         token_is_type_only = ch.get_type_only_alias_declaration(sym).is_some();
     }
     vec![symbolNameInfo { name: symbol_token.text().to_string(), is_type_only: token_is_type_only }]
@@ -398,10 +489,19 @@ fn needs_jsx_namespace_fix(jsx_namespace: &str, symbol_token: P<Node>, ch: &mut 
     if scanner::is_intrinsic_jsx_name(symbol_token.text()) {
         return true;
     }
-    let Some(namespace_symbol) = ch.resolve_name_exported(jsx_namespace, symbol_token, SymbolFlags::Value, true /* excludeGlobals */) else {
+    let Some(namespace_symbol) = ch.resolve_name_exported(
+        jsx_namespace,
+        symbol_token,
+        SymbolFlags::Value,
+        true, /* excludeGlobals */
+    ) else {
         return true;
     };
-    if namespace_symbol.declarations().iter().any(|&d| ast::is_type_only_import_or_export_declaration(d)) {
+    if namespace_symbol
+        .declarations()
+        .iter()
+        .any(|&d| ast::is_type_only_import_or_export_declaration(d))
+    {
         return !namespace_symbol.flags().intersects(SymbolFlags::Value);
     }
     false
@@ -427,7 +527,7 @@ fn sort_fix_info(fixes: Vec<fixInfo>, view: &View) -> Vec<fixInfo> {
     tsrs_core::goslices::sort_func(&mut sorted, |a, b| {
         // JSX namespace fixes should come last
         let cmp = tsrs_core::compare_booleans(a.is_jsx_namespace_fix, b.is_jsx_namespace_fix);
-        if cmp != 0 {
+        if !cmp.is_eq() {
             return cmp;
         }
         view.compare_fixes_for_sorting(&a.fix, &b.fix)

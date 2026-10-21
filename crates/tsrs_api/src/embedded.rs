@@ -139,9 +139,10 @@ impl Compiler {
             let root = previous
                 .is_none()
                 .then(|| SnapshotReference(session.snapshot_host.new_root_snapshot()));
-            let base = previous
-                .map(|p| &*p.data.snapshot)
-                .unwrap_or_else(|| &root.as_ref().unwrap().0);
+            let base = previous.map_or_else(
+                || &*root.as_ref().unwrap().0,
+                |p| &*p.data.snapshot,
+            );
             let result = session.snapshot_host.clone_snapshot(
                 &Context::background(),
                 base,

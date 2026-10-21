@@ -10,9 +10,8 @@
 //!   pointer to that memory: same chunk, and no free or `pin` on this thread in between (`pin` is called by code
 //!   that stores freshly allocated data in a structure that outlives the speculation, e.g. a scanner cache).
 //!
-//! Verification modes (`TSRS_ARENA_POISON=1`, and the census build with `TSRS_CENSUS=1`) never reuse memory: freed
-//! blocks and rewound ranges are filled with `POISON` (any later read of a pointer field crashes) or recorded as
-//! would-free for the census, which asserts at exit that none of them is reachable.
+//! `TSRS_ARENA_POISON=1` never reuses memory: freed blocks and rewound ranges are filled with `POISON`
+//! so later uses of stale pointers can be detected.
 //!
 //! **Regions** (docs/LSP.md "Memory plan for a long-lived server"): a `Region` is an arena of its own that can be
 //! freed as a whole. `Region::enter` makes it the current thread's allocation target until the returned scope is
@@ -21,7 +20,7 @@
 //! vectors and maps inside links and tables), so freeing it (dropping the last `Region` handle) also releases the
 //! heap memory those values own. Freeing is safe only if nothing that outlives the region points into it; the
 //! language server ties regions to the objects Go's GC would free together (a parsed file version, a checker, a
-//! program), and the census build checks it (a freed region is recorded as would-free, never released).
+//! program).
 
 use std::alloc::Layout;
 use std::cell::{Cell, RefCell};
@@ -44,8 +43,6 @@ const HUGE_THREAD_CHUNK: Option<usize> = None;
 /// Largest chunk a thread arena grows to in compressed mode (larger single allocations still get their own size).
 #[cfg(compressed_ptrs)]
 const MAX_CHUNK: usize = 64 << 20;
-#[cfg(all(not(compressed_ptrs), target_pointer_width = "64"))]
-const MAX_CHUNK: usize = usize::MAX;
 /// 32-bit targets (wasm32) cap the doubling too: a doubled 1 GiB chunk would waste half of a 4 GiB address space.
 #[cfg(all(not(compressed_ptrs), target_pointer_width = "32"))]
 const MAX_CHUNK: usize = 64 << 20;
@@ -82,54 +79,6 @@ pub struct Arena {
     registered: bool,
     /// Regions only: chunks are carved from the thread's large slabs (`Region::new_scratch_in_large_slabs`).
     large_slabs: bool,
-    #[cfg(feature = "alloc-profile")]
-    pub(crate) free_stats: FreeStats,
-}
-
-/// Alloc-profile builds: what this arena's free lists hold, per size class (blocks on the list now and at the class's
-/// peak, blocks handed out again, recycling allocations that found the list empty and bumped instead), and the bytes
-/// on all lists now and at their peak.
-#[cfg(feature = "alloc-profile")]
-pub(crate) struct FreeStats {
-    pub(crate) blocks: [Cell<u64>; CLASSES],
-    pub(crate) peak_blocks: [Cell<u64>; CLASSES],
-    pub(crate) reissued: [Cell<u64>; CLASSES],
-    pub(crate) misses: [Cell<u64>; CLASSES],
-    pub(crate) bytes: Cell<u64>,
-    pub(crate) peak_bytes: Cell<u64>,
-}
-
-#[cfg(feature = "alloc-profile")]
-impl FreeStats {
-    const fn new() -> FreeStats {
-        FreeStats {
-            blocks: [const { Cell::new(0) }; CLASSES],
-            peak_blocks: [const { Cell::new(0) }; CLASSES],
-            reissued: [const { Cell::new(0) }; CLASSES],
-            misses: [const { Cell::new(0) }; CLASSES],
-            bytes: Cell::new(0),
-            peak_bytes: Cell::new(0),
-        }
-    }
-
-    fn pushed(&self, class: usize) {
-        let n = self.blocks[class].get() + 1;
-        self.blocks[class].set(n);
-        self.peak_blocks[class].set(self.peak_blocks[class].get().max(n));
-        let b = self.bytes.get() + class as u64 * 8;
-        self.bytes.set(b);
-        self.peak_bytes.set(self.peak_bytes.get().max(b));
-    }
-
-    fn popped(&self, class: usize, hit: bool) {
-        if hit {
-            self.blocks[class].set(self.blocks[class].get() - 1);
-            self.bytes.set(self.bytes.get() - class as u64 * 8);
-            self.reissued[class].set(self.reissued[class].get() + 1);
-        } else {
-            self.misses[class].set(self.misses[class].get() + 1);
-        }
-    }
 }
 
 pub(crate) struct Residency {
@@ -160,8 +109,6 @@ pub struct Checkpoint {
     start: *mut u8,
     epoch: u64,
     drops: usize,
-    #[cfg(feature = "alloc-profile")]
-    census_blocks: usize,
 }
 
 impl Arena {
@@ -169,7 +116,12 @@ impl Arena {
         Arena::with_first_chunk(FIRST_CHUNK, None, false, false)
     }
 
-    fn with_first_chunk(first_chunk: usize, region: Option<Weak<RegionInner>>, registered: bool, large_slabs: bool) -> Arena {
+    fn with_first_chunk(
+        first_chunk: usize,
+        region: Option<Weak<RegionInner>>,
+        registered: bool,
+        large_slabs: bool,
+    ) -> Arena {
         let a = Arena {
             ptr: Cell::new(std::ptr::null_mut()),
             up: region.is_some(),
@@ -184,8 +136,6 @@ impl Arena {
             slabs: RefCell::new(Vec::new()),
             registered,
             large_slabs,
-            #[cfg(feature = "alloc-profile")]
-            free_stats: FreeStats::new(),
         };
         a.new_chunk(first_chunk);
         a
@@ -207,12 +157,6 @@ impl Arena {
 
     #[inline]
     pub(crate) fn alloc_layout(&self, layout: Layout) -> NonNull<u8> {
-        // Profile builds: a zero-sized value (a closure without captures, e.g. a `TypeComparer`) would get the bump
-        // position, which is the start of the previous block, and the census would count that word as a reference.
-        #[cfg(feature = "alloc-profile")]
-        if layout.size() == 0 {
-            return NonNull::new(std::ptr::without_provenance_mut(layout.align())).unwrap();
-        }
         if self.up {
             return self.alloc_layout_up(layout);
         }
@@ -244,17 +188,23 @@ impl Arena {
     #[inline(never)]
     fn alloc_layout_slow(&self, layout: Layout) -> NonNull<u8> {
         let prev = self.end.get().addr() - self.start.get().addr();
-        let need = layout.size().checked_add(layout.align()).expect("arena allocation size overflow");
+        let need =
+            layout.size().checked_add(layout.align()).expect("arena allocation size overflow");
         // A region grows by a quarter of what it has (at least 4 KiB): many regions are small (one per parsed file),
         // and the unused tail of a doubled chunk would dominate their footprint.
         // Compressed pointers: thread-arena chunks stop doubling at `MAX_CHUNK`, since every chunk takes its size out
         // of the fixed reservation, touched or not.
         let next = if self.is_region() {
             (self.capacity.get() / 4).max(PAGE)
-        } else if cfg!(any(compressed_ptrs, target_pointer_width = "32")) {
-            (prev * 2).min(MAX_CHUNK)
         } else {
-            prev * 2
+            #[cfg(any(compressed_ptrs, target_pointer_width = "32"))]
+            {
+                (prev * 2).min(MAX_CHUNK)
+            }
+            #[cfg(not(any(compressed_ptrs, target_pointer_width = "32")))]
+            {
+                prev * 2
+            }
         };
         self.new_chunk(next.max(need));
         if self.up {
@@ -271,7 +221,7 @@ impl Arena {
 
     fn new_chunk(&self, size: usize) {
         if self.up {
-            let size = (size + CENSUS_GAP).next_multiple_of(CHUNK_ALIGN);
+            let size = size.next_multiple_of(CHUNK_ALIGN);
             let (base, slab) = slab_carve(size, self.large_slabs);
             self.slabs.borrow_mut().push(slab);
             self.new_chunk_at(base, size);
@@ -287,16 +237,22 @@ impl Arena {
         // Blocks given back by address (`free_block`) are written through this provenance.
         let _ = base.expose_provenance();
         if !self.start.get().is_null() {
-            self.retired.borrow_mut().push((self.start.get().addr(), self.end.get().addr(), self.ptr.get().addr()));
+            self.retired.borrow_mut().push((
+                self.start.get().addr(),
+                self.end.get().addr(),
+                self.ptr.get().addr(),
+            ));
         }
         self.start.set(base);
         // SAFETY: one past the end of the allocation.
         self.end.set(unsafe { base.add(size) });
-        // (Profile builds: a region's first block does not start at the chunk start, which its arena keeps.)
-        self.ptr.set(if self.up { base.wrapping_add(CENSUS_GAP) } else { self.end.get() });
+        self.ptr.set(if self.up { base } else { self.end.get() });
         self.capacity.set(self.capacity.get() + size);
         if let (Some(region), true) = (&self.region, self.registered) {
-            REGISTRY.write().unwrap().insert(reg_key(base.addr()), (reg_key(base.addr() + size), Weak::clone(region)));
+            REGISTRY
+                .write()
+                .unwrap()
+                .insert(reg_key(base.addr()), (reg_key(base.addr() + size), Weak::clone(region)));
         }
     }
 
@@ -314,13 +270,17 @@ impl Arena {
         self.end.set(end.with_addr(new_end));
         self.capacity.set(self.capacity.get() - (end.addr() - new_end));
         if let (Some(region), true) = (&self.region, self.registered) {
-            REGISTRY.write().unwrap().insert(reg_key(start.addr()), (reg_key(new_end), Weak::clone(region)));
+            REGISTRY
+                .write()
+                .unwrap()
+                .insert(reg_key(start.addr()), (reg_key(new_end), Weak::clone(region)));
         }
     }
 
     /// Every chunk, (start, size).
     fn chunks(&self) -> Vec<(usize, usize)> {
-        let mut out = vec![(self.start.get().addr(), self.end.get().addr() - self.start.get().addr())];
+        let mut out =
+            vec![(self.start.get().addr(), self.end.get().addr() - self.start.get().addr())];
         out.extend(self.retired.borrow().iter().map(|&(start, end, _)| (start, end - start)));
         out
     }
@@ -333,9 +293,15 @@ impl Arena {
 
     /// `value` in a block of `layout` (at least `T`'s size and alignment).
     #[inline]
-    #[expect(clippy::mut_from_ref, reason = "a bump allocator: each call returns a fresh block nothing else points to (bumpalo's alloc has this signature)")]
+    #[expect(
+        clippy::mut_from_ref,
+        reason = "a bump allocator: each call returns a fresh block nothing else points to (bumpalo's alloc has this signature)"
+    )]
     pub(crate) fn alloc_with<T>(&self, layout: Layout, value: T) -> &mut T {
-        debug_assert!(layout.size() >= std::mem::size_of::<T>() && layout.align() >= std::mem::align_of::<T>());
+        debug_assert!(
+            layout.size() >= std::mem::size_of::<T>()
+                && layout.align() >= std::mem::align_of::<T>()
+        );
         let p = self.alloc_layout(layout).cast::<T>();
         // SAFETY: fresh, aligned, exclusively owned memory for one `T`.
         unsafe {
@@ -383,28 +349,22 @@ impl Arena {
         self.capacity.get()
     }
 
-    /// The unused part of the current chunk (below the finger of a thread arena, above it in a region); the
-    /// allocation profile reports it per arena.
-    #[cfg(feature = "alloc-profile")]
-    pub(crate) fn current_chunk_unused(&self) -> usize {
-        if self.up {
-            self.end.get().addr() - self.ptr.get().addr()
-        } else {
-            self.ptr.get().addr() - self.start.get().addr()
-        }
-    }
-
     /// A thread arena's chunks for `TSRS_MEM_SPLIT` (`memsplit`): capacity, used bytes, the unused range of the
     /// current chunk and of each retired chunk (start, len), and whether the current chunk is a huge-page chunk.
     pub(crate) fn residency(&self) -> Residency {
         debug_assert!(!self.up);
-        let (start, end, ptr) = (self.start.get().addr(), self.end.get().addr(), self.ptr.get().addr());
+        let (start, end, ptr) =
+            (self.start.get().addr(), self.end.get().addr(), self.ptr.get().addr());
         let retired = self.retired.borrow();
         Residency {
             capacity: self.capacity.get(),
             used: (end - ptr) + retired.iter().map(|&(_, e, f)| e - f).sum::<usize>(),
             current_unused: (ptr > start).then_some((start, ptr - start)),
-            retired_unused: retired.iter().filter(|&&(s, _, f)| f > s).map(|&(s, _, f)| (s, f - s)).collect(),
+            retired_unused: retired
+                .iter()
+                .filter(|&&(s, _, f)| f > s)
+                .map(|&(s, _, f)| (s, f - s))
+                .collect(),
             current_huge: HUGE_THREAD_CHUNK.is_some_and(|h| end - start >= h),
         }
     }
@@ -412,8 +372,11 @@ impl Arena {
     /// The used part of every chunk, (start, len).
     pub(crate) fn used_ranges(&self) -> Vec<(usize, usize)> {
         if self.up {
-            let mut out = vec![(self.start.get().addr(), self.ptr.get().addr() - self.start.get().addr())];
-            out.extend(self.retired.borrow().iter().map(|&(start, _, finger)| (start, finger - start)));
+            let mut out =
+                vec![(self.start.get().addr(), self.ptr.get().addr() - self.start.get().addr())];
+            out.extend(
+                self.retired.borrow().iter().map(|&(start, _, finger)| (start, finger - start)),
+            );
             return out;
         }
         let mut out = vec![(self.ptr.get().addr(), self.end.get().addr() - self.ptr.get().addr())];
@@ -424,20 +387,24 @@ impl Arena {
     #[inline]
     pub(crate) fn pop_free(&self, class: usize) -> Option<NonNull<u8>> {
         let head = self.free[class].get();
-        #[cfg(feature = "alloc-profile")]
-        self.free_stats.popped(class, !head.is_null());
         if head.is_null() {
             return None;
         }
         // SAFETY: free blocks hold the next pointer in their first word.
         unsafe {
-            #[expect(clippy::cast_ptr_alignment, reason = "free blocks are 8-aligned (push_free's contract)")]
+            #[expect(
+                clippy::cast_ptr_alignment,
+                reason = "free blocks are 8-aligned (push_free's contract)"
+            )]
             self.free[class].set(*head.cast_const().cast::<*mut u8>());
             #[cfg(debug_assertions)]
             {
                 let size = class * 8;
                 let rest = std::slice::from_raw_parts(head.add(8), size - 8);
-                assert!(rest.iter().all(|&b| b == POISON), "arena: free block at {head:p} was written after it was freed: {rest:x?}");
+                assert!(
+                    rest.iter().all(|&b| b == POISON),
+                    "arena: free block at {head:p} was written after it was freed: {rest:x?}"
+                );
             }
             Some(NonNull::new_unchecked(head))
         }
@@ -449,14 +416,17 @@ impl Arena {
     pub(crate) unsafe fn push_free(&self, class: usize, p: *mut u8) {
         #[cfg(debug_assertions)]
         // SAFETY: `p` is a dead block of `class * 8` bytes (this function's contract); its first word is kept.
-        unsafe { std::ptr::write_bytes(p.add(8), POISON, class * 8 - 8) };
-        #[expect(clippy::cast_ptr_alignment, reason = "`p` is 8-aligned (this function's contract)")]
+        unsafe {
+            std::ptr::write_bytes(p.add(8), POISON, class * 8 - 8);
+        };
+        #[expect(
+            clippy::cast_ptr_alignment,
+            reason = "`p` is 8-aligned (this function's contract)"
+        )]
         let next = p.cast::<*mut u8>();
         // SAFETY: the block is dead and at least 8 bytes, so its first word holds the free-list link.
         unsafe { *next = self.free[class].get() };
         self.free[class].set(p);
-        #[cfg(feature = "alloc-profile")]
-        self.free_stats.pushed(class);
     }
 
     #[inline]
@@ -471,8 +441,6 @@ impl Arena {
             start: self.start.get(),
             epoch: self.epoch.get(),
             drops: self.drops.borrow().len(),
-            #[cfg(feature = "alloc-profile")]
-            census_blocks: crate::alloc_profile::census_block_count(),
         }
     }
 
@@ -497,33 +465,6 @@ impl Arena {
     }
 }
 
-/// Profile builds map arena chunks far above the heap (from 0x7c00_0000_0000 up). The census decodes every word as a
-/// possible pointer; with the arena next to the malloc heap (around 0x200_0000_0000), any pair of 32-bit fields
-/// whose second half is 0x200 (a common flag value) "points" into it, which shows up as spurious would-free
-/// violations. Bytes 4-5 = 00 7c (NUL then `|`) are rare in numbers and text.
-#[cfg(feature = "alloc-profile")]
-fn census_chunk(size: usize) -> *mut u8 {
-    use std::sync::atomic::AtomicUsize;
-    unsafe extern "C" {
-        fn mmap(addr: *mut std::ffi::c_void, len: usize, prot: i32, flags: i32, fd: i32, offset: i64) -> *mut std::ffi::c_void;
-    }
-    const PROT_READ: i32 = 1;
-    const PROT_WRITE: i32 = 2;
-    const MAP_PRIVATE: i32 = 2;
-    #[cfg(target_os = "linux")]
-    const MAP_ANON: i32 = 0x20;
-    #[cfg(not(target_os = "linux"))]
-    const MAP_ANON: i32 = 0x1000;
-    static NEXT: AtomicUsize = AtomicUsize::new(0x7c00_0000_0000);
-    let hint = NEXT.fetch_add(size.next_multiple_of(1 << 20) + (1 << 20), Ordering::Relaxed);
-    // SAFETY: anonymous private mapping; the hint is only a hint.
-    let p = unsafe { mmap(std::ptr::without_provenance_mut(hint), size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0) };
-    if p.addr() == usize::MAX {
-        return std::ptr::null_mut();
-    }
-    p.cast()
-}
-
 /// A chunk for a thread's arena or a slab. Compressed pointers: from the process-wide reservation (`reserve`), where
 /// `huge` asks for transparent huge pages on Linux.
 fn os_chunk(layout: Layout, huge: bool) -> *mut u8 {
@@ -531,9 +472,7 @@ fn os_chunk(layout: Layout, huge: bool) -> *mut u8 {
     return crate::reserve::alloc_chunk(layout.size(), huge);
     #[cfg(not(compressed_ptrs))]
     let _ = huge;
-    #[cfg(all(feature = "alloc-profile", not(compressed_ptrs)))]
-    let base = census_chunk(layout.size());
-    #[cfg(not(any(feature = "alloc-profile", compressed_ptrs)))]
+    #[cfg(not(compressed_ptrs))]
     // SAFETY: non-zero size.
     let base = unsafe { std::alloc::alloc(layout) };
     #[cfg(not(compressed_ptrs))]
@@ -569,16 +508,35 @@ const SLAB_SIZE: usize = 1 << 20;
 /// Untouched pages of a slab cost address space only.
 const LARGE_SLAB_SIZE: usize = 16 << 20;
 
-/// Profile builds leave a gap after each carved chunk: a chunk's one-past-the-end pointer (in its arena and in the
-/// region registry) would otherwise be the address of the next region's first block, which the census would count
-/// as a reference to it.
-const CENSUS_GAP: usize = if cfg!(feature = "alloc-profile") { CHUNK_ALIGN } else { 0 };
-
 thread_local! {
     /// The thread's current slab and its bump position (upwards).
-    static SLAB: Cell<(*const Slab, usize)> = const { Cell::new((std::ptr::null(), 0)) };
+    static SLAB: CurrentSlab = const { CurrentSlab(Cell::new((std::ptr::null(), 0))) };
     /// The same for large slabs (`LARGE_SLAB_SIZE`).
-    static LARGE_SLAB: Cell<(*const Slab, usize)> = const { Cell::new((std::ptr::null(), 0)) };
+    static LARGE_SLAB: CurrentSlab = const { CurrentSlab(Cell::new((std::ptr::null(), 0))) };
+}
+
+/// A thread's current slab, which holds one of the slab's references until the thread exits. Without the release,
+/// every thread that ended kept its current slab: a watch session's checker and worker threads are made per build
+/// and end with it, and switching branches on vscode kept about 0.9 GB of the arena address range per round trip.
+struct CurrentSlab(Cell<(*const Slab, usize)>);
+
+impl CurrentSlab {
+    fn get(&self) -> (*const Slab, usize) {
+        self.0.get()
+    }
+
+    fn set(&self, v: (*const Slab, usize)) {
+        self.0.set(v);
+    }
+}
+
+impl Drop for CurrentSlab {
+    fn drop(&mut self) {
+        let (slab, _) = self.0.get();
+        if !slab.is_null() {
+            slab_release(slab);
+        }
+    }
 }
 
 /// Released standard-size slabs kept for reuse instead of going back to the system (compressed pointers: a
@@ -596,23 +554,36 @@ fn new_slab(size: usize, live: usize) -> *const Slab {
         let cached = SLAB_CACHE.lock().unwrap().pop();
         if let Some(addr) = cached {
             let base = std::ptr::with_exposed_provenance_mut::<u8>(addr);
-            return Box::into_raw(Box::new(Slab { base, size, live: AtomicUsize::new(live), retired: AtomicBool::new(false) }));
+            return Box::into_raw(Box::new(Slab {
+                base,
+                size,
+                live: AtomicUsize::new(live),
+                retired: AtomicBool::new(false),
+            }));
         }
     }
-    let base = os_chunk(Layout::from_size_align(size, CHUNK_ALIGN).expect("arena slab layout"), false);
-    Box::into_raw(Box::new(Slab { base, size, live: AtomicUsize::new(live), retired: AtomicBool::new(false) }))
+    let base =
+        os_chunk(Layout::from_size_align(size, CHUNK_ALIGN).expect("arena slab layout"), false);
+    Box::into_raw(Box::new(Slab {
+        base,
+        size,
+        live: AtomicUsize::new(live),
+        retired: AtomicBool::new(false),
+    }))
 }
 
 fn slab_carve(size: usize, large: bool) -> (*mut u8, *const Slab) {
-    let (current, slab_size) = if large { (&LARGE_SLAB, LARGE_SLAB_SIZE) } else { (&SLAB, SLAB_SIZE) };
+    let (current, slab_size) =
+        if large { (&LARGE_SLAB, LARGE_SLAB_SIZE) } else { (&SLAB, SLAB_SIZE) };
     if size > slab_size / 4 {
-        let slab = new_slab(size, 1);
-        // SAFETY: just made.
-        return (unsafe { (*slab).base }, slab);
+        return own_slab(size);
     }
-    let (mut cur, mut bump) = current.with(|s| s.get());
+    // A thread-local destructor that allocates in a region after the thread's slab was released gets a slab of its own.
+    let Ok((mut cur, mut bump)) = current.try_with(CurrentSlab::get) else {
+        return own_slab(size);
+    };
     // SAFETY: the current slab is kept alive by the thread's reference.
-    if cur.is_null() || bump + size + CENSUS_GAP > unsafe { (*cur).base.addr() + (*cur).size } {
+    if cur.is_null() || bump + size > unsafe { (*cur).base.addr() + (*cur).size } {
         if !cur.is_null() {
             slab_release(cur);
         }
@@ -623,22 +594,31 @@ fn slab_carve(size: usize, large: bool) -> (*mut u8, *const Slab) {
     // SAFETY: as above.
     let slab = unsafe { &*cur };
     slab.live.fetch_add(1, Ordering::Relaxed);
-    current.with(|s| s.set((cur, bump + size + CENSUS_GAP)));
+    current.with(|s| s.set((cur, bump + size)));
     (slab.base.with_addr(bump), cur)
+}
+
+/// A slab for one chunk.
+fn own_slab(size: usize) -> (*mut u8, *const Slab) {
+    let slab = new_slab(size, 1);
+    // SAFETY: just made.
+    (unsafe { (*slab).base }, slab)
 }
 
 /// Moves the thread's slab position back from `end` to `new_end` if the chunk ending at `end` was its last carve.
 fn slab_trim(slab: *const Slab, end: usize, new_end: usize) -> bool {
     [&SLAB, &LARGE_SLAB].into_iter().any(|current| {
-        current.with(|s| {
-            let (cur, bump) = s.get();
-            if cur == slab && bump == end + CENSUS_GAP {
-                s.set((cur, new_end + CENSUS_GAP));
-                true
-            } else {
-                false
-            }
-        })
+        current
+            .try_with(|s| {
+                let (cur, bump) = s.get();
+                if cur == slab && bump == end {
+                    s.set((cur, new_end));
+                    true
+                } else {
+                    false
+                }
+            })
+            .unwrap_or(false)
     })
 }
 
@@ -667,11 +647,13 @@ fn slab_release_ex(slab: *const Slab, retire: bool) {
         drop(unsafe { Box::from_raw(slab.cast_mut()) });
         return;
     }
-    // Profile builds map slabs with `mmap` (`census_chunk`) and keep them.
-    #[cfg(not(any(feature = "alloc-profile", compressed_ptrs)))]
+    #[cfg(not(compressed_ptrs))]
     // SAFETY: allocated by `new_slab` with this layout; every chunk carved from it was released.
     unsafe {
-        std::alloc::dealloc(s.base, Layout::from_size_align(s.size, CHUNK_ALIGN).expect("arena slab layout"))
+        std::alloc::dealloc(
+            s.base,
+            Layout::from_size_align(s.size, CHUNK_ALIGN).expect("arena slab layout"),
+        );
     };
     #[cfg(compressed_ptrs)]
     {
@@ -686,21 +668,6 @@ fn slab_release_ex(slab: *const Slab, retire: bool) {
     }
     // SAFETY: made by `Box::into_raw` in `new_slab`; this was the last reference.
     drop(unsafe { Box::from_raw(slab.cast_mut()) });
-}
-
-/// Census only: clears `N` bytes of the stack below the caller. The frames that just used the freed or rewound
-/// memory are dead but their words stay on the stack, and the padding of the next objects built there copies them
-/// into the arena, where the conservative census would count them as references.
-#[cfg(feature = "alloc-profile")]
-#[inline(never)]
-fn scrub_stack<const N: usize>() {
-    let mut buf = [0u8; N];
-    std::hint::black_box(&mut buf);
-}
-
-#[cfg(feature = "alloc-profile")]
-pub(crate) fn scrub_stack_for_census() {
-    scrub_stack::<{ 256 << 10 }>();
 }
 
 /// 0 unknown, 1 normal, 2 poison (`TSRS_ARENA_POISON=1`): freed and rewound memory is filled and never reused.
@@ -718,24 +685,11 @@ pub(crate) fn poison_mode() -> bool {
     }
 }
 
-/// Whether freed memory is recorded for the census instead of reused (alloc-profile build, `TSRS_CENSUS=1`).
-#[inline]
-fn census_mode() -> bool {
-    #[cfg(feature = "alloc-profile")]
-    {
-        crate::alloc_profile::census::recording()
-    }
-    #[cfg(not(feature = "alloc-profile"))]
-    {
-        false
-    }
-}
-
 /// The free-list class of a block of `size` bytes and alignment `align` at address `addr`, or 0 when such blocks
 /// are not recycled.
 #[inline]
 pub const fn free_class(size: usize, align: usize) -> usize {
-    if size >= 8 && size <= MAX_FREE_SIZE && size % 8 == 0 && align <= 8 {
+    if size >= 8 && size <= MAX_FREE_SIZE && size.is_multiple_of(8) && align <= 8 {
         size / 8
     } else {
         0
@@ -747,9 +701,15 @@ pub const fn free_class(size: usize, align: usize) -> usize {
 /// # Safety
 /// Nothing may use the block afterwards: no live object or local may point into it.
 #[inline]
-pub(crate) unsafe fn free_block(arena: &Arena, addr: usize, size: usize, align: usize, needs_drop: bool) {
+pub(crate) unsafe fn free_block(
+    arena: &Arena,
+    addr: usize,
+    size: usize,
+    align: usize,
+    needs_drop: bool,
+) {
     let class = free_class(size, align);
-    if class == 0 || addr % 8 != 0 {
+    if class == 0 || !addr.is_multiple_of(8) {
         return;
     }
     // A region's drop list still names the block; it is dropped (not reused) when the region is freed.
@@ -759,18 +719,13 @@ pub(crate) unsafe fn free_block(arena: &Arena, addr: usize, size: usize, align: 
     // Free lists belong to the arena that allocated the block: a recycling site frees only what it made, while the
     // same allocation target (thread arena or region) is current.
     #[cfg(debug_assertions)]
-    assert!(arena.owns(addr), "arena: block {addr:#x} freed into an arena (or region) that did not allocate it");
+    assert!(
+        arena.owns(addr),
+        "arena: block {addr:#x} freed into an arena (or region) that did not allocate it"
+    );
     // Write access through the chunk's (exposed) provenance, not through the references the program held.
     let p = std::ptr::with_exposed_provenance_mut::<u8>(addr);
     arena.bump_epoch();
-    if census_mode() {
-        #[cfg(feature = "alloc-profile")]
-        {
-            crate::alloc_profile::census_would_free(addr, size);
-            scrub_stack::<4096>();
-        }
-        return;
-    }
     if poison_mode() {
         // SAFETY: the block is `size` dead bytes (this function's contract), written through the chunk's provenance.
         unsafe { std::ptr::write_bytes(p, POISON, size) };
@@ -791,14 +746,6 @@ pub(crate) fn rewind(arena: &Arena, cp: Checkpoint) {
     }
     // Values discarded by the rewind are not dropped (as in a thread arena); forget their drop entries.
     arena.drops.borrow_mut().truncate(cp.drops);
-    if census_mode() {
-        #[cfg(feature = "alloc-profile")]
-        {
-            crate::alloc_profile::census_would_free_since(cp.census_blocks);
-            scrub_stack::<16384>();
-        }
-        return;
-    }
     if poison_mode() {
         // SAFETY: `now .. now + len` is the range allocated since the checkpoint, in the current chunk.
         unsafe { std::ptr::write_bytes(now, POISON, len) };
@@ -807,20 +754,16 @@ pub(crate) fn rewind(arena: &Arena, cp: Checkpoint) {
     #[cfg(debug_assertions)]
     // SAFETY: as above.
     unsafe {
-        std::ptr::write_bytes(now, POISON, len)
+        std::ptr::write_bytes(now, POISON, len);
     };
-    #[cfg(feature = "alloc-profile")]
-    assert!(!crate::alloc_profile::census::active(), "arena rewind while the census records");
     arena.ptr.set(cp.ptr);
 }
-
 
 // ---------------------------------------------------------------------------------------------------------------
 // Regions and the allocation target
 // ---------------------------------------------------------------------------------------------------------------
 
-/// Registry keys and ends are addresses + 1 (order is kept): the map's vacated slots keep old values, which must not
-/// look like references to blocks in the census build.
+/// Registry keys and ends are encoded as addresses + 1 (order is kept).
 #[inline]
 fn reg_key(addr: usize) -> usize {
     addr + 1
@@ -839,9 +782,11 @@ thread_local! {
     /// Scope tokens: a scope is `!Send`, so tokens only need to be unique on their thread (a global counter was a
     /// contended cache line once scratch regions push a scope per checker call).
     static NEXT_TOKEN: Cell<u64> = const { Cell::new(1) };
-    /// While a scratch region is entered on this thread (`Region::enter_scratch`): its arena, and the allocation
-    /// target that was current when it was entered (`escape_scratch`). Null when none is.
-    static SCRATCH: Cell<(*const Arena, *const Arena)> = const { Cell::new((std::ptr::null(), std::ptr::null())) };
+    /// While a scratch region is entered on this thread (`Region::enter_scratch`): its arena, the allocation target
+    /// that was current when it was entered (`escape_scratch_one_level`), and the one that was current when the
+    /// outermost entered scratch region was entered (`escape_scratch`). Null when none is.
+    static SCRATCH: Cell<(*const Arena, *const Arena, *const Arena)> =
+        const { Cell::new((std::ptr::null(), std::ptr::null(), std::ptr::null())) };
 }
 
 /// A lock that the thread holding it may take again (a region entered while it is already entered).
@@ -901,6 +846,8 @@ pub(crate) struct RegionInner {
     on_free: Mutex<Vec<Box<dyn FnOnce() + Send>>>,
     /// `retire_on_free`.
     retire: AtomicBool,
+    /// `note_escape`.
+    escaped: AtomicBool,
 }
 
 #[expect(clippy::non_send_fields_in_send_ty, reason = "the arena's cells: see the SAFETY comment")]
@@ -939,11 +886,17 @@ impl Region {
 
     fn new_in(first_chunk: usize, registered: bool, large_slabs: bool) -> Region {
         Region(Arc::new_cyclic(|weak| RegionInner {
-            arena: Box::new(Arena::with_first_chunk(first_chunk.max(PAGE), Some(Weak::clone(weak)), registered, large_slabs)),
+            arena: Box::new(Arena::with_first_chunk(
+                first_chunk.max(PAGE),
+                Some(Weak::clone(weak)),
+                registered,
+                large_slabs,
+            )),
             lock: OwnerLock { state: Mutex::new((None, 0, 0)), released: Condvar::new() },
             owners: Mutex::new(Vec::new()),
             on_free: Mutex::new(Vec::new()),
             retire: AtomicBool::new(false),
+            escaped: AtomicBool::new(false),
         }))
     }
 
@@ -993,7 +946,7 @@ impl Region {
             .collect()
     }
 
-    /// Runs `f` when the region is freed (also in the census and poison modes, which keep the memory): for tables
+    /// Runs `f` when the region is freed (also in poison mode, which keeps the memory): for tables
     /// outside the region that must forget pointers into it.
     pub fn on_free(&self, f: Box<dyn FnOnce() + Send>) {
         self.0.on_free.lock().unwrap().push(f);
@@ -1003,7 +956,10 @@ impl Region {
     /// by this region, so `enter_owner(addr)` routes to it while the region lives.
     pub fn adopt_owner(&self, addr: usize) {
         self.0.owners.lock().unwrap().push(addr);
-        REGISTRY.write().unwrap().insert(reg_key(addr), (reg_key(addr + 1), Arc::downgrade(&self.0)));
+        REGISTRY
+            .write()
+            .unwrap()
+            .insert(reg_key(addr), (reg_key(addr + 1), Arc::downgrade(&self.0)));
     }
 
     /// Total size of the region's chunks.
@@ -1018,14 +974,14 @@ impl Region {
         self.0.arena.trim();
     }
 
+    /// The region's chunks, (start, size) (the shared graph freezes the seed's).
+    pub fn chunks(&self) -> Vec<(usize, usize)> {
+        self.0.arena.chunks()
+    }
+
     /// Bytes in use in the region's chunks (call while no other thread has the region entered).
     pub fn used_bytes(&self) -> usize {
         self.0.arena.used_ranges().iter().map(|&(_, len)| len).sum()
-    }
-
-    /// Number of values waiting to be dropped when the region is freed (diagnostics).
-    pub fn drop_entries(&self) -> usize {
-        self.0.arena.drops.borrow().len()
     }
 
     /// Forgets the values waiting to be dropped (and frees the list): for a region that will never be freed, whose
@@ -1038,6 +994,16 @@ impl Region {
 
     pub fn ptr_eq(&self, other: &Region) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
+    }
+
+    /// Whether an object in the region was stored in a structure that may outlive it (`note_escape`).
+    pub fn escaped(&self) -> bool {
+        self.0.escaped.load(Ordering::Acquire)
+    }
+
+    /// `note_escape` for the whole region.
+    pub fn mark_escaped(&self) {
+        self.0.escaped.store(true, Ordering::Release);
     }
 }
 
@@ -1104,17 +1070,26 @@ pub(crate) fn no_scope_open() -> bool {
     SCOPES.with(|s| s.borrow().is_empty()) && SCRATCH.with(|s| s.get().0.is_null())
 }
 
+/// `no_scope_open` while the thread exits: the scope stack may be gone already, and with it every scope.
+pub(crate) fn no_scope_open_at_exit() -> bool {
+    SCOPES.try_with(|s| s.borrow().is_empty()).unwrap_or(true)
+        && SCRATCH.with(|s| s.get().0.is_null())
+}
+
 pub(crate) fn give_spare_arena(arena: &'static Arena) {
     CURRENT.with(|c| c.set(std::ptr::null()));
     SPARE_ARENAS.lock().unwrap().push(SpareArena(arena));
 }
 
-/// Gives back the resident part of the calling thread's own arena that was never handed out: on Linux, when the
-/// current chunk is a huge-page chunk, the rest of the 2 MiB block the finger is in (the block was faulted in as one
-/// transparent huge page; one `madvise`, which splits that page's mapping). For a thread that is done allocating at
-/// the moment memory peaks (a checker whose type-check queue ran dry while others still check). A later allocation
-/// below the finger faults in fresh zero pages. Elsewhere, and for a 4 KiB-page chunk, the unused part is not
-/// resident and this does nothing.
+/// Reclaims unused resident pages at a thread arena's allocation tail.
+///
+/// Gives back the resident part of the calling thread's own arena that was never handed out: on Linux, when
+/// the current chunk is a huge-page chunk, the rest of the 2 MiB block the finger is in (the block was
+/// faulted in as one transparent huge page; one `madvise`, which splits that page's mapping).
+///
+/// For a thread that is done allocating at the moment memory peaks (a checker whose type-check queue ran dry
+/// while others still check). A later allocation below the finger faults in fresh zero pages. Elsewhere, and
+/// for a 4 KiB-page chunk, the unused part is not resident and this does nothing.
 pub fn trim_own_arena_tail() {
     #[cfg(all(compressed_ptrs, target_os = "linux"))]
     {
@@ -1133,13 +1108,38 @@ pub fn trim_own_arena_tail() {
 
 /// The region that is the current thread's allocation target, if any (`None`: the thread's own arena).
 pub fn current_region() -> Option<Region> {
-    let p = CURRENT.with(|c| c.get());
+    let p = CURRENT.with(std::cell::Cell::get);
     if p.is_null() {
         return None;
     }
     // SAFETY: a non-null `CURRENT` is the thread arena or the arena of a region kept alive by an entered scope.
     let arena = unsafe { &*p };
-    arena.region.as_ref().and_then(|w| w.upgrade()).map(Region)
+    arena.region.as_ref().and_then(std::sync::Weak::upgrade).map(Region)
+}
+
+/// Keeps a region alive when its objects escape to longer-lived storage.
+///
+/// Records that the object at `addr` was stored in a structure that may outlive the owner of its region (a
+/// program-lifetime cache filled while a checker is held, whose region is the allocation target): the owner
+/// must then keep the region until that structure goes (`Region::escaped`; `tsrs_project` checkerpool.rs).
+///
+/// No-op for an object outside every region, and while no region exists (the CLI).
+pub fn note_escape(addr: usize) {
+    if let Some(region) = Region::containing(addr) {
+        region.mark_escaped();
+    }
+}
+
+/// Routes lazily filled data by its owner before any registered region exists.
+///
+/// Makes `enter_owner` and `enter_table_owner` look up the owner's region from now on, as they do once a registered
+/// region exists (`Region::new`), for a process that frees unregistered regions (a program's file loader regions,
+/// `tsrs_compiler` programregions.rs). Until then they leave lazily filled data of an object outside every region in
+/// the current target, which is right only while nothing is freed: a project reference's command line, parsed before
+/// any region, got its output maps in the loader region of the first program that read them (an incremental `tsc -b`
+/// whose upstream projects were up to date), and kept them after that region was freed.
+pub fn route_by_owner() {
+    ANY_REGION.store(true, Ordering::Relaxed);
 }
 
 /// Makes the current thread's own (never freed) arena the allocation target until the scope is dropped: for data
@@ -1149,10 +1149,14 @@ pub fn enter_thread_arena() -> RegionScope {
     RegionScope::push(own, None)
 }
 
-/// Routes allocations to the region that owns the object at `addr` (lazily initialized data of a shared object, such
-/// as a source file's JSDoc cache, must live and die with that object, not with the checker that happens to fill
-/// it). An object outside every region gets the thread's own arena. No scope (and no cost beyond one load) while no
-/// region exists, as in the CLI.
+/// Keeps lazily allocated data in its owning object's region.
+///
+/// Routes allocations to the region that owns the object at `addr` (lazily initialized data of a shared
+/// object, such as a source file's `JSDoc` cache, must live and die with that object, not with the checker
+/// that happens to fill it).
+///
+/// An object outside every region gets the thread's own arena. No scope (and no cost beyond one load) while
+/// no region exists, as in the CLI.
 #[inline]
 pub fn enter_owner(addr: usize) -> Option<RegionScope> {
     if !ANY_REGION.load(Ordering::Relaxed) {
@@ -1161,23 +1165,32 @@ pub fn enter_owner(addr: usize) -> Option<RegionScope> {
     }
     Some(match Region::containing(addr) {
         Some(region) => region.enter(),
+        // Scratch regions are not registered: an object of the one entered on this thread (a checker's, a file's
+        // emit) keeps its data there, as when no region is registered, instead of leaking it into the thread arena.
+        None if scratch_contains(addr) => return None,
         None => enter_thread_arena(),
     })
 }
 
-/// Routes allocations for a value stored in a shared table that may outlive the current allocation target (a cache
-/// that later program versions copy, filled by whichever thread happens to look something up): they stay in the
-/// current target only if the table at `addr` lives in it, and go to the thread's own (never freed) arena otherwise.
-/// Unlike `enter_owner`, never waits for a region another thread has entered. No scope (and no cost beyond one load)
-/// while no region exists, as in the CLI.
+/// Keeps shared-table allocations alive across program versions.
+///
+/// Routes allocations for a value stored in a shared table that may outlive the current allocation target (a
+/// cache that later program versions copy, filled by whichever thread happens to look something up): they
+/// stay in the current target only if the table at `addr` lives in it, and go to the thread's own (never
+/// freed) arena otherwise.
+///
+/// Unlike `enter_owner`, never waits for a region another thread has entered. No scope (and no cost beyond
+/// one load) while no region exists, as in the CLI.
 #[inline]
 pub fn enter_table_owner(addr: usize) -> Option<RegionScope> {
     if !ANY_REGION.load(Ordering::Relaxed) {
         return escape_scratch_unless_inside(addr);
     }
-    let current = CURRENT.with(|c| c.get());
+    let current = CURRENT.with(std::cell::Cell::get);
     match Region::containing(addr) {
         Some(region) if std::ptr::eq(&raw const *region.0.arena, current) => None,
+        // As in `enter_owner`: a table in the scratch region entered on this thread, which is the current target.
+        None if std::ptr::eq(scratch_arena(), current) && scratch_contains(addr) => None,
         _ => Some(enter_thread_arena()),
     }
 }
@@ -1186,14 +1199,17 @@ pub fn enter_table_owner(addr: usize) -> Option<RegionScope> {
 // Scratch regions (per-file emit, notes/mem-emit-regions.md)
 // ---------------------------------------------------------------------------------------------------------------
 
-/// While alive, the region it was made from is the thread's allocation target as with `Region::enter`, and also the
-/// thread's **scratch region**: code that knows its allocations die with the scratch region allocates there even
-/// while escaped (`P::new_scratch`, `alloc_str_scratch`, ...), and code whose allocations must outlive it escapes
-/// to the target that was current before it (`escape_scratch`). Emit uses one per file: the transformers, the
-/// printer and the node builder's per-call state allocate in it, the checker escapes (its types, symbols and caches
-/// outlive the file).
+/// Reclaims temporary allocations together when a scratch scope ends.
+///
+/// While alive, the region it was made from is the thread's allocation target as with `Region::enter`, and
+/// also the thread's **scratch region**: code that knows its allocations die with the scratch region
+/// allocates there even while escaped (`P::new_scratch`, `alloc_str_scratch`, ...), and code whose
+/// allocations must outlive it escapes to the target that was current before it (`escape_scratch`).
+///
+/// Emit uses one per file: the transformers, the printer and the node builder's per-call state allocate in
+/// it, the checker escapes (its types, symbols and caches outlive the file).
 pub struct ScratchScope {
-    saved: (*const Arena, *const Arena),
+    saved: (*const Arena, *const Arena, *const Arena),
     _scope: RegionScope,
 }
 
@@ -1201,10 +1217,18 @@ impl Region {
     /// `enter`, and makes the region the thread's scratch region (see `ScratchScope`). Scratch scopes nest; the
     /// innermost one is the scratch region.
     pub fn enter_scratch(&self) -> ScratchScope {
-        let outer = CURRENT.with(|c| c.get());
-        let outer = if outer.is_null() { std::ptr::from_ref::<Arena>(crate::ptr::own_arena()) } else { outer };
+        let outer = CURRENT.with(std::cell::Cell::get);
+        let outer = if outer.is_null() {
+            std::ptr::from_ref::<Arena>(crate::ptr::own_arena())
+        } else {
+            outer
+        };
         let scope = self.enter();
-        let saved = SCRATCH.with(|s| s.replace((&raw const *self.0.arena, outer)));
+        let saved = SCRATCH.with(|s| {
+            let (enclosing, _, enclosing_root) = s.get();
+            let root = if enclosing.is_null() { outer } else { enclosing_root };
+            s.replace((&raw const *self.0.arena, outer, root))
+        });
         ScratchScope { saved, _scope: scope }
     }
 }
@@ -1215,17 +1239,90 @@ impl Drop for ScratchScope {
     }
 }
 
-/// Inside a scratch region, makes the allocation target that was current when it was entered (the thread's own arena,
-/// or an enclosing region) the target until the scope is dropped: for code whose allocations may outlive the scratch
-/// region (the checker called from emit, program caches, diagnostics). `None` (no cost beyond a thread-local read)
-/// outside scratch regions or when that target is already current.
+/// Moves escaping allocations outside all enclosing scratch regions.
+///
+/// Inside scratch regions, makes the allocation target that was current when the outermost of them was
+/// entered (the thread's own arena, or an enclosing region that is not a scratch region) the target until the
+/// scope is dropped: for code whose allocations may outlive every scratch region (program caches,
+/// diagnostics, the lazily filled data of shared objects).
+///
+/// Scratch regions nest when a checker that runs in a region of its own (checkerpool.rs `SlotChecker`) emits
+/// a file (`program_emit.rs`): what escapes the file's region must outlive the checker too, as an incremental
+/// snapshot keeps the diagnostics after their program's checkers are freed (watch mode). `None` (no cost
+/// beyond a thread-local read) outside scratch regions or when that target is already current.
 #[inline]
 pub fn escape_scratch() -> Option<RegionScope> {
-    let (scratch, outer) = SCRATCH.with(|s| s.get());
-    if scratch.is_null() || CURRENT.with(|c| c.get()) == outer {
+    let (scratch, _, root) = SCRATCH.with(std::cell::Cell::get);
+    if scratch.is_null() || CURRENT.with(std::cell::Cell::get) == root {
+        return None;
+    }
+    Some(RegionScope::push(root, None))
+}
+
+/// Keeps allocations alive beyond the innermost scratch region.
+///
+/// `escape_scratch` to the target that was current when the innermost scratch region was entered: for the
+/// checker called from emit, whose types, symbols and caches outlive one file's emit region and belong to the
+/// checker's own region when it has one.
+#[inline]
+pub fn escape_scratch_one_level() -> Option<RegionScope> {
+    let (scratch, outer, _) = SCRATCH.with(std::cell::Cell::get);
+    if scratch.is_null() || CURRENT.with(std::cell::Cell::get) == outer {
         return None;
     }
     Some(RegionScope::push(outer, None))
+}
+
+thread_local! {
+    /// `Region::route_diagnostics`: (the allocation target the route applies to, the arena the diagnostics go to);
+    /// null while no route is set.
+    static DIAGNOSTIC_ROUTE: Cell<(*const Arena, *const Arena)> = const { Cell::new((std::ptr::null(), std::ptr::null())) };
+}
+
+/// A route set by `Region::route_diagnostics`, until dropped.
+pub struct DiagnosticRoute {
+    saved: (*const Arena, *const Arena),
+    _region: Region,
+    _not_send: std::marker::PhantomData<*const ()>,
+}
+
+impl Region {
+    /// Until the route is dropped, diagnostics made on this thread while the allocation target is the current one
+    /// (`escape_for_diagnostic`) go to this region instead of escaping the thread's scratch regions: for a session
+    /// that frees what it no longer uses (watch mode), whose checkers would otherwise leave every diagnostic they
+    /// report in the thread arenas (a few thousand per cycle on vscode). Diagnostics made under another target (the
+    /// lazily filled data of a file, `enter_owner`; a program cache, `escape_scratch`) are not routed.
+    ///
+    /// The route allocates in the region without entering it: while the route is set, no other thread may allocate
+    /// in it.
+    pub fn route_diagnostics(&self) -> DiagnosticRoute {
+        let saved =
+            DIAGNOSTIC_ROUTE.with(|r| r.replace((current_target(), &raw const *self.0.arena)));
+        DiagnosticRoute { saved, _region: self.clone(), _not_send: std::marker::PhantomData }
+    }
+}
+
+impl Drop for DiagnosticRoute {
+    fn drop(&mut self) {
+        DIAGNOSTIC_ROUTE.with(|r| r.set(self.saved));
+    }
+}
+
+/// For the allocations of a diagnostic: its route's region (`Region::route_diagnostics`) when the allocation target
+/// is the one the route applies to, else `escape_scratch`.
+#[inline]
+pub fn escape_for_diagnostic() -> Option<RegionScope> {
+    let (from, to) = DIAGNOSTIC_ROUTE.with(std::cell::Cell::get);
+    if !from.is_null() && current_target() == from {
+        return Some(RegionScope::push(to, None));
+    }
+    escape_scratch()
+}
+
+/// The allocation target: the current region's arena, or the thread's own.
+fn current_target() -> *const Arena {
+    let cur = CURRENT.with(std::cell::Cell::get);
+    if cur.is_null() { std::ptr::from_ref::<Arena>(crate::ptr::own_arena()) } else { cur }
 }
 
 /// `escape_scratch` unless the object at `addr` lives in the scratch region (`enter_owner` without registered regions).
@@ -1240,7 +1337,7 @@ fn escape_scratch_unless_inside(addr: usize) -> Option<RegionScope> {
 /// Whether a scratch region is entered on this thread.
 #[inline]
 pub fn scratch_active() -> bool {
-    !SCRATCH.with(|s| s.get()).0.is_null()
+    !SCRATCH.with(std::cell::Cell::get).0.is_null()
 }
 
 /// Whether `addr` lies in the thread's scratch region (for caches outside it that must forget keys in it).
@@ -1251,13 +1348,14 @@ pub fn scratch_contains(addr: usize) -> bool {
     }
     // SAFETY: the scratch region is kept alive by its entered scope on this thread, which alone uses its arena.
     let a = unsafe { &*s };
-    (a.start.get().addr() <= addr && addr < a.end.get().addr()) || a.retired.borrow().iter().any(|&(start, end, _)| start <= addr && addr < end)
+    (a.start.get().addr() <= addr && addr < a.end.get().addr())
+        || a.retired.borrow().iter().any(|&(start, end, _)| start <= addr && addr < end)
 }
 
 /// The thread's scratch region's arena, if one is entered.
 #[inline]
 pub(crate) fn scratch_arena() -> *const Arena {
-    SCRATCH.with(|s| s.get()).0
+    SCRATCH.with(std::cell::Cell::get).0
 }
 
 impl Drop for RegionInner {
@@ -1282,20 +1380,17 @@ impl Drop for RegionInner {
             // freed block of a type that needs drop is not reused, a rewound one has no entry).
             unsafe { (d.drop)(d.ptr, d.len) };
         }
-        if census_mode() {
-            // The heap memory the values owned is released (above), the region's own memory is recorded as
-            // would-free and kept, never reused: the census checks at exit that nothing reachable points into it.
-            #[cfg(feature = "alloc-profile")]
-            for (start, len) in arena.used_ranges() {
-                crate::alloc_profile::census_would_free_range(start, len);
-            }
-            return;
-        }
         if poison_mode() {
             // Kept mapped and filled, so any later use through a stale pointer crashes.
             for (start, len) in arena.used_ranges() {
                 // SAFETY: the used part of a chunk of this region; nothing may use it any more.
-                unsafe { std::ptr::write_bytes(std::ptr::with_exposed_provenance_mut::<u8>(start), POISON, len) };
+                unsafe {
+                    std::ptr::write_bytes(
+                        std::ptr::with_exposed_provenance_mut::<u8>(start),
+                        POISON,
+                        len,
+                    );
+                };
             }
             return;
         }
@@ -1314,19 +1409,19 @@ impl Drop for RegionInner {
     }
 }
 
-/// Gives back the pages of retired regions (`Region::retire_on_free`) that nothing uses any more, without ever giving
-/// their ranges back (`reserve::discard`).
+/// Gives back the pages of retired regions (`Region::retire_on_free`) that nothing uses any more, without
+/// ever giving their ranges back (`reserve::discard`).
 ///
-/// Retired ranges (the chunks of retired regions, and retired slabs once their last chunk goes) are kept as coalesced
-/// spans, so the page that two neighbouring chunks share goes once both are retired: file regions are carved back to
-/// back, leaves are often neighbours (vscode: 4,691 leaf chunks form 924 runs), and with 16 KiB pages the shared pages
-/// are a tenth of what the leaves hold. They are given back in batches of `BATCH` bytes (`flush_retired` gives back the
-/// rest): each `madvise` / `mmap` call flushes the TLB of every core running a thread of the process, and one call per
-/// chunk cost the check pass 2-3% at 32 checkers on Linux, against one per run of neighbouring pages in a batch.
+/// Retired ranges (the chunks of retired regions, and retired slabs once their last chunk goes) are kept as
+/// coalesced spans, so the page that two neighbouring chunks share goes once both are retired: file regions
+/// are carved back to back, leaves are often neighbours (vscode: 4,691 leaf chunks form 924 runs), and with
+/// 16 KiB pages the shared pages are a tenth of what the leaves hold. They are given back in batches of
+/// `BATCH` bytes (`flush_retired` gives back the rest): each `madvise` / `mmap` call flushes the TLB of every
+/// core running a thread of the process, and one call per chunk cost the check pass 2-3% at 32 checkers on
+/// Linux, against one per run of neighbouring pages in a batch.
 #[cfg(all(compressed_ptrs, unix))]
 mod retired {
     use std::collections::BTreeMap;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
 
     /// Bytes retired before a batch is given back.
@@ -1340,35 +1435,31 @@ mod retired {
         pending_bytes: usize,
     }
 
-    static STATE: Mutex<State> = Mutex::new(State { spans: BTreeMap::new(), pending: Vec::new(), pending_bytes: 0 });
-    /// `stats`: calls that gave pages back, and their bytes.
-    static CALLS: AtomicUsize = AtomicUsize::new(0);
-    static BYTES: AtomicUsize = AtomicUsize::new(0);
+    static STATE: Mutex<State> =
+        Mutex::new(State { spans: BTreeMap::new(), pending: Vec::new(), pending_bytes: 0 });
 
     /// Retires `start .. start + len` (nothing uses it any more, and it is never handed out again).
     pub(super) fn retire(start: usize, len: usize) {
-        let (pages, calls) = {
-            let mut s = STATE.lock().unwrap_or_else(|e| e.into_inner());
+        let calls = {
+            let mut s = STATE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             s.pending.push((start, start + len));
             s.pending_bytes += len;
             if s.pending_bytes < BATCH {
                 return;
             }
             let pages = take_pages(&mut s);
-            let calls = spans_of(&s, &pages);
-            (pages, calls)
+            spans_of(&s, &pages)
         };
-        give_back(&pages, &calls);
+        give_back(&calls);
     }
 
     pub(super) fn flush() {
-        let (pages, calls) = {
-            let mut s = STATE.lock().unwrap_or_else(|e| e.into_inner());
+        let calls = {
+            let mut s = STATE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             let pages = take_pages(&mut s);
-            let calls = spans_of(&s, &pages);
-            (pages, calls)
+            spans_of(&s, &pages)
         };
-        give_back(&pages, &calls);
+        give_back(&calls);
     }
 
     /// The whole pages of each span that `pages` (from `take_pages`) lie in: a span's pages are all retired, and the
@@ -1380,18 +1471,15 @@ mod retired {
         let page = crate::reserve::page_size();
         let mut out: Vec<(usize, usize)> = Vec::with_capacity(pages.len());
         for &(first, _) in pages {
-            let Some((&lo, &hi)) = s.spans.range(..=first).next_back() else { continue };
+            let Some((&lo, &hi)) = s.spans.range(..=first).next_back() else {
+                continue;
+            };
             let whole = (lo.next_multiple_of(page), hi & !(page - 1));
             if out.last() != Some(&whole) {
                 out.push(whole);
             }
         }
         out
-    }
-
-    pub(super) fn stats() -> (usize, usize) {
-        // Relaxed: counters, read after the threads that retire joined.
-        (CALLS.load(Ordering::Relaxed), BYTES.load(Ordering::Relaxed))
     }
 
     /// Merges the pending ranges into the spans and returns the pages that became wholly retired: for each pending
@@ -1450,15 +1538,27 @@ mod retired {
         merged
     }
 
+    /// Gives back `calls` (whole pages of retired spans, `spans_of`).
+    fn give_back(calls: &[(usize, usize)]) {
+        for &(first, last) in calls {
+            // SAFETY: whole pages inside retired spans: chunks and slabs nothing uses any more, never handed out
+            // again; `first` is page aligned (and so is `last - first`).
+            unsafe {
+                crate::reserve::discard(
+                    std::ptr::with_exposed_provenance_mut::<u8>(first),
+                    last - first,
+                );
+            };
+        }
+    }
+
     #[cfg(test)]
     mod tests {
-        use super::{spans_of, take_pages, State};
+        use super::{State, spans_of, take_pages};
         use std::collections::BTreeMap;
 
         fn batch(s: &mut State, ranges: &[(usize, usize)]) -> Vec<(usize, usize)> {
-            for &(start, end) in ranges {
-                s.pending.push((start, end));
-            }
+            s.pending.extend(ranges.iter().map(|&(start, end)| (start, end)));
             take_pages(s)
         }
 
@@ -1493,19 +1593,6 @@ mod retired {
             assert_eq!(spans_of(&s, &pages), [(8 * p, 14 * p), (30 * p, 31 * p)]);
         }
     }
-
-    /// Gives back `calls` (whole pages of retired spans, `spans_of`); `pages`, the ones not given back before, are
-    /// what `stats` counts.
-    fn give_back(pages: &[(usize, usize)], calls: &[(usize, usize)]) {
-        for &(first, last) in calls {
-            // SAFETY: whole pages inside retired spans: chunks and slabs nothing uses any more, never handed out
-            // again; `first` is page aligned (and so is `last - first`).
-            unsafe { crate::reserve::discard(std::ptr::with_exposed_provenance_mut::<u8>(first), last - first) };
-        }
-        // Relaxed: counters (see `stats`).
-        CALLS.fetch_add(calls.len(), Ordering::Relaxed);
-        BYTES.fetch_add(pages.iter().map(|&(first, last)| last - first).sum(), Ordering::Relaxed);
-    }
 }
 
 /// Gives back the pages of the regions retired since the last batch (`Region::retire_on_free`), for a caller that has
@@ -1515,17 +1602,11 @@ pub fn flush_retired() {
     retired::flush();
 }
 
-/// (calls that gave pages of retired regions back to the system, bytes given back), for `TSRS_FREE_LEAVES=stats`.
-pub fn retired_stats() -> (usize, usize) {
-    #[cfg(all(compressed_ptrs, unix))]
-    return retired::stats();
-    #[cfg(not(all(compressed_ptrs, unix)))]
-    (0, 0)
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::{alloc_slice_recycled, arena_checkpoint, arena_pin, arena_rewind, free, free_slice, P};
+    use crate::{
+        P, alloc_slice_recycled, arena_checkpoint, arena_pin, arena_rewind, free, free_slice,
+    };
 
     #[test]
     fn free_list_reuses_blocks_of_the_same_size() {
@@ -1602,7 +1683,7 @@ mod tests {
 
     #[test]
     fn region_scopes_route_allocations_and_free_drops_values() {
-        use super::{enter_owner, enter_thread_arena, Region};
+        use super::{Region, enter_owner, enter_thread_arena};
         use std::rc::Rc;
         let outside = P::new(1u64);
         let counter = Rc::new(());
@@ -1651,12 +1732,14 @@ mod tests {
             let _scope = region.enter();
             let a = P::new([1u64, 2]);
             let a_addr = a.addr();
+            // SAFETY: a is no longer accessed after this call, so its region block can be recycled.
             unsafe { free!(a) };
             let b = P::new_recycled([3u64, 4]);
             assert_eq!(b.addr(), a_addr);
             // A value that needs drop is not recycled in a region: its drop entry stays.
             let c = P::new(Rc::clone(&counter));
             let c_addr = c.addr();
+            // SAFETY: c is no longer accessed; its region retains the drop entry for the Rc payload.
             unsafe { free!(c) };
             let d = P::new_recycled(Rc::clone(&counter));
             assert_ne!(d.addr(), c_addr);
@@ -1671,8 +1754,36 @@ mod tests {
     }
 
     #[test]
+    fn nested_scratch_regions_escape_past_all_of_them() {
+        use super::{Region, escape_scratch, escape_scratch_one_level};
+        // A checker in a scratch region of its own emits a file in a nested scratch region: the checker's data
+        // escapes the file's region into the checker's, diagnostics escape both.
+        let outer = Region::new(4096);
+        let checker = Region::new(4096);
+        let file = Region::new(4096);
+        let _o = outer.enter();
+        let _c = checker.enter_scratch();
+        {
+            let _f = file.enter_scratch();
+            assert!(Region::containing(P::new(1u64).addr()).unwrap().ptr_eq(&file));
+            {
+                let _e = escape_scratch_one_level().unwrap();
+                assert!(Region::containing(P::new(2u64).addr()).unwrap().ptr_eq(&checker));
+                let _d = escape_scratch().unwrap();
+                assert!(Region::containing(P::new(3u64).addr()).unwrap().ptr_eq(&outer));
+            }
+            let _d = escape_scratch().unwrap();
+            assert!(Region::containing(P::new(4u64).addr()).unwrap().ptr_eq(&outer));
+        }
+        // Back in the checker's region alone: both escapes lead to the same target.
+        let _e = escape_scratch().unwrap();
+        assert!(escape_scratch_one_level().is_none());
+        assert!(Region::containing(P::new(5u64).addr()).unwrap().ptr_eq(&outer));
+    }
+
+    #[test]
     fn scratch_regions_route_escapes_to_the_outer_target() {
-        use super::{enter_thread_arena, escape_scratch, scratch_active, Region};
+        use super::{Region, enter_thread_arena, escape_scratch, scratch_active};
         let outer = Region::new(4096);
         let scratch = Region::new(4096);
         let _o = outer.enter();
@@ -1688,7 +1799,11 @@ mod tests {
                 assert!(Region::containing(P::new(2u64).addr()).unwrap().ptr_eq(&outer));
                 // Scratch allocations while escaped.
                 assert!(Region::containing(P::new_scratch(3u64).addr()).unwrap().ptr_eq(&scratch));
-                assert!(Region::containing(crate::alloc_str_scratch("abc").as_ptr() as usize).unwrap().ptr_eq(&scratch));
+                assert!(
+                    Region::containing(crate::alloc_str_scratch("abc").as_ptr() as usize)
+                        .unwrap()
+                        .ptr_eq(&scratch)
+                );
                 // A scope pushed and popped inside the escape restores the escape's target, not the scratch region.
                 drop(enter_thread_arena());
                 assert!(Region::containing(P::new(4u64).addr()).unwrap().ptr_eq(&outer));
@@ -1701,9 +1816,9 @@ mod tests {
         assert!(Region::containing(P::new_scratch(7u64).addr()).unwrap().ptr_eq(&outer));
     }
 
-    /// A retired region's range is never handed out again (fileregions.rs in tsrs_compiler frees a checked file's
-    /// tree while caches keyed by the address of a node in it may keep stale entries): no later chunk, of any
-    /// arena or region on any thread, overlaps it.
+    /// A retired region's range is never handed out again (fileregions.rs in `tsrs_compiler` frees a checked
+    /// file's tree while caches keyed by the address of a node in it may keep stale entries): no later chunk,
+    /// of any arena or region on any thread, overlaps it.
     #[cfg(compressed_ptrs)]
     #[test]
     fn retired_regions_are_never_reused() {
@@ -1730,7 +1845,11 @@ mod tests {
             later.push(r);
         }
         let big = crate::alloc_slice(&vec![0u8; 4 * SIZE]);
-        assert!(!range.contains(&(big.as_ptr() as usize)) && !range.contains(&(big.as_ptr() as usize + big.len() - 1)));
+        assert!(
+            !range.contains(&(big.as_ptr() as usize))
+                && !range.contains(&(big.as_ptr() as usize + big.len() - 1))
+        );
+        drop(later);
     }
 
     #[test]

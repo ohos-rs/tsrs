@@ -14,6 +14,12 @@ use crate::{Entries, FileInfo, FileMode, FsError};
 pub trait IoFS: Send + Sync {
     fn stat(&self, name: &str) -> Result<FileInfo, FsError>;
 
+    // file_type is the subset of Stat needed by FileExists and DirectoryExists. Implementations may avoid
+    // collecting the name, size and modification time; the default preserves the behavior of custom file systems.
+    fn file_type(&self, name: &str) -> Result<FileMode, FsError> {
+        self.stat(name).map(|info| info.mode.type_())
+    }
+
     // ReadDir returns the entries sorted by filename, like fs.ReadDir.
     fn read_dir(&self, name: &str) -> Result<Vec<IoDirEntry>, FsError>;
 
@@ -31,6 +37,10 @@ pub trait IoFS: Send + Sync {
 impl<T: IoFS + ?Sized> IoFS for Arc<T> {
     fn stat(&self, name: &str) -> Result<FileInfo, FsError> {
         (**self).stat(name)
+    }
+
+    fn file_type(&self, name: &str) -> Result<FileMode, FsError> {
+        (**self).file_type(name)
     }
 
     fn read_dir(&self, name: &str) -> Result<Vec<IoDirEntry>, FsError> {
@@ -66,7 +76,10 @@ pub fn valid_path(name: &str) -> bool {
 
     // No element is empty, "." or "..": the first and last are not empty (an empty name is one empty element), and
     // no element is "." or ".." or empty between two slashes (one scan instead of a search per element).
-    !name.is_empty() && !name.starts_with('/') && !name.ends_with('/') && !tspath::has_relative_path_segment(name)
+    !name.is_empty()
+        && !name.starts_with('/')
+        && !name.ends_with('/')
+        && !tspath::has_relative_path_segment(name)
 }
 
 pub type RootForFn = Box<dyn Fn(&str) -> Option<Box<dyn IoFS>> + Send + Sync>;
@@ -78,12 +91,8 @@ pub struct Common {
 
 pub fn root_length(p: &str) -> usize {
     let l = tspath::get_encoded_root_length(p);
-    if l == 0 {
-        panic!("vfs: path {:?} is not absolute", p);
-    } else if l < 0 {
-        return (!l) as usize;
-    }
-    l as usize
+    assert!(l != tspath::EncodedRootLength::Relative, "vfs: path {p:?} is not absolute");
+    l.len()
 }
 
 pub fn split_path(p: &str) -> (String, String) {
@@ -110,20 +119,31 @@ impl Common {
     }
 
     pub fn file_exists(&self, path: &str) -> bool {
-        let stat = self.stat(path);
-        matches!(stat, Some(stat) if !stat.is_dir())
+        let (fsys, _, rest) = self.root_and_path(path);
+        let Some(fsys) = fsys else {
+            return false;
+        };
+        matches!(fsys.file_type(&rest), Ok(mode) if !mode.is_dir())
     }
 
     pub fn directory_exists(&self, path: &str) -> bool {
-        let stat = self.stat(path);
-        matches!(stat, Some(stat) if stat.is_dir())
+        let (fsys, _, rest) = self.root_and_path(path);
+        let Some(fsys) = fsys else {
+            return false;
+        };
+        matches!(fsys.file_type(&rest), Ok(mode) if mode.is_dir())
     }
 
     pub fn get_accessible_entries(&self, path: &str) -> Entries {
         let mut result = Entries::default();
         let mut symlinks = FxHashSet::default();
 
-        let add_to_result = |result: &mut Entries, symlinks: &mut FxHashSet<String>, name: &str, mode: FileMode, is_link: bool| -> bool {
+        let add_to_result = |result: &mut Entries,
+                             symlinks: &mut FxHashSet<String>,
+                             name: &str,
+                             mode: FileMode,
+                             is_link: bool|
+         -> bool {
             if mode.is_dir() {
                 result.directories.push(name.to_string());
             } else if mode.is_regular() {
@@ -163,7 +183,6 @@ impl Common {
                             add_to_result(&mut result, &mut symlinks, &entry.name, stat.mode, true);
                         }
                     }
-                    continue;
                 }
             }
         }
@@ -209,19 +228,17 @@ pub fn decode_bytes(mut s: Vec<u8>) -> String {
 
     // Go strings may hold arbitrary bytes; Rust strings must be UTF-8, so
     // invalid sequences are replaced with U+FFFD.
-    match String::from_utf8(s) {
-        Ok(s) => s,
-        Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
+    if tsrs_core::utf8::basic::from_utf8(&s).is_ok() {
+        // SAFETY: simdutf8 validated every byte, and s has not been modified since validation.
+        unsafe { String::from_utf8_unchecked(s) }
+    } else {
+        String::from_utf8_lossy(&s).into_owned()
     }
 }
 
 fn decode_utf16(s: &[u8], big_endian: bool) -> String {
-    let ints = s.chunks_exact(2).map(|c| {
-        if big_endian {
-            u16::from_be_bytes([c[0], c[1]])
-        } else {
-            u16::from_le_bytes([c[0], c[1]])
-        }
+    let ints = s.as_chunks::<2>().0.iter().map(|c| {
+        if big_endian { u16::from_be_bytes([c[0], c[1]]) } else { u16::from_le_bytes([c[0], c[1]]) }
     });
     char::decode_utf16(ints).map(|r| r.unwrap_or(char::REPLACEMENT_CHARACTER)).collect()
 }
@@ -234,17 +251,22 @@ mod tests {
     fn valid_path_matches_element_split() {
         // Every name of up to 9 bytes over '/', '.', 'a', against fs.ValidPath's element loop.
         fn by_elements(name: &str) -> bool {
-            name == "." || name.split('/').all(|elem| !elem.is_empty() && elem != "." && elem != "..")
+            name == "."
+                || name.split('/').all(|elem| !elem.is_empty() && elem != "." && elem != "..")
         }
-        let alphabet = [b'/', b'.', b'a'];
+        let alphabet = *b"/.a";
         let mut bytes = Vec::new();
         for len in 0..=9 {
             for mut code in 0..3usize.pow(len) {
                 bytes.clear();
-                for _ in 0..len {
-                    bytes.push(alphabet[code % 3]);
-                    code /= 3;
-                }
+                bytes.extend(
+                    std::iter::repeat_with(|| {
+                        let byte = alphabet[code % 3];
+                        code /= 3;
+                        byte
+                    })
+                    .take(len as usize),
+                );
                 let name = std::str::from_utf8(&bytes).unwrap();
                 assert_eq!(valid_path(name), by_elements(name), "{name}");
             }

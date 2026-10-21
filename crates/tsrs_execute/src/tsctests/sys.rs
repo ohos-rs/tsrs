@@ -1,15 +1,16 @@
 // Port of execute/tsctests/sys.go and fs.go (non-watch), plus testutil/fsbaselineutil (FSDiffer) and
 // harnessutil.TracerForBaselining.
 
+use std::fmt::Write as _;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 use rustc_hash::{FxHashMap, FxHashSet};
-use tsrs_core::tspath::{self, ComparePathsOptions, Path};
 use tsrs_core::P;
+use tsrs_core::tspath::{self, ComparePathsOptions, Path};
 use tsrs_vfs::iovfs::IoVFS;
 use tsrs_vfs::vfstest::MapFS;
-use tsrs_vfs::{Entries, FileInfo, FileMode, FS};
+use tsrs_vfs::{Entries, FS, FileInfo, FileMode};
 
 use super::readablebuildinfo::to_readable_build_info;
 use crate::tsc::{CommandLineTesting, MTimesCache, SyncWriter, System};
@@ -23,6 +24,8 @@ const STATISTICS_START: &str = "!!! Statistics start";
 const STATISTICS_END: &str = "!!! Statistics end";
 const BUILD_STATUS_REPORT_START: &str = "!!! Build Status Report Start";
 const BUILD_STATUS_REPORT_END: &str = "!!! Build Status Report End";
+const WATCH_STATUS_REPORT_START: &str = "!!! Watch Status Report Start";
+const WATCH_STATUS_REPORT_END: &str = "!!! Watch Status Report End";
 const TRACE_START: &str = "!!! Trace start";
 const TRACE_END: &str = "!!! Trace end";
 
@@ -84,7 +87,10 @@ impl testFs {
                         data = build_info.marshal();
                     }
                     // Write readable build info version
-                    self.write_file(&format!("{path}.readable.baseline.txt"), &to_readable_build_info(&build_info, &sanitize_internal_symbol_name(&data)))?;
+                    self.write_file(
+                        &format!("{path}.readable.baseline.txt"),
+                        &to_readable_build_info(&build_info, &sanitize_internal_symbol_name(&data)),
+                    )?;
                 }
                 Err(err) => panic!("testFs.WriteFile: failed to unmarshal build info: {err}"),
             }
@@ -160,6 +166,8 @@ pub(crate) struct TestSys {
     pub(crate) env: FxHashMap<String, String>,
     pub(crate) output_is_tty: bool,
     pub(crate) clock: Arc<TestClock>,
+    pub(crate) mock_watch_backend: std::sync::OnceLock<Arc<super::mockwatch::MockWatchBackend>>,
+    pub(crate) signature_job: bool,
 }
 
 impl TestSys {
@@ -178,12 +186,18 @@ impl TestSys {
             program_include_baselines: Mutex::new(String::new()),
             tracer: Mutex::new(FxHashMap::default()),
             serialized_diff: Mutex::new(None),
-            fs: Arc::new(testFs { fs, default_libs: Mutex::new(default_libs), written_files: Mutex::new(FxHashSet::default()) }),
+            fs: Arc::new(testFs {
+                fs,
+                default_libs: Mutex::new(default_libs),
+                written_files: Mutex::new(FxHashSet::default()),
+            }),
             default_library_path,
             cwd,
             env,
             output_is_tty,
             clock,
+            mock_watch_backend: std::sync::OnceLock::new(),
+            signature_job: false,
         }
     }
 
@@ -195,7 +209,11 @@ impl TestSys {
         &self.fs.fs
     }
 
-    fn write_header_to_baseline(&self, builder: &mut String, program: P<tsrs_incremental::Program>) {
+    fn write_header_to_baseline(
+        &self,
+        builder: &mut String,
+        program: P<tsrs_incremental::Program>,
+    ) {
         if !builder.is_empty() {
             builder.push('\n');
         }
@@ -204,7 +222,10 @@ impl TestSys {
             builder.push_str(&tspath::get_relative_path_from_directory(
                 &self.cwd,
                 config_file_path,
-                &ComparePathsOptions { use_case_sensitive_file_names: self.fs.use_case_sensitive_file_names(), current_directory: self.cwd.clone() },
+                &ComparePathsOptions {
+                    use_case_sensitive_file_names: self.fs.use_case_sensitive_file_names(),
+                    current_directory: self.cwd.clone(),
+                },
             ));
             builder.push_str("::\n");
         }
@@ -216,7 +237,11 @@ impl TestSys {
         let mut result = String::new();
         let include = std::mem::take(&mut *self.program_include_baselines.lock().unwrap());
         if !include.is_empty() {
-            result += &format!("\n\n{header}\n!!! Include reasons expectations don't match pls review!!!\n");
+            write!(
+                result,
+                "\n\n{header}\n!!! Include reasons expectations don't match pls review!!!\n"
+            )
+            .unwrap();
             result += &include;
             baseline.push_str(&result);
         }
@@ -243,6 +268,40 @@ impl TestSys {
         self.tracer.lock().unwrap().clear();
     }
 
+    // fsbaselineutil FSDiffer.ChangedPaths: the files written, touched or deleted since the last baseline.
+    pub(crate) fn changed_paths(&self) -> Vec<super::mockwatch::FileChange> {
+        let serialized = self.serialized_diff.lock().unwrap();
+        let Some(old_snap) = serialized.as_ref() else {
+            return Vec::new();
+        };
+        let mut changes = Vec::new();
+        for (path, file) in self.map_fs().entries() {
+            if file.mode.intersects(FileMode::Symlink) || !file.mode.is_regular() {
+                continue;
+            }
+            match old_snap.snap.get(&path) {
+                None => changes.push(super::mockwatch::FileChange { path, deleted: false }),
+                Some(old)
+                    if *tsrs_core::utf8::from_utf8_lossy(&file.data) != *old.content
+                        || file.mod_time != old.m_time =>
+                {
+                    changes.push(super::mockwatch::FileChange { path, deleted: false });
+                }
+                Some(_) => {}
+            }
+        }
+        #[expect(
+            clippy::iter_over_hash_type,
+            reason = "Go ranges this map too; the watcher coalesces these unique deleted paths before checking."
+        )]
+        for path in old_snap.snap.keys() {
+            if self.map_fs().get_file_info(path).is_none() {
+                changes.push(super::mockwatch::FileChange { path: path.clone(), deleted: true });
+            }
+        }
+        changes
+    }
+
     // fsbaselineutil BaselineFSwithDiff
     pub(crate) fn baseline_fs_with_diff(&self, baseline: &mut String) {
         let mut snap: FxHashMap<String, DiffEntry> = FxHashMap::default();
@@ -252,34 +311,62 @@ impl TestSys {
         let current_libs = self.fs.default_libs.lock().unwrap().clone();
         for (path, file) in self.map_fs().entries() {
             if file.mode.intersects(FileMode::Symlink) {
-                let target = self.map_fs().get_target_of_symlink(&path).unwrap_or_else(|| panic!("Failed to resolve symlink target: {path}"));
-                let entry = DiffEntry { content: String::new(), m_time: None, is_written: false, symlink_target: target };
-                add_fs_entry_diff(&serialized, current_libs.as_ref(), &mut diffs, Some(&entry), &path);
+                let target = self
+                    .map_fs()
+                    .get_target_of_symlink(&path)
+                    .unwrap_or_else(|| panic!("Failed to resolve symlink target: {path}"));
+                let entry = DiffEntry {
+                    content: String::new(),
+                    m_time: None,
+                    is_written: false,
+                    symlink_target: target,
+                };
+                add_fs_entry_diff(
+                    serialized.as_ref(),
+                    current_libs.as_ref(),
+                    &mut diffs,
+                    Some(&entry),
+                    &path,
+                );
                 snap.insert(path, entry);
             } else if file.mode.is_regular() {
-                let content = sanitize_internal_symbol_name(&String::from_utf8_lossy(&file.data));
-                let entry = DiffEntry { content, m_time: file.mod_time, is_written: written.contains(&path), symlink_target: String::new() };
-                add_fs_entry_diff(&serialized, current_libs.as_ref(), &mut diffs, Some(&entry), &path);
+                let content =
+                    sanitize_internal_symbol_name(&tsrs_core::utf8::from_utf8_lossy(&file.data));
+                let entry = DiffEntry {
+                    content,
+                    m_time: file.mod_time,
+                    is_written: written.contains(&path),
+                    symlink_target: String::new(),
+                };
+                add_fs_entry_diff(
+                    serialized.as_ref(),
+                    current_libs.as_ref(),
+                    &mut diffs,
+                    Some(&entry),
+                    &path,
+                );
                 snap.insert(path, entry);
             }
         }
         if let Some(old) = serialized.as_ref() {
             let mut deleted: Vec<String> = Vec::new();
-            for path in old.snap.keys() {
-                if self.map_fs().get_file_info(path).is_none() {
-                    deleted.push(path.clone());
-                }
-            }
+            deleted.extend(old.snap.keys().filter_map(|path| {
+                if self.map_fs().get_file_info(path).is_none() { Some(path.clone()) } else { None }
+            }));
             for path in deleted {
-                add_fs_entry_diff(&serialized, current_libs.as_ref(), &mut diffs, None, &path);
+                add_fs_entry_diff(
+                    serialized.as_ref(),
+                    current_libs.as_ref(),
+                    &mut diffs,
+                    None,
+                    &path,
+                );
             }
         }
         *serialized = Some(Snapshot { snap, default_libs: current_libs.unwrap_or_default() });
         let mut keys: Vec<&String> = diffs.keys().collect();
         keys.sort();
-        for path in keys {
-            baseline.push_str(&format!("//// [{}] {}\n", path, diffs[path]));
-        }
+        baseline.extend(keys.into_iter().map(|path| format!("//// [{}] {}\n", path, diffs[path])));
         baseline.push('\n');
     }
 
@@ -290,7 +377,8 @@ impl TestSys {
         if msg.contains(&version) {
             return msg.replacen(&version, &format!("'{FAKE_TS_VERSION}'"), 1);
         }
-        let opts = |file: &str| tspath::to_path(file, &self.cwd, self.fs.use_case_sensitive_file_names());
+        let opts =
+            |file: &str| tspath::to_path(file, &self.cwd, self.fs.use_case_sensitive_file_names());
         let mut cache = self.tracer.lock().unwrap();
         // caching of fs in trace to be replaces with non caching version
         if let Some(s) = msg.strip_suffix("' does not exist according to earlier cached lookups.") {
@@ -319,17 +407,19 @@ impl TestSys {
             if let Some(s) = msg.strip_suffix("' does not exist.") {
                 let file = s.strip_prefix("File '").unwrap_or(s);
                 let file_path = opts(file);
-                if !cache.contains_key(&file_path) {
-                    cache.insert(file_path, false);
+                if let std::collections::hash_map::Entry::Vacant(e) = cache.entry(file_path) {
+                    e.insert(false);
                     return msg.to_string();
                 }
-                return format!("File '{file}' does not exist according to earlier cached lookups.");
+                return format!(
+                    "File '{file}' does not exist according to earlier cached lookups."
+                );
             }
             if let Some(s) = msg.strip_prefix("Found 'package.json' at '") {
                 let file = s.strip_suffix("'.").unwrap_or(s);
                 let file_path = opts(file);
-                if !cache.contains_key(&file_path) {
-                    cache.insert(file_path, true);
+                if let std::collections::hash_map::Entry::Vacant(e) = cache.entry(file_path) {
+                    e.insert(true);
                     return msg.to_string();
                 }
                 return format!("File '{file}' exists according to earlier cached lookups.");
@@ -341,14 +431,14 @@ impl TestSys {
 
 // fsbaselineutil addFsEntryDiff
 fn add_fs_entry_diff(
-    serialized: &Option<Snapshot>,
+    serialized: Option<&Snapshot>,
     current_libs: Option<&FxHashSet<String>>,
     diffs: &mut FxHashMap<String, String>,
     new: Option<&DiffEntry>,
     path: &str,
 ) {
-    let old = serialized.as_ref().and_then(|s| s.snap.get(path));
-    let old_libs = serialized.as_ref().map(|s| &s.default_libs);
+    let old = serialized.and_then(|s| s.snap.get(path));
+    let old_libs = serialized.map(|s| &s.default_libs);
     match (old, new) {
         (None, Some(new)) => {
             if !current_libs.is_some_and(|l| l.contains(path)) {
@@ -369,7 +459,9 @@ fn add_fs_entry_diff(
                 diffs.insert(path.to_string(), "*rewrite with same content*".to_string());
             } else if new.m_time != old.m_time {
                 diffs.insert(path.to_string(), "*mTime changed*".to_string());
-            } else if old_libs.is_some_and(|l| l.contains(path)) && current_libs.is_some_and(|l| !l.contains(path)) {
+            } else if old_libs.is_some_and(|l| l.contains(path))
+                && current_libs.is_some_and(|l| !l.contains(path))
+            {
                 // Lib file that was read
                 diffs.insert(path.to_string(), format!("*Lib*\n{}", new.content));
             }
@@ -391,20 +483,17 @@ pub(crate) fn sanitize_internal_symbol_name(s: &str) -> String {
         // [^@]+@[0-9]+
         let name_end = after.find('@');
         let matched = name_end.filter(|&n| n > 0).and_then(|n| {
-            let digits = after[n + 1..].bytes().take_while(|b| b.is_ascii_digit()).count();
+            let digits = after[n + 1..].bytes().take_while(u8::is_ascii_digit).count();
             (digits > 0).then_some((n, digits))
         });
-        match matched {
-            Some((n, digits)) => {
-                out.push_str("\u{FFFD}@");
-                out.push_str(&after[..n]);
-                out.push_str("@<symbolId>");
-                rest = &after[n + 1 + digits..];
-            }
-            None => {
-                out.push_str("\u{FFFD}@");
-                rest = after;
-            }
+        if let Some((n, digits)) = matched {
+            out.push_str("\u{FFFD}@");
+            out.push_str(&after[..n]);
+            out.push_str("@<symbolId>");
+            rest = &after[n + 1 + digits..];
+        } else {
+            out.push_str("\u{FFFD}@");
+            rest = after;
         }
     }
     out.push_str(rest);
@@ -429,16 +518,37 @@ impl outputSanitizer<'_> {
     fn sanitize_build_status_time_stamp(&self) -> String {
         let status_line = self.lines[self.index];
         let hh_separator = status_line.find(':').filter(|&i| i >= 2).expect("Expected timestamp");
-        format!("{}{}{}", &status_line[..hh_separator - 2], FAKE_TIME_STAMP, &status_line[hh_separator + FAKE_TIME_STAMP.len() - 2..])
+        format!(
+            "{}{}{}",
+            &status_line[..hh_separator - 2],
+            FAKE_TIME_STAMP,
+            &status_line[hh_separator + FAKE_TIME_STAMP.len() - 2..]
+        )
     }
 
     fn transform_lines(&mut self) -> String {
         while self.index < self.lines.len() {
             let line = self.lines[self.index];
             if !self.add_or_skip_lines_for_comparing(LIST_FILE_START, LIST_FILE_END, false, false)
-                && !self.add_or_skip_lines_for_comparing(STATISTICS_START, STATISTICS_END, true, false)
+                && !self.add_or_skip_lines_for_comparing(
+                    STATISTICS_START,
+                    STATISTICS_END,
+                    true,
+                    false,
+                )
                 && !self.add_or_skip_lines_for_comparing(TRACE_START, TRACE_END, false, false)
-                && !self.add_or_skip_lines_for_comparing(BUILD_STATUS_REPORT_START, BUILD_STATUS_REPORT_END, false, true)
+                && !self.add_or_skip_lines_for_comparing(
+                    BUILD_STATUS_REPORT_START,
+                    BUILD_STATUS_REPORT_END,
+                    false,
+                    true,
+                )
+                && !self.add_or_skip_lines_for_comparing(
+                    WATCH_STATUS_REPORT_START,
+                    WATCH_STATUS_REPORT_END,
+                    false,
+                    true,
+                )
             {
                 self.add_output_line(line);
             }
@@ -447,7 +557,13 @@ impl outputSanitizer<'_> {
         self.output_lines.join("\n")
     }
 
-    fn add_or_skip_lines_for_comparing(&mut self, line_start: &str, line_end: &str, skip_even_if_not_comparing: bool, sanitize_first_line: bool) -> bool {
+    fn add_or_skip_lines_for_comparing(
+        &mut self,
+        line_start: &str,
+        line_end: &str,
+        skip_even_if_not_comparing: bool,
+        sanitize_first_line: bool,
+    ) -> bool {
         if self.lines[self.index] != line_start {
             return false;
         }
@@ -473,7 +589,7 @@ impl outputSanitizer<'_> {
 
 impl System for TestSys {
     fn fs(&self) -> Arc<dyn FS> {
-        self.fs.clone()
+        Arc::<testFs>::clone(&self.fs)
     }
     fn default_library_path(&self) -> &str {
         &self.default_library_path
@@ -504,12 +620,31 @@ impl System for TestSys {
     // mapper package declares (see internal/testutil/contentmappertest), so tests exercise the full IPC stack
     // without spawning a subprocess.
     // sys.go:252
-    fn spawn(&self, command: &[String], dir: &str, stderr: Option<Box<dyn std::io::Write + Send>>) -> Result<crate::tsc::ReadWriteCloser, String> {
+    fn spawn(
+        &self,
+        command: &[String],
+        dir: &str,
+        stderr: Option<Box<dyn std::io::Write + Send>>,
+    ) -> Result<crate::tsc::ReadWriteCloser, String> {
         tsrs_contentmappertest::new_spawner().spawn(command, dir, stderr)
     }
 }
 
 impl CommandLineTesting for TestSys {
+    fn run_signature_job(&self) -> bool {
+        self.signature_job
+    }
+    fn on_watch_status_report_start(&self, w: &dyn Fn(&str)) {
+        w(&format!("{WATCH_STATUS_REPORT_START}\n"));
+    }
+    fn on_watch_status_report_end(&self, w: &dyn Fn(&str)) {
+        w(&format!("{WATCH_STATUS_REPORT_END}\n"));
+    }
+    fn watch_backend(&self) -> Option<Arc<dyn crate::watchmanager::WatchBackend>> {
+        self.mock_watch_backend
+            .get()
+            .map(|b| Arc::clone(b) as Arc<dyn crate::watchmanager::WatchBackend>)
+    }
     fn on_list_files_start(&self, w: &dyn Fn(&str)) {
         w(&format!("{LIST_FILE_START}\n"));
     }
@@ -530,7 +665,11 @@ impl CommandLineTesting for TestSys {
     }
 
     // sys.go OnEmittedFiles
-    fn on_emitted_files(&self, result: Option<&tsrs_compiler::EmitResult>, m_times_cache: Option<&MTimesCache>) {
+    fn on_emitted_files(
+        &self,
+        result: Option<&tsrs_compiler::EmitResult>,
+        m_times_cache: Option<&MTimesCache>,
+    ) {
         let Some(result) = result else { return };
         for file in &result.emitted_files {
             let mod_time = self.map_fs().get_mod_time(file);
@@ -550,7 +689,8 @@ impl CommandLineTesting for TestSys {
             }
             // Update the mTime cache in --b mode to store the updated timestamp so tests will behave deteministically when finding newest output
             if let Some(cache) = m_times_cache {
-                let path = tspath::to_path(file, &self.cwd, self.fs.use_case_sensitive_file_names());
+                let path =
+                    tspath::to_path(file, &self.cwd, self.fs.use_case_sensitive_file_names());
                 let mut cache = cache.lock().unwrap();
                 if cache.contains_key(&path) {
                     cache.insert(path, Some(now));
@@ -566,61 +706,68 @@ impl CommandLineTesting for TestSys {
 
         let p = program.get_program();
         b.push_str("SemanticDiagnostics::\n");
-        for &file in p.get_source_files() {
-            match program.testing_semantic_diagnostics_state(file.path()) {
-                tsrs_incremental::SemanticDiagnosticsState::Refreshed => {
-                    b.push_str("*refresh*    ");
-                    b.push_str(file.file_name());
-                    b.push('\n');
-                }
-                tsrs_incremental::SemanticDiagnosticsState::NotCached => {
-                    b.push_str("*not cached* ");
-                    b.push_str(file.file_name());
-                    b.push('\n');
-                }
-                tsrs_incremental::SemanticDiagnosticsState::Reused => {}
-            }
-        }
+        b.extend(
+            p.get_source_files()
+                .iter()
+                .filter_map(|file| {
+                    let prefix = match program.testing_semantic_diagnostics_state(file.path()) {
+                        tsrs_incremental::SemanticDiagnosticsState::Refreshed => "*refresh*    ",
+                        tsrs_incremental::SemanticDiagnosticsState::NotCached => "*not cached* ",
+                        tsrs_incremental::SemanticDiagnosticsState::Reused => return None,
+                    };
+                    Some([prefix, file.file_name(), "\n"])
+                })
+                .flatten(),
+        );
 
         // Write signature updates
         b.push_str("Signatures::\n");
-        for &file in p.get_source_files() {
-            if let Some(kind) = program.testing_updated_signature_kind(file.path()) {
-                b.push_str(match kind {
-                    tsrs_incremental::SignatureUpdateKind::ComputedDts => "(computed .d.ts) ",
-                    tsrs_incremental::SignatureUpdateKind::StoredAtEmit => "(stored at emit) ",
-                    tsrs_incremental::SignatureUpdateKind::UsedVersion => "(used version)   ",
-                });
-                b.push_str(file.file_name());
-                b.push('\n');
-            }
-        }
+        b.extend(
+            p.get_source_files()
+                .iter()
+                .filter_map(|file| {
+                    let kind = program.testing_updated_signature_kind(file.path())?;
+                    let prefix = match kind {
+                        tsrs_incremental::SignatureUpdateKind::ComputedDts => "(computed .d.ts) ",
+                        tsrs_incremental::SignatureUpdateKind::StoredAtEmit => "(stored at emit) ",
+                        tsrs_incremental::SignatureUpdateKind::UsedVersion => "(used version)   ",
+                    };
+                    Some([prefix, file.file_name(), "\n"])
+                })
+                .flatten(),
+        );
         drop(b);
 
         let include_reasons = p.get_include_reasons();
-        let files_without_include_reason: Vec<String> =
-            p.get_source_files().iter().filter(|f| !include_reasons.contains_key(f.path())).map(|f| f.path().to_string()).collect();
+        let files_without_include_reason: Vec<String> = p
+            .get_source_files()
+            .iter()
+            .filter(|f| !include_reasons.contains_key(f.path()))
+            .map(|f| f.path().to_string())
+            .collect();
         let mut file_not_in_program_with_include_reason: Vec<String> = include_reasons
             .keys()
             .filter(|path| p.get_source_file_by_path(path).is_none() && !p.is_missing_path(path))
-            .map(|path| path.to_string())
+            .map(std::string::ToString::to_string)
             .collect();
         file_not_in_program_with_include_reason.sort();
-        if !files_without_include_reason.is_empty() || !file_not_in_program_with_include_reason.is_empty() {
+        if !files_without_include_reason.is_empty()
+            || !file_not_in_program_with_include_reason.is_empty()
+        {
             let mut b = self.program_include_baselines.lock().unwrap();
             self.write_header_to_baseline(&mut b, program);
-            b.push_str("!!! Expected all files to have include reasons\nfilesWithoutIncludeReason::\n");
-            for file in &files_without_include_reason {
-                b.push_str("  ");
-                b.push_str(file);
-                b.push('\n');
-            }
+            b.push_str(
+                "!!! Expected all files to have include reasons\nfilesWithoutIncludeReason::\n",
+            );
+            b.extend(
+                files_without_include_reason.iter().flat_map(|line| ["  ", line.as_str(), "\n"]),
+            );
             b.push_str("filesNotInProgramWithIncludeReason::\n");
-            for file in &file_not_in_program_with_include_reason {
-                b.push_str("  ");
-                b.push_str(file);
-                b.push('\n');
-            }
+            b.extend(
+                file_not_in_program_with_include_reason
+                    .iter()
+                    .flat_map(|line| ["  ", line.as_str(), "\n"]),
+            );
         }
     }
 

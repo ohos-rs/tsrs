@@ -1,12 +1,14 @@
 // helpers.go: the EmitHelper data type and its ordering; the helper definitions are in helpers_defs.rs.
 
+use std::cmp::Ordering;
+
 pub struct Priority {
-    pub value: i32,
+    pub value: u32,
 }
 
 pub struct EmitHelper {
     pub name: &'static str, // A unique name for this helper.
-    pub scoped: bool, // Indicates whether the helper MUST be emitted in the current scope.
+    pub scoped: bool,       // Indicates whether the helper MUST be emitted in the current scope.
     pub text: &'static str, // ES3-compatible raw script text
     pub text_callback: Option<fn(make_unique_name: &mut dyn FnMut(&str) -> String) -> String>, // A function yielding an ES3-compatible raw script text.
     pub priority: Option<&'static Priority>, // Helpers with a higher priority are emitted earlier than other helpers on the node.
@@ -14,9 +16,12 @@ pub struct EmitHelper {
     pub import_name: &'static str, // The name of the helper to use when importing via `--importHelpers`.
 }
 
-pub(crate) fn compare_emit_helpers(x: tsrs_core::SP<EmitHelper>, y: tsrs_core::SP<EmitHelper>) -> i32 {
+pub(crate) fn compare_emit_helpers(
+    x: tsrs_core::SP<EmitHelper>,
+    y: tsrs_core::SP<EmitHelper>,
+) -> Ordering {
     if x == y {
-        return 0;
+        return Ordering::Equal;
     }
     let same_priority = match (x.priority, y.priority) {
         (None, None) => true,
@@ -24,13 +29,13 @@ pub(crate) fn compare_emit_helpers(x: tsrs_core::SP<EmitHelper>, y: tsrs_core::S
         _ => false,
     };
     if same_priority {
-        return 0;
+        return Ordering::Equal;
     }
     if x.priority.is_none() {
-        return 1;
+        return Ordering::Greater;
     }
     if y.priority.is_none() {
-        return -1;
+        return Ordering::Less;
     }
-    x.priority.unwrap().value - y.priority.unwrap().value
+    x.priority.unwrap().value.cmp(&y.priority.unwrap().value)
 }

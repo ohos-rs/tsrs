@@ -17,11 +17,11 @@ use std::sync::atomic::{AtomicPtr, AtomicU32, AtomicUsize, Ordering::Relaxed};
 use std::sync::{LazyLock, Mutex};
 
 use rustc_hash::FxHashMap;
-use tsrs_core::{OwnedCell, PackedStr, TextRange, P};
+use tsrs_core::{OwnedCell, P, PackedStr, TextRange};
 
-use crate::ast::{clone_node, Node, NodeAlloc, NodeFactory, NodePayload};
-use crate::generated::NodeDataTag;
+use crate::ast::{Node, NodeAlloc, NodeFactory, NodePayload, clone_node};
 use crate::flow::FlowNode;
+use crate::generated::NodeDataTag;
 use crate::kind::Kind;
 
 /// No source text: the text index of flow nodes the checker makes, and of parses whose text is not registered.
@@ -37,24 +37,18 @@ struct SourceTextSlot {
 // Zero-initialized, so untouched pages cost nothing. A text is registered by the thread that parses it, before any
 // identifier of it exists; other threads reach those identifiers only through the synchronization that hands them
 // the AST (end of the parse phase, `jsdoc_mu`), so relaxed accesses suffice.
-static SOURCE_TEXTS: [SourceTextSlot; SOURCE_TEXTS_CAP] =
-    [const { SourceTextSlot { ptr: AtomicPtr::new(std::ptr::null_mut()), len: AtomicUsize::new(0) } }; SOURCE_TEXTS_CAP];
+static SOURCE_TEXTS: [SourceTextSlot; SOURCE_TEXTS_CAP] = [const {
+    SourceTextSlot { ptr: AtomicPtr::new(std::ptr::null_mut()), len: AtomicUsize::new(0) }
+}; SOURCE_TEXTS_CAP];
 static SOURCE_TEXT_COUNT: AtomicU32 = AtomicU32::new(0);
 
 /// Registers a file's text for compact identifiers; `NO_SOURCE_TEXT` once the table is full (identifiers of later
 /// files then store their text).
 pub fn register_source_text(text: &'static str) -> u32 {
-    // A compare-exchange loop rather than `fetch_update`: that method is deprecated in favor of `try_update` on
-    // newer toolchains, and the replacement does not exist on older ones.
-    let mut n = SOURCE_TEXT_COUNT.load(Relaxed);
-    let index = loop {
-        if n as usize >= SOURCE_TEXTS_CAP {
-            return NO_SOURCE_TEXT;
-        }
-        match SOURCE_TEXT_COUNT.compare_exchange_weak(n, n + 1, Relaxed, Relaxed) {
-            Ok(_) => break n,
-            Err(current) => n = current,
-        }
+    let Ok(index) = SOURCE_TEXT_COUNT
+        .try_update(Relaxed, Relaxed, |n| ((n as usize) < SOURCE_TEXTS_CAP).then(|| n + 1))
+    else {
+        return NO_SOURCE_TEXT;
     };
     let slot = &SOURCE_TEXTS[index as usize];
     slot.ptr.store(text.as_ptr().cast_mut(), Relaxed);
@@ -85,7 +79,13 @@ fn source_text_ptr(index: u32) -> *const u8 {
 fn source_text(index: u32) -> &'static str {
     let slot = &SOURCE_TEXTS[index as usize];
     // SAFETY: the slot was stored from a `&'static str` by `register_source_text` (see the static's comment).
-    unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(slot.ptr.load(Relaxed), slot.len.load(Relaxed))) }
+    unsafe {
+        std::str::from_utf8_unchecked(std::slice::from_raw_parts(
+            // Relaxed: the source text is published before readers run (see the static's comment).
+            slot.ptr.load(Relaxed),
+            slot.len.load(Relaxed),
+        ))
+    }
 }
 
 // The word: bits 0..45 the flow node (`P::pack`, like the node header's parent) or the text index, bits 45..62 the text length, bits 62..64 the mode.
@@ -122,31 +122,6 @@ impl NodePayload for IdentifierWithText {
 
 const _: () = assert!(std::mem::size_of::<NodeAlloc<Identifier>>() == 32);
 
-/// TOOL (`--features ast-sizing` only): arena bytes of an identifier node with its text stored.
-#[cfg(feature = "ast-sizing")]
-pub(crate) const IDENTIFIER_WITH_TEXT_SIZE: usize = std::mem::size_of::<NodeAlloc<IdentifierWithText>>();
-
-/// TOOL (`--features ast-sizing` only): arena bytes of the identifier node `n`.
-#[cfg(feature = "ast-sizing")]
-pub(crate) fn identifier_alloc_size(n: &Node) -> usize {
-    if n.payload::<Identifier>().is_source_text() {
-        std::mem::size_of::<NodeAlloc<Identifier>>()
-    } else {
-        IDENTIFIER_WITH_TEXT_SIZE
-    }
-}
-
-/// Census builds: the identifier word holds a flow node's address / 8 in the modes that keep one
-/// (`crate::census_layouts`).
-pub(crate) fn census_layout() {
-    use std::mem::offset_of;
-    let word = offset_of!(Identifier, word);
-    let field = |data: usize| tsrs_core::CensusField::X8 { off: data + word, modes: 1 << MODE_SOURCE_FLOW | 1 << MODE_TEXT };
-    tsrs_core::census_layout(std::any::type_name::<NodeAlloc<Identifier>>(), &[field(offset_of!(NodeAlloc<Identifier>, data))]);
-    let data = offset_of!(NodeAlloc<IdentifierWithText>, data) + offset_of!(IdentifierWithText, identifier);
-    tsrs_core::census_layout(std::any::type_name::<NodeAlloc<IdentifierWithText>>(), &[field(data)]);
-}
-
 #[inline]
 fn flow_slot(flow: Option<P<FlowNode>>) -> u64 {
     P::pack_opt(flow)
@@ -161,11 +136,15 @@ fn slot_flow(word: u64) -> Option<P<FlowNode>> {
 
 impl Identifier {
     #[inline]
-    #[expect(clippy::cast_ptr_alignment, reason = "the header starts the `NodeAlloc`, so it has the allocation's alignment")]
     fn node(&self) -> &Node {
         // SAFETY: identifiers are created only by `new_node` inside a `NodeAlloc` (`repr(C)`, header first), so the
         // header lies at this offset before the data struct.
-        unsafe { &*std::ptr::from_ref::<Identifier>(self).cast::<u8>().sub(std::mem::offset_of!(NodeAlloc<Identifier>, data)).cast::<Node>() }
+        unsafe {
+            tsrs_core::ptr::arena_neighbor(
+                self,
+                -(std::mem::offset_of!(NodeAlloc<Identifier>, data) as isize),
+            )
+        }
     }
 
     #[inline]
@@ -184,25 +163,44 @@ impl Identifier {
     }
 
     #[inline]
-    #[expect(clippy::disallowed_methods, reason = "from_utf8 here: +1.6% instructions, one checker (notes/lint-paydown-compiler.md)")]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "from_utf8 here: +1.6% instructions, one checker (notes/lint-paydown-compiler.md)"
+    )]
     pub fn text(&self) -> &'static str {
         let word = self.word.get();
         if Self::mode(word) == MODE_TEXT {
             return self.stored_text();
         }
         let len = ((word >> LEN_SHIFT) & LEN_MAX) as usize;
-        let end = self.node().end() as usize;
+        let end =
+            self.node().end().expect_source("source identifiers have source positions") as usize;
         debug_assert!(end <= source_text(Self::text_index(word)).len() && len <= end);
         // SAFETY: `new_source_identifier` checked that `end - len..end` is the token's text inside the registered
         // text (so in bounds and on char boundaries), and `Node::set_loc` keeps the end from changing (the range of a
         // node is written only there, or by the factory when it creates a node).
-        unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(source_text_ptr(Self::text_index(word)).add(end - len), len)) }
+        unsafe {
+            std::str::from_utf8_unchecked(std::slice::from_raw_parts(
+                source_text_ptr(Self::text_index(word)).add(end - len),
+                len,
+            ))
+        }
+    }
+
+    /// `text().len()`, without forming the text (a compact identifier keeps its length in the word).
+    #[inline]
+    pub fn text_len(&self) -> usize {
+        let word = self.word.get();
+        if Self::mode(word) == MODE_TEXT {
+            return self.stored_text().len();
+        }
+        ((word >> LEN_SHIFT) & LEN_MAX) as usize
     }
 
     #[cold]
     fn stored_text(&self) -> &'static str {
         // SAFETY: identifiers in `MODE_TEXT` were allocated as `IdentifierWithText` (`repr(C)`, identifier first).
-        unsafe { &*std::ptr::from_ref::<Identifier>(self).cast::<IdentifierWithText>() }.text.as_str()
+        unsafe { tsrs_core::ptr::arena_neighbor::<_, IdentifierWithText>(self, 0) }.text.as_str()
     }
 
     #[inline]
@@ -233,16 +231,22 @@ impl Identifier {
             SIDE_FLOW.lock().unwrap().remove(&(std::ptr::from_ref::<Identifier>(self) as usize));
         }
         let word = match flow {
-            None => MODE_SOURCE << MODE_SHIFT | len | index as u64,
-            Some(f) if f.text_index() == index => MODE_SOURCE_FLOW << MODE_SHIFT | len | flow_slot(flow),
+            None => (MODE_SOURCE << MODE_SHIFT) | len | index as u64,
+            Some(f) if f.text_index() == index => {
+                (MODE_SOURCE_FLOW << MODE_SHIFT) | len | flow_slot(flow)
+            }
             Some(f) => {
-                match SIDE_FLOW.lock().unwrap().entry(std::ptr::from_ref::<Identifier>(self) as usize) {
+                match SIDE_FLOW
+                    .lock()
+                    .unwrap()
+                    .entry(std::ptr::from_ref::<Identifier>(self) as usize)
+                {
                     Entry::Occupied(mut e) => *e.get_mut() = f,
                     Entry::Vacant(e) => {
                         e.insert(f);
                     }
                 }
-                MODE_SOURCE_SIDE << MODE_SHIFT | len | index as u64
+                (MODE_SOURCE_SIDE << MODE_SHIFT) | len | index as u64
             }
         };
         self.word.set(word);
@@ -264,18 +268,28 @@ impl NodeFactory {
         self.text_count.set(self.text_count.get() + 1);
         self.new_node(
             Kind::Identifier,
-            IdentifierWithText { identifier: Identifier { word: OwnedCell::new(MODE_TEXT << MODE_SHIFT) }, text: PackedStr::new(text) },
+            IdentifierWithText {
+                identifier: Identifier { word: OwnedCell::new(MODE_TEXT << MODE_SHIFT) },
+                text: PackedStr::new(text),
+            },
         )
     }
 
     /// `new_identifier` for a token of the text registered as `text_index`, spanning `loc`: when `text` is the
     /// slice of that text that ends at `loc.end()`, the identifier keeps only its length. Sets the range, which can
     /// then not change its end.
-    pub fn new_source_identifier(&self, text: &'static str, text_index: u32, loc: TextRange) -> P<Node> {
-        let end = loc.end() as usize;
+    pub fn new_source_identifier(
+        &self,
+        text: &'static str,
+        text_index: u32,
+        loc: TextRange,
+    ) -> P<Node> {
+        let end = loc.end().expect_source("source identifiers have source positions") as usize;
         let from_source = text_index != NO_SOURCE_TEXT && text.len() as u64 <= LEN_MAX && {
             let file = source_text(text_index);
-            end <= file.len() && text.len() <= end && std::ptr::eq(file.as_ptr().wrapping_add(end - text.len()), text.as_ptr())
+            end <= file.len()
+                && text.len() <= end
+                && std::ptr::eq(file.as_ptr().wrapping_add(end - text.len()), text.as_ptr())
         };
         if !from_source {
             let node = self.new_identifier(text);
@@ -285,7 +299,13 @@ impl NodeFactory {
         self.text_count.set(self.text_count.get() + 1);
         let node = self.new_node(
             Kind::Identifier,
-            Identifier { word: OwnedCell::new(MODE_SOURCE << MODE_SHIFT | (text.len() as u64) << LEN_SHIFT | text_index as u64) },
+            Identifier {
+                word: OwnedCell::new(
+                    (MODE_SOURCE << MODE_SHIFT)
+                        | ((text.len() as u64) << LEN_SHIFT)
+                        | text_index as u64,
+                ),
+            },
         );
         node.loc.set(loc);
         node
@@ -295,7 +315,11 @@ impl NodeFactory {
 /// `Node::set_loc` of an identifier to a range with another end.
 #[cold]
 pub(crate) fn check_source_identifier_loc(node: &Node, loc: TextRange) {
-    if node.as_identifier().is_source_text() {
-        panic!("the range end of identifier {:?} cannot change ({} -> {})", node.as_identifier().text(), node.end(), loc.end());
-    }
+    assert!(
+        !node.as_identifier().is_source_text(),
+        "the range end of identifier {:?} cannot change ({:?} -> {:?})",
+        node.as_identifier().text(),
+        node.end(),
+        loc.end()
+    );
 }

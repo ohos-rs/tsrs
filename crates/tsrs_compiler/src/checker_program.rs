@@ -2,11 +2,11 @@
 
 use rustc_hash::FxHashMap;
 use tsrs_ast::{Node, SourceFile, SourceFileMetaData};
-use tsrs_tsoptions::{ParsedCommandLine, SourceOutputAndProjectReference};
 use tsrs_core::tspath::Path;
-use tsrs_core::{CompilerOptions, ModuleKind, ResolutionMode, P};
+use tsrs_core::{CompilerOptions, ModuleKind, P, ResolutionMode};
 use tsrs_module::symlinks::KnownSymlinks;
-use tsrs_module::{packagejson, ModeAwareCacheKey, ResolvedModule};
+use tsrs_module::{ModeAwareCacheKey, ResolvedModule, packagejson};
+use tsrs_tsoptions::{ParsedCommandLine, SourceOutputAndProjectReference};
 
 use crate::program::Program;
 
@@ -20,7 +20,7 @@ impl tsrs_checker::Program for Program {
     }
 
     fn bind_source_files(&self) {
-        Program::bind_source_files(self)
+        Program::bind_source_files(self);
     }
 
     fn file_exists(&self, file_name: &str) -> bool {
@@ -43,7 +43,11 @@ impl tsrs_checker::Program for Program {
         Program::get_emit_module_format_of_file(self, source_file)
     }
 
-    fn get_emit_syntax_for_usage_location(&self, source_file: P<SourceFile>, usage_location: P<Node>) -> ResolutionMode {
+    fn get_emit_syntax_for_usage_location(
+        &self,
+        source_file: P<SourceFile>,
+        usage_location: P<Node>,
+    ) -> ResolutionMode {
         Program::get_emit_syntax_for_usage_location(self, source_file, usage_location)
     }
 
@@ -51,11 +55,18 @@ impl tsrs_checker::Program for Program {
         Program::get_implied_node_format_for_emit(self, source_file)
     }
 
-    fn get_resolved_module(&self, current_source_file: P<SourceFile>, module_reference: &str, mode: ResolutionMode) -> Option<P<ResolvedModule>> {
+    fn get_resolved_module(
+        &self,
+        current_source_file: P<SourceFile>,
+        module_reference: &str,
+        mode: ResolutionMode,
+    ) -> Option<P<ResolvedModule>> {
         Program::get_resolved_module(self, current_source_file, module_reference, mode)
     }
 
-    fn get_resolved_modules(&self) -> &FxHashMap<Path, FxHashMap<ModeAwareCacheKey, P<ResolvedModule>>> {
+    fn get_resolved_modules(
+        &self,
+    ) -> &FxHashMap<Path, FxHashMap<ModeAwareCacheKey, P<ResolvedModule>>> {
         Program::get_resolved_modules(self)
     }
 
@@ -83,11 +94,17 @@ impl tsrs_checker::Program for Program {
         Program::is_source_file_default_library(self, path)
     }
 
-    fn get_project_reference_from_output_dts(&self, path: &Path) -> Option<P<SourceOutputAndProjectReference>> {
+    fn get_project_reference_from_output_dts(
+        &self,
+        path: &Path,
+    ) -> Option<P<SourceOutputAndProjectReference>> {
         Program::get_project_reference_from_output_dts(self, path)
     }
 
-    fn get_project_reference_from_source(&self, path: &Path) -> Option<P<SourceOutputAndProjectReference>> {
+    fn get_project_reference_from_source(
+        &self,
+        path: &Path,
+    ) -> Option<P<SourceOutputAndProjectReference>> {
         Program::get_project_reference_from_source(self, path)
     }
 
@@ -111,12 +128,28 @@ impl tsrs_checker::Program for Program {
         Program::get_default_resolution_mode_for_file(self, file)
     }
 
-    fn get_mode_for_usage_location(&self, file: P<SourceFile>, module_specifier: P<Node>) -> ResolutionMode {
+    fn get_mode_for_usage_location(
+        &self,
+        file: P<SourceFile>,
+        module_specifier: P<Node>,
+    ) -> ResolutionMode {
         Program::get_mode_for_usage_location(self, file, module_specifier)
     }
 
-    fn as_module_specifier_generation_host(&self) -> &dyn tsrs_modulespecifiers::ModuleSpecifierGenerationHost {
+    fn as_module_specifier_generation_host(
+        &self,
+    ) -> &dyn tsrs_modulespecifiers::ModuleSpecifierGenerationHost {
         self
+    }
+
+    fn tsgo_default_check_slot(&self, file: P<SourceFile>) -> Option<(u32, u32)> {
+        if !self.uses_canonical_diagnostics() {
+            return None;
+        }
+        self.tsgo_check_slots
+            .get_or_init(|| crate::checkerpool::tsgo_default_check_slots(self))
+            .get(&file)
+            .copied()
     }
 }
 
@@ -132,7 +165,10 @@ impl tsrs_modulespecifiers::ModuleSpecifierGenerationHost for Program {
         Program::get_global_typings_cache_location(self).to_string()
     }
 
-    fn get_project_reference_from_source(&self, path: &Path) -> Option<P<tsrs_tsoptions::SourceOutputAndProjectReference>> {
+    fn get_project_reference_from_source(
+        &self,
+        path: &Path,
+    ) -> Option<P<tsrs_tsoptions::SourceOutputAndProjectReference>> {
         Program::get_project_reference_from_source(self, path)
     }
 
@@ -141,7 +177,11 @@ impl tsrs_modulespecifiers::ModuleSpecifierGenerationHost for Program {
     }
 
     fn get_source_of_project_reference_if_output_included(&self, file: P<SourceFile>) -> String {
-        Program::get_source_of_project_reference_if_output_included(self, file.file_name(), &file.path())
+        Program::get_source_of_project_reference_if_output_included(
+            self,
+            file.file_name(),
+            file.path(),
+        )
     }
 
     fn file_exists(&self, path: &str) -> bool {
@@ -160,15 +200,26 @@ impl tsrs_modulespecifiers::ModuleSpecifierGenerationHost for Program {
         Program::get_default_resolution_mode_for_file(self, file)
     }
 
-    fn get_resolved_module_from_module_specifier(&self, file: P<SourceFile>, module_specifier: P<Node>) -> Option<P<ResolvedModule>> {
+    fn get_resolved_module_from_module_specifier(
+        &self,
+        file: P<SourceFile>,
+        module_specifier: P<Node>,
+    ) -> Option<P<ResolvedModule>> {
         Program::get_resolved_module_from_module_specifier(self, file, module_specifier)
     }
 
-    fn get_mode_for_usage_location(&self, file: P<SourceFile>, module_specifier: P<Node>) -> ResolutionMode {
+    fn get_mode_for_usage_location(
+        &self,
+        file: P<SourceFile>,
+        module_specifier: P<Node>,
+    ) -> ResolutionMode {
         Program::get_mode_for_usage_location(self, file, module_specifier)
     }
 
-    fn exports_module_name_cache(&self, options: &tsrs_core::CompilerOptions) -> Option<&tsrs_modulespecifiers::ExportsModuleNameCache> {
+    fn exports_module_name_cache(
+        &self,
+        options: &tsrs_core::CompilerOptions,
+    ) -> Option<&tsrs_modulespecifiers::ExportsModuleNameCache> {
         std::ptr::eq(options, &raw const *self.options()).then_some(&self.exports_module_name_cache)
     }
 }

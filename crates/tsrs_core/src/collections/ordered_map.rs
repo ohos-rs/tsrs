@@ -15,9 +15,7 @@ pub fn new_ordered_map_with_size_hint<K, V>(hint: usize) -> OrderedMap<K, V> {
 
 pub fn new_ordered_map_from_list<K: Hash + Eq, V>(items: Vec<MapEntry<K, V>>) -> OrderedMap<K, V> {
     let mut m = new_ordered_map_with_size_hint(items.len());
-    for entry in items {
-        m.set(entry.key, entry.value);
-    }
+    m.extend(items.into_iter().map(|entry| (entry.key, entry.value)));
     m
 }
 
@@ -69,7 +67,7 @@ pub fn diff_ordered_maps<K: Hash + Eq, V: PartialEq>(
     on_removed: impl FnMut(&K, &V),
     on_modified: impl FnMut(&K, &V, &V),
 ) {
-    diff_ordered_maps_func(m1, m2, |a, b| a == b, on_added, on_removed, on_modified)
+    diff_ordered_maps_func(m1, m2, |a, b| a == b, on_added, on_removed, on_modified);
 }
 
 pub fn diff_ordered_maps_func<K: Hash + Eq, V>(
@@ -112,14 +110,10 @@ mod tests {
         const START: i32 = 1;
         const END: i32 = START + N;
         // Seed the map with ascending keys and values for easier testing.
-        for i in START..END {
-            m.set(i, pad_int(i));
-        }
+        m.extend((START..END).map(|i| (i, pad_int(i))));
         assert_eq!(m.size(), N as usize);
         // Attempt to overwrite existing keys in reverse order.
-        for i in (START..END).rev() {
-            m.set(i, pad_int(i));
-        }
+        m.extend((START..END).rev().map(|i| (i, pad_int(i))));
         assert_eq!(m.size(), N as usize);
         for i in START..END {
             assert_eq!(m.get(&i), Some(&pad_int(i)));

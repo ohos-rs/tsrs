@@ -13,9 +13,9 @@ use tsrs_vfs::FS;
 use crate::diagnostics::{diagnostic_response, diagnostic_responses};
 use crate::handler::{ApiError, ApiResult};
 use crate::session::Session;
-use crate::wire::{strings, Obj, Params};
+use crate::wire::{Obj, Params, strings};
 
-/// `tsoptions.ParseConfigHost` over the session's base filesystem (Go passes the SnapshotHost).
+/// `tsoptions.ParseConfigHost` over the session's base filesystem (Go passes the `SnapshotHost`).
 pub(crate) struct ApiParseConfigHost {
     pub fs: Arc<dyn FS>,
     pub cwd: String,
@@ -38,13 +38,13 @@ pub fn options_value_to_json(v: &CompilerOptionsValue) -> Value {
         CompilerOptionsValue::Float(f) => Value::Number(*f),
         CompilerOptionsValue::Int(i) => Value::Number(*i as f64),
         CompilerOptionsValue::String(s) => Value::String(s.clone()),
-        CompilerOptionsValue::Array(a) => Value::Array(a.iter().map(options_value_to_json).collect()),
+        CompilerOptionsValue::Array(a) => {
+            Value::Array(a.iter().map(options_value_to_json).collect())
+        }
         CompilerOptionsValue::StringArray(a) => strings(a.iter().cloned()),
         CompilerOptionsValue::Object(m) => {
             let mut o = OrderedMap::default();
-            for (k, v) in m.iter() {
-                o.insert(k.clone(), options_value_to_json(v));
-            }
+            o.extend(m.iter().map(|(k, v)| (k.clone(), options_value_to_json(v))));
             Value::Object(o)
         }
         CompilerOptionsValue::EmptyStruct => Value::Object(OrderedMap::default()),
@@ -74,12 +74,12 @@ pub fn json_to_options_value(v: &Value) -> CompilerOptionsValue {
         Value::Integer(n) => CompilerOptionsValue::Float(*n as f64),
         Value::Number(n) => CompilerOptionsValue::Float(*n),
         Value::String(s) => CompilerOptionsValue::String(s.clone()),
-        Value::Array(a) => CompilerOptionsValue::Array(a.iter().map(json_to_options_value).collect()),
+        Value::Array(a) => {
+            CompilerOptionsValue::Array(a.iter().map(json_to_options_value).collect())
+        }
         Value::Object(o) => {
             let mut m = OrderedMap::default();
-            for (k, v) in o.iter() {
-                m.insert(k.clone(), json_to_options_value(v));
-            }
+            m.extend(o.iter().map(|(k, v)| (k.clone(), json_to_options_value(v))));
             CompilerOptionsValue::Object(m)
         }
     }
@@ -104,9 +104,15 @@ pub fn config_file_response(parsed: &ParsedCommandLine) -> Value {
     Obj::new()
         .set("fileNames", strings(parsed.file_names().iter().cloned()))
         .set("options", options)
-        .set_omitempty("projectReferences", Value::Array(refs.iter().map(gojson::project_reference_to_go_json).collect()))
-        .set_omitempty("typeAcquisition", parsed.type_acquisition().map(gojson::type_acquisition_to_go_json).unwrap_or(Value::Null))
-        .set_omitempty("compileOnSave", compile_on_save.map(Value::Bool).unwrap_or(Value::Null))
+        .set_omitempty(
+            "projectReferences",
+            Value::Array(refs.iter().map(gojson::project_reference_to_go_json).collect()),
+        )
+        .set_omitempty(
+            "typeAcquisition",
+            parsed.type_acquisition().map_or(Value::Null, gojson::type_acquisition_to_go_json),
+        )
+        .set_omitempty("compileOnSave", compile_on_save.map_or(Value::Null, Value::Bool))
         .set_omitempty("raw", raw)
         .set("errors", diagnostic_responses(&parsed.errors))
         .build()
@@ -121,17 +127,30 @@ impl Session {
 
     pub(crate) fn handle_parse_command_line(&self, p: Params) -> ApiResult<Value> {
         let command_line = p.strings("commandLine")?;
-        Ok(config_file_response(&tsrs_tsoptions::parse_command_line(&command_line, self.parse_config_host())))
+        Ok(config_file_response(&tsrs_tsoptions::parse_command_line(
+            &command_line,
+            self.parse_config_host(),
+        )))
     }
 
     pub(crate) fn handle_read_config_file(&self, p: Params) -> ApiResult<Value> {
         let file = p.document("file")?;
         let config_file_name = file.to_absolute_file_name(self.current_directory());
         let Some(content) = self.base_fs().read_file(&config_file_name) else {
-            let diag = tsrs_ast::new_compiler_diagnostic(&tsrs_diagnostics::Cannot_read_file_0, &[&config_file_name]);
-            return Ok(Obj::new().set("config", Value::Object(OrderedMap::default())).set("error", diagnostic_response(&diag)).build());
+            let diag = tsrs_ast::new_compiler_diagnostic(
+                &tsrs_diagnostics::Cannot_read_file_0,
+                &[&config_file_name],
+            );
+            return Ok(Obj::new()
+                .set("config", Value::Object(OrderedMap::default()))
+                .set("error", diagnostic_response(&diag))
+                .build());
         };
-        let (config, errors) = tsrs_tsoptions::parse_config_file_text_to_json(&config_file_name, self.to_path(&config_file_name), &content);
+        let (config, errors) = tsrs_tsoptions::parse_config_file_text_to_json(
+            &config_file_name,
+            self.to_path(&config_file_name),
+            &content,
+        );
         Ok(Obj::new()
             .set("config", options_value_to_json(&config))
             .set_opt("error", errors.first().map(|d| diagnostic_response(d)))
@@ -142,7 +161,9 @@ impl Session {
         let has_dir = p.has("configDirectory");
         let has_name = p.has("configFileName");
         if has_dir == has_name {
-            return Err(ApiError::client("exactly one of configDirectory or configFileName is required"));
+            return Err(ApiError::client(
+                "exactly one of configDirectory or configFileName is required",
+            ));
         }
         let cwd = self.current_directory();
         let (base_path, config_file_name) = if has_dir {
@@ -170,7 +191,11 @@ impl Session {
             return Err(ApiError::client(format!("could not read file {config_file_name:?}")));
         };
         let config_dir = tspath::get_directory_path(&config_file_name);
-        let source = tsrs_tsoptions::new_tsconfig_source_file_from_file_path(&config_file_name, self.to_path(&config_file_name), &content);
+        let source = tsrs_tsoptions::new_tsconfig_source_file_from_file_path(
+            &config_file_name,
+            self.to_path(&config_file_name),
+            &content,
+        );
         let parsed = tsrs_tsoptions::parse_json_source_file_config_file_content(
             source,
             self.parse_config_host(),

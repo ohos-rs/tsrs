@@ -28,7 +28,7 @@ mapper (1.7%), the cache's hashbrown probe (~5%), `find_active_mapper`'s scan (~
 the instructions after a multiply chain, so 74% overstates the hash's share of instructions, but it was the one site
 in the function worth taking out.
 
-Site counts (`--features site-counts`) of the same check: 11.0 M calls reach the worker; 3.24 M (29.5%) come with a
+Site counts (`-p tsrs_checker --features tsrs_checker/site-counts`) of the same check: 11.0 M calls reach the worker; 3.24 M (29.5%) come with a
 mapper that is not active, 6.52 M miss an active mapper's cache, 1.25 M hit it. In the first group the worker pushes
 the mapper with a cleared cache, hashes the key, looks it up in that empty table, and never stores into it (Go stores
 the result only when the mapper was already active).
@@ -105,6 +105,6 @@ reference checkout at b85298b6a): 13,458 error baselines, 12,779 `.types`, 12,77
 A `dev` build (debug assertions on) checks t3code-server with output identical to the base. `cargo check
 --workspace` without warnings, `tools/lint/ratchet.py`, `tools/lint/source.py`, `cargo test -p tsrs_checker -p
 tsrs_compiler`. On the runner: diagnostics, `--listFiles` and `--explainFiles` identical (abprobe, t3code-server and
-vscode). `pr-verify` on https://github.com/maschwenk/tsrs/pull/186 (17 projects x 1/4/16/32
+vscode). `pr-verify` on https://github.com/oxc-project/tsrs/pull/186 (17 projects x 1/4/16/32
 checkers against main 7d7e54a): 102 of 102 cells identical; single-threaded instructions fall on all 17 projects
 (t3code-server -1.003%, mikro-orm -1.087%, xstate-main -1.076%, smallest Compiler-Unions -0.052%).

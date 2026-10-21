@@ -17,9 +17,9 @@ impl ArkTsLinter<'_> {
                 self.handle_sendable_as_expression(node, target, expression);
             }
             Kind::ExportDeclaration => self.handle_interop_export_declaration(node),
-            Kind::ExportAssignment => if self.interop_sdk_root().1 {
+            Kind::ExportAssignment if self.interop_sdk_root().1 => {
                 let expression = node.expression().unwrap(); if self.is_sendable_class_or_interface_entity(expression) { self.add(expression, Fault::SendableTypeExported); }
-            },
+            }
             _ => {}
         }
         node.for_each_child(&mut |child| { self.visit_interop(child); false });
@@ -65,7 +65,7 @@ impl ArkTsLinter<'_> {
     }
     fn handle_interop_heritage_clauses(&mut self, node: P<Node>) {
         let clauses = if ast::is_class_declaration(node) { node.as_class_declaration().heritage_clauses() } else {
-            if !node.name().and_then(|n| self.true_symbol_at_location(n)).is_some_and(|s| !s.declarations().is_empty()) { return; }
+            if node.name().and_then(|n| self.true_symbol_at_location(n)).is_none_or(|s| s.declarations().is_empty()) { return; }
             node.as_interface_declaration().heritage_clauses
         };
         let Some(clauses) = clauses else { return; };

@@ -36,10 +36,10 @@ pub fn has_ets_decorator(node: P<Node>, options: &EtsOptions) -> bool {
         let expression = modifier.expression().unwrap();
         if ast::is_call_expression(expression) {
             let callee = expression.expression().unwrap();
-            return ast::is_identifier(callee) && ets_contains(&options.extend.decorator, callee.text());
+            return ast::is_identifier(callee) && ets_contains(options.extend.decorator.as_deref(), callee.text());
         }
         ast::is_identifier(expression)
-            && (ets_contains(&options.render.decorator, expression.text())
+            && (ets_contains(options.render.decorator.as_deref(), expression.text())
                 || options.styles.decorator.as_deref() == Some(expression.text())
                 || options.concurrent.decorator.as_deref() == Some(expression.text()))
     })
@@ -54,8 +54,8 @@ pub fn is_ets_function_decorator(decorator: P<Node>, options: &EtsOptions) -> bo
         expression = expression.expression().unwrap();
     }
     ast::is_identifier(expression)
-        && (ets_contains(&options.render.decorator, expression.text())
-            || ets_contains(&options.extend.decorator, expression.text())
+        && (ets_contains(options.render.decorator.as_deref(), expression.text())
+            || ets_contains(options.extend.decorator.as_deref(), expression.text())
             || options.styles.decorator.as_deref() == Some(expression.text()))
 }
 

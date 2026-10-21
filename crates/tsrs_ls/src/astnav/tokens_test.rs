@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use tsrs_ast::{Kind, Node, SourceFile, SourceFileParseOptions};
 use tsrs_core::collections::OrderedMap;
 use tsrs_core::json::{self, Value};
-use tsrs_core::{position_to_line_and_byte_offset, ScriptKind, TextRange, P};
+use tsrs_core::{P, ScriptKind, TextRange, position_to_line_and_byte_offset};
 
 use super::*;
 
@@ -20,16 +20,27 @@ fn test_files() -> Vec<PathBuf> {
     vec![repo_root().join("ts-ref/tsc/testdata/fixtures/services/mapCode.ts")]
 }
 
-pub(crate) fn parse_for_test(file_name: &str, text: &str, script_kind: ScriptKind) -> P<SourceFile> {
+pub(crate) fn parse_for_test(
+    file_name: &str,
+    text: &str,
+    script_kind: ScriptKind,
+) -> P<SourceFile> {
     tsrs_parser::parse_source_file(
-        SourceFileParseOptions { file_name: file_name.to_string(), path: file_name.into(), ..Default::default() },
+        SourceFileParseOptions {
+            file_name: file_name.to_string(),
+            path: file_name.into(),
+            ..Default::default()
+        },
         text,
         script_kind,
     )
 }
 
 fn reference_baseline(name: &str) -> Option<String> {
-    std::fs::read_to_string(repo_root().join("ts-ref/tsc/testdata/baselines/reference/astnav").join(name)).ok()
+    std::fs::read_to_string(
+        repo_root().join("ts-ref/tsc/testdata/baselines/reference/astnav").join(name),
+    )
+    .ok()
 }
 
 // baseline.Run: compare against the reference file; on mismatch write the local baseline for inspection.
@@ -39,15 +50,17 @@ fn check_baseline(name: &str, actual: &str) {
         let dir = repo_root().join("target/scratch/lsfound/baselines/local/astnav");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join(name), actual).unwrap();
-        panic!("baseline mismatch for {name}: see target/scratch/lsfound/baselines/local/astnav/{name}");
+        panic!(
+            "baseline mismatch for {name}: see target/scratch/lsfound/baselines/local/astnav/{name}"
+        );
     }
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 struct TokenInfo {
     kind: String,
-    pos: i32,
-    end: i32,
+    pos: u32,
+    end: u32,
 }
 
 // tokens_test.go:257
@@ -57,19 +70,26 @@ fn to_token_info(node: Option<P<Node>>) -> Option<TokenInfo> {
     if kind == "EndOfFile" {
         kind = "EndOfFileToken".to_string();
     }
-    Some(TokenInfo { kind, pos: node.pos(), end: node.end() })
+    Some(TokenInfo {
+        kind,
+        pos: node.pos().expect_source("parsed tokens have source positions"),
+        end: node.end().expect_source("parsed tokens have source positions"),
+    })
 }
 
 struct TokenRun {
     start_pos: usize,
     end_pos: usize,
     kind: String,
-    node_pos: i32,
-    node_end: i32,
+    node_pos: u32,
+    node_end: u32,
 }
 
 // tokens_test.go:196
-fn baseline_go_tokens_json(test_name: &str, get_go_token: impl Fn(P<SourceFile>, i32) -> Option<TokenInfo>) {
+fn baseline_go_tokens_json(
+    test_name: &str,
+    get_go_token: impl Fn(P<SourceFile>, u32) -> Option<TokenInfo>,
+) {
     for file_name in test_files() {
         let file_text = std::fs::read_to_string(&file_name).unwrap();
         let file = parse_for_test("/file.ts", &file_text, ScriptKind::TS);
@@ -79,16 +99,28 @@ fn baseline_go_tokens_json(test_name: &str, get_go_token: impl Fn(P<SourceFile>,
         let mut current: Option<TokenRun> = None;
 
         for pos in 0..max_pos {
-            let token = get_go_token(file, pos as i32);
+            let token = get_go_token(file, u32::try_from(pos).expect("test position fits in u32"));
             match (&mut current, &token) {
-                (Some(c), Some(t)) if c.kind == t.kind && c.node_pos == t.pos && c.node_end == t.end => {
+                #[expect(
+                    clippy::suspicious_operation_groupings,
+                    reason = "A TokenRun records a token's positions under different field names; all three identity components are compared."
+                )]
+                (Some(c), Some(t))
+                    if c.kind == t.kind && c.node_pos == t.pos && c.node_end == t.end =>
+                {
                     c.end_pos = pos;
                 }
                 _ => {
                     if let Some(c) = current.take() {
                         runs.push(c);
                     }
-                    current = token.map(|t| TokenRun { start_pos: pos, end_pos: pos, kind: t.kind, node_pos: t.pos, node_end: t.end });
+                    current = token.map(|t| TokenRun {
+                        start_pos: pos,
+                        end_pos: pos,
+                        kind: t.kind,
+                        node_pos: t.pos,
+                        node_end: t.end,
+                    });
                 }
             }
         }
@@ -108,7 +140,11 @@ fn baseline_go_tokens_json(test_name: &str, get_go_token: impl Fn(P<SourceFile>,
                 Value::Object(m)
             })
             .collect();
-        let output = if values.is_empty() { "null".to_string() } else { json::marshal_indent(&Value::Array(values), "", "  ").unwrap() };
+        let output = if values.is_empty() {
+            "null".to_string()
+        } else {
+            json::marshal_indent(&Value::Array(values), "", "  ").unwrap()
+        };
 
         let base = file_name.file_name().unwrap().to_string_lossy().to_string();
         check_baseline(&format!("{test_name}.{base}.baseline.json"), &output);
@@ -119,12 +155,19 @@ fn baseline_go_tokens_json(test_name: &str, get_go_token: impl Fn(P<SourceFile>,
 // `typescript` from the repository's node_modules (jstest.EvalNodeScriptWithTS). The TS side is reproduced here by the
 // same script when `TSRS_TYPESCRIPT_JS` points at a typescript.js (6.0.3, the version in ts-ref/package-lock.json);
 // without it, the test is skipped like Go's `jstest.SkipIfNoNodeJS`.
-fn ts_tokens(function: &str, file_text: &str, positions: &[usize]) -> Option<Vec<Option<TokenInfo>>> {
+fn ts_tokens(
+    function: &str,
+    file_text: &str,
+    positions: &[usize],
+) -> Option<Vec<Option<TokenInfo>>> {
     let ts_js = std::env::var("TSRS_TYPESCRIPT_JS").ok()?;
     let dir = repo_root().join(format!("target/scratch/lsfound/jstest/{function}"));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("file.ts"), file_text).unwrap();
-    let positions_json = format!("[{}]", positions.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(","));
+    let positions_json = format!(
+        "[{}]",
+        positions.iter().map(std::string::ToString::to_string).collect::<Vec<_>>().join(",")
+    );
     std::fs::write(dir.join("positions.json"), positions_json).unwrap();
     let call = match function {
         "GetTokenAtPosition" => "ts.getTokenAtPosition(file, position)",
@@ -149,7 +192,8 @@ fs.writeFileSync("result.json", JSON.stringify(result));
 "#
     );
     std::fs::write(dir.join("script.cjs"), script).unwrap();
-    let status = std::process::Command::new("node").arg("script.cjs").current_dir(&dir).status().ok()?;
+    let status =
+        std::process::Command::new("node").arg("script.cjs").current_dir(&dir).status().ok()?;
     assert!(status.success(), "node script failed");
     let result = std::fs::read_to_string(dir.join("result.json")).unwrap();
     let Value::Array(items) = json::unmarshal(&result).unwrap() else {
@@ -165,11 +209,11 @@ fs.writeFileSync("result.json", JSON.stringify(result));
                         _ => panic!(),
                     },
                     pos: match m["pos"] {
-                        Value::Number(n) => n as i32,
+                        Value::Number(n) => n as u32,
                         _ => panic!(),
                     },
                     end: match m["end"] {
-                        Value::Number(n) => n as i32,
+                        Value::Number(n) => n as u32,
                         _ => panic!(),
                     },
                 }),
@@ -186,10 +230,14 @@ struct TokenDiff {
 }
 
 // tokens_test.go:140
-fn baseline_tokens(test_name: &str, include_eof: bool, get_go_token: impl Fn(P<SourceFile>, i32) -> Option<TokenInfo>) {
+fn baseline_tokens(
+    test_name: &str,
+    include_eof: bool,
+    get_go_token: impl Fn(P<SourceFile>, u32) -> Option<TokenInfo>,
+) {
     for file_name in test_files() {
         let file_text = std::fs::read_to_string(&file_name).unwrap();
-        let positions: Vec<usize> = (0..file_text.len() + if include_eof { 1 } else { 0 }).collect();
+        let positions: Vec<usize> = (0..file_text.len() + usize::from(include_eof)).collect();
         let Some(ts_tokens) = ts_tokens(test_name, &file_text, &positions) else {
             eprintln!("skipping {test_name} TS comparison: TSRS_TYPESCRIPT_JS not set");
             return;
@@ -201,30 +249,43 @@ fn baseline_tokens(test_name: &str, include_eof: bool, get_go_token: impl Fn(P<S
         let mut current_diff = TokenDiff::default();
 
         for (pos, ts_token) in ts_tokens.iter().enumerate() {
-            let go_token = get_go_token(file, pos as i32);
+            let pos = u32::try_from(pos).expect("test position fits in u32");
+            let go_token = get_go_token(file, pos);
             let diff = TokenDiff { go_token, ts_token: ts_token.clone() };
 
             if !(current_diff.go_token == diff.go_token && current_diff.ts_token == diff.ts_token) {
                 if current_diff.go_token != current_diff.ts_token {
-                    write_range_diff(&mut output, file, &current_diff, current_range, pos as i32);
+                    write_range_diff(&mut output, file, &current_diff, current_range, pos);
                 }
                 current_diff = diff;
-                current_range = TextRange::new(pos as i32, pos as i32);
+                current_range = TextRange::new(pos, pos);
             }
-            current_range = current_range.with_end(pos as i32);
+            current_range = current_range.with_end(pos.into());
         }
 
         if current_diff.go_token != current_diff.ts_token {
-            write_range_diff(&mut output, file, &current_diff, current_range, ts_tokens.len() as i32 - 1);
+            let last_position = u32::try_from(ts_tokens.len())
+                .expect("test position fits in u32")
+                .saturating_sub(1);
+            write_range_diff(&mut output, file, &current_diff, current_range, last_position);
         }
 
         let base = file_name.file_name().unwrap().to_string_lossy().to_string();
-        check_baseline(&format!("{test_name}.{base}.baseline.txt"), if output.is_empty() { "<no content>" } else { &output });
+        check_baseline(
+            &format!("{test_name}.{base}.baseline.txt"),
+            if output.is_empty() { "<no content>" } else { &output },
+        );
     }
 }
 
 // tokens_test.go:381
-fn write_range_diff(output: &mut String, file: P<SourceFile>, diff: &TokenDiff, rng: TextRange, position: i32) {
+fn write_range_diff(
+    output: &mut String,
+    file: P<SourceFile>,
+    diff: &TokenDiff,
+    rng: TextRange,
+    position: u32,
+) {
     let lines = file.ecma_line_map();
 
     let mut ts_token_pos = position;
@@ -248,7 +309,7 @@ fn write_range_diff(output: &mut String, file: P<SourceFile>, diff: &TokenDiff, 
     let start_line = ts_start_line.min(go_start_line);
     let end_line = ts_end_line.max(go_end_line);
     let mut marker_lines = [ts_start_line, ts_end_line, go_start_line, go_end_line];
-    marker_lines.sort();
+    marker_lines.sort_unstable();
     let context_start = start_line.saturating_sub(context_lines);
     let context_end = (lines.len() - 1).min(end_line + context_lines);
     let digits = (context_end).to_string().len();
@@ -289,14 +350,25 @@ fn write_range_diff(output: &mut String, file: P<SourceFile>, diff: &TokenDiff, 
     while line <= context_end {
         let (truncate, skip_to) = should_truncate(line);
         if truncate {
-            out_bytes.extend_from_slice(format!("{} │........ {} lines omitted ........\n", " ".repeat(digits), skip_to - line + 1).as_bytes());
+            out_bytes.extend_from_slice(
+                format!(
+                    "{} │........ {} lines omitted ........\n",
+                    " ".repeat(digits),
+                    skip_to - line + 1
+                )
+                .as_bytes(),
+            );
             line = skip_to;
         }
         out_bytes.extend_from_slice(format!("{:>digits$} │", line + 1).as_bytes());
-        let end = if line < lines.len() - 1 { lines[line + 1] as i32 } else { text.len() as i32 + 1 };
-        let mut pos = lines[line] as i32;
+        let end = if line < lines.len() - 1 {
+            lines[line + 1]
+        } else {
+            u32::try_from(text.len()).expect("test source fits in u32") + 1
+        };
+        let mut pos = lines[line];
         while pos < end {
-            if pos == rng.end() + 1 {
+            if pos == rng.end().expect_source("diff ranges have source positions") + 1 {
                 out_bytes.extend_from_slice("〛".as_bytes());
             }
             if diff.ts_token.is_some() && pos == ts_token_end {
@@ -311,7 +383,7 @@ fn write_range_diff(output: &mut String, file: P<SourceFile>, diff: &TokenDiff, 
             if diff.ts_token.is_some() && pos == ts_token_pos {
                 out_bytes.extend_from_slice("【".as_bytes());
             }
-            if pos == rng.pos() {
+            if pos == rng.pos().expect_source("diff ranges have source positions") {
                 out_bytes.extend_from_slice("〚".as_bytes());
             }
             if (pos as usize) < text.len() {
@@ -327,12 +399,16 @@ fn write_range_diff(output: &mut String, file: P<SourceFile>, diff: &TokenDiff, 
 // tokens_test.go:25
 #[test]
 fn test_get_token_at_position_baseline() {
-    baseline_tokens("GetTokenAtPosition", false /*includeEOF*/, |file, pos| to_token_info(Some(get_token_at_position(file, pos))));
+    baseline_tokens("GetTokenAtPosition", false /*includeEOF*/, |file, pos| {
+        to_token_info(Some(get_token_at_position(file, pos)))
+    });
 }
 
 #[test]
 fn test_get_token_at_position_go_baseline_json() {
-    baseline_go_tokens_json("GetTokenAtPosition", |file, pos| to_token_info(Some(get_token_at_position(file, pos))));
+    baseline_go_tokens_json("GetTokenAtPosition", |file, pos| {
+        to_token_info(Some(get_token_at_position(file, pos)))
+    });
 }
 
 #[test]
@@ -379,23 +455,31 @@ fn test_get_token_at_position_pointer_equality() {
 // tokens_test.go:121
 #[test]
 fn test_get_touching_property_name_baseline() {
-    baseline_tokens("GetTouchingPropertyName", false /*includeEOF*/, |file, pos| to_token_info(Some(get_touching_property_name(file, pos))));
+    baseline_tokens("GetTouchingPropertyName", false /*includeEOF*/, |file, pos| {
+        to_token_info(Some(get_touching_property_name(file, pos)))
+    });
 }
 
 #[test]
 fn test_get_touching_property_name_go_baseline_json() {
-    baseline_go_tokens_json("GetTouchingPropertyName", |file, pos| to_token_info(Some(get_touching_property_name(file, pos))));
+    baseline_go_tokens_json("GetTouchingPropertyName", |file, pos| {
+        to_token_info(Some(get_touching_property_name(file, pos)))
+    });
 }
 
 // tokens_test.go:478
 #[test]
 fn test_find_preceding_token_baseline() {
-    baseline_tokens("FindPrecedingToken", true /*includeEOF*/, |file, pos| to_token_info(find_preceding_token(file, pos)));
+    baseline_tokens("FindPrecedingToken", true /*includeEOF*/, |file, pos| {
+        to_token_info(find_preceding_token(file, pos))
+    });
 }
 
 #[test]
 fn test_find_preceding_token_go_baseline_json() {
-    baseline_go_tokens_json("FindPrecedingToken", |file, pos| to_token_info(find_preceding_token(file, pos)));
+    baseline_go_tokens_json("FindPrecedingToken", |file, pos| {
+        to_token_info(find_preceding_token(file, pos))
+    });
 }
 
 // tokens_test.go:504
@@ -420,7 +504,7 @@ fn test_unit_find_preceding_token() {
     struct TestCase {
         name: &'static str,
         file_content: &'static str,
-        position: i32,
+        position: u32,
         expected_kind: Kind,
     }
     let test_cases = [
@@ -475,7 +559,12 @@ export function isAnyDirectorySeparator(charCode: number): boolean {
             position: 839,
             expected_kind: Kind::DotToken,
         },
-        TestCase { name: "after comma in parameter list", file_content: "takesCb((n, s, ))", position: 15, expected_kind: Kind::CommaToken },
+        TestCase {
+            name: "after comma in parameter list",
+            file_content: "takesCb((n, s, ))",
+            position: 15,
+            expected_kind: Kind::CommaToken,
+        },
     ];
     for test_case in test_cases {
         let file = parse_for_test("/file.ts", test_case.file_content, ScriptKind::TS);

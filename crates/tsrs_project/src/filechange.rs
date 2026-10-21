@@ -22,7 +22,9 @@ pub enum FileChangeKind {
 impl FileChangeKind {
     // filechange.go:26
     pub fn is_watch_kind(self) -> bool {
-        self == FileChangeKind::WatchCreate || self == FileChangeKind::WatchChange || self == FileChangeKind::WatchDelete
+        self == FileChangeKind::WatchCreate
+            || self == FileChangeKind::WatchChange
+            || self == FileChangeKind::WatchDelete
     }
 }
 
@@ -30,8 +32,8 @@ impl FileChangeKind {
 pub struct FileChange {
     pub kind: FileChangeKind,
     pub uri: lsproto::DocumentUri,
-    pub version: i32,                        // Only set for Open/Change
-    pub content: String,                     // Only set for Open
+    pub version: i32,                         // Only set for Open/Change
+    pub content: String,                      // Only set for Open
     pub language_kind: lsproto::LanguageKind, // Only set for Open
     pub changes: Vec<lsproto::TextDocumentContentChangePartialOrWholeDocument>, // Only set for Change
 }
@@ -58,6 +60,7 @@ pub struct FileChangeSummary {
 
 impl FileChangeSummary {
     // filechange.go:58 (Go's value receiver copies the struct and clones the sets; Rust `clone` does both)
+    #[must_use]
     pub fn clone_summary(&self) -> FileChangeSummary {
         self.clone()
     }
@@ -75,7 +78,9 @@ impl FileChangeSummary {
 
     // filechange.go:70
     pub fn has_excessive_watch_events(&self) -> bool {
-        self.invalidate_all || self.created.len() + self.deleted.len() + self.changed.len() > excessiveChangeThreshold
+        self.invalidate_all
+            || self.created.len() + self.deleted.len() + self.changed.len()
+                > excessiveChangeThreshold
     }
 
     // filechange.go:74
@@ -94,18 +99,12 @@ pub(crate) fn merge_file_change_summary(dst: &mut FileChangeSummary, src: &FileC
     if src.invalidate_all {
         dst.invalidate_all = true;
     }
-    #[expect(clippy::iter_over_hash_type, reason = "pure set union into dst; Go ranges the set too")]
-    for uri in src.changed.keys() {
-        dst.changed.add(uri.clone());
-    }
-    #[expect(clippy::iter_over_hash_type, reason = "pure set union into dst; Go ranges the set too")]
-    for uri in src.created.keys() {
-        dst.created.add(uri.clone());
-    }
-    #[expect(clippy::iter_over_hash_type, reason = "pure set union into dst; Go ranges the set too")]
-    for uri in src.deleted.keys() {
-        dst.deleted.add(uri.clone());
-    }
+    // pure set union into dst; Go ranges the set too
+    dst.changed.m.extend(src.changed.keys().iter().map(std::clone::Clone::clone));
+    // pure set union into dst; Go ranges the set too
+    dst.created.m.extend(src.created.keys().iter().map(std::clone::Clone::clone));
+    // pure set union into dst; Go ranges the set too
+    dst.deleted.m.extend(src.deleted.keys().iter().map(std::clone::Clone::clone));
     if src.includes_watch_change_outside_node_modules {
         dst.includes_watch_change_outside_node_modules = true;
     }

@@ -7,18 +7,23 @@ use regex::Regex;
 use tsrs_core::tspath::{self, ComparePathsOptions};
 
 use crate::baseline::NO_CONTENT;
-use crate::diagnosticwriter::{self as dw, compute_ecma_line_starts, Diag, FormattingOptions};
+use crate::diagnosticwriter::{self as dw, Diag, FormattingOptions, compute_ecma_line_starts};
 use crate::harnessutil::TestFile;
 
 // IO
 const HARNESS_NEW_LINE: &str = "\r\n";
 
 fn format_opts() -> FormattingOptions {
-    FormattingOptions { compare_paths_options: ComparePathsOptions::default(), new_line: HARNESS_NEW_LINE }
+    FormattingOptions {
+        compare_paths_options: ComparePathsOptions::default(),
+        new_line: HARNESS_NEW_LINE,
+    }
 }
 
-static DIAGNOSTICS_LOCATION_PREFIX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?im)^(lib.*\.d\.ts)\([0-9]+,[0-9]+\)").unwrap());
-static DIAGNOSTICS_LOCATION_PATTERN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)(lib.*\.d\.ts):[0-9]+:[0-9]+").unwrap());
+static DIAGNOSTICS_LOCATION_PREFIX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?im)^(lib.*\.d\.ts)\([0-9]+,[0-9]+\)").unwrap());
+static DIAGNOSTICS_LOCATION_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)(lib.*\.d\.ts):[0-9]+:[0-9]+").unwrap());
 static LINE_DELIMITER: LazyLock<Regex> = LazyLock::new(|| Regex::new("\r?\n").unwrap());
 pub(crate) static TS_EXTENSION: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\.tsx?$").unwrap());
 
@@ -56,10 +61,14 @@ pub fn get_error_baseline(input_files: &[TestFile], diagnostics: &[Diag], pretty
     output_lines.concat()
 }
 
-fn iterate_error_baseline(input_files: &[TestFile], input_diagnostics: &[Diag], pretty: bool) -> Vec<String> {
+fn iterate_error_baseline(
+    input_files: &[TestFile],
+    input_diagnostics: &[Diag],
+    pretty: bool,
+) -> Vec<String> {
     let mut diagnostics: Vec<&Diag> = input_diagnostics.iter().collect();
     // slices.SortFunc is not stable; diagnostics that compare equal are indistinguishable in the output.
-    diagnostics.sort_by(|a, b| dw::compare_diagnostics(a, b).cmp(&0));
+    diagnostics.sort_by(|a, b| dw::compare_diagnostics(a, b));
 
     let mut output_lines = String::new();
     let mut first_line = true;
@@ -73,29 +82,49 @@ fn iterate_error_baseline(input_files: &[TestFile], input_diagnostics: &[Diag], 
 
     let mut result = Vec::new();
 
-    let output_error_text = |output_lines: &mut String, new_line: &mut dyn FnMut() -> &'static str, diag: &Diag| {
+    let output_error_text = |output_lines: &mut String,
+                             new_line: &mut dyn FnMut() -> &'static str,
+                             diag: &Diag| {
         let message = dw::flatten_diagnostic_message(diag, HARNESS_NEW_LINE);
 
         let mut err_lines = Vec::new();
-        for line in remove_test_path_prefixes(&message, false).split('\n') {
-            let line = line.strip_suffix('\r').unwrap_or(line);
-            if line.is_empty() {
-                continue;
-            }
-            err_lines.push(format!("!!! {} TS{}: {}", diag.category.name(), diag.code, line));
-        }
+        err_lines.extend(remove_test_path_prefixes(&message, false).split('\n').filter_map(
+            |line| {
+                let line = line.strip_suffix('\r').unwrap_or(line);
+                if line.is_empty() {
+                    return None;
+                }
+                Some(format!("!!! {} TS{}: {}", diag.category.name(), diag.code, line))
+            },
+        ));
 
-        for info in &diag.related {
+        err_lines.extend(diag.related.iter().map(|info| {
             let mut location = String::new();
             if let Some(file) = &info.file {
-                location = format!(" {}", format_location(file, info.pos, &format_opts(), |output, text, _| output.push_str(text)));
+                location = format!(
+                    " {}",
+                    format_location(
+                        file,
+                        info.pos.unwrap_or(0),
+                        &format_opts(),
+                        |output, text, _| output.push_str(text)
+                    )
+                );
             }
             location = remove_test_path_prefixes(&location, false);
-            if !location.is_empty() && is_default_library_file(&info.file.as_ref().unwrap().file_name) {
-                location = DIAGNOSTICS_LOCATION_PATTERN.replace_all(&location, "$1:--:--").into_owned();
+            if !location.is_empty()
+                && is_default_library_file(&info.file.as_ref().unwrap().file_name)
+            {
+                location =
+                    DIAGNOSTICS_LOCATION_PATTERN.replace_all(&location, "$1:--:--").into_owned();
             }
-            err_lines.push(format!("!!! related TS{}{}: {}", info.code, location, dw::flatten_diagnostic_message(info, HARNESS_NEW_LINE)));
-        }
+            format!(
+                "!!! related TS{}{}: {}",
+                info.code,
+                location,
+                dw::flatten_diagnostic_message(info, HARNESS_NEW_LINE)
+            )
+        }));
 
         for e in err_lines {
             output_lines.push_str(new_line());
@@ -127,13 +156,19 @@ fn iterate_error_baseline(input_files: &[TestFile], input_diagnostics: &[Diag], 
             .copied()
             .filter(|e| {
                 e.file.as_ref().is_some_and(|f| {
-                    tspath::compare_paths(&remove_test_path_prefixes(&f.file_name, false), &unit, &ComparePathsOptions::default()) == 0
+                    tspath::compare_paths(
+                        &remove_test_path_prefixes(&f.file_name, false),
+                        &unit,
+                        &ComparePathsOptions::default(),
+                    )
+                    .is_eq()
                 })
             })
             .collect();
 
         // Header
-        let _ = write!(output_lines, "{}==== {} ({} errors) ====", new_line(), unit, file_errors.len());
+        let _ =
+            write!(output_lines, "{}==== {} ({} errors) ====", new_line(), unit, file_errors.len());
 
         // For each line, emit the line followed by any error squiggles matching this line
         let content = input_file.content.as_bytes();
@@ -148,28 +183,42 @@ fn iterate_error_baseline(input_files: &[TestFile], input_diagnostics: &[Diag], 
 
             let this_line_start = line_starts[line_index];
             // On the last line of the file, fake the next line start number so that we handle errors on the last character of the file correctly
-            let next_line_start = if line_index == lines.len() - 1 { content.len() as i32 } else { line_starts[line_index + 1] };
+            let next_line_start = if line_index == lines.len() - 1 {
+                u32::try_from(content.len()).expect("source length exceeds u32")
+            } else {
+                line_starts[line_index + 1]
+            };
             // Emit this line from the original file
             output_lines.push_str(new_line());
             output_lines.push_str("    ");
-            output_lines.push_str(&String::from_utf8_lossy(line));
+            output_lines.push_str(&tsrs_core::utf8::from_utf8_lossy(line));
             for err_diagnostic in &file_errors {
                 // Does any error start or continue on to this line? Emit squiggles
-                let err_start = err_diagnostic.pos;
-                let end = err_start + err_diagnostic.len();
-                if end >= this_line_start && (err_start < next_line_start || line_index == lines.len() - 1) {
+                let err_start = err_diagnostic.pos.unwrap_or(0);
+                let end = err_diagnostic.end.unwrap_or(err_start);
+                if end >= this_line_start
+                    && (err_start < next_line_start || line_index == lines.len() - 1)
+                {
                     // How many characters from the start of this line the error starts at (could be positive or negative)
-                    let relative_offset = err_start - this_line_start;
+                    let relative_offset = i64::from(err_start) - i64::from(this_line_start);
                     // How many characters of the error are on this line (might be longer than this line in reality)
-                    let length = (end - err_start) - 0.max(this_line_start - err_start);
+                    let length = end.saturating_sub(err_start.max(this_line_start));
                     // Calculate the start of the squiggle
-                    let squiggle_start = 0.max(relative_offset) as usize;
+                    let squiggle_start = usize::try_from(relative_offset.max(0))
+                        .expect("squiggle offset exceeds usize");
                     output_lines.push_str(new_line());
                     output_lines.push_str("    ");
-                    output_lines.push_str(&replace_non_whitespace(&line[..squiggle_start.min(line.len())]));
+                    output_lines
+                        .push_str(&replace_non_whitespace(&line[..squiggle_start.min(line.len())]));
                     // This was `new Array(count).join("~")`; which maps 0 to "", 1 to "", 2 to "~", 3 to "~~", etc.
-                    let squiggle_end = squiggle_start.max((squiggle_start as i64 + length as i64).min(line.len() as i64).max(0) as usize);
-                    let squiggle_slice = if squiggle_start <= line.len() { &line[squiggle_start..squiggle_end.min(line.len())] } else { &[][..] };
+                    let squiggle_end = squiggle_start
+                        .max((squiggle_start as i64 + length as i64).min(line.len() as i64).max(0)
+                            as usize);
+                    let squiggle_slice = if squiggle_start <= line.len() {
+                        &line[squiggle_start..squiggle_end.min(line.len())]
+                    } else {
+                        &[][..]
+                    };
                     output_lines.push_str(&"~".repeat(rune_count(squiggle_slice)));
                     // If the error ended here, or we're at the end of the file, emit its message
                     if line_index == lines.len() - 1 || next_line_start > end {
@@ -194,18 +243,22 @@ fn rune_count(bytes: &[u8]) -> usize {
 // `[\t\n\f\r ]` becomes a single space.
 fn replace_non_whitespace(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len());
-    for chunk in bytes.utf8_chunks() {
-        for c in chunk.valid().chars() {
-            out.push(if matches!(c, '\t' | '\n' | '\x0C' | '\r' | ' ') { c } else { ' ' });
-        }
-        for _ in chunk.invalid() {
-            out.push(' ');
-        }
-    }
+    out.extend(bytes.utf8_chunks().flat_map(|chunk| {
+        chunk
+            .valid()
+            .chars()
+            .map(|c| if matches!(c, '\t' | '\n' | '\x0C' | '\r' | ' ') { c } else { ' ' })
+            .chain(std::iter::repeat_n(' ', chunk.invalid().len()))
+    }));
     out
 }
 
-fn format_location(file: &dw::FileLike, pos: i32, format_opts: &FormattingOptions, write_with_style_and_reset: dw::FormattedWriter) -> String {
+fn format_location(
+    file: &dw::FileLike,
+    pos: u32,
+    format_opts: &FormattingOptions,
+    write_with_style_and_reset: dw::FormattedWriter,
+) -> String {
     let mut output = String::new();
     dw::write_location(&mut output, file, pos, Some(format_opts), write_with_style_and_reset);
     output
@@ -241,7 +294,9 @@ fn replace_all(text: &str, pairs: &[(&str, &str)]) -> String {
     let mut i = 0;
     let mut last = 0;
     while i < bytes.len() {
-        if let Some((old, new)) = pairs.iter().find(|(old, _)| bytes[i..].starts_with(old.as_bytes())) {
+        if let Some((old, new)) =
+            pairs.iter().find(|(old, _)| bytes[i..].starts_with(old.as_bytes()))
+        {
             out.push_str(&text[last..i]);
             out.push_str(new);
             i += old.len();

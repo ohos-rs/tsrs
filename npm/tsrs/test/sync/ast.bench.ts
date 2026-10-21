@@ -9,18 +9,18 @@ import type {
     Block,
     Identifier,
     Node,
-} from "@maschwenk/tsrs/unstable/ast";
+} from "tsrs/unstable/ast";
 import {
     isBlock,
     isIdentifier,
-} from "@maschwenk/tsrs/unstable/ast";
+} from "tsrs/unstable/ast";
 import {
     createBlock,
     createExpressionStatement,
     createIdentifier,
     createIfStatement,
-} from "@maschwenk/tsrs/unstable/ast/factory";
-import { API } from "@maschwenk/tsrs/unstable/sync";
+} from "tsrs/unstable/ast/factory";
+import { API } from "tsrs/unstable/sync";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
@@ -135,7 +135,8 @@ export function runBenchmarks(options?: { filter?: string; singleIteration?: boo
     const configPath = "/tsconfig.json";
     const sourcePath = "/src/bench.ts";
     using api = new API({
-        cwd: repoRoot,        fs: createVirtualFileSystem({
+        cwd: repoRoot,
+        fs: createVirtualFileSystem({
             [configPath]: "{}",
             [sourcePath]: localTree.source,
         }),

@@ -4,14 +4,16 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use rustc_hash::FxHashMap;
-use tsrs_ast::{new_compiler_diagnostic, Diagnostic, SourceFile};
-use tsrs_compiler::{filter_no_emit_semantic_diagnostics, Context, Program as CompilerProgram};
+use tsrs_ast::{Diagnostic, DiagnosticExt, SourceFile, new_compiler_diagnostic};
+use tsrs_compiler::{Context, Program as CompilerProgram, filter_no_emit_semantic_diagnostics};
 use tsrs_core::tspath::{self, ComparePathsOptions, Path};
-use tsrs_core::{CompilerOptions, Tristate, P};
+use tsrs_core::{CompilerOptions, P, Tristate};
 use tsrs_diagnostics as diagnostics;
 
 use crate::affectedfileshandler::collect_all_affected_files;
-use crate::emit::{handle_no_emit_options, EmitOnly, EmitOptions, EmitResult, ProgramLike, WriteFileData};
+use crate::emit::{
+    EmitOnly, EmitOptions, EmitResult, ProgramLike, WriteFileData, handle_no_emit_options,
+};
 use crate::emitfileshandler::emit_files;
 use crate::host::Host;
 use crate::programtosnapshot::program_to_snapshot;
@@ -27,7 +29,7 @@ pub enum SignatureUpdateKind {
 
 #[derive(Default)]
 struct nestedEmitState {
-    depth: i32,
+    depth: usize,
     start: Option<Instant>,
     time: Duration,
 }
@@ -54,17 +56,21 @@ pub fn new_program(
 ) -> P<Program> {
     let snapshot = program_to_snapshot(program, old_program, testing);
     let testing_data = if testing {
-        let testing_data = TestingData { old_snapshot: old_program.map(|p| p.snapshot), updated_signature_kinds: FxHashMap::default() };
+        let testing_data = TestingData {
+            old_snapshot: old_program.map(|p| p.snapshot),
+            updated_signature_kinds: FxHashMap::default(),
+        };
         Some(Mutex::new(testing_data))
     } else {
         None
     };
-    P::new(Program {
+    // Recycled: see `drop_replaced`.
+    P::new_recycled(Program {
         snapshot,
         program: Some(program),
         host: Some(host),
         testing_data,
-        nested_emit_now,
+        nested_emit_now: nested_emit_now.filter(|_| program.options().diagnostics_enabled()),
         nested_emit: Mutex::new(nestedEmitState::default()),
     })
 }
@@ -86,7 +92,14 @@ pub enum SemanticDiagnosticsState {
 
 impl Program {
     pub(crate) fn new_from_snapshot(snapshot: P<Snapshot>) -> P<Program> {
-        P::new(Program { snapshot, program: None, host: None, testing_data: None, nested_emit_now: None, nested_emit: Mutex::new(nestedEmitState::default()) })
+        P::new(Program {
+            snapshot,
+            program: None,
+            host: None,
+            testing_data: None,
+            nested_emit_now: None,
+            nested_emit: Mutex::new(nestedEmitState::default()),
+        })
     }
 
     pub fn get_testing_data(&self) -> Option<&Mutex<TestingData>> {
@@ -99,15 +112,25 @@ impl Program {
             return SemanticDiagnosticsState::NotCached;
         };
         let testing_data = self.testing_data.as_ref().unwrap().lock().unwrap();
-        let old = testing_data.old_snapshot.and_then(|s| s.semantic_diagnostics_per_file.load(path));
+        let old =
+            testing_data.old_snapshot.and_then(|s| s.semantic_diagnostics_per_file.load(path));
         match old {
-            Some(old) if std::sync::Arc::ptr_eq(&old, &diagnostics) => SemanticDiagnosticsState::Reused,
+            Some(old) if std::sync::Arc::ptr_eq(&old, &diagnostics) => {
+                SemanticDiagnosticsState::Reused
+            }
             _ => SemanticDiagnosticsState::Refreshed,
         }
     }
 
     pub fn testing_updated_signature_kind(&self, path: &Path) -> Option<SignatureUpdateKind> {
-        self.testing_data.as_ref().unwrap().lock().unwrap().updated_signature_kinds.get(path).copied()
+        self.testing_data
+            .as_ref()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .updated_signature_kinds
+            .get(path)
+            .copied()
     }
 
     // program.go:82
@@ -134,18 +157,186 @@ impl Program {
 
     // program.go:105
     pub fn take_nested_emit_time(&self) -> Duration {
+        if self.nested_emit_now.is_none() {
+            return Duration::ZERO;
+        }
         let mut state = self.nested_emit.lock().unwrap();
         std::mem::take(&mut state.time)
     }
 
     // program.go:113
     fn panic_if_no_program(&self, method: &str) {
-        if self.program.is_none() {
-            panic!("{method}: should not be called without program");
-        }
+        assert!(self.program.is_some(), "{method}: should not be called without program");
     }
 
     // program.go:119
+    /// The compiler program, `None` for one read from a build info.
+    pub fn compiler_program(&self) -> Option<&'static CompilerProgram> {
+        self.program
+    }
+
+    /// tsrs-only: replaces the signatures that stand in for a file's declaration shape with the signature of its
+    /// declaration output. The stand-in is the file's version: the initial build stores one for every file, and
+    /// `handle_dts_may_change_of` stores one for each file it invalidates without computing its declarations. The
+    /// next edit of such a file compares its new declaration signature with the version, which always differs, and
+    /// so invalidates every file importing it, transitively: about 5 s of rechecking on a 9.4k-file project after an
+    /// edit that changed no declaration. With the real signature only a changed declaration shape does that.
+    ///
+    /// Does nothing while a change is pending (a non-empty changed file set). Otherwise every file has been checked
+    /// against this program or is queued to be, so the files that depend on a file saw its current declaration
+    /// shape, which is what a builder that always computed the signatures would hold. Emits `chunk` files at a time
+    /// and returns between chunks once `ctx` is cancelled; the signatures stored until then stand. Must not run
+    /// concurrently with anything else that uses this program or its snapshot. Returns the number of signatures
+    /// stored.
+    pub fn compute_placeholder_signatures(&self, ctx: &Context, chunk: usize) -> usize {
+        let snapshot = self.snapshot;
+        if !snapshot.can_use_incremental_state()
+            || snapshot.changed_files_set.size() != 0
+            || ctx.err().is_some()
+        {
+            return 0;
+        }
+        let program = self.p();
+        let files: Vec<P<SourceFile>> = program
+            .get_source_files()
+            .iter()
+            .copied()
+            .filter(|&file| {
+                !file.is_declaration_file()
+                    && !tsrs_ast::is_json_source_file(file)
+                    && snapshot
+                        .file_infos
+                        .load(file.path())
+                        .is_some_and(|info| info.signature == info.version)
+            })
+            .collect();
+        let stored = std::sync::atomic::AtomicUsize::new(0);
+        let write_file =
+            |file_name: &str, text: &str, data: &mut WriteFileData| -> Result<(), String> {
+                assert!(
+                    tspath::is_declaration_file_name(file_name),
+                    "File extension for signature expected to be dts, got : {file_name}"
+                );
+                let file = data.source_file.expect("declaration output of a source file");
+                let signature = snapshot.compute_signature_with_diagnostics(file, text, data);
+                if let Some(mut info) = snapshot.file_infos.load(file.path())
+                    && !signature.is_empty()
+                    && info.signature == info.version
+                {
+                    info.signature = signature;
+                    snapshot.file_infos.store(file.path().clone(), info);
+                    // Relaxed: a count, read once the emit has joined the threads that run this.
+                    stored.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+                Ok(())
+            };
+        for files in files.chunks(chunk.max(1)) {
+            if ctx.err().is_some() {
+                break;
+            }
+            program.emit(
+                ctx,
+                &EmitOptions {
+                    target_source_files: Some(files.to_vec()),
+                    emit_only: EmitOnly::EmitOnlyBuilderSignature,
+                    write_file: Some(&write_file),
+                    ..Default::default()
+                },
+            );
+        }
+        let stored = stored.into_inner();
+        if stored > 0 {
+            snapshot.build_info_emit_pending.set(true);
+        }
+        stored
+    }
+
+    /// tsrs-only (watch mode, Go's GC): runs the destructors of a program nothing reads any more and of its
+    /// snapshot, giving back the heap they own (the snapshot's maps, the host and its file system caches, about 13 MB
+    /// per full build on a 9.4k-file project). Their arena blocks stay (`free_replaced` gives them back too).
+    ///
+    /// # Safety
+    /// Nothing reads `program` or its snapshot afterwards: the program made from it (if any) has been created, and it
+    /// was not created for the test harness (whose next program keeps the snapshot, `TestingData`).
+    pub unsafe fn drop_replaced(program: P<Program>) {
+        let snapshot = program.snapshot;
+        // SAFETY: both are arena values the thread arenas never drop, and nothing uses them any more (this function's
+        // contract), so each is dropped once.
+        unsafe {
+            std::ptr::drop_in_place(std::ptr::from_ref::<Program>(program.get()).cast_mut());
+            std::ptr::drop_in_place(std::ptr::from_ref::<Snapshot>(snapshot.get()).cast_mut());
+        }
+    }
+
+    /// `drop_replaced`, and gives their arena blocks to the thread's free list, for the next ones (`new_program`).
+    ///
+    /// # Safety
+    /// As `drop_replaced`; both were allocated on this thread in its own arena.
+    pub unsafe fn free_replaced(program: P<Program>) {
+        let snapshot = program.snapshot;
+        // SAFETY: this function's contract; the blocks are dead once dropped.
+        unsafe {
+            Program::drop_replaced(program);
+            tsrs_core::free!(program);
+            tsrs_core::free!(snapshot);
+        }
+    }
+
+    /// tsrs-only (a watch session's file regions, `tsrs_execute` watchmem.rs): calls `f` with each source
+    /// file that the diagnostics the snapshot keeps refer to, related information and message chains
+    /// included. Diagnostics copied from an older snapshot refer to the file versions they were reported for,
+    /// which need not be the program's.
+    pub fn for_each_diagnostic_file(&self, f: &mut dyn FnMut(P<SourceFile>)) {
+        fn visit(diagnostics: &[P<Diagnostic>], f: &mut dyn FnMut(P<SourceFile>)) {
+            for d in diagnostics {
+                if let Some(file) = d.file() {
+                    f(file);
+                }
+                visit(d.message_chain(), f);
+                visit(d.related_information(), f);
+            }
+        }
+        let mut snapshots = vec![self.snapshot];
+        // The test harness reads the previous snapshot's diagnostics too.
+        if let Some(testing_data) = &self.testing_data
+            && let Some(old) = testing_data.lock().unwrap().old_snapshot
+        {
+            snapshots.push(old);
+        }
+        for snapshot in snapshots {
+            for map in
+                [&snapshot.semantic_diagnostics_per_file, &snapshot.emit_diagnostics_per_file]
+            {
+                map.range(|_, cache| {
+                    if let Some(diagnostics) = cache.diagnostics() {
+                        visit(&diagnostics, f);
+                    }
+                    true
+                });
+            }
+        }
+    }
+
+    /// tsrs-only (watch mode): replaces every diagnostic the snapshot keeps with a copy in the current
+    /// allocation target (`DiagnosticExt::copy_deep`), so that the regions of the diagnostics it copied from
+    /// the old snapshot and of those the replaced program's checkers made (`tsrs_compiler` checkerpool.rs
+    /// `SlotChecker`) can be freed. Not for the test harness, which reads the old snapshot's diagnostics too:
+    /// some are shared with this one.
+    pub fn copy_diagnostics(&self) {
+        for map in
+            [&self.snapshot.semantic_diagnostics_per_file, &self.snapshot.emit_diagnostics_per_file]
+        {
+            map.range(|_, cache| {
+                if let Some(diagnostics) = cache.diagnostics.lock().unwrap().as_mut() {
+                    for d in diagnostics.iter_mut() {
+                        *d = d.copy_deep();
+                    }
+                }
+                true
+            });
+        }
+    }
+
     pub fn get_program(&self) -> &'static CompilerProgram {
         self.panic_if_no_program("GetProgram");
         self.program.unwrap()
@@ -161,7 +352,11 @@ impl Program {
     }
 
     // program.go:160
-    fn get_semantic_diagnostics_impl(&self, ctx: &Context, file: Option<P<SourceFile>>) -> Vec<P<Diagnostic>> {
+    fn get_semantic_diagnostics_impl(
+        &self,
+        ctx: &Context,
+        file: Option<P<SourceFile>>,
+    ) -> Vec<P<Diagnostic>> {
         self.panic_if_no_program("GetSemanticDiagnostics");
         if self.snapshot.options().no_check.is_true() {
             return Vec::new();
@@ -179,25 +374,37 @@ impl Program {
         }
 
         let mut diagnostics = Vec::new();
-        for &file in self.p().get_source_files() {
-            diagnostics.extend(self.get_semantic_diagnostics_of_file(file));
-        }
+        diagnostics.extend(
+            self.p()
+                .get_source_files()
+                .iter()
+                .flat_map(|&file| self.get_semantic_diagnostics_of_file(file)),
+        );
         diagnostics
     }
 
     // program.go:186
     fn get_semantic_diagnostics_of_file(&self, file: P<SourceFile>) -> Vec<P<Diagnostic>> {
-        let Some(cached_diagnostics) = self.snapshot.semantic_diagnostics_per_file.load(file.path()) else {
+        let Some(cached_diagnostics) =
+            self.snapshot.semantic_diagnostics_per_file.load(file.path())
+        else {
             panic!("After handling all the affected files, there shouldnt be more changes");
         };
-        let mut result = filter_no_emit_semantic_diagnostics(cached_diagnostics.get_diagnostics(self.p(), Some(file)), &self.snapshot.options());
+        let mut result = filter_no_emit_semantic_diagnostics(
+            cached_diagnostics.get_diagnostics(self.p(), Some(file)),
+            &self.snapshot.options(),
+        );
         result.extend(self.p().get_include_processor_diagnostics(file));
         result
     }
 
     // Handle affected files and cache the semantic diagnostics for all of them or the file asked for
     // program.go:256
-    fn collect_semantic_diagnostics_of_affected_files(&self, ctx: &Context, file: Option<P<SourceFile>>) {
+    fn collect_semantic_diagnostics_of_affected_files(
+        &self,
+        ctx: &Context,
+        file: Option<P<SourceFile>>,
+    ) {
         if self.snapshot.can_use_incremental_state() {
             // Get all affected files
             collect_all_affected_files(ctx, self);
@@ -205,7 +412,9 @@ impl Program {
                 return;
             }
 
-            if self.snapshot.semantic_diagnostics_per_file.size() == self.p().get_source_files().len() {
+            if self.snapshot.semantic_diagnostics_per_file.size()
+                == self.p().get_source_files().len()
+            {
                 // If we have all the files,
                 return;
             }
@@ -223,21 +432,30 @@ impl Program {
                 .get_source_files()
                 .iter()
                 .copied()
-                .filter(|file| self.snapshot.semantic_diagnostics_per_file.load(file.path()).is_none())
+                .filter(|file| {
+                    self.snapshot.semantic_diagnostics_per_file.load(file.path()).is_none()
+                })
                 .collect(),
         };
 
         // Get their diagnostics and cache them
-        let diagnostics_per_file = self.p().get_semantic_diagnostics_for_incremental(ctx, &affected_files);
+        let diagnostics_per_file =
+            self.p().get_semantic_diagnostics_for_incremental(ctx, &affected_files);
         // commit changes if no err
         if ctx.err().is_some() {
             return;
         }
 
         // Commit changes to snapshot
-        #[expect(clippy::iter_over_hash_type, reason = "stores one entry per file in an unordered map")]
+        #[expect(
+            clippy::iter_over_hash_type,
+            reason = "stores one entry per file in an unordered map"
+        )]
         for (file, diagnostics) in diagnostics_per_file {
-            self.snapshot.semantic_diagnostics_per_file.store(file.path().clone(), DiagnosticsOrBuildInfoDiagnosticsWithFileName::from_diagnostics(diagnostics));
+            self.snapshot.semantic_diagnostics_per_file.store(
+                file.path().clone(),
+                DiagnosticsOrBuildInfoDiagnosticsWithFileName::from_diagnostics(diagnostics),
+            );
         }
         if self.snapshot.semantic_diagnostics_per_file.size() == self.p().get_source_files().len()
             && self.snapshot.check_pending.get()
@@ -249,7 +467,11 @@ impl Program {
     }
 
     // program.go:304
-    pub(crate) fn emit_build_info(&self, ctx: &Context, options: &EmitOptions) -> Option<EmitResult> {
+    pub(crate) fn emit_build_info(
+        &self,
+        ctx: &Context,
+        options: &EmitOptions,
+    ) -> Option<EmitResult> {
         let program = self.p();
         let build_info_file_name = tsrs_tsoptions::outputpaths::get_build_info_file_name(
             &self.snapshot.options(),
@@ -262,19 +484,42 @@ impl Program {
             return None;
         }
         if self.snapshot.has_errors.get() == Tristate::Unknown {
-            tsrs_core::phases::time("BuildInfo: has errors", || self.ensure_has_errors_for_state(ctx, program));
+            tsrs_core::phases::time(
+                program.options().diagnostics_enabled(),
+                "BuildInfo: has errors",
+                || {
+                    self.ensure_has_errors_for_state(ctx, program);
+                },
+            );
             if self.snapshot.has_errors.get() != self.snapshot.has_errors_from_old_state.get()
-                || self.snapshot.has_semantic_errors.get() != self.snapshot.has_semantic_errors_from_old_state.get()
+                || self.snapshot.has_semantic_errors.get()
+                    != self.snapshot.has_semantic_errors_from_old_state.get()
             {
                 self.snapshot.build_info_emit_pending.set(true);
             }
         }
         if self.snapshot.package_jsons.borrow().is_none() {
-            tsrs_core::phases::time("BuildInfo: package.jsons", || self.ensure_package_jsons_for_state());
+            tsrs_core::phases::time(
+                program.options().diagnostics_enabled(),
+                "BuildInfo: package.jsons",
+                || {
+                    self.ensure_package_jsons_for_state();
+                },
+            );
             if self.snapshot.package_jsons.borrow().as_deref().unwrap_or_default()
-                != self.snapshot.package_jsons_from_old_state.borrow().as_deref().unwrap_or_default()
+                != self
+                    .snapshot
+                    .package_jsons_from_old_state
+                    .borrow()
+                    .as_deref()
+                    .unwrap_or_default()
                 || self.snapshot.missing_package_jsons.borrow().as_deref().unwrap_or_default()
-                    != self.snapshot.missing_package_jsons_from_old_state.borrow().as_deref().unwrap_or_default()
+                    != self
+                        .snapshot
+                        .missing_package_jsons_from_old_state
+                        .borrow()
+                        .as_deref()
+                        .unwrap_or_default()
             {
                 self.snapshot.build_info_emit_pending.set(true);
             }
@@ -285,31 +530,53 @@ impl Program {
         if ctx.err().is_some() {
             return None;
         }
-        let build_info = match tsrs_core::phases::time("BuildInfo: from snapshot", || snapshot_to_build_info(&self.snapshot, program, &build_info_file_name)) {
+        let build_info = match tsrs_core::phases::time(
+            program.options().diagnostics_enabled(),
+            "BuildInfo: from snapshot",
+            || snapshot_to_build_info(&self.snapshot, program, &build_info_file_name),
+        ) {
             Ok(build_info) => build_info,
             Err(err) => {
-                return Some(EmitResult { emit_skipped: true, diagnostics: vec![tsrs_compiler::content_mapper_project_diagnostic(&err)], ..Default::default() });
+                return Some(EmitResult {
+                    emit_skipped: true,
+                    diagnostics: vec![tsrs_compiler::content_mapper_project_diagnostic(&err)],
+                    ..Default::default()
+                });
             }
         };
-        let text = tsrs_core::phases::time("BuildInfo: marshal", || build_info.marshal());
-        let write_start = std::time::Instant::now();
+        let text = tsrs_core::phases::time(
+            program.options().diagnostics_enabled(),
+            "BuildInfo: marshal",
+            || build_info.marshal(),
+        );
+        let write_start = tsrs_core::phases::Timer::new(program.options().diagnostics_enabled());
         let err = match options.write_file {
             Some(write_file) => {
-                let mut data = WriteFileData { build_info: Some(std::sync::Arc::new(build_info)), ..Default::default() };
+                let mut data = WriteFileData {
+                    build_info: Some(std::sync::Arc::new(build_info)),
+                    ..Default::default()
+                };
                 write_file(&build_info_file_name, &text, &mut data)
             }
             None => program.host().fs().write_file(&build_info_file_name, &text),
         };
-        tsrs_core::phases::record("BuildInfo: write", write_start.elapsed());
+        write_start.record("BuildInfo: write");
         if let Err(err) = err {
             return Some(EmitResult {
                 emit_skipped: true,
-                diagnostics: vec![new_compiler_diagnostic(&diagnostics::Could_not_write_file_0_Colon_1, &[&build_info_file_name, &err])],
+                diagnostics: vec![new_compiler_diagnostic(
+                    &diagnostics::Could_not_write_file_0_Colon_1,
+                    &[&build_info_file_name, &err],
+                )],
                 ..Default::default()
             });
         }
         self.snapshot.build_info_emit_pending.set(false);
-        Some(EmitResult { emit_skipped: false, emitted_files: vec![build_info_file_name], ..Default::default() })
+        Some(EmitResult {
+            emit_skipped: false,
+            emitted_files: vec![build_info_file_name],
+            ..Default::default()
+        })
     }
 
     // program.go:368
@@ -317,29 +584,41 @@ impl Program {
         let mut has_include_processing_diagnostics: Option<bool> = None;
         let mut has_emit_diagnostics = false;
         let snapshot = &self.snapshot;
-        let compute_has_include_processing_diagnostics: Box<dyn Fn() -> bool> = if snapshot.can_use_incremental_state() {
-            if program.get_source_files().iter().any(|&file| {
-                if snapshot.emit_diagnostics_per_file.load(file.path()).is_some() {
-                    // emit diagnostics will be encoded in buildInfo;
-                    return true;
+        let compute_has_include_processing_diagnostics: Box<dyn Fn() -> bool> =
+            if snapshot.can_use_incremental_state() {
+                if program.get_source_files().iter().any(|&file| {
+                    if snapshot.emit_diagnostics_per_file.load(file.path()).is_some() {
+                        // emit diagnostics will be encoded in buildInfo;
+                        return true;
+                    }
+                    if has_include_processing_diagnostics.is_none()
+                        && !program.get_include_processor_diagnostics(file).is_empty()
+                    {
+                        has_include_processing_diagnostics = Some(true);
+                    }
+                    false
+                }) {
+                    has_emit_diagnostics = true;
                 }
-                if has_include_processing_diagnostics.is_none() && !program.get_include_processor_diagnostics(file).is_empty() {
-                    has_include_processing_diagnostics = Some(true);
-                }
-                false
-            }) {
-                has_emit_diagnostics = true;
-            }
-            let value = has_include_processing_diagnostics.unwrap_or(false);
-            Box::new(move || value)
-        } else {
-            has_emit_diagnostics = snapshot.has_emit_diagnostics.get();
-            Box::new(move || program.get_source_files().iter().any(|&file| !program.get_include_processor_diagnostics(file).is_empty()))
-        };
+                let value = has_include_processing_diagnostics.unwrap_or(false);
+                Box::new(move || value)
+            } else {
+                has_emit_diagnostics = snapshot.has_emit_diagnostics.get();
+                Box::new(move || {
+                    program
+                        .get_source_files()
+                        .iter()
+                        .any(|&file| !program.get_include_processor_diagnostics(file).is_empty())
+                })
+            };
 
         if has_emit_diagnostics {
             // Record this for only non incremental build info
-            snapshot.has_errors.set(if snapshot.options().is_incremental() { Tristate::False } else { Tristate::True });
+            snapshot.has_errors.set(if snapshot.options().is_incremental() {
+                Tristate::False
+            } else {
+                Tristate::True
+            });
             // Dont need to encode semantic errors state since the emit diagnostics are encoded
             snapshot.has_semantic_errors.set(false);
             return;
@@ -360,12 +639,15 @@ impl Program {
         snapshot.has_errors.set(Tristate::False);
         // Check semantic and emit diagnostics first as we dont need to ask program about it
         if program.get_source_files().iter().any(|&file| {
-            let Some(semantic_diagnostics) = snapshot.semantic_diagnostics_per_file.load(file.path()) else {
+            let Some(semantic_diagnostics) =
+                snapshot.semantic_diagnostics_per_file.load(file.path())
+            else {
                 // Missing semantic diagnostics in cache will be encoded in incremental buildInfo
                 return snapshot.options().is_incremental();
             };
             // cached semantic diagnostics will be encoded in buildInfo
-            semantic_diagnostics.has_diagnostics() || !semantic_diagnostics.build_info_diagnostics.is_empty()
+            semantic_diagnostics.has_diagnostics()
+                || !semantic_diagnostics.build_info_diagnostics.is_empty()
         }) {
             // Because semantic diagnostics are recorded in buildInfo, we dont need to encode hasErrors in incremental buildInfo
             // But encode as errors in non incremental buildInfo
@@ -388,7 +670,8 @@ impl Program {
             // The realpath calls are independent file system lookups, and both lists are sorted below, so they run on
             // the worker pool.
             let resolve = |value: &P<tsrs_module::packagejson::InfoCacheEntry>| {
-                let mut package_json = tspath::combine_paths(&value.package_directory, &["package.json"]);
+                let mut package_json =
+                    tspath::combine_paths(value.package_directory, &["package.json"]);
                 if value.exists() || value.directory_exists {
                     package_json = program.host().fs().realpath(&package_json);
                 }
@@ -400,16 +683,22 @@ impl Program {
                 use rayon::prelude::*;
                 tsrs_compiler::worker_pool().install(|| entries.par_iter().map(resolve).collect())
             };
-            for (exists, package_json) in resolved {
-                if exists {
-                    package_jsons.push(package_json);
-                } else if package_json.contains("/node_modules/") {
-                    missing_package_jsons.push(package_json);
-                }
-            }
+            (missing_package_jsons, package_jsons) = resolved.into_iter().fold(
+                (missing_package_jsons, package_jsons),
+                |(mut missing_package_jsons, mut package_jsons), (exists, package_json)| {
+                    if exists {
+                        package_jsons.push(package_json);
+                    } else if package_json.contains("/node_modules/") {
+                        missing_package_jsons.push(package_json);
+                    }
+
+                    (missing_package_jsons, package_jsons)
+                },
+            );
         }
         *self.snapshot.package_jsons.borrow_mut() = Some(normalize_package_jsons(package_jsons));
-        *self.snapshot.missing_package_jsons.borrow_mut() = Some(normalize_package_jsons(missing_package_jsons));
+        *self.snapshot.missing_package_jsons.borrow_mut() =
+            Some(normalize_package_jsons(missing_package_jsons));
     }
 
     // program.go:478
@@ -422,7 +711,8 @@ impl Program {
 
         let mut package_jsons = Vec::new();
         program.package_json_cache_entries(|_key, value| {
-            let mut package_json = tspath::combine_paths(&value.package_directory, &["package.json"]);
+            let mut package_json =
+                tspath::combine_paths(value.package_directory, &["package.json"]);
             if value.exists() || value.directory_exists {
                 package_json = program.host().fs().realpath(&package_json);
             }
@@ -468,13 +758,21 @@ impl ProgramLike for &'static Program {
     }
 
     // GetSyntacticDiagnostics implements compiler.AnyProgram interface.
-    fn get_syntactic_diagnostics(&self, ctx: &Context, file: Option<P<SourceFile>>) -> Vec<P<Diagnostic>> {
+    fn get_syntactic_diagnostics(
+        &self,
+        ctx: &Context,
+        file: Option<P<SourceFile>>,
+    ) -> Vec<P<Diagnostic>> {
         self.panic_if_no_program("GetSyntacticDiagnostics");
         self.p().get_syntactic_diagnostics(ctx, file)
     }
 
     // GetBindDiagnostics implements compiler.AnyProgram interface.
-    fn get_bind_diagnostics(&self, ctx: &Context, file: Option<P<SourceFile>>) -> Vec<P<Diagnostic>> {
+    fn get_bind_diagnostics(
+        &self,
+        ctx: &Context,
+        file: Option<P<SourceFile>>,
+    ) -> Vec<P<Diagnostic>> {
         self.panic_if_no_program("GetBindDiagnostics");
         self.p().get_bind_diagnostics(ctx, file)
     }
@@ -490,14 +788,27 @@ impl ProgramLike for &'static Program {
     }
 
     // GetSemanticDiagnostics implements compiler.AnyProgram interface.
-    fn get_semantic_diagnostics(&self, ctx: &Context, file: Option<P<SourceFile>>) -> Vec<P<Diagnostic>> {
+    fn get_semantic_diagnostics(
+        &self,
+        ctx: &Context,
+        file: Option<P<SourceFile>>,
+    ) -> Vec<P<Diagnostic>> {
         self.get_semantic_diagnostics_impl(ctx, file)
     }
 
     // GetDeclarationDiagnostics implements compiler.AnyProgram interface.
-    fn get_declaration_diagnostics(&self, ctx: &Context, file: Option<P<SourceFile>>) -> Vec<P<Diagnostic>> {
+    fn get_declaration_diagnostics(
+        &self,
+        ctx: &Context,
+        file: Option<P<SourceFile>>,
+    ) -> Vec<P<Diagnostic>> {
         self.panic_if_no_program("GetDeclarationDiagnostics");
-        let result = emit_files(ctx, P::from_static(*self), &EmitOptions { target_source_files: file.map(|f| vec![f]), ..Default::default() }, true);
+        let result = emit_files(
+            ctx,
+            P::from_static(*self),
+            &EmitOptions { target_source_files: file.map(|f| vec![f]), ..Default::default() },
+            true,
+        );
         match result {
             Some(result) => result.diagnostics,
             None => Vec::new(),
@@ -505,7 +816,11 @@ impl ProgramLike for &'static Program {
     }
 
     // GetSuggestionDiagnostics implements compiler.AnyProgram interface.
-    fn get_suggestion_diagnostics(&self, ctx: &Context, file: Option<P<SourceFile>>) -> Vec<P<Diagnostic>> {
+    fn get_suggestion_diagnostics(
+        &self,
+        ctx: &Context,
+        file: Option<P<SourceFile>>,
+    ) -> Vec<P<Diagnostic>> {
         self.panic_if_no_program("GetSuggestionDiagnostics");
         self.p().get_suggestion_diagnostics(ctx, file) // TODO: incremental suggestion diagnostics (only relevant in editor incremental builder?)
     }
@@ -517,8 +832,14 @@ impl ProgramLike for &'static Program {
         let mut result = None;
         if !options.force_emit && options.emit_only != EmitOnly::EmitOnlyBuilderSignature {
             let emit_build_info = || self.emit_build_info(ctx, &options);
-            let emit_build_info: Option<&dyn Fn() -> Option<EmitResult>> = if self.options().no_emit.is_true() { Some(&emit_build_info) } else { None };
-            result = handle_no_emit_options(ctx, self, options.target_source_files.as_deref(), emit_build_info);
+            let emit_build_info: Option<&dyn Fn() -> Option<EmitResult>> =
+                if self.options().no_emit.is_true() { Some(&emit_build_info) } else { None };
+            result = handle_no_emit_options(
+                ctx,
+                self,
+                options.target_source_files.as_deref(),
+                emit_build_info,
+            );
             if ctx.err().is_some() {
                 return None;
             }

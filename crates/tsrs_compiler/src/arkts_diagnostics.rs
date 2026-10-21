@@ -8,12 +8,20 @@ pub struct ArkTsBuildDiagnostics {
     pub syntactic: Vec<P<Diagnostic>>,
     pub semantic: Vec<P<Diagnostic>>,
 }
+/// The `(code, pos, len)` identity two passes compare: a synthetic diagnostic has neither position nor length.
+fn diagnostic_key(d: P<Diagnostic>) -> (i32, i32, i32) {
+    (
+        d.code(),
+        d.pos().map_or(-1, |pos| pos as i32),
+        d.len().map_or(0, |len| len as i32),
+    )
+}
 /// Normal-pass comparisons contain no checker-region pointers.
 pub struct ArkTsDiagnosticKeys(FxHashMap<ast::NodeId, FxHashSet<(i32, i32, i32)>>);
 impl ArkTsDiagnosticKeys {
     fn from_groups(files: &[P<SourceFile>], groups: &[Vec<P<Diagnostic>>]) -> Self {
         Self(files.iter().zip(groups).map(|(file, diagnostics)| {
-            (ast::get_node_id(file.as_node()), diagnostics.iter().map(|d| (d.code(), d.pos(), d.len())).collect())
+            (ast::get_node_id(file.as_node()), diagnostics.iter().map(|d| diagnostic_key(*d)).collect())
         }).collect())
     }
 }
@@ -24,7 +32,7 @@ pub struct ArkTsNormalDiagnostics {
 }
 impl Program {
     fn arkts_build_pool(&'static self) -> &'static checkerPool {
-        self.compiler_checker_pool().unwrap_or_else(|| self.arkts_build_checker_pool.get_or_init(|| checkerPool::new(self)))
+        self.compiler_checker_pool().unwrap_or_else(|| self.arkts_build_checker_pool.get_or_init(|| checkerPool::new(self, None)))
     }
     fn arkts_linter_pool(&'static self) -> &'static checkerPool {
         self.arkts_linter_checker_pool.get_or_init(|| checkerPool::new_arkts_linter(self))
@@ -100,7 +108,9 @@ impl Program {
             if !self.should_run_arkts_linter(file) || file.script_kind() == ScriptKind::TS { return; }
             let mut strict = self.get_semantic_diagnostics_with_checker(ctx, checker, file);
             let existing = normal.0.get(&ast::get_node_id(file.as_node()));
-            strict.retain(|d| (d.pos() != 0 || d.len() != 0) && (self.options().strict_checker_only == Tristate::True || !existing.is_some_and(|keys| keys.contains(&(d.code(), d.pos(), d.len())))));
+            strict.retain(|d| (d.pos().unwrap_or(0) != 0 || d.len().unwrap_or(0) != 0)
+                && (self.options().strict_checker_only == Tristate::True
+                    || !existing.is_some_and(|keys| keys.contains(&diagnostic_key(*d)))));
             *groups[index].lock().unwrap() = strict;
         });
         strict_pool.for_each_checker_parallel(|_, checker| checker.reset_oh_sdk_jsdoc_check());

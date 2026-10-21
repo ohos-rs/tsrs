@@ -11,27 +11,36 @@ use crate::wire::Params;
 /// Go `DefaultMaxResponseBytesPerPage`.
 pub const DEFAULT_MAX_RESPONSE_BYTES_PER_PAGE: usize = 300_000_000;
 
-const SOURCE_FILE_RESPONSE_METHODS: &[&str] =
-    &["createSourceFile", "createSourceFileFromFile", "getSourceFile", "getCachedSourceFile", "getConfigSourceFile", "typeToTypeNode", "signatureToSignatureDeclaration"];
+const SOURCE_FILE_RESPONSE_METHODS: &[&str] = &[
+    "createSourceFile",
+    "createSourceFileFromFile",
+    "getSourceFile",
+    "getCachedSourceFile",
+    "getConfigSourceFile",
+    "typeToTypeNode",
+    "signatureToSignatureDeclaration",
+];
 
 pub fn base64_encode(data: &[u8]) -> String {
     const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
-    for chunk in data.chunks(3) {
+    out.extend(data.chunks(3).flat_map(|chunk| {
         let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
-        let n = (b[0] as u32) << 16 | (b[1] as u32) << 8 | b[2] as u32;
-        out.push(T[(n >> 18) as usize & 63] as char);
-        out.push(T[(n >> 12) as usize & 63] as char);
-        out.push(if chunk.len() > 1 { T[(n >> 6) as usize & 63] as char } else { '=' });
-        out.push(if chunk.len() > 2 { T[n as usize & 63] as char } else { '=' });
-    }
+        let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
+        [
+            T[(n >> 18) as usize & 63] as char,
+            T[(n >> 12) as usize & 63] as char,
+            if chunk.len() > 1 { T[(n >> 6) as usize & 63] as char } else { '=' },
+            if chunk.len() > 2 { T[n as usize & 63] as char } else { '=' },
+        ]
+    }));
     out
 }
 
 /// Go `base64.StdEncoding.DecodeString` (padding required, no whitespace).
 pub fn base64_decode(text: &str) -> Result<Vec<u8>, String> {
     let b = text.as_bytes();
-    if b.len() % 4 != 0 {
+    if !b.len().is_multiple_of(4) {
         return Err(format!("illegal base64 data at input byte {}", b.len() - b.len() % 4));
     }
     let val = |c: u8| -> Option<u32> {
@@ -53,8 +62,12 @@ pub fn base64_decode(text: &str) -> Result<Vec<u8>, String> {
         }
         let mut n = 0u32;
         for (i, &c) in chunk.iter().enumerate() {
-            let v = if i >= 4 - pad { 0 } else { val(c).ok_or_else(|| format!("illegal base64 data at input byte {}", ci * 4 + i))? };
-            n = n << 6 | v;
+            let v = if i >= 4 - pad {
+                0
+            } else {
+                val(c).ok_or_else(|| format!("illegal base64 data at input byte {}", ci * 4 + i))?
+            };
+            n = (n << 6) | v;
         }
         out.push((n >> 16) as u8);
         if pad < 2 {
@@ -91,7 +104,11 @@ impl Session {
             _ => String::new(),
         };
         if method == "batchRequests" {
-            return encode_batch_response(&method, "null", Some("api: invalid request: batchRequests cannot be nested"));
+            return encode_batch_response(
+                &method,
+                "null",
+                Some("api: invalid request: batchRequests cannot be nested"),
+            );
         }
         // Go keeps each item's params as raw `json.Value` bytes: re-encoding the parsed value would lose number
         // literals (`1e3`, integers above 2^53) and so change decoding.
@@ -107,12 +124,17 @@ impl Session {
                     if data.is_empty() {
                         encode_batch_response(&method, "null", None)
                     } else {
-                        let r = format!("{{\"data\":{}}}", json::marshal_string(&base64_encode(&data)));
+                        let r =
+                            format!("{{\"data\":{}}}", json::marshal_string(&base64_encode(&data)));
                         encode_batch_response(&method, &r, None)
                     }
                 } else {
                     // Go marshals other RawBinary values as a JSON byte slice (base64 string).
-                    encode_batch_response(&method, &json::marshal_string(&base64_encode(&data)), None)
+                    encode_batch_response(
+                        &method,
+                        &json::marshal_string(&base64_encode(&data)),
+                        None,
+                    )
                 }
             }
             Err(e) => encode_batch_response(&method, "null", Some(&e.to_string())),
@@ -127,14 +149,21 @@ impl Session {
         };
         let token = p.str("continuationToken")?;
         let encoded = if !token.is_empty() {
-            self.batch_pages.lock().unwrap().remove(token).ok_or_else(|| ApiError::client("invalid batch continuation token"))?
+            self.batch_pages
+                .lock()
+                .unwrap()
+                .remove(token)
+                .ok_or_else(|| ApiError::client("invalid batch continuation token"))?
         } else {
             {
-            // Raw params of every item, indexed in one pass (rescanning per item would be quadratic).
-            let requests = p.array("requests")?;
-            let mut raw = crate::predecode::current_batch_params().into_iter();
-            requests.iter().map(|r| self.handle_batch_request(r, raw.next().flatten())).collect()
-        }
+                // Raw params of every item, indexed in one pass (rescanning per item would be quadratic).
+                let requests = p.array("requests")?;
+                let mut raw = crate::predecode::current_batch_params().into_iter();
+                requests
+                    .iter()
+                    .map(|r| self.handle_batch_request(r, raw.next().flatten()))
+                    .collect()
+            }
         };
         Ok(self.paginate_batch_responses(encoded, max))
     }

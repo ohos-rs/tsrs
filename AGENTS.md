@@ -1,62 +1,61 @@
 # Notes for coding agents
 
-`CONTRIBUTING.md` and `docs/PORTING.md` have the porting rules and the test workflow. This file adds two rules.
+`CONTRIBUTING.md` and `docs/PORTING.md` have the porting rules and the test workflow; `docs/RUST.md` has the Rust
+practices. This file adds the rules below.
 
-## Keep the lint ratchet green
+## Build and test
 
-Run `tools/lint/ratchet.py` before a change lands. It runs a chosen set of clippy lints (clones, allocations,
-argument passing, hash iteration order, `unsafe`) and fails when a file has more findings of a lint than
-`tools/lint/baseline.tsv` records. `docs/RUST.md` explains the lints, the rules no tool checks, and which performance
-techniques are in place, rejected or untried.
+Build with `cargo build --profile dev -p tsrs_cli -p tsrs_testrunner` and run `target/debug/tsrs-test`, not
+`--release`: an edit rebuilds in seconds instead of minutes, with the same test results (notes/dev-loop-build.md).
+Use `--release` only for performance numbers.
 
-- Fix what it reports in the code you wrote. Do not fix baseline findings in passing; paying them down is its own
-  change (`docs/RUST.md`).
+## Lint
+
+Run `cargo clippy --all-targets --config 'build.warnings="deny"'` and
+`tools/lint/source.py` before a change lands (`docs/RUST.md`).
+
+- Fix what they report in the code you wrote.
 - If the flagged code is intended, use `#[expect(clippy::<lint>, reason = "...")]` on the smallest item. Never a bare
-  `#[allow]`, and never raise `baseline.tsv`.
-- Run `tools/lint/source.py` too: a new `unsafe impl Send`/`Sync` needs a SAFETY comment and an `--update` that puts it
-  in the reviewed inventory, and a `Relaxed`/`Acquire`/`Release` ordering needs a comment saying why it is enough.
-- A performance change needs numbers (instructions retired and peak RSS, before and after) and a note in `notes/`.
-- Before you start a performance or memory idea, find what was already tried. Most ideas have been: search
-  `notes/` for it (`rg -il '<a few keywords>' notes/ docs/RUST.md`), read the "Measured and rejected (do not redo)"
-  list in `notes/perf-round2-followups.md` and `docs/RUST.md` "Techniques", and read the newest round's summary
-  (`notes/mem-round4.md` for memory against bun check). For example, sharing the type graph between
-  checkers was measured four times (notes/mem-shared-base.md, notes/perf-checker-processes.md,
-  notes/perf-shared-checker.md, notes/spike-shared-graph.md). If a note rejected the idea, start only if something is
-  different, and say what in the brief or the pull request: new evidence, a changed constraint, or the condition the
-  note gave for revisiting it. Whatever the outcome, add it to that list.
-- A performance change must pay for its complexity. It lands only if it clears one of: 1% of single-threaded
-  instructions on at least one `bench/projects.json` project (`bench/count.py`, deterministic), 2% of wall time on
-  the README's headline table (the default-mode run, read across two publishes on the same hardware), or 5% of peak memory at the
-  default checker count; and a change that adds a thread, a cache, an overlap between phases or an invariant that
-  later code must keep needs more than a sub-percent gain to justify it, whatever the number. A finding below the
-  bar is still worth keeping: land it as a note in `notes/` (the negative results there are read before every new
-  round) and leave the code alone. Decided 2026-10-07 after a review of the commits since 0.5.0: five changes carried
-  most of the gain, and a tail of 2-4 ms serial-step changes added helper threads and overlaps for about 5% of wall
-  in total, one of which broke the PGO and BOLT training profiles (notes/perf-serial-steps.md,
-  notes/perf-front-end-fixed-costs.md).
+  `#[allow]`.
 
-## Keep the README capability table current
+## Performance and memory changes
 
-`README.md` has a table, "What it does and doesn't do", listing every user-visible capability with its status and
-evidence. When you finish a large chunk of work, update the table in the same pull request. A large chunk is:
+**Find what was already tried first.** Most ideas have been. Search the notes (`rg -il '<a few keywords>' notes/
+docs/RUST.md`), read the "Measured and rejected (do not redo)" list in `notes/perf-round2-followups.md` and the
+"Techniques" section of `docs/RUST.md`, and read the newest round's summary (the highest-numbered
+`notes/mem-round*.md` for memory against bun check). If a note rejected the idea, start only if something is
+different, and say what in the brief or the pull request: new evidence, a changed constraint, or the condition the
+note gave for revisiting it.
 
-- a ported subsystem or emit wave, or a merged feature PR;
-- a capability that starts or stops being supported, becomes the default, or ships in an npm release;
-- a change in a pass count the table cites (conformance, `.types` / `.symbols`, `.js` / `.js.map` /
-  `.sourcemap.txt`, fourslash, tsctests, the emit oracle);
-- a known gap that is closed, or a new one you find.
+**Bring numbers.** A performance change needs instructions retired and peak RSS, before and after, in the pull
+request.
 
-Small fixes that change none of these need no update.
+**Clear the bar.** A change lands only if it gains at least one of:
 
-How to update it:
+- 1% of single-threaded instructions on at least one `bench/projects.json` project (`bench/count.py`, deterministic);
+- 2% of wall time in the wall-time table in [`bench/RESULTS.md`](bench/RESULTS.md), read across two publishes on
+  the same hardware;
+- 5% of peak memory at the default checker count.
 
-- Measure numbers at the commit you describe: `tsrs-test run --suite all --baselines types,symbols,js,jsmap,sourcemap`,
-  `tsrs-fourslash run`, the tsctests harness and `tools/oracle/emit/` (`docs/EMIT.md`, `docs/LSP.md`). If you copy a
-  number from `notes/` or a PR instead, say so in the PR description.
-- Compare against tsgo built from the pinned commit, not the npm nightly.
-- Keep the status column to a short state: `yes`, `no`, `ignored`, or the condition it needs (such as
-  `--incremental`). Put numbers and caveats in the evidence column.
-- Keep the README intro, `docs/EMIT.md`, `docs/LSP.md` and `docs/STATUS.md` consistent with the table.
-- Do not name the private monorepo; call it "the 38k-file codebase".
-- Do not edit the benchmark section between `<!-- bench:start -->` and `<!-- bench:end -->`. The bench workflow
-  (`.depot/workflows/bench.yml`) rewrites it.
+A change that adds a thread, a cache, an overlap between phases or an invariant later code must keep needs a clear
+margin over that bar: a sub-percent gain never justifies it, whichever measure it is on (notes/perf-serial-steps.md
+has why). A change below the bar does not land.
+
+## Keep the capability table current
+
+[`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md)'s table "What it does and doesn't do" lists every user-visible
+capability with its status and evidence.
+Update it in the same pull request when a change ports a subsystem or emit wave, adds a feature, makes a capability
+start or stop being supported, become the default or ship in an npm release, changes a pass count the table cites,
+or closes or finds a known gap. How to update it is in a comment above the table. Keep the root and npm README
+compatibility summaries consistent with it.
+
+## Private code
+
+When you run tsrs on private code (to test performance, hill-climb or reproduce a bug), say only that it was run on a
+large private monorepo. Never divulge anything else about that repo: not its name, paths, package or file names, size,
+types or code. This holds in code, comments, notes, commit messages and pull requests.
+
+## Scripts and automation
+
+Write new scripts and ad hoc automation in JavaScript, not Python.

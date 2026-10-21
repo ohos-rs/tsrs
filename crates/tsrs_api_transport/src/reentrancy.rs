@@ -102,12 +102,12 @@ impl CallbackState {
     }
 
     fn notify(&self) {
-        let _g = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = self.lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         self.changed.notify_all();
     }
 
     fn wait_for_change(&self, timeout: Duration) {
-        let g = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+        let g = self.lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let _ = self.changed.wait_timeout(g, timeout);
     }
 }
@@ -153,9 +153,10 @@ pub fn current_request() -> Option<RequestContext> {
     CURRENT.with(|c| c.borrow().clone())
 }
 
-/// The current request's identity, to carry onto threads that do work for it (e.g. compiler workers
-/// reading files through the callback filesystem). Client calls made inside `enter` are attributed to
-/// that request instead of being unattributed (see module docs).
+/// The current request's identity, to carry onto threads that do work for it (e.g.
+///
+/// compiler workers reading files through the callback filesystem). Client calls made inside `enter` are
+/// attributed to that request instead of being unattributed (see module docs).
 #[derive(Clone, Debug)]
 pub struct RequestScope(RequestContext);
 
@@ -194,7 +195,7 @@ fn holder_possibly_stuck(holder: &Arc<RequestState>, conn: &CallbackState) -> bo
         if r.waiting.load(Ordering::SeqCst) > 0 {
             return true;
         }
-        let next = r.blocked_on.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let next = r.blocked_on.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
         match next {
             Some(n) if Arc::ptr_eq(&n, holder) => return true,
             Some(n) => r = n,
@@ -204,9 +205,10 @@ fn holder_possibly_stuck(holder: &Arc<RequestState>, conn: &CallbackState) -> bo
     true
 }
 
-/// Per-acquisition contention state for an exclusive resource that cannot use `lock_for_request`
-/// (e.g. a checker lease). Create one when an acquisition first finds the resource taken, call
-/// `may_deadlock` on every re-check, and drop it when the acquisition ends (success or failure).
+/// Per-acquisition contention state for an exclusive resource that cannot use `lock_for_request` (e.g.
+///
+/// a checker lease). Create one when an acquisition first finds the resource taken, call `may_deadlock` on
+/// every re-check, and drop it when the acquisition ends (success or failure).
 pub struct ContentionWait {
     holder: Option<Arc<RequestState>>,
     stuck_since: Option<Instant>,
@@ -217,7 +219,11 @@ impl ContentionWait {
     /// `holder`: the resource's current holder if known (`Holder::current()` captured by the holder).
     /// Without it, any client call in flight on the connection counts as the holder's (conservative).
     pub fn new(holder: Option<&Holder>) -> ContentionWait {
-        ContentionWait { holder: holder.map(|h| Arc::clone(&h.0)), stuck_since: None, registered: None }
+        ContentionWait {
+            holder: holder.map(|h| Arc::clone(&h.0)),
+            stuck_since: None,
+            registered: None,
+        }
     }
 
     /// Updates the holder (it can change between re-checks).
@@ -232,7 +238,8 @@ impl ContentionWait {
             self.holder = h;
             self.stuck_since = None;
             if let Some(me) = &self.registered {
-                (*me.blocked_on.lock().unwrap_or_else(|e| e.into_inner())).clone_from(&self.holder);
+                (*me.blocked_on.lock().unwrap_or_else(std::sync::PoisonError::into_inner))
+                    .clone_from(&self.holder);
             }
         }
     }
@@ -241,9 +248,12 @@ impl ContentionWait {
     /// connection when the holder is possibly stuck; on an async connection once the holder has been
     /// possibly stuck for the grace period during *this* acquisition. Always false outside a request.
     pub fn may_deadlock(&mut self) -> bool {
-        let Some(cx) = current_request() else { return false };
+        let Some(cx) = current_request() else {
+            return false;
+        };
         if self.registered.is_none() {
-            (*cx.state.blocked_on.lock().unwrap_or_else(|e| e.into_inner())).clone_from(&self.holder);
+            (*cx.state.blocked_on.lock().unwrap_or_else(std::sync::PoisonError::into_inner))
+                .clone_from(&self.holder);
             self.registered = Some(Arc::clone(&cx.state));
         }
         let stuck = match &self.holder {
@@ -266,7 +276,7 @@ impl ContentionWait {
 impl Drop for ContentionWait {
     fn drop(&mut self) {
         if let Some(me) = &self.registered {
-            *me.blocked_on.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            *me.blocked_on.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = None;
         }
     }
 }
@@ -279,12 +289,15 @@ thread_local! {
 
 const EPISODE_GAP: Duration = Duration::from_millis(200);
 
-/// Legacy predicate without per-acquisition state; prefer `ContentionWait`. Treats any client call on
-/// the connection as the holder's. On async connections the grace period is tracked per thread and
-/// request: a new acquisition by the same request within 200 ms of a previous contended check inherits
-/// that wait's start, so it can fail up to one grace period early. Kept so existing callers compile.
+/// Legacy predicate without per-acquisition state; prefer `ContentionWait`.
+///
+/// Treats any client call on the connection as the holder's. On async connections the grace period is tracked
+/// per thread and request: a new acquisition by the same request within 200 ms of a previous contended check
+/// inherits that wait's start, so it can fail up to one grace period early. Kept so existing callers compile.
 pub fn blocking_may_deadlock() -> bool {
-    let Some(cx) = current_request() else { return false };
+    let Some(cx) = current_request() else {
+        return false;
+    };
     if cx.callbacks.waiting_on_client() == 0 {
         EPISODE.with(|e| e.set(None));
         return false;
@@ -294,7 +307,7 @@ pub fn blocking_may_deadlock() -> bool {
     }
     let key = Arc::as_ptr(&cx.state) as usize;
     let now = Instant::now();
-    let start = match EPISODE.with(|e| e.get()) {
+    let start = match EPISODE.with(std::cell::Cell::get) {
         Some((k, start, last)) if k == key && now.duration_since(last) < EPISODE_GAP => start,
         _ => now,
     };
@@ -314,7 +327,7 @@ pub fn reentrancy_error(resource: &str) -> ApiError {
 static LOCK_HOLDERS: Mutex<Option<FxHashMap<usize, Arc<RequestState>>>> = Mutex::new(None);
 
 fn lock_holders() -> MutexGuard<'static, Option<FxHashMap<usize, Arc<RequestState>>>> {
-    LOCK_HOLDERS.lock().unwrap_or_else(|e| e.into_inner())
+    LOCK_HOLDERS.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// Guard returned by `lock_for_request`; derefs to the locked value.
@@ -346,14 +359,24 @@ impl<T> Drop for RequestGuard<'_, T> {
     }
 }
 
-/// Locks `mutex` for an API request without deadlocking on callback re-entry: waits like Go while the
-/// holder makes progress, and fails with `reentrancy_error` when the holder is possibly stuck on the
-/// client (immediately on sync, after the grace period on async; see module docs). Outside a request it
-/// is a plain blocking lock. Poisoned locks are recovered (the connection already reported the panic).
-pub fn lock_for_request<'a, T>(mutex: &'a Mutex<T>, resource: &str) -> Result<RequestGuard<'a, T>, ApiError> {
+/// Detects callback re-entry that would otherwise deadlock an API request.
+///
+/// Locks `mutex` for an API request without deadlocking on callback re-entry: waits like Go while the holder
+/// makes progress, and fails with `reentrancy_error` when the holder is possibly stuck on the client
+/// (immediately on sync, after the grace period on async; see module docs).
+///
+/// Outside a request it is a plain blocking lock. Poisoned locks are recovered (the connection already
+/// reported the panic).
+pub fn lock_for_request<'a, T>(
+    mutex: &'a Mutex<T>,
+    resource: &str,
+) -> Result<RequestGuard<'a, T>, ApiError> {
     let key = std::ptr::from_ref::<Mutex<T>>(mutex) as usize;
     let Some(cx) = current_request() else {
-        return Ok(RequestGuard { key: None, guard: mutex.lock().unwrap_or_else(|e| e.into_inner()) });
+        return Ok(RequestGuard {
+            key: None,
+            guard: mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner),
+        });
     };
     let acquired = |guard: MutexGuard<'a, T>| {
         lock_holders().get_or_insert_with(FxHashMap::default).insert(key, Arc::clone(&cx.state));

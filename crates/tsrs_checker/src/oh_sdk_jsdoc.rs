@@ -1,4 +1,5 @@
 //! OH SDK declaration-use checks (`checker/oh_sdk_jsdoc.go`).
+#![expect(clippy::unused_self, reason = "ported Go receiver methods keep their receiver")]
 use crate::*;
 use crate::oh_sdk_api::*;
 use tsrs_core::tspath;
@@ -104,7 +105,10 @@ impl OhSdkFileFacts {
             project, project_available: project && file.text().contains("@Available"), sdk,
             card: o.oh_card_entry_files.as_deref().unwrap_or_default().iter().any(|p| tspath::normalize_path(p) == normalized),
             ohos_test: !o.oh_module_path.is_empty() && normalized.starts_with(&tspath::resolve_path(&o.oh_module_path, &["src", "ohosTest"])),
-            ts_implementation: normalized.ends_with(".ts") && !normalized.ends_with(".d.ts"),
+            ts_implementation: std::path::Path::new(&normalized)
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("ts"))
+                && !normalized.ends_with(".d.ts"),
             arkui, device_info: file.text().contains("deviceInfo"), whitelist,
             normalized, base, api_module,
         }
@@ -353,10 +357,10 @@ fn sdk_api_path(declaration: P<Node>) -> String {
             Kind::Constructor | Kind::ConstructSignature | Kind::CallSignature => "constructor".to_string(),
             Kind::VariableStatement => {
                 let declarations = node.as_variable_statement().declaration_list.as_variable_declaration_list().declarations.nodes();
-                if declarations.len() == 1 { declarations[0].name().map(tsrs_scanner::get_text_of_node).unwrap_or_else(|| "unnamed".into()) } else { "unnamed".into() }
+                if declarations.len() == 1 { declarations[0].name().map_or_else(|| "unnamed".into(), tsrs_scanner::get_text_of_node) } else { "unnamed".into() }
             }
             Kind::IndexSignature => "unnamed".into(),
-            _ => node.name().map(tsrs_scanner::get_text_of_node).unwrap_or_else(|| "unnamed".into()),
+            _ => node.name().map_or_else(|| "unnamed".into(), tsrs_scanner::get_text_of_node),
         };
         if !name.is_empty() { parts.push(name); }
     }
@@ -404,7 +408,7 @@ impl Checker {
                 pos = parent.expression().unwrap().end();
             }
         }
-        has_suppress_comment(file, pos, warning)
+        has_suppress_comment(file, pos.source_offset().unwrap_or(0), warning)
     }
     fn oh_sdk_find_comment_statement(&self, node: P<Node>, warning: &str) -> CommentSearch {
         let mut search = CommentSearch { node: Some(node), is_chain: false, chain_node: Some(node) };
@@ -523,12 +527,12 @@ impl Checker {
         compare_oh_point_versions(&assigned, required) >= 0
     }
     fn oh_sdk_guard_value(&mut self, node: P<Node>) -> Option<i32> {
-        if ast::is_numeric_literal(node) { return node.text().parse::<f64>().ok().map(|v| (v + 0.999999999) as i32); }
+        if ast::is_numeric_literal(node) { return node.text().parse::<f64>().ok().map(|v| (v + 0.999_999_999) as i32); }
         if ast::is_identifier(node) {
             if let Some(declaration) = self.get_resolved_symbol_or_nil(node).and_then(|s| s.value_declaration()).filter(|d| ast::is_variable_declaration(*d) || ast::is_binding_element(*d)) {
                 let initializer = declaration.initializer()?;
                 if ast::is_string_literal(initializer) {
-                    if let Ok(value) = initializer.text().parse::<f64>() { return Some((value + 0.999999999) as i32); }
+                    if let Ok(value) = initializer.text().parse::<f64>() { return Some((value + 0.999_999_999) as i32); }
                 }
                 return self.oh_sdk_guard_value(initializer);
             }
@@ -560,9 +564,13 @@ impl Checker {
 }
 struct CommentSearch { node: Option<P<Node>>, is_chain: bool, chain_node: Option<P<Node>> }
 fn node_has_suppress_comment(node: P<Node>, warning: &str) -> bool {
-    has_suppress_comment(ast::get_source_file_of_node(node).unwrap(), node.pos(), warning)
+    has_suppress_comment(
+        ast::get_source_file_of_node(node).unwrap(),
+        node.pos().source_offset().unwrap_or(0),
+        warning,
+    )
 }
-fn has_suppress_comment(file: P<SourceFile>, pos: i32, warning: &str) -> bool {
+fn has_suppress_comment(file: P<SourceFile>, pos: u32, warning: &str) -> bool {
     let comments = tsrs_scanner::get_leading_comment_ranges(file.text(), pos);
     let texts: Vec<_> = comments.map(|c| &file.text()[c.pos() as usize..c.end() as usize]).collect();
     if texts.iter().any(|text| text.starts_with("/*") || OH_INVALID_SUPPRESS_COMMENT_PATTERN.is_match(text)) { return false; }

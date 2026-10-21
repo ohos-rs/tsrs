@@ -3,35 +3,47 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 
 use rustc_hash::{FxHashMap, FxHashSet};
-use tsrs_ast::{self as ast, CheckFlags, FileReference, Kind, ModifierFlags, Node, SemanticMeaning, SourceFile, SubtreeFacts, Symbol, SymbolFlags};
+use tsrs_ast::{
+    self as ast, CheckFlags, FileReference, Kind, ModifierFlags, Node, SemanticMeaning, SourceFile,
+    SubtreeFacts, Symbol, SymbolFlags,
+};
 use tsrs_checker::{Checker, ContextFlags, EmitResolver};
 use tsrs_compiler::Program;
-use tsrs_core::collections::{new_set_with_size_hint, Set};
+use tsrs_core::collections::{Set, new_set_with_size_hint};
 use tsrs_core::context::Context;
-use tsrs_core::{tspath, TextPos, TextRange, P};
+use tsrs_core::{P, TextPos, TextRange, tspath};
 use tsrs_lsproto as lsproto;
 use tsrs_scanner as scanner;
 
 use crate::astnav;
-use crate::crossproject::{combine_implementations, combine_location_array, combine_references, combine_vs_references, CrossProjectOrchestrator};
+use crate::crossproject::{
+    CrossProjectOrchestrator, combine_implementations, combine_location_array, combine_references,
+    combine_vs_references,
+};
 use crate::hover::get_quick_info_and_declaration_at_location;
 use crate::import_tracker::{
-    create_import_tracker, find_module_references, get_export_info, get_import_or_export_symbol, ExportInfo, ExportKind, ImpExpKind, ImportTracker,
-    ImportsResult, ModuleReference, ModuleReferenceKind,
+    ExportInfo, ExportKind, ImpExpKind, ImportTracker, ImportsResult, ModuleReference,
+    ModuleReferenceKind, create_import_tracker, find_module_references, get_export_info,
+    get_import_or_export_symbol,
 };
 use crate::languageservice::LanguageService;
 use crate::lsconv;
 use crate::rename::node_is_eligible_for_rename;
 use crate::spanmap::Feature;
 use crate::utilities::{
-    get_adjusted_location, get_all_super_type_nodes, get_container_node, get_containing_node_if_in_heritage_clause, get_containing_object_literal_element,
-    get_contextual_type_from_parent_or_ancestor_type_node, get_intersecting_meaning_from_declarations, get_local_symbol_for_export_specifier,
-    get_meaning_from_location, get_non_module_symbol_of_merged_module_symbol, get_parent_symbols_of_property_access,
-    get_property_symbol_from_binding_element, get_property_symbol_of_object_binding_pattern_without_property_name,
-    get_property_symbols_from_base_types, get_reference_at_position, get_target_label, is_expression_of_external_module_import_equals_declaration,
-    is_implementation, is_implementation_expression, is_jump_statement_target, is_label_of_labeled_statement,
-    is_literal_name_of_property_declaration_or_index_access, is_module_specifier_like, is_name_of_module_declaration,
-    is_object_binding_element_without_property_name, is_readonly_type_operator, is_source_file_with_global_exports, is_static_symbol, is_this,
+    get_adjusted_location, get_all_super_type_nodes, get_container_node,
+    get_containing_node_if_in_heritage_clause, get_containing_object_literal_element,
+    get_contextual_type_from_parent_or_ancestor_type_node,
+    get_intersecting_meaning_from_declarations, get_local_symbol_for_export_specifier,
+    get_meaning_from_location, get_non_module_symbol_of_merged_module_symbol,
+    get_parent_symbols_of_property_access, get_property_symbol_from_binding_element,
+    get_property_symbol_of_object_binding_pattern_without_property_name,
+    get_property_symbols_from_base_types, get_reference_at_position, get_target_label,
+    is_expression_of_external_module_import_equals_declaration, is_implementation,
+    is_implementation_expression, is_jump_statement_target, is_label_of_labeled_statement,
+    is_literal_name_of_property_declaration_or_index_access, is_module_specifier_like,
+    is_name_of_module_declaration, is_object_binding_element_without_property_name,
+    is_readonly_type_operator, is_source_file_with_global_exports, is_static_symbol, is_this,
     is_type_keyword, to_context_range,
 };
 
@@ -70,8 +82,16 @@ pub struct SymbolAndEntries {
 }
 
 // findallreferences.go:60
-pub(crate) fn new_symbol_and_entries(kind: DefinitionKind, node: Option<P<Node>>, symbol: Option<P<Symbol>>, references: Vec<Rc<ReferenceEntry>>) -> SymbolAndEntries {
-    SymbolAndEntries { definition: Some(Definition { kind, node, symbol, triple_slash_file_ref: None }), references }
+pub(crate) fn new_symbol_and_entries(
+    kind: DefinitionKind,
+    node: Option<P<Node>>,
+    symbol: Option<P<Symbol>>,
+    references: Vec<Rc<ReferenceEntry>>,
+) -> SymbolAndEntries {
+    SymbolAndEntries {
+        definition: Some(Definition { kind, node, symbol, triple_slash_file_ref: None }),
+        references,
+    }
 }
 
 // findallreferences.go:71
@@ -126,7 +146,11 @@ pub struct ReferenceEntry {
 }
 
 impl ReferenceEntry {
-    pub(crate) fn new(kind: EntryKind, node: Option<P<Node>>, context: Option<P<Node>>) -> ReferenceEntry {
+    pub(crate) fn new(
+        kind: EntryKind,
+        node: Option<P<Node>>,
+        context: Option<P<Node>>,
+    ) -> ReferenceEntry {
         ReferenceEntry {
             kind,
             node,
@@ -208,7 +232,11 @@ impl LanguageService {
     }
 
     // findallreferences.go:172
-    pub(crate) fn get_range_of_entry_for_feature(&self, entry: &ReferenceEntry, feature: Feature) -> Option<lsproto::Range> {
+    pub(crate) fn get_range_of_entry_for_feature(
+        &self,
+        entry: &ReferenceEntry,
+        feature: Feature,
+    ) -> Option<lsproto::Range> {
         let location = self.get_location_of_entry_for_feature(entry, feature)?;
         Some(location.range)
     }
@@ -219,33 +247,44 @@ impl LanguageService {
     }
 
     // findallreferences.go:181
-    pub(crate) fn get_location_of_entry_for_feature(&self, entry: &ReferenceEntry, feature: Feature) -> Option<lsproto::Location> {
-        self.resolve_entry_source(entry);
-        let (location, fidelity) = self.source_file_range_to_lsp_location_for_feature(entry.source_file.get().unwrap(), entry.text_range.get().unwrap(), feature);
-        if fidelity.is_single_segment() {
-            Some(location)
-        } else {
-            None
-        }
+    pub(crate) fn get_location_of_entry_for_feature(
+        &self,
+        entry: &ReferenceEntry,
+        feature: Feature,
+    ) -> Option<lsproto::Location> {
+        Self::resolve_entry_source(entry);
+        let (location, fidelity) = self.source_file_range_to_lsp_location_for_feature(
+            entry.source_file.get().unwrap(),
+            entry.text_range.get().unwrap(),
+            feature,
+        );
+        if fidelity.is_single_segment() { Some(location) } else { None }
     }
 
     // findallreferences.go:187
-    pub(crate) fn resolve_entry_source(&self, entry: &ReferenceEntry) {
+    pub(crate) fn resolve_entry_source(entry: &ReferenceEntry) {
         if entry.source_file.get().is_none() {
             assert!(entry.node.is_some(), "reference entry must have a node or source file");
             entry.source_file.set(ast::get_source_file_of_node(entry.node.unwrap()));
         }
         if entry.text_range.get().is_none() {
-            let text_range = get_range_of_node(entry.node.unwrap(), entry.source_file.get(), None /*endNode*/);
+            let text_range = get_range_of_node(
+                entry.node.unwrap(),
+                entry.source_file.get(),
+                None, /*endNode*/
+            );
             entry.text_range.set(Some(text_range));
         }
     }
 
     // findallreferences.go:198
     pub(crate) fn resolve_entry<'e>(&self, entry: &'e ReferenceEntry) -> &'e ReferenceEntry {
-        self.resolve_entry_source(entry);
+        Self::resolve_entry_source(entry);
         if entry.lsp_range.borrow().is_none() {
-            let (location, fidelity) = self.source_file_range_to_lsp_location(entry.source_file.get().unwrap(), entry.text_range.get().unwrap());
+            let (location, fidelity) = self.source_file_range_to_lsp_location(
+                entry.source_file.get().unwrap(),
+                entry.text_range.get().unwrap(),
+            );
             *entry.lsp_range.borrow_mut() = Some(location);
             entry.unmappable.set(!fidelity.is_single_segment());
         }
@@ -266,7 +305,11 @@ pub(crate) fn new_node_entry(node: P<Node>) -> Rc<ReferenceEntry> {
 
 fn new_node_entry_value(node: P<Node>) -> ReferenceEntry {
     // creates nodeEntry with `kind == entryKindNode`
-    ReferenceEntry::new(EntryKind::Node, Some(node.name().unwrap_or(node)), get_context_node_for_node_entry(node))
+    ReferenceEntry::new(
+        EntryKind::Node,
+        Some(node.name().unwrap_or(node)),
+        get_context_node_for_node_entry(node),
+    )
 }
 
 // findallreferences.go:223
@@ -291,7 +334,9 @@ pub(crate) fn get_context_node_for_node_entry(node: P<Node>) -> Option<P<Node>> 
                 binary_expression = parent.parent();
             }
             if let Some(binary_expression) = binary_expression {
-                if ast::get_assignment_declaration_kind(binary_expression) != ast::JSDeclarationKind::None {
+                if ast::get_assignment_declaration_kind(binary_expression)
+                    != ast::JSDeclarationKind::None
+                {
                     return get_context_node(Some(binary_expression));
                 }
             }
@@ -300,12 +345,18 @@ pub(crate) fn get_context_node_for_node_entry(node: P<Node>) -> Option<P<Node>> 
         // Jsx Tags
         match parent.kind() {
             Kind::JsxOpeningElement | Kind::JsxClosingElement => return parent.parent(),
-            Kind::JsxSelfClosingElement | Kind::LabeledStatement | Kind::BreakStatement | Kind::ContinueStatement => return Some(parent),
+            Kind::JsxSelfClosingElement
+            | Kind::LabeledStatement
+            | Kind::BreakStatement
+            | Kind::ContinueStatement => return Some(parent),
             Kind::StringLiteral | Kind::NoSubstitutionTemplateLiteral => {
                 if let Some(valid_import) = ast::try_get_import_from_module_specifier(node) {
                     // Go's callback ignores its argument and tests `node` (the closure's outer variable).
-                    let decl_or_statement =
-                        ast::find_ancestor(Some(valid_import), |_| ast::is_declaration(node) || ast::is_statement(node) || ast::is_jsdoc_tag(node));
+                    let decl_or_statement = ast::find_ancestor(Some(valid_import), |_| {
+                        ast::is_declaration(node)
+                            || ast::is_statement(node)
+                            || ast::is_jsdoc_tag(node)
+                    });
                     if decl_or_statement.is_some_and(ast::is_declaration) {
                         return get_context_node(decl_or_statement);
                     }
@@ -343,7 +394,9 @@ pub(crate) fn get_context_node(node: Option<P<Node>>) -> Option<P<Node>> {
     match node.kind() {
         Kind::VariableDeclaration => {
             let parent = node.parent().unwrap();
-            if !ast::is_variable_declaration_list(parent) || parent.as_variable_declaration_list().declarations.nodes().len() != 1 {
+            if !ast::is_variable_declaration_list(parent)
+                || parent.as_variable_declaration_list().declarations.nodes().len() != 1
+            {
                 Some(node)
             } else if ast::is_variable_statement(parent.parent().unwrap()) {
                 parent.parent()
@@ -392,23 +445,26 @@ pub(crate) fn get_context_node(node: Option<P<Node>>) -> Option<P<Node>> {
 }
 
 // findallreferences.go:335
-pub(crate) fn get_range_of_node(node: P<Node>, source_file: Option<P<SourceFile>>, end_node: Option<P<Node>>) -> TextRange {
+pub(crate) fn get_range_of_node(
+    node: P<Node>,
+    source_file: Option<P<SourceFile>>,
+    end_node: Option<P<Node>>,
+) -> TextRange {
     let source_file = match source_file {
         Some(f) => f,
         None => ast::get_source_file_of_node(node).unwrap(),
     };
     let mut start = scanner::get_token_pos_of_node(node, source_file, false /*includeJsDoc*/);
-    let mut end = end_node.unwrap_or(node).end();
+    let mut end =
+        end_node.unwrap_or(node).end().expect_source("reference nodes have source positions");
     if ast::is_string_literal_like(node) && (end - start) > 2 {
-        if end_node.is_some() {
-            panic!("endNode is not nil for stringLiteralLike");
-        }
+        assert!(end_node.is_none(), "endNode is not nil for stringLiteralLike");
         start += 1;
         end -= 1;
     }
     if let Some(end_node) = end_node {
         if end_node.kind() == Kind::CaseBlock {
-            end = end_node.pos();
+            end = end_node.pos().expect_source("reference nodes have source positions");
         }
     }
     TextRange::new(start, end)
@@ -431,10 +487,15 @@ pub(crate) fn is_valid_reference_position(node: P<Node>, search_symbol_name: &st
                 && (is_literal_name_of_property_declaration_or_index_access(node)
                     || is_name_of_module_declaration(node)
                     || is_expression_of_external_module_import_equals_declaration(node)
-                    || ast::is_call_expression(parent) && ast::is_bindable_object_define_property_call(parent) && parent.arguments()[1] == node
+                    || ast::is_call_expression(parent)
+                        && ast::is_bindable_object_define_property_call(parent)
+                        && parent.arguments()[1] == node
                     || ast::is_import_or_export_specifier(parent))
         }
-        Kind::NumericLiteral => is_literal_name_of_property_declaration_or_index_access(node) && node.text().len() == search_symbol_name.len(),
+        Kind::NumericLiteral => {
+            is_literal_name_of_property_declaration_or_index_access(node)
+                && node.text().len() == search_symbol_name.len()
+        }
         Kind::DefaultKeyword => "default".len() == search_symbol_name.len(),
         _ => false,
     }
@@ -467,7 +528,9 @@ pub(crate) fn skip_past_export_or_import_specifier_or_union(
             // Assertions for GH#21814. We should be handling SourceFile symbols in `getReferencedSymbolsForModule` instead of getting here.
             panic!("Unexpected symbol at {:?}: {}", node.kind(), symbol.name());
         };
-        if decl_parent.kind() == Kind::TypeLiteral && decl_parent.parent().unwrap().kind() == Kind::UnionType {
+        if decl_parent.kind() == Kind::TypeLiteral
+            && decl_parent.parent().unwrap().kind() == Kind::UnionType
+        {
             let t = checker.get_type_from_type_node_exported(decl_parent.parent().unwrap());
             return checker.get_property_of_type_exported(t, symbol.name());
         }
@@ -481,7 +544,9 @@ pub(crate) fn get_symbol_scope(symbol: P<Symbol>) -> Option<P<Node>> {
     // then named references are limited to its own scope.
     let value_declaration = symbol.value_declaration();
     if let Some(value_declaration) = value_declaration {
-        if value_declaration.kind() == Kind::FunctionExpression || value_declaration.kind() == Kind::ClassExpression {
+        if value_declaration.kind() == Kind::FunctionExpression
+            || value_declaration.kind() == Kind::ClassExpression
+        {
             return Some(value_declaration);
         }
     }
@@ -493,8 +558,10 @@ pub(crate) fn get_symbol_scope(symbol: P<Symbol>) -> Option<P<Node>> {
     let declarations = symbol.declarations();
     // If this is private property or method, the scope is the containing class
     if symbol.flags().intersects(SymbolFlags::Property | SymbolFlags::Method) {
-        let private_declaration =
-            declarations.iter().copied().find(|&d| ast::has_modifier(d, ModifierFlags::Private) || ast::is_private_identifier_class_element_declaration(d));
+        let private_declaration = declarations.iter().copied().find(|&d| {
+            ast::has_modifier(d, ModifierFlags::Private)
+                || ast::is_private_identifier_class_element_declaration(d)
+        });
         if let Some(private_declaration) = private_declaration {
             return ast::find_ancestor_kind(private_declaration, Kind::ClassDeclaration);
         }
@@ -515,10 +582,13 @@ pub(crate) fn get_symbol_scope(symbol: P<Symbol>) -> Option<P<Node>> {
         - The parent is an external module: then we should only search in the module (and recurse on the export later).
         - But if the parent has `export as namespace`, the symbol is globally visible through that namespace.
     */
-    let exposed_by_parent = symbol.parent().is_some() && !symbol.flags().intersects(SymbolFlags::TypeParameter);
+    let exposed_by_parent =
+        symbol.parent().is_some() && !symbol.flags().intersects(SymbolFlags::TypeParameter);
     if exposed_by_parent {
         let parent = symbol.parent().unwrap();
-        if !(tsrs_checker::is_external_module_symbol(parent) && !is_source_file_with_global_exports(parent.value_declaration())) {
+        let is_external_without_global_exports = tsrs_checker::is_external_module_symbol(parent)
+            && !is_source_file_with_global_exports(parent.value_declaration());
+        if !is_external_without_global_exports {
             return None;
         }
     }
@@ -537,7 +607,10 @@ pub(crate) fn get_symbol_scope(symbol: P<Symbol>) -> Option<P<Node>> {
                 // within this scope is visible outside the file
                 return None;
             }
-            Some(container) if container.kind() == Kind::SourceFile && !ast::is_external_or_common_js_module(container.as_source_file_p()) => {
+            Some(container)
+                if container.kind() == Kind::SourceFile
+                    && !ast::is_external_or_common_js_module(container.as_source_file_p()) =>
+            {
                 return None;
             }
             _ => {}
@@ -599,11 +672,15 @@ impl nonLocalDefinition {
                 let mapped = l.try_get_source_position(&self.file_name, self.start_pos);
                 if let Some(mapped) = mapped {
                     let script = l.get_script(&mapped.file_name).expect("nil script");
-                    let (mapped_position, mapped_fidelity) = l.converters.to_lsp_position(&script, mapped.pos);
+                    let (mapped_position, mapped_fidelity) =
+                        l.converters.to_lsp_position(&script, mapped.pos.into());
                     if mapped_fidelity.is_none() {
                         return None;
                     }
-                    return Some(position { uri: lsconv::file_name_to_document_uri(&mapped.file_name), pos: mapped_position });
+                    return Some(position {
+                        uri: lsconv::file_name_to_document_uri(&mapped.file_name),
+                        pos: mapped_position,
+                    });
                 }
                 None
             })
@@ -617,11 +694,15 @@ impl nonLocalDefinition {
                 let mapped = l.try_get_generated_position(&self.file_name, self.start_pos);
                 if let Some(mapped) = mapped {
                     let script = l.get_script(&mapped.file_name).expect("nil script");
-                    let (mapped_position, mapped_fidelity) = l.converters.to_lsp_position(&script, mapped.pos);
+                    let (mapped_position, mapped_fidelity) =
+                        l.converters.to_lsp_position(&script, mapped.pos.into());
                     if mapped_fidelity.is_none() {
                         return None;
                     }
-                    return Some(position { uri: lsconv::file_name_to_document_uri(&mapped.file_name), pos: mapped_position });
+                    return Some(position {
+                        uri: lsconv::file_name_to_document_uri(&mapped.file_name),
+                        pos: mapped_position,
+                    });
                 }
                 None
             })
@@ -630,9 +711,15 @@ impl nonLocalDefinition {
 }
 
 // findallreferences.go:496
-pub(crate) fn get_file_and_start_pos_from_declaration(declaration: P<Node>) -> (P<SourceFile>, TextPos) {
+pub(crate) fn get_file_and_start_pos_from_declaration(
+    declaration: P<Node>,
+) -> (P<SourceFile>, TextPos) {
     let file = ast::get_source_file_of_node(declaration).unwrap();
-    let name = ast::get_name_of_declaration(Some(declaration)).unwrap_or(declaration);
+    // A name without a position (the `this` parameter of a JSDoc `@this` tag) starts at -1 in Go; use the
+    // declaration's position instead (definition.rs create_definition_locations).
+    let name = ast::get_name_of_declaration(Some(declaration))
+        .filter(|name| !name.pos().is_synthetic())
+        .unwrap_or(declaration);
     let text_range = get_range_of_node(name, Some(file), None /*endNode*/);
 
     (file, text_range.pos())
@@ -640,7 +727,11 @@ pub(crate) fn get_file_and_start_pos_from_declaration(declaration: P<Node>) -> (
 
 impl LanguageService {
     // findallreferences.go:504
-    pub(crate) fn get_non_local_definition(&self, ctx: &Context, entry: &SymbolAndEntries) -> Option<nonLocalDefinition> {
+    pub(crate) fn get_non_local_definition(
+        &self,
+        ctx: &Context,
+        entry: &SymbolAndEntries,
+    ) -> Option<nonLocalDefinition> {
         if !entry.can_use_definition_symbol() {
             return None;
         }
@@ -649,22 +740,34 @@ impl LanguageService {
         let mut checker = program.get_type_checker(ctx);
         let checker: &mut Checker = &mut checker;
         let emit_resolver = checker.get_emit_resolver();
-        for &d in entry.definition.as_ref().unwrap().symbol.unwrap().declarations() {
-            if is_definition_visible(emit_resolver, checker, d) {
-                let (file, start_pos) = get_file_and_start_pos_from_declaration(d);
-                let file_name = file.file_name();
-                let (lsp_position, fidelity) = self.converters.to_lsp_position(&file, start_pos);
-                if fidelity.is_none() {
-                    continue;
-                }
-                return Some(nonLocalDefinition {
-                    position: position { uri: lsconv::file_name_to_document_uri(file_name), pos: lsp_position },
-                    file_name: file_name.to_string(),
-                    start_pos,
-                    source_position: OnceCell::new(),
-                    generated_position: OnceCell::new(),
-                });
-            }
+        if let Some(result) =
+            entry.definition.as_ref().unwrap().symbol.unwrap().declarations().iter().find_map(
+                |&d| {
+                    if is_definition_visible(emit_resolver, checker, d) {
+                        let (file, start_pos) = get_file_and_start_pos_from_declaration(d);
+                        let file_name = file.file_name();
+                        let (lsp_position, fidelity) =
+                            self.converters.to_lsp_position(&file, start_pos);
+                        if fidelity.is_none() {
+                            return None;
+                        }
+                        return Some(Some(nonLocalDefinition {
+                            position: position {
+                                uri: lsconv::file_name_to_document_uri(file_name),
+                                pos: lsp_position,
+                            },
+                            file_name: file_name.to_string(),
+                            start_pos,
+                            source_position: OnceCell::new(),
+                            generated_position: OnceCell::new(),
+                        }));
+                    }
+
+                    None
+                },
+            )
+        {
+            return result;
         }
         None
     }
@@ -674,7 +777,11 @@ impl LanguageService {
 // By default arrows (and such other ast kinds) are not visible as declaration emitter doesnt need them
 // But we want to handle them specially so that they are visible if their parent is visible
 // findallreferences.go:561
-pub(crate) fn is_definition_visible(emit_resolver: P<EmitResolver>, c: &mut Checker, declaration: P<Node>) -> bool {
+pub(crate) fn is_definition_visible(
+    emit_resolver: P<EmitResolver>,
+    c: &mut Checker,
+    declaration: P<Node>,
+) -> bool {
     if emit_resolver.is_declaration_visible_exported(c, declaration) {
         return true;
     }
@@ -689,9 +796,14 @@ pub(crate) fn is_definition_visible(emit_resolver: P<EmitResolver>, c: &mut Chec
 
     // Handle some exceptions here like arrow function, members of class and object literal expression which are technically not visible but we want the definition to be determined by its parent
     match declaration.kind() {
-        Kind::PropertyDeclaration | Kind::GetAccessor | Kind::SetAccessor | Kind::MethodDeclaration => {
+        Kind::PropertyDeclaration
+        | Kind::GetAccessor
+        | Kind::SetAccessor
+        | Kind::MethodDeclaration => {
             // Private/protected properties/methods are not visible
-            if ast::has_modifier(declaration, ModifierFlags::Private) || ast::is_private_identifier(declaration.name().unwrap()) {
+            if ast::has_modifier(declaration, ModifierFlags::Private)
+                || ast::is_private_identifier(declaration.name().unwrap())
+            {
                 return false;
             }
             // Public properties/methods are visible if its parents are visible, so:
@@ -711,7 +823,12 @@ pub(crate) fn is_definition_visible(emit_resolver: P<EmitResolver>, c: &mut Chec
 
 impl LanguageService {
     // findallreferences.go:600
-    pub(crate) fn for_each_original_definition_location(&self, _ctx: &Context, entry: &SymbolAndEntries, cb: &mut dyn FnMut(lsproto::DocumentUri, lsproto::Position)) {
+    pub(crate) fn for_each_original_definition_location(
+        &self,
+        _ctx: &Context,
+        entry: &SymbolAndEntries,
+        cb: &mut dyn FnMut(lsproto::DocumentUri, lsproto::Position),
+    ) {
         if !entry.can_use_definition_symbol() {
             return;
         }
@@ -725,7 +842,8 @@ impl LanguageService {
                 let mapped = self.try_get_source_position(file.file_name(), start_pos);
                 if let Some(mapped) = mapped {
                     let script = self.get_script(&mapped.file_name).expect("nil script");
-                    let (lsp_position, fidelity) = self.converters.to_lsp_position(&script, mapped.pos);
+                    let (lsp_position, fidelity) =
+                        self.converters.to_lsp_position(&script, mapped.pos.into());
                     if !fidelity.is_none() {
                         cb(lsconv::file_name_to_document_uri(&mapped.file_name), lsp_position);
                     }
@@ -754,7 +872,7 @@ pub(crate) struct SymbolEntryTransformOptions {
 pub struct SymbolAndEntriesData {
     pub original_node: Option<P<Node>>,
     pub symbols_and_entries: Vec<SymbolAndEntries>,
-    pub position: i32,
+    pub position: u32,
 }
 
 impl LanguageService {
@@ -776,7 +894,11 @@ impl LanguageService {
         } else if is_rename {
             feature = Feature::Rename;
         }
-        let positions = self.converters.from_lsp_position_for_source_file(source_file, document_position, feature);
+        let positions = self.converters.from_lsp_position_for_source_file(
+            source_file,
+            document_position,
+            feature,
+        );
         if positions.is_empty() {
             return None;
         }
@@ -786,7 +908,14 @@ impl LanguageService {
             if !mapped.fidelity.is_single_segment() {
                 continue;
             }
-            let Some(data) = self.provide_symbols_and_entries_at_position(ctx, program, mapped.script, mapped.position, is_rename, implementations) else {
+            let Some(data) = self.provide_symbols_and_entries_at_position(
+                ctx,
+                program,
+                mapped.script,
+                mapped.position,
+                is_rename,
+                implementations,
+            ) else {
                 continue;
             };
             if !ok {
@@ -796,11 +925,7 @@ impl LanguageService {
             }
             combined.symbols_and_entries.extend(data.symbols_and_entries);
         }
-        if ok {
-            Some(combined)
-        } else {
-            None
-        }
+        if ok { Some(combined) } else { None }
     }
 
     // findallreferences.go:677
@@ -809,7 +934,7 @@ impl LanguageService {
         ctx: &Context,
         program: &'static Program,
         source_file: P<SourceFile>,
-        position: i32,
+        position: u32,
         is_rename: bool,
         implementations: bool,
     ) -> Option<SymbolAndEntriesData> {
@@ -818,33 +943,48 @@ impl LanguageService {
             // Adjust modifier/keyword nodes to the declaration name, matching Strada's findRenameLocations.
             node = get_adjusted_location(node, true /*forRename*/, Some(source_file));
         }
-        if is_rename && !node_is_eligible_for_rename(Some(node)) || implementations && ast::is_source_file(node) {
+        if is_rename && !node_is_eligible_for_rename(Some(node))
+            || implementations && ast::is_source_file(node)
+        {
             return None;
         }
 
-        let entries = self.get_symbol_and_entries(ctx, position, node, program, is_rename, implementations);
+        let entries =
+            self.get_symbol_and_entries(ctx, position, node, program, is_rename, implementations);
         if !implementations {
-            return Some(SymbolAndEntriesData { original_node: Some(node), symbols_and_entries: entries, position });
+            return Some(SymbolAndEntriesData {
+                original_node: Some(node),
+                symbols_and_entries: entries,
+                position,
+            });
         }
 
         let mut implementation_entries: Vec<SymbolAndEntries> = Vec::new();
         let mut queue: VecDeque<Rc<ReferenceEntry>> = VecDeque::new();
         let mut seen_nodes: FxHashSet<Option<P<Node>>> = FxHashSet::default();
         let mut seen_definitions: FxHashSet<Option<P<Symbol>>> = FxHashSet::default();
-        let mut add_to_queue = |symbol_and_entries: Vec<SymbolAndEntries>, queue: &mut VecDeque<Rc<ReferenceEntry>>| {
-            for s in symbol_and_entries {
-                let mut new_references: Vec<Rc<ReferenceEntry>> = Vec::new();
-                for r in &s.references {
-                    if seen_nodes.insert(r.node) {
-                        queue.push_back(Rc::clone(r));
-                        new_references.push(Rc::clone(r));
+        let mut add_to_queue =
+            |symbol_and_entries: Vec<SymbolAndEntries>,
+             queue: &mut VecDeque<Rc<ReferenceEntry>>| {
+                for s in symbol_and_entries {
+                    let mut new_references: Vec<Rc<ReferenceEntry>> = Vec::new();
+                    for r in &s.references {
+                        if seen_nodes.insert(r.node) {
+                            queue.push_back(Rc::clone(r));
+                            new_references.push(Rc::clone(r));
+                        }
+                    }
+                    if !new_references.is_empty()
+                        || s.definition.is_none()
+                        || seen_definitions.insert(s.definition.as_ref().unwrap().symbol)
+                    {
+                        implementation_entries.push(SymbolAndEntries {
+                            definition: s.definition,
+                            references: new_references,
+                        });
                     }
                 }
-                if !new_references.is_empty() || s.definition.is_none() || seen_definitions.insert(s.definition.as_ref().unwrap().symbol) {
-                    implementation_entries.push(SymbolAndEntries { definition: s.definition, references: new_references });
-                }
-            }
-        };
+            };
 
         add_to_queue(entries, &mut queue);
         while let Some(entry) = queue.pop_front() {
@@ -853,18 +993,29 @@ impl LanguageService {
             }
 
             if let Some(entry_node) = entry.node {
-                let entries = self.get_symbol_and_entries(ctx, entry_node.pos(), entry_node, program, is_rename, implementations);
+                let entries = self.get_symbol_and_entries(
+                    ctx,
+                    entry_node.pos().expect_source("reference entries have source positions"),
+                    entry_node,
+                    program,
+                    is_rename,
+                    implementations,
+                );
                 add_to_queue(entries, &mut queue);
             }
         }
-        Some(SymbolAndEntriesData { original_node: Some(node), symbols_and_entries: implementation_entries, position })
+        Some(SymbolAndEntriesData {
+            original_node: Some(node),
+            symbols_and_entries: implementation_entries,
+            position,
+        })
     }
 
     // findallreferences.go:726
     pub(crate) fn get_symbol_and_entries(
         &self,
         ctx: &Context,
-        position: i32,
+        position: u32,
         node: P<Node>,
         program: &'static Program,
         is_rename: bool,
@@ -878,9 +1029,17 @@ impl LanguageService {
             }
         } else {
             options.use_ = ReferenceUse::Rename;
-            options.use_aliases_for_rename = self.user_preferences().use_aliases_for_rename.is_true_or_unknown();
+            options.use_aliases_for_rename =
+                self.user_preferences().use_aliases_for_rename.is_true_or_unknown();
         }
-        self.get_referenced_symbols_for_node(ctx, position, node, program, program.get_source_files(), options)
+        self.get_referenced_symbols_for_node(
+            ctx,
+            position,
+            node,
+            program,
+            program.get_source_files(),
+            options,
+        )
     }
 
     // findallreferences.go:747
@@ -945,6 +1104,10 @@ impl LanguageService {
     }
 
     // findallreferences.go:789
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "Language service operations share the fallible response signature used by LSP and cross-project dispatch."
+    )]
     pub(crate) fn symbol_and_entries_to_references(
         &self,
         _ctx: &Context,
@@ -956,13 +1119,21 @@ impl LanguageService {
         let mut locations: Vec<lsproto::Location> = Vec::new();
         let mut seen_locations: Set<lsproto::Location> = Set::new();
         for symbol in &data.symbols_and_entries {
-            let symbol_locations = self.convert_symbol_and_entries_to_locations(symbol, params.context.include_declaration, Feature::References);
+            let symbol_locations = self.convert_symbol_and_entries_to_locations(
+                symbol,
+                params.context.include_declaration,
+                Feature::References,
+            );
             locations = combine_location_array(locations, &symbol_locations, &mut seen_locations);
         }
         Ok(lsproto::LocationsOrNull { locations: Some(locations) })
     }
 
     // findallreferences.go:800
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "Language service operations share the fallible response signature used by LSP and cross-project dispatch."
+    )]
     pub(crate) fn symbol_and_entries_to_vs_references(
         &self,
         ctx: &Context,
@@ -973,7 +1144,7 @@ impl LanguageService {
         let caps = lsproto::get_client_capabilities(ctx);
         let vs_capability = caps.vs_supports_visual_studio_extensions;
         let mut items: Vec<lsproto::VSReferenceItem> = Vec::new();
-        let mut id: i32 = 0;
+        let mut id: usize = 0;
         let project_name = self.project_id.0.clone();
 
         for s in &data.symbols_and_entries {
@@ -982,12 +1153,18 @@ impl LanguageService {
             };
 
             // Convert definition to info
-            let Some(def_info) = self.definition_to_referenced_symbol_definition_info(ctx, definition, data.original_node, vs_capability, Feature::References) else {
+            let Some(def_info) = self.definition_to_referenced_symbol_definition_info(
+                ctx,
+                definition,
+                data.original_node,
+                vs_capability,
+                Feature::References,
+            ) else {
                 continue;
             };
 
             // Create the definition item
-            let definition_id = id;
+            let definition_id = i32::try_from(id).expect("reference ID exceeds protocol i32");
             let empty_str = String::new();
             let def_item = lsproto::VSReferenceItem {
                 vs_id: definition_id,
@@ -1004,22 +1181,29 @@ impl LanguageService {
             // Create reference items grouped under the definition
             for r in &s.references {
                 // Skip the declaration itself (already represented by the definition item)
-                if definition.symbol.is_some() && is_declaration_of_symbol(r.node, definition.symbol) {
+                if definition.symbol.is_some()
+                    && is_declaration_of_symbol(r.node, definition.symbol)
+                {
                     continue;
                 }
 
-                let Some(ref_location) = self.get_location_of_entry_for_feature(r, Feature::References) else {
+                let Some(ref_location) =
+                    self.get_location_of_entry_for_feature(r, Feature::References)
+                else {
                     continue;
                 };
 
                 // Determine read/write kind
                 let mut kind = lsproto::VSReferenceKind::Read;
-                if r.kind != EntryKind::Range && r.node.is_some() && ast::is_write_access_for_reference(r.node.unwrap()) {
+                if r.kind != EntryKind::Range
+                    && r.node.is_some()
+                    && ast::is_write_access_for_reference(r.node.unwrap())
+                {
                     kind = lsproto::VSReferenceKind::Write;
                 }
 
                 let ref_item = lsproto::VSReferenceItem {
-                    vs_id: id,
+                    vs_id: i32::try_from(id).expect("reference ID exceeds protocol i32"),
                     vs_definition_id: Some(definition_id),
                     vs_location: ref_location,
                     vs_kind: Some(vec![kind]),
@@ -1042,9 +1226,16 @@ pub(crate) struct referencedSymbolDefinitionInfo {
     pub(crate) display_text: Option<lsproto::VSClassifiedTextElement>,
 }
 
-fn single_run(text: &str, classification: lsproto::ClassificationTypeName) -> lsproto::VSClassifiedTextElement {
+fn single_run(
+    text: &str,
+    classification: lsproto::ClassificationTypeName,
+) -> lsproto::VSClassifiedTextElement {
     lsproto::VSClassifiedTextElement {
-        runs: vec![lsproto::VSClassifiedTextRun { text: text.to_string(), classification_type_name: classification.0.to_string(), ..Default::default() }],
+        runs: vec![lsproto::VSClassifiedTextRun {
+            text: text.to_string(),
+            classification_type_name: classification.0.to_string(),
+            ..Default::default()
+        }],
         ..Default::default()
     }
 }
@@ -1064,49 +1255,95 @@ impl LanguageService {
             DefinitionKind::Symbol => {
                 let symbol = def.symbol?;
                 // Get display parts
-                let element = self.get_definition_kind_and_display_parts(ctx, symbol, original_node.unwrap(), vs_capability);
+                let element = self.get_definition_kind_and_display_parts(
+                    ctx,
+                    symbol,
+                    original_node.unwrap(),
+                    vs_capability,
+                );
 
                 // Get the definition node
-                let node = if let Some(&decl) = symbol.declarations().first() { decl.name().unwrap_or(decl) } else { original_node.unwrap() };
+                let node = if let Some(&decl) = symbol.declarations().first() {
+                    decl.name().unwrap_or(decl)
+                } else {
+                    original_node.unwrap()
+                };
 
-                let loc = self.get_location_of_entry_for_feature(&ReferenceEntry::new(EntryKind::Node, Some(node), None), feature)?;
+                let loc = self.get_location_of_entry_for_feature(
+                    &ReferenceEntry::new(EntryKind::Node, Some(node), None),
+                    feature,
+                )?;
                 Some(referencedSymbolDefinitionInfo { location: loc, display_text: Some(element) })
             }
 
             DefinitionKind::Label => {
                 let node = def.node?;
-                let loc = self.get_location_of_entry_for_feature(&ReferenceEntry::new(EntryKind::Node, Some(node), None), feature)?;
-                Some(referencedSymbolDefinitionInfo { location: loc, display_text: Some(single_run(node.text(), lsproto::ClassificationTypeName::Text)) })
+                let loc = self.get_location_of_entry_for_feature(
+                    &ReferenceEntry::new(EntryKind::Node, Some(node), None),
+                    feature,
+                )?;
+                Some(referencedSymbolDefinitionInfo {
+                    location: loc,
+                    display_text: Some(single_run(
+                        node.text(),
+                        lsproto::ClassificationTypeName::Text,
+                    )),
+                })
             }
 
             DefinitionKind::Keyword => {
                 let node = def.node?;
                 let name = scanner::token_to_string(node.kind());
-                let loc = self.get_location_of_entry_for_feature(&ReferenceEntry::new(EntryKind::Node, Some(node), None), feature)?;
-                Some(referencedSymbolDefinitionInfo { location: loc, display_text: Some(single_run(name, lsproto::ClassificationTypeName::Keyword)) })
+                let loc = self.get_location_of_entry_for_feature(
+                    &ReferenceEntry::new(EntryKind::Node, Some(node), None),
+                    feature,
+                )?;
+                Some(referencedSymbolDefinitionInfo {
+                    location: loc,
+                    display_text: Some(single_run(name, lsproto::ClassificationTypeName::Keyword)),
+                })
             }
 
             DefinitionKind::This => {
                 let node = def.node?;
                 let symbol = def.symbol?;
-                let element = self.get_definition_kind_and_display_parts(ctx, symbol, node, vs_capability);
-                let loc = self.get_location_of_entry_for_feature(&ReferenceEntry::new(EntryKind::Node, Some(node), None), feature)?;
+                let element =
+                    self.get_definition_kind_and_display_parts(ctx, symbol, node, vs_capability);
+                let loc = self.get_location_of_entry_for_feature(
+                    &ReferenceEntry::new(EntryKind::Node, Some(node), None),
+                    feature,
+                )?;
                 Some(referencedSymbolDefinitionInfo { location: loc, display_text: Some(element) })
             }
 
             DefinitionKind::String => {
                 let node = def.node?;
-                let loc = self.get_location_of_entry_for_feature(&ReferenceEntry::new(EntryKind::Node, Some(node), None), feature)?;
-                Some(referencedSymbolDefinitionInfo { location: loc, display_text: Some(single_run(node.text(), lsproto::ClassificationTypeName::String)) })
+                let loc = self.get_location_of_entry_for_feature(
+                    &ReferenceEntry::new(EntryKind::Node, Some(node), None),
+                    feature,
+                )?;
+                Some(referencedSymbolDefinitionInfo {
+                    location: loc,
+                    display_text: Some(single_run(
+                        node.text(),
+                        lsproto::ClassificationTypeName::String,
+                    )),
+                })
             }
 
             DefinitionKind::TripleSlashReference => {
                 let triple_slash_file_ref = def.triple_slash_file_ref.as_ref()?;
                 let file = triple_slash_file_ref.file?;
                 let node = file.as_node();
-                let loc = self.get_location_of_entry_for_feature(&ReferenceEntry::new(EntryKind::Node, Some(node), None), feature)?;
+                let loc = self.get_location_of_entry_for_feature(
+                    &ReferenceEntry::new(EntryKind::Node, Some(node), None),
+                    feature,
+                )?;
                 let text = format!("\"{}\"", triple_slash_file_ref.reference.unwrap().file_name);
-                Some(referencedSymbolDefinitionInfo { location: loc, display_text: Some(single_run(&text, lsproto::ClassificationTypeName::String)) })
+                Some(referencedSymbolDefinitionInfo {
+                    location: loc,
+                    display_text: Some(single_run(&text, lsproto::ClassificationTypeName::String)),
+                })
             }
         }
     }
@@ -1124,12 +1361,26 @@ impl LanguageService {
         let mut c = program.get_type_checker(ctx);
         let c: &mut Checker = &mut c;
 
-        let meaning = get_intersecting_meaning_from_declarations(Some(original_node), symbol, SemanticMeaning::All);
+        let meaning = get_intersecting_meaning_from_declarations(
+            Some(original_node),
+            symbol,
+            SemanticMeaning::All,
+        );
 
-        let info = get_quick_info_and_declaration_at_location(c, Some(symbol), original_node, None, vs_capability, meaning);
+        let info = get_quick_info_and_declaration_at_location(
+            c,
+            Some(symbol),
+            original_node,
+            None,
+            vs_capability,
+            meaning,
+        );
 
         if vs_capability {
-            return lsproto::VSClassifiedTextElement { runs: info.display_parts.get_runs().to_vec(), ..Default::default() };
+            return lsproto::VSClassifiedTextElement {
+                runs: info.display_parts.get_runs().to_vec(),
+                ..Default::default()
+            };
         }
         // Fallback: single unclassified run with the full text
         let text = info.display_parts.as_str().to_string();
@@ -1143,7 +1394,12 @@ impl LanguageService {
         params: &lsproto::ImplementationParams,
         orchestrator: Option<&dyn CrossProjectOrchestrator>,
     ) -> Result<lsproto::ImplementationResponse, lsproto::Error> {
-        self.provide_implementations_ex(ctx, params, SymbolEntryTransformOptions::default(), orchestrator)
+        self.provide_implementations_ex(
+            ctx,
+            params,
+            SymbolEntryTransformOptions::default(),
+            orchestrator,
+        )
     }
 
     // findallreferences.go:1020
@@ -1190,6 +1446,10 @@ impl LanguageService {
     }
 
     // findallreferences.go:1048
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "Language service operations share the fallible response signature used by LSP and cross-project dispatch."
+    )]
     pub(crate) fn symbol_and_entries_to_implementations(
         &self,
         ctx: &Context,
@@ -1199,32 +1459,54 @@ impl LanguageService {
     ) -> Result<lsproto::ImplementationResponse, lsproto::Error> {
         let mut seen_nodes: FxHashSet<Option<P<Node>>> = FxHashSet::default();
         let mut entries: Vec<Rc<ReferenceEntry>> = Vec::new();
-        for entry in &data.symbols_and_entries {
-            for r in &entry.references {
-                if seen_nodes.insert(r.node) && (!options.drop_origin_nodes || !r.node.unwrap().loc().contains_inclusive(data.position)) {
-                    entries.push(Rc::clone(r));
-                }
-            }
-        }
+        entries.extend(
+            data.symbols_and_entries
+                .iter()
+                .flat_map(|entry| &entry.references)
+                .filter(|r| {
+                    seen_nodes.insert(r.node)
+                        && (!options.drop_origin_nodes
+                            || !r.node.unwrap().loc().contains_inclusive(data.position.into()))
+                })
+                .map(Rc::clone),
+        );
 
-        if !options.require_locations_result && lsproto::get_client_capabilities(ctx).text_document.implementation.link_support {
+        if !options.require_locations_result
+            && lsproto::get_client_capabilities(ctx).text_document.implementation.link_support
+        {
             let links = self.convert_entries_to_location_links(&entries, Feature::Implementation);
-            return Ok(lsproto::LocationOrLocationsOrDefinitionLinksOrNull { definition_links: Some(links), ..Default::default() });
+            return Ok(lsproto::LocationOrLocationsOrDefinitionLinksOrNull {
+                definition_links: Some(links),
+                ..Default::default()
+            });
         }
         let locations = self.convert_entries_to_locations(&entries, Feature::Implementation);
-        Ok(lsproto::LocationOrLocationsOrDefinitionLinksOrNull { locations: Some(locations), ..Default::default() })
+        Ok(lsproto::LocationOrLocationsOrDefinitionLinksOrNull {
+            locations: Some(locations),
+            ..Default::default()
+        })
     }
 
     // == functions for conversions ==
     // findallreferences.go:1068
-    pub(crate) fn convert_symbol_and_entries_to_locations(&self, s: &SymbolAndEntries, include_declarations: bool, feature: Feature) -> Vec<lsproto::Location> {
+    pub(crate) fn convert_symbol_and_entries_to_locations(
+        &self,
+        s: &SymbolAndEntries,
+        include_declarations: bool,
+        feature: Feature,
+    ) -> Vec<lsproto::Location> {
         let filtered: Vec<Rc<ReferenceEntry>>;
         let mut references: &[Rc<ReferenceEntry>] = &s.references;
 
         // !!! includeDeclarations
         if !include_declarations {
             if let Some(definition) = &s.definition {
-                filtered = s.references.iter().filter(|entry| !is_declaration_of_symbol(entry.node, definition.symbol)).cloned().collect();
+                filtered = s
+                    .references
+                    .iter()
+                    .filter(|entry| !is_declaration_of_symbol(entry.node, definition.symbol))
+                    .cloned()
+                    .collect();
                 references = &filtered;
             }
         }
@@ -1244,9 +1526,10 @@ pub(crate) fn is_declaration_of_symbol(node: Option<P<Node>>, target: Option<P<S
         source = Some(decl);
     } else if node.kind() == Kind::DefaultKeyword {
         source = node.parent();
-    } else if ast::is_literal_computed_property_declaration_name(node) {
-        source = node.parent().unwrap().parent();
-    } else if node.kind() == Kind::ConstructorKeyword && ast::is_constructor_declaration(node.parent().unwrap()) {
+    } else if (ast::is_literal_computed_property_declaration_name(node))
+        || (node.kind() == Kind::ConstructorKeyword
+            && ast::is_constructor_declaration(node.parent().unwrap()))
+    {
         source = node.parent().unwrap().parent();
     }
 
@@ -1258,56 +1541,77 @@ pub(crate) fn is_declaration_of_symbol(node: Option<P<Node>>, target: Option<P<S
 
 impl LanguageService {
     // findallreferences.go:1105
-    pub(crate) fn convert_entries_to_locations(&self, entries: &[Rc<ReferenceEntry>], feature: Feature) -> Vec<lsproto::Location> {
+    pub(crate) fn convert_entries_to_locations(
+        &self,
+        entries: &[Rc<ReferenceEntry>],
+        feature: Feature,
+    ) -> Vec<lsproto::Location> {
         let mut locations: Vec<lsproto::Location> = Vec::with_capacity(entries.len());
-        for entry in entries {
-            if let Some(location) = self.get_location_of_entry_for_feature(entry, feature) {
-                locations.push(location);
-            }
-        }
+        locations.extend(
+            entries
+                .iter()
+                .filter_map(|entry| self.get_location_of_entry_for_feature(entry, feature)),
+        );
         locations
     }
 
     // findallreferences.go:1116
-    pub(crate) fn convert_entries_to_location_links(&self, entries: &[Rc<ReferenceEntry>], feature: Feature) -> Vec<lsproto::LocationLink> {
+    pub(crate) fn convert_entries_to_location_links(
+        &self,
+        entries: &[Rc<ReferenceEntry>],
+        feature: Feature,
+    ) -> Vec<lsproto::LocationLink> {
         let mut links: Vec<lsproto::LocationLink> = Vec::with_capacity(entries.len());
-        for entry in entries {
+        links.extend(entries.iter().filter_map(|entry| {
             // Get the selection range (the actual reference)
-            let Some(loc) = self.get_location_of_entry_for_feature(entry, feature) else {
-                continue;
-            };
+            let loc = self.get_location_of_entry_for_feature(entry, feature)?;
             let target_selection_range = loc.range;
             let mut target_range = target_selection_range;
 
             // For entries with nodes, compute ranges directly from the node
             if entry.node.is_some() {
                 // Get the context range (broader scope including declaration context)
-                let context_text_range = to_context_range(entry.text_range.get(), entry.source_file.get().unwrap(), entry.context);
+                let context_text_range = to_context_range(
+                    entry.text_range.get(),
+                    entry.source_file.get().unwrap(),
+                    entry.context,
+                );
                 if let Some(context_text_range) = context_text_range {
-                    let (context_location, fidelity) = self.source_file_range_to_lsp_location_for_feature(entry.source_file.get().unwrap(), context_text_range, feature);
+                    let (context_location, fidelity) = self
+                        .source_file_range_to_lsp_location_for_feature(
+                            entry.source_file.get().unwrap(),
+                            context_text_range,
+                            feature,
+                        );
                     if !fidelity.is_none() && context_location.uri == loc.uri {
                         target_range = context_location.range;
                     }
                 }
             }
 
-            links.push(lsproto::LocationLink {
-                target_uri: lsconv::file_name_to_document_uri(entry.source_file.get().unwrap().original_file_name()),
+            Some(lsproto::LocationLink {
+                target_uri: lsconv::file_name_to_document_uri(
+                    entry.source_file.get().unwrap().original_file_name(),
+                ),
                 target_range,
                 target_selection_range,
                 ..Default::default()
-            });
-        }
+            })
+        }));
         links
     }
 
     // Go's variadic `referencesToMerge ...[]*SymbolAndEntries` is a Vec of groups.
     // findallreferences.go:1149
-    pub(crate) fn merge_references(&self, program: &'static Program, references_to_merge: Vec<Vec<SymbolAndEntries>>) -> Vec<SymbolAndEntries> {
+    pub(crate) fn merge_references(
+        &self,
+        program: &'static Program,
+        references_to_merge: Vec<Vec<SymbolAndEntries>>,
+    ) -> Vec<SymbolAndEntries> {
         let mut result: Vec<SymbolAndEntries> = Vec::new();
-        let get_source_file_index_of_entry = |entry: &ReferenceEntry| -> isize {
-            self.resolve_entry_source(entry);
-            program.source_files().iter().position(|&f| Some(f) == entry.source_file.get()).map_or(-1, |i| i as isize)
+        let get_source_file_index_of_entry = |entry: &ReferenceEntry| -> Option<usize> {
+            Self::resolve_entry_source(entry);
+            program.source_files().iter().position(|&f| Some(f) == entry.source_file.get())
         };
 
         for references in references_to_merge {
@@ -1319,13 +1623,17 @@ impl LanguageService {
                 continue;
             }
             for entry in references {
-                if entry.definition.is_none() || entry.definition.as_ref().unwrap().kind != DefinitionKind::Symbol {
+                if entry.definition.is_none()
+                    || entry.definition.as_ref().unwrap().kind != DefinitionKind::Symbol
+                {
                     result.push(entry);
                     continue;
                 }
                 let symbol = entry.definition.as_ref().unwrap().symbol;
                 let ref_index = result.iter().position(|r| {
-                    r.definition.as_ref().is_some_and(|definition| definition.kind == DefinitionKind::Symbol && definition.symbol == symbol)
+                    r.definition.as_ref().is_some_and(|definition| {
+                        definition.kind == DefinitionKind::Symbol && definition.symbol == symbol
+                    })
                 });
                 let Some(ref_index) = ref_index else {
                     result.push(entry);
@@ -1342,9 +1650,13 @@ impl LanguageService {
                         return entry1_file.cmp(&entry2_file);
                     }
 
-                    lsproto::compare_ranges(self.get_range_of_entry(entry1), self.get_range_of_entry(entry2)).cmp(&0)
+                    lsproto::compare_ranges(
+                        self.get_range_of_entry(entry1),
+                        self.get_range_of_entry(entry2),
+                    )
                 });
-                result[ref_index] = SymbolAndEntries { definition: reference.definition, references: sorted_refs };
+                result[ref_index] =
+                    SymbolAndEntries { definition: reference.definition, references: sorted_refs };
             }
         }
         result
@@ -1354,8 +1666,21 @@ impl LanguageService {
     // It returns all referenced symbols and their reference entries for the given node across the provided source files.
     // (`_exported`: the unexported Go method of the same name exists.)
     // findallreferences.go:1202
-    pub fn get_referenced_symbols_for_node_exported(&self, ctx: &Context, position: i32, node: P<Node>, source_files: &[P<SourceFile>]) -> Vec<SymbolAndEntries> {
-        self.get_referenced_symbols_for_node(ctx, position, node, self.get_program(), source_files, RefOptions { use_: ReferenceUse::References, ..Default::default() })
+    pub fn get_referenced_symbols_for_node_exported(
+        &self,
+        ctx: &Context,
+        position: u32,
+        node: P<Node>,
+        source_files: &[P<SourceFile>],
+    ) -> Vec<SymbolAndEntries> {
+        self.get_referenced_symbols_for_node(
+            ctx,
+            position,
+            node,
+            self.get_program(),
+            source_files,
+            RefOptions { use_: ReferenceUse::References, ..Default::default() },
+        )
     }
 }
 
@@ -1373,7 +1698,11 @@ impl LanguageService {
     // For each reference to the signature's name, it returns the reference node and
     // the call expression it appears in (nil if the reference is not in a call position).
     // findallreferences.go:1218
-    pub fn get_signature_usages(&self, ctx: &Context, signature_decl: P<Node>) -> Vec<SignatureUsage> {
+    pub fn get_signature_usages(
+        &self,
+        ctx: &Context,
+        signature_decl: P<Node>,
+    ) -> Vec<SignatureUsage> {
         let Some(name) = signature_decl.name() else {
             return Vec::new();
         };
@@ -1382,45 +1711,47 @@ impl LanguageService {
         }
 
         let source_files = self.get_program().get_source_files();
-        let entries = self.get_referenced_symbols_for_node_exported(ctx, name.pos(), name, source_files);
+        let entries = self.get_referenced_symbols_for_node_exported(
+            ctx,
+            name.pos().expect_source("signature names have source positions"),
+            name,
+            source_files,
+        );
 
         // Collect all declaration name nodes for the target symbol so we can
         // filter them out — the caller wants usages, not declarations.
         let mut decl_names: FxHashSet<P<Node>> = FxHashSet::default();
-        for entry in &entries {
-            if let Some(symbol) = entry.definition.as_ref().and_then(|d| d.symbol) {
-                for &decl in symbol.declarations() {
-                    if let Some(n) = decl.name() {
-                        decl_names.insert(n);
-                    }
-                }
-            }
-        }
+        decl_names.extend(
+            entries
+                .iter()
+                .filter_map(|entry| entry.definition.as_ref()?.symbol)
+                .flat_map(|symbol| symbol.declarations().iter().filter_map(|decl| decl.name())),
+        );
 
         let mut result: Vec<SignatureUsage> = Vec::new();
         for entry in &entries {
-            for r in entry.references() {
+            result.extend(entry.references().iter().filter_map(|r| {
                 if !r.is_node_entry() {
-                    continue;
+                    return None;
                 }
-                let Some(node) = r.node() else {
-                    continue;
-                };
+                let node = r.node()?;
                 if decl_names.contains(&node) {
-                    continue;
+                    return None;
                 }
 
                 let called = ast::climb_past_property_access(node);
 
                 let mut call_expr: Option<P<Node>> = None;
                 if let Some(called_parent) = called.parent() {
-                    if ast::is_call_expression(called_parent) && called_parent.expression() == Some(called) {
+                    if ast::is_call_expression(called_parent)
+                        && called_parent.expression() == Some(called)
+                    {
                         call_expr = Some(called_parent);
                     }
                 }
 
-                result.push(SignatureUsage { name: node, call: call_expr });
-            }
+                Some(SignatureUsage { name: node, call: call_expr })
+            }));
         }
         result
     }
@@ -1431,7 +1762,7 @@ impl LanguageService {
     pub(crate) fn get_referenced_symbols_for_node(
         &self,
         ctx: &Context,
-        position: i32,
+        position: u32,
         node: P<Node>,
         program: &'static Program,
         source_files: &[P<SourceFile>],
@@ -1440,19 +1771,22 @@ impl LanguageService {
         let mut node = node;
         // !!! cancellationToken
         let mut source_files_set: Set<String> = new_set_with_size_hint(source_files.len());
-        for file in source_files {
-            source_files_set.add(file.file_name().to_string());
-        }
+        source_files_set.m.extend(source_files.iter().map(|file| file.file_name().to_string()));
 
         if options.use_ == ReferenceUse::References || options.use_ == ReferenceUse::Rename {
-            node = get_adjusted_location(node, options.use_ == ReferenceUse::Rename, ast::get_source_file_of_node(node));
+            node = get_adjusted_location(
+                node,
+                options.use_ == ReferenceUse::Rename,
+                ast::get_source_file_of_node(node),
+            );
         }
 
         let mut checker = program.get_type_checker(ctx);
         let checker: &mut Checker = &mut checker;
 
         if node.kind() == Kind::SourceFile {
-            let resolved_ref = get_reference_at_position(node.as_source_file_p(), position, program);
+            let resolved_ref =
+                get_reference_at_position(node.as_source_file_p(), position, program);
             let Some(resolved_ref) = resolved_ref else {
                 return Vec::new();
             };
@@ -1460,8 +1794,17 @@ impl LanguageService {
                 return Vec::new();
             };
 
-            if let Some(module_symbol) = resolved_file.as_node().symbol().map(|s| checker.get_merged_symbol_exported(s)) {
-                return self.get_referenced_symbols_for_module(checker, program, module_symbol, false /*excludeImportTypeOfExportEquals*/, source_files, &source_files_set);
+            if let Some(module_symbol) =
+                resolved_file.as_node().symbol().map(|s| checker.get_merged_symbol_exported(s))
+            {
+                return Self::get_referenced_symbols_for_module(
+                    checker,
+                    program,
+                    module_symbol,
+                    false, /*excludeImportTypeOfExportEquals*/
+                    source_files,
+                    &source_files_set,
+                );
             }
 
             // !!! not implemented
@@ -1474,9 +1817,15 @@ impl LanguageService {
                     kind: DefinitionKind::TripleSlashReference,
                     symbol: None,
                     node: None,
-                    triple_slash_file_ref: Some(TripleSlashDefinition { reference: resolved_ref.reference, file: None }),
+                    triple_slash_file_ref: Some(TripleSlashDefinition {
+                        reference: resolved_ref.reference,
+                        file: None,
+                    }),
                 }),
-                references: get_references_for_non_module(resolved_file, program /*fileIncludeReasons,*/),
+                references: get_references_for_non_module(
+                    resolved_file,
+                    program, /*fileIncludeReasons,*/
+                ),
             }];
         }
 
@@ -1488,7 +1837,12 @@ impl LanguageService {
         }
 
         // constructors should use the class symbol, detected by name, if present
-        let location = if node.kind() == Kind::Constructor && node.parent().unwrap().name().is_some() { node.parent().unwrap().name().unwrap() } else { node };
+        let location =
+            if node.kind() == Kind::Constructor && node.parent().unwrap().name().is_some() {
+                node.parent().unwrap().name().unwrap()
+            } else {
+                node
+            };
         let symbol = checker.get_symbol_at_location_exported(location);
         // Could not find a symbol e.g. unknown identifier
         let Some(symbol) = symbol else {
@@ -1507,7 +1861,7 @@ impl LanguageService {
                     // anything useful, but I guess it's better than nothing, and there's an existing
                     // test that expects this to happen (fourslash/cases/untypedModuleImport.ts).
                 }
-                return self.get_references_for_string_literal(ctx, node, source_files, checker);
+                return Self::get_references_for_string_literal(ctx, node, source_files, checker);
             }
             return Vec::new();
         };
@@ -1516,31 +1870,66 @@ impl LanguageService {
             let Some(parent) = symbol.parent() else {
                 return Vec::new();
             };
-            return self.get_referenced_symbols_for_module(checker, program, parent, false /*excludeImportTypeOfExportEquals*/, source_files, &source_files_set);
+            return Self::get_referenced_symbols_for_module(
+                checker,
+                program,
+                parent,
+                false, /*excludeImportTypeOfExportEquals*/
+                source_files,
+                &source_files_set,
+            );
         }
 
-        let module_references =
-            self.get_referenced_symbols_for_module_if_declared_by_source_file(ctx, Some(symbol), program, source_files, checker, options, &source_files_set);
+        let module_references = self.get_referenced_symbols_for_module_if_declared_by_source_file(
+            ctx,
+            Some(symbol),
+            program,
+            source_files,
+            checker,
+            options,
+            &source_files_set,
+        );
         if let Some(module_references) = &module_references {
             if !symbol.flags().intersects(SymbolFlags::Transient) {
                 return module_references.clone();
             }
         }
 
-        let aliased_symbol = get_merged_aliased_symbol_of_namespace_export_declaration(node, symbol, checker);
-        let module_references_of_export_target =
-            self.get_referenced_symbols_for_module_if_declared_by_source_file(ctx, aliased_symbol, program, source_files, checker, options, &source_files_set);
+        let aliased_symbol =
+            get_merged_aliased_symbol_of_namespace_export_declaration(node, symbol, checker);
+        let module_references_of_export_target = self
+            .get_referenced_symbols_for_module_if_declared_by_source_file(
+                ctx,
+                aliased_symbol,
+                program,
+                source_files,
+                checker,
+                options,
+                &source_files_set,
+            );
 
-        let references = get_referenced_symbols_for_symbol(ctx, program, symbol, Some(node), source_files, &source_files_set, checker, options);
+        let references = get_referenced_symbols_for_symbol(
+            ctx,
+            program,
+            symbol,
+            Some(node),
+            source_files,
+            &source_files_set,
+            checker,
+            options,
+        );
         self.merge_references(
             program,
-            vec![module_references.unwrap_or_default(), references, module_references_of_export_target.unwrap_or_default()],
+            vec![
+                module_references.unwrap_or_default(),
+                references,
+                module_references_of_export_target.unwrap_or_default(),
+            ],
         )
     }
 
     // findallreferences.go:1354
     pub(crate) fn get_references_for_string_literal(
-        &self,
         ctx: &Context,
         node: P<Node>, /*StringLiteralLike*/
         source_files: &[P<SourceFile>],
@@ -1552,33 +1941,55 @@ impl LanguageService {
             if ctx.err().is_some() {
                 continue;
             }
-            let possible_references = get_possible_symbol_reference_nodes(source_file, node.text(), None /*container*/);
-            for r in possible_references {
+            let possible_references = get_possible_symbol_reference_nodes(
+                source_file,
+                node.text(),
+                None, /*container*/
+            );
+            references.extend(possible_references.into_iter().filter_map(|r| {
                 if ast::is_string_literal_like(r) && r.text() == node.text() {
                     if let Some(t) = t {
-                        let ref_type = get_contextual_type_from_parent_or_ancestor_type_node(r, checker);
-                        if t != checker.get_string_type() && (Some(t) == ref_type || is_string_literal_property_reference(r, checker)) {
-                            references.push(new_node_entry_with_kind(r, EntryKind::StringLiteral));
+                        let ref_type =
+                            get_contextual_type_from_parent_or_ancestor_type_node(r, checker);
+                        if t != checker.get_string_type()
+                            && (Some(t) == ref_type
+                                || is_string_literal_property_reference(r, checker))
+                        {
+                            Some(new_node_entry_with_kind(r, EntryKind::StringLiteral))
+                        } else {
+                            None
                         }
                     } else {
-                        if ast::is_no_substitution_template_literal(r) && !tsrs_printer::range_is_on_single_line(r.loc(), source_file) {
-                            continue;
+                        if ast::is_no_substitution_template_literal(r)
+                            && !tsrs_printer::range_is_on_single_line(r.loc(), source_file)
+                        {
+                            return None;
                         }
-                        references.push(new_node_entry_with_kind(r, EntryKind::StringLiteral));
+                        Some(new_node_entry_with_kind(r, EntryKind::StringLiteral))
                     }
+                } else {
+                    None
                 }
-            }
+            }));
         }
 
         vec![SymbolAndEntries {
-            definition: Some(Definition { kind: DefinitionKind::String, symbol: None, node: Some(node), triple_slash_file_ref: None }),
+            definition: Some(Definition {
+                kind: DefinitionKind::String,
+                symbol: None,
+                node: Some(node),
+                triple_slash_file_ref: None,
+            }),
             references,
         }]
     }
 }
 
 // findallreferences.go:1394
-pub(crate) fn is_string_literal_property_reference(node: P<Node> /*StringLiteralLike*/, checker: &mut Checker) -> bool {
+pub(crate) fn is_string_literal_property_reference(
+    node: P<Node>, /*StringLiteralLike*/
+    checker: &mut Checker,
+) -> bool {
     let parent = node.parent().unwrap();
     if ast::is_property_signature_declaration(parent) {
         let t = checker.get_type_at_location(parent.parent().unwrap());
@@ -1602,21 +2013,32 @@ impl LanguageService {
     ) -> Option<Vec<SymbolAndEntries>> {
         let module_source_file_name: &str;
         let symbol = symbol?;
-        if !(symbol.flags().intersects(SymbolFlags::Module) && !symbol.declarations().is_empty()) {
+        if !symbol.flags().intersects(SymbolFlags::Module) || symbol.declarations().is_empty() {
             return None;
         }
-        if let Some(module_source_file) = symbol.declarations().iter().copied().find(|&d| ast::is_source_file(d)) {
+        {
+            let module_source_file =
+                symbol.declarations().iter().copied().find(|&d| ast::is_source_file(d))?;
             module_source_file_name = module_source_file.as_source_file().file_name();
-        } else {
-            return None;
         }
-        let export_equals = symbol.exports().and_then(|exports| exports.lookup(ast::InternalSymbolNameExportEquals));
+        let export_equals = symbol
+            .exports()
+            .and_then(|exports| exports.lookup(ast::InternalSymbolNameExportEquals));
         // If exportEquals != nil, we're about to add references to `import("mod")` anyway, so don't double-count them.
-        let module_references = self.get_referenced_symbols_for_module(checker, program, symbol, export_equals.is_some(), source_files, source_files_set);
+        let module_references = Self::get_referenced_symbols_for_module(
+            checker,
+            program,
+            symbol,
+            export_equals.is_some(),
+            source_files,
+            source_files_set,
+        );
         let Some(export_equals) = export_equals else {
             return Some(module_references);
         };
-        if !export_equals.flags().intersects(SymbolFlags::Alias) || !source_files_set.has(&module_source_file_name.to_string()) {
+        if !export_equals.flags().intersects(SymbolFlags::Alias)
+            || !source_files_set.has(&module_source_file_name.to_string())
+        {
             return Some(module_references);
         }
         let (symbol, _) = checker.resolve_alias_exported(Some(export_equals));
@@ -1624,7 +2046,16 @@ impl LanguageService {
             program,
             vec![
                 module_references,
-                get_referenced_symbols_for_symbol(ctx, program, symbol.unwrap(), None /*node*/, source_files, source_files_set, checker /*, cancellationToken*/, options),
+                get_referenced_symbols_for_symbol(
+                    ctx,
+                    program,
+                    symbol.unwrap(),
+                    None, /*node*/
+                    source_files,
+                    source_files_set,
+                    checker, /*, cancellationToken*/
+                    options,
+                ),
             ],
         ))
     }
@@ -1632,10 +2063,14 @@ impl LanguageService {
 
 // Go returns nil for "not special"; `None` is Go's nil.
 // findallreferences.go:1421
-pub(crate) fn get_referenced_symbols_special(node: P<Node>, source_files: &[P<SourceFile>]) -> Option<Vec<SymbolAndEntries>> {
+pub(crate) fn get_referenced_symbols_special(
+    node: P<Node>,
+    source_files: &[P<SourceFile>],
+) -> Option<Vec<SymbolAndEntries>> {
     if is_type_keyword(node.kind()) {
         // A void expression (i.e., `void foo()`) is not special, but the `void` type is.
-        if node.kind() == Kind::VoidKeyword && node.parent().unwrap().kind() == Kind::VoidExpression {
+        if node.kind() == Kind::VoidKeyword && node.parent().unwrap().kind() == Kind::VoidExpression
+        {
             return None;
         }
 
@@ -1661,7 +2096,12 @@ pub(crate) fn get_referenced_symbols_special(node: P<Node>, source_files: &[P<So
 
     if node.kind() == Kind::StaticKeyword && parent.kind() == Kind::ClassStaticBlockDeclaration {
         return Some(vec![SymbolAndEntries {
-            definition: Some(Definition { kind: DefinitionKind::Keyword, symbol: None, node: Some(node), triple_slash_file_ref: None }),
+            definition: Some(Definition {
+                kind: DefinitionKind::Keyword,
+                symbol: None,
+                node: Some(node),
+                triple_slash_file_ref: None,
+            }),
             references: vec![new_node_entry(node)],
         }]);
     }
@@ -1671,7 +2111,10 @@ pub(crate) fn get_referenced_symbols_special(node: P<Node>, source_files: &[P<So
         // if we have a label definition, look within its statement for references, if not, then
         // the label is undefined and we have no results..
         if let Some(label_definition) = get_target_label(Some(parent), node.text()) {
-            return Some(get_label_references_in_node(label_definition.parent().unwrap(), label_definition));
+            return Some(get_label_references_in_node(
+                label_definition.parent().unwrap(),
+                label_definition,
+            ));
         }
         return None;
     }
@@ -1693,30 +2136,46 @@ pub(crate) fn get_referenced_symbols_special(node: P<Node>, source_files: &[P<So
 }
 
 // findallreferences.go:1477
-pub(crate) fn get_label_references_in_node(container: P<Node>, target_label: P<Node>) -> Vec<SymbolAndEntries> {
+pub(crate) fn get_label_references_in_node(
+    container: P<Node>,
+    target_label: P<Node>,
+) -> Vec<SymbolAndEntries> {
     let source_file = ast::get_source_file_of_node(container).unwrap();
     let label_name = target_label.text();
-    let references: Vec<Rc<ReferenceEntry>> = get_possible_symbol_reference_nodes(source_file, label_name, Some(container))
-        .into_iter()
-        .filter_map(|node| {
-            // Only pick labels that are either the target label, or have a target that is the target label
-            if node == target_label || (is_jump_statement_target(node) && get_target_label(Some(node), label_name) == Some(target_label)) {
-                return Some(new_node_entry(node));
-            }
-            None
-        })
-        .collect();
+    let references: Vec<Rc<ReferenceEntry>> =
+        get_possible_symbol_reference_nodes(source_file, label_name, Some(container))
+            .into_iter()
+            .filter_map(|node| {
+                // Only pick labels that are either the target label, or have a target that is the target label
+                if node == target_label
+                    || (is_jump_statement_target(node)
+                        && get_target_label(Some(node), label_name) == Some(target_label))
+                {
+                    return Some(new_node_entry(node));
+                }
+                None
+            })
+            .collect();
     vec![new_symbol_and_entries(DefinitionKind::Label, Some(target_label), None, references)]
 }
 
 // findallreferences.go:1490
-pub(crate) fn get_references_for_this_keyword(this_or_super_keyword: P<Node>, source_files: &[P<SourceFile>]) -> Option<Vec<SymbolAndEntries>> {
-    let mut search_space_node = ast::get_this_container(this_or_super_keyword, false /*includeArrowFunctions*/, false /*includeClassComputedPropertyName*/);
+pub(crate) fn get_references_for_this_keyword(
+    this_or_super_keyword: P<Node>,
+    source_files: &[P<SourceFile>],
+) -> Option<Vec<SymbolAndEntries>> {
+    let mut search_space_node = ast::get_this_container(
+        this_or_super_keyword,
+        false, /*includeArrowFunctions*/
+        false, /*includeClassComputedPropertyName*/
+    );
 
     // Whether 'this' occurs in a static context within a class.
     let mut static_flag = ModifierFlags::Static;
     let is_parameter_name = |node: P<Node>| -> bool {
-        node.kind() == Kind::Identifier && node.parent().unwrap().kind() == Kind::Parameter && node.parent().unwrap().name() == Some(node)
+        node.kind() == Kind::Identifier
+            && node.parent().unwrap().kind() == Kind::Parameter
+            && node.parent().unwrap().name() == Some(node)
     };
 
     match search_space_node.kind() {
@@ -1727,7 +2186,8 @@ pub(crate) fn get_references_for_this_keyword(this_or_super_keyword: P<Node>, so
         | Kind::Constructor
         | Kind::GetAccessor
         | Kind::SetAccessor => {
-            if (search_space_node.kind() == Kind::MethodDeclaration || search_space_node.kind() == Kind::MethodSignature)
+            if (search_space_node.kind() == Kind::MethodDeclaration
+                || search_space_node.kind() == Kind::MethodSignature)
                 && ast::is_object_literal_method(search_space_node)
             {
                 static_flag &= search_space_node.modifier_flags();
@@ -1738,7 +2198,9 @@ pub(crate) fn get_references_for_this_keyword(this_or_super_keyword: P<Node>, so
             }
         }
         Kind::SourceFile => {
-            if ast::is_external_module(search_space_node.as_source_file_p()) || is_parameter_name(this_or_super_keyword) {
+            if ast::is_external_module(search_space_node.as_source_file_p())
+                || is_parameter_name(this_or_super_keyword)
+            {
                 return None;
             }
         }
@@ -1749,43 +2211,66 @@ pub(crate) fn get_references_for_this_keyword(this_or_super_keyword: P<Node>, so
         _ => return None,
     }
 
-    let files_to_search: Vec<P<SourceFile>> =
-        if search_space_node.kind() != Kind::SourceFile { vec![ast::get_source_file_of_node(search_space_node).unwrap()] } else { source_files.to_vec() };
+    let files_to_search: Vec<P<SourceFile>> = if search_space_node.kind() != Kind::SourceFile {
+        vec![ast::get_source_file_of_node(search_space_node).unwrap()]
+    } else {
+        source_files.to_vec()
+    };
     let mut references: Vec<Rc<ReferenceEntry>> = Vec::new();
     for source_file in files_to_search {
         // cancellationToken.throwIfCancellationRequested();
-        let container = if search_space_node.kind() == Kind::SourceFile { source_file.as_node() } else { search_space_node };
-        for node in get_possible_symbol_reference_nodes(source_file, "this", Some(container)) {
-            let keep = (|| {
-                if !is_this(node) {
-                    return false;
-                }
-                let container = ast::get_this_container(node /*includeArrowFunctions*/, false /*includeClassComputedPropertyName*/, false);
-                if !ast::can_have_symbol(container) {
-                    return false;
-                }
-                match search_space_node.kind() {
-                    Kind::FunctionExpression | Kind::FunctionDeclaration => search_space_node.symbol() == container.symbol(),
-                    Kind::MethodDeclaration | Kind::MethodSignature => {
-                        ast::is_object_literal_method(search_space_node) && search_space_node.symbol() == container.symbol()
-                    }
-                    Kind::ClassExpression | Kind::ClassDeclaration | Kind::ObjectLiteralExpression => {
-                        // Make sure the container belongs to the same class/object literals
-                        // and has the appropriate static modifier from the original container.
-                        container.parent().is_some_and(|container_parent| {
-                            ast::can_have_symbol(container_parent)
-                                && search_space_node.symbol() == container_parent.symbol()
-                                && ast::is_static(container) == (static_flag != ModifierFlags::None)
-                        })
-                    }
-                    Kind::SourceFile => container.kind() == Kind::SourceFile && !ast::is_external_module(container.as_source_file_p()) && !is_parameter_name(node),
-                    _ => false,
-                }
-            })();
-            if keep {
-                references.push(new_node_entry(node));
-            }
-        }
+        let container = if search_space_node.kind() == Kind::SourceFile {
+            source_file.as_node()
+        } else {
+            search_space_node
+        };
+        references.extend(
+            get_possible_symbol_reference_nodes(source_file, "this", Some(container))
+                .into_iter()
+                .filter_map(|node| {
+                    let keep = (|| {
+                        if !is_this(node) {
+                            return false;
+                        }
+                        let container = ast::get_this_container(
+                            node,  /*includeArrowFunctions*/
+                            false, /*includeClassComputedPropertyName*/
+                            false,
+                        );
+                        if !ast::can_have_symbol(container) {
+                            return false;
+                        }
+                        match search_space_node.kind() {
+                            Kind::FunctionExpression | Kind::FunctionDeclaration => {
+                                search_space_node.symbol() == container.symbol()
+                            }
+                            Kind::MethodDeclaration | Kind::MethodSignature => {
+                                ast::is_object_literal_method(search_space_node)
+                                    && search_space_node.symbol() == container.symbol()
+                            }
+                            Kind::ClassExpression
+                            | Kind::ClassDeclaration
+                            | Kind::ObjectLiteralExpression => {
+                                // Make sure the container belongs to the same class/object literals
+                                // and has the appropriate static modifier from the original container.
+                                container.parent().is_some_and(|container_parent| {
+                                    ast::can_have_symbol(container_parent)
+                                        && search_space_node.symbol() == container_parent.symbol()
+                                        && ast::is_static(container)
+                                            == (static_flag != ModifierFlags::None)
+                                })
+                            }
+                            Kind::SourceFile => {
+                                container.kind() == Kind::SourceFile
+                                    && !ast::is_external_module(container.as_source_file_p())
+                                    && !is_parameter_name(node)
+                            }
+                            _ => false,
+                        }
+                    })();
+                    if keep { Some(new_node_entry(node)) } else { None }
+                }),
+        );
     }
 
     let this_parameter = references.iter().find_map(|r| {
@@ -1796,12 +2281,20 @@ pub(crate) fn get_references_for_this_keyword(this_or_super_keyword: P<Node>, so
         None
     });
     let this_parameter = this_parameter.unwrap_or(this_or_super_keyword);
-    Some(vec![new_symbol_and_entries(DefinitionKind::This, Some(this_parameter), search_space_node.symbol(), references)])
+    Some(vec![new_symbol_and_entries(
+        DefinitionKind::This,
+        Some(this_parameter),
+        search_space_node.symbol(),
+        references,
+    )])
 }
 
 // findallreferences.go:1568
-pub(crate) fn get_references_for_super_keyword(super_keyword: P<Node>) -> Option<Vec<SymbolAndEntries>> {
-    let mut search_space_node = ast::get_super_container(super_keyword, false /*stopOnFunctions*/)?;
+pub(crate) fn get_references_for_super_keyword(
+    super_keyword: P<Node>,
+) -> Option<Vec<SymbolAndEntries>> {
+    let mut search_space_node =
+        ast::get_super_container(super_keyword, false /*stopOnFunctions*/)?;
     // Whether 'super' occurs in a static context within a class.
     let mut static_flag = ModifierFlags::Static;
 
@@ -1820,63 +2313,99 @@ pub(crate) fn get_references_for_super_keyword(super_keyword: P<Node>) -> Option
     }
 
     let source_file = ast::get_source_file_of_node(search_space_node).unwrap();
-    let references: Vec<Rc<ReferenceEntry>> = get_possible_symbol_reference_nodes(source_file, "super", Some(search_space_node))
-        .into_iter()
-        .filter_map(|node| {
-            if node.kind() != Kind::SuperKeyword {
-                return None;
-            }
-
-            let container = ast::get_super_container(node, false /*stopOnFunctions*/);
-
-            // If we have a 'super' container, we must have an enclosing class.
-            // Now make sure the owning class is the same as the search-space
-            // and has the same static qualifier as the original 'super's owner.
-            if let Some(container) = container {
-                if ast::is_static(container) == (static_flag != ModifierFlags::None) && container.parent().unwrap().symbol() == search_space_node.symbol() {
-                    return Some(new_node_entry(node));
+    let references: Vec<Rc<ReferenceEntry>> =
+        get_possible_symbol_reference_nodes(source_file, "super", Some(search_space_node))
+            .into_iter()
+            .filter_map(|node| {
+                if node.kind() != Kind::SuperKeyword {
+                    return None;
                 }
-            }
-            None
-        })
-        .collect();
 
-    Some(vec![new_symbol_and_entries(DefinitionKind::Symbol, None, search_space_node.symbol(), references)])
+                let container = ast::get_super_container(node, false /*stopOnFunctions*/);
+
+                // If we have a 'super' container, we must have an enclosing class.
+                // Now make sure the owning class is the same as the search-space
+                // and has the same static qualifier as the original 'super's owner.
+                if let Some(container) = container {
+                    if ast::is_static(container) == (static_flag != ModifierFlags::None)
+                        && container.parent().unwrap().symbol() == search_space_node.symbol()
+                    {
+                        return Some(new_node_entry(node));
+                    }
+                }
+                None
+            })
+            .collect();
+
+    Some(vec![new_symbol_and_entries(
+        DefinitionKind::Symbol,
+        None,
+        search_space_node.symbol(),
+        references,
+    )])
 }
 
 // findallreferences.go:1604
-pub(crate) fn get_all_references_for_import_meta(source_files: &[P<SourceFile>]) -> Option<Vec<SymbolAndEntries>> {
+pub(crate) fn get_all_references_for_import_meta(
+    source_files: &[P<SourceFile>],
+) -> Option<Vec<SymbolAndEntries>> {
     let mut references: Vec<Rc<ReferenceEntry>> = Vec::new();
-    for &source_file in source_files {
-        for node in get_possible_symbol_reference_nodes(source_file, "meta", Some(source_file.as_node())) {
-            let parent = node.parent().unwrap();
-            if ast::is_import_meta(parent) {
-                references.push(new_node_entry(parent));
-            }
-        }
-    }
+    references.extend(
+        source_files
+            .iter()
+            .flat_map(|&source_file| {
+                get_possible_symbol_reference_nodes(
+                    source_file,
+                    "meta",
+                    Some(source_file.as_node()),
+                )
+            })
+            .filter_map(|node| {
+                let parent = node.parent().unwrap();
+                ast::is_import_meta(parent).then(|| new_node_entry(parent))
+            }),
+    );
     if references.is_empty() {
         return None;
     }
     let first = references[0].node;
     Some(vec![SymbolAndEntries {
-        definition: Some(Definition { kind: DefinitionKind::Keyword, symbol: None, node: first, triple_slash_file_ref: None }),
+        definition: Some(Definition {
+            kind: DefinitionKind::Keyword,
+            symbol: None,
+            node: first,
+            triple_slash_file_ref: None,
+        }),
         references,
     }])
 }
 
 // findallreferences.go:1620
-pub(crate) fn get_all_references_for_keyword(source_files: &[P<SourceFile>], keyword_kind: Kind, filter_read_only_type_operator: bool) -> Option<Vec<SymbolAndEntries>> {
+pub(crate) fn get_all_references_for_keyword(
+    source_files: &[P<SourceFile>],
+    keyword_kind: Kind,
+    filter_read_only_type_operator: bool,
+) -> Option<Vec<SymbolAndEntries>> {
     // references is a list of NodeEntry
     let mut references: Vec<Rc<ReferenceEntry>> = Vec::new();
-    for &source_file in source_files {
-        // cancellationToken.throwIfCancellationRequested();
-        for reference_location in get_possible_symbol_reference_nodes(source_file, scanner::token_to_string(keyword_kind), Some(source_file.as_node())) {
-            if reference_location.kind() == keyword_kind && (!filter_read_only_type_operator || is_readonly_type_operator(reference_location)) {
-                references.push(new_node_entry(reference_location));
-            }
-        }
-    }
+    references.extend(
+        source_files
+            .iter()
+            .flat_map(|&source_file| {
+                // cancellationToken.throwIfCancellationRequested();
+                get_possible_symbol_reference_nodes(
+                    source_file,
+                    scanner::token_to_string(keyword_kind),
+                    Some(source_file.as_node()),
+                )
+            })
+            .filter(|&reference_location| {
+                reference_location.kind() == keyword_kind
+                    && (!filter_read_only_type_operator
+                        || is_readonly_type_operator(reference_location))
+            })
+            .map(new_node_entry),
+    );
     if references.is_empty() {
         return None;
     }
@@ -1885,7 +2414,11 @@ pub(crate) fn get_all_references_for_keyword(source_files: &[P<SourceFile>], key
 }
 
 // findallreferences.go:1637
-pub(crate) fn get_possible_symbol_reference_nodes(source_file: P<SourceFile>, symbol_name: &str, container: Option<P<Node>>) -> Vec<P<Node>> {
+pub(crate) fn get_possible_symbol_reference_nodes(
+    source_file: P<SourceFile>,
+    symbol_name: &str,
+    container: Option<P<Node>>,
+) -> Vec<P<Node>> {
     get_possible_symbol_reference_positions(source_file, symbol_name, container)
         .into_iter()
         .filter_map(|pos| {
@@ -1898,19 +2431,18 @@ pub(crate) fn get_possible_symbol_reference_nodes(source_file: P<SourceFile>, sy
         .collect()
 }
 
-// Go `strings.Index(text[start:], needle)`: `start` need not be a char boundary. A match never starts at a UTF-8
-// continuation byte (the needle is valid UTF-8), so searching from the next char boundary finds the same index.
+// Go `strings.Index(text[start:], needle)`.
 fn index_from(text: &str, start: usize, needle: &str) -> Option<usize> {
-    let mut boundary = start;
-    while boundary < text.len() && !text.is_char_boundary(boundary) {
-        boundary += 1;
-    }
-    text[boundary..].find(needle).map(|i| i + boundary - start)
+    tsrs_core::index_bytes(&text.as_bytes()[start..], needle.as_bytes())
 }
 
 // findallreferences.go:1646
-pub(crate) fn get_possible_symbol_reference_positions(source_file: P<SourceFile>, symbol_name: &str, container: Option<P<Node>>) -> Vec<i32> {
-    let mut positions: Vec<i32> = Vec::new();
+pub(crate) fn get_possible_symbol_reference_positions(
+    source_file: P<SourceFile>,
+    symbol_name: &str,
+    container: Option<P<Node>>,
+) -> Vec<u32> {
+    let mut positions: Vec<u32> = Vec::new();
 
     // TODO: Cache symbol existence for files to save text search
     // Also, need to make this work for unicode escapes.
@@ -1927,25 +2459,37 @@ pub(crate) fn get_possible_symbol_reference_positions(source_file: P<SourceFile>
 
     let container = container.unwrap_or_else(|| source_file.as_node());
 
-    // Go quirk kept: the index is relative to container.Pos() but is used as an absolute position.
-    let mut position: isize = index_from(text_str, container.pos() as usize, symbol_name).map_or(-1, |i| i as isize);
-    let end_pos = container.end() as isize;
-    while position >= 0 && position < end_pos {
+    // Go quirk kept: the first index is relative to container.Pos() but is used as an absolute position.
+    let container_pos = usize::try_from(
+        container.pos().expect_source("reference-search containers have source positions"),
+    )
+    .expect("source position exceeds usize");
+    let Some(mut position) = index_from(text_str, container_pos, symbol_name) else {
+        return positions;
+    };
+    let end_pos = usize::try_from(
+        container.end().expect_source("reference-search containers have source positions"),
+    )
+    .expect("source position exceeds usize");
+    while position < end_pos {
         // We found a match.  Make sure it's not part of a larger word (i.e. the char
         // before and after it have to be a non-identifier char).
-        let p = position as usize;
+        let p = position;
         let end_position = p + symbol_name_length;
 
-        if (p == 0 || !scanner::is_identifier_part(text[p - 1] as i32)) && (end_position == source_length || !scanner::is_identifier_part(text[end_position] as i32)) {
+        if (p == 0 || !scanner::is_identifier_part(u32::from(text[p - 1])))
+            && (end_position == source_length
+                || !scanner::is_identifier_part(u32::from(text[end_position])))
+        {
             // Found a real match.  Keep searching.
-            positions.push(p as i32);
+            positions.push(u32::try_from(p).expect("source position exceeds u32"));
         }
         let start_index = p + symbol_name_length + 1;
         if start_index > text.len() {
             break;
         }
         if let Some(found_index) = index_from(text_str, start_index, symbol_name) {
-            position = (start_index + found_index) as isize;
+            position = start_index + found_index;
         } else {
             break;
         }
@@ -1960,7 +2504,9 @@ pub(crate) fn find_first_jsx_node(root: P<Node>) -> Option<P<Node>> {
     fn visit(node: P<Node>) -> Option<P<Node>> {
         // Check if this is a JSX node we're looking for
         match node.kind() {
-            Kind::JsxElement | Kind::JsxSelfClosingElement | Kind::JsxFragment => return Some(node),
+            Kind::JsxElement | Kind::JsxSelfClosingElement | Kind::JsxFragment => {
+                return Some(node);
+            }
             _ => {}
         }
 
@@ -1982,13 +2528,20 @@ pub(crate) fn find_first_jsx_node(root: P<Node>) -> Option<P<Node>> {
 }
 
 // findallreferences.go:1718
-pub(crate) fn get_references_for_non_module(_referenced_file: P<SourceFile>, _program: &'static Program) -> Vec<Rc<ReferenceEntry>> {
+pub(crate) fn get_references_for_non_module(
+    _referenced_file: P<SourceFile>,
+    _program: &'static Program,
+) -> Vec<Rc<ReferenceEntry>> {
     // !!! not implemented
     Vec::new()
 }
 
 // findallreferences.go:1723
-pub(crate) fn get_merged_aliased_symbol_of_namespace_export_declaration(node: P<Node>, symbol: P<Symbol>, checker: &mut Checker) -> Option<P<Symbol>> {
+pub(crate) fn get_merged_aliased_symbol_of_namespace_export_declaration(
+    node: P<Node>,
+    symbol: P<Symbol>,
+    checker: &mut Checker,
+) -> Option<P<Symbol>> {
     if node.parent().is_some_and(|parent| parent.kind() == Kind::NamespaceExportDeclaration) {
         if let (Some(aliased_symbol), true) = checker.resolve_alias_exported(Some(symbol)) {
             let target_symbol = checker.get_merged_symbol_exported(aliased_symbol);
@@ -2003,7 +2556,6 @@ pub(crate) fn get_merged_aliased_symbol_of_namespace_export_declaration(node: P<
 impl LanguageService {
     // findallreferences.go:1735
     pub(crate) fn get_referenced_symbols_for_module(
-        &self,
         checker: &mut Checker,
         program: &'static Program,
         symbol: P<Symbol>,
@@ -2025,7 +2577,9 @@ impl LanguageService {
                             let import_type = parent.parent().unwrap();
                             if ast::is_import_type_node(import_type) {
                                 let import_type_node = import_type.as_import_type_node();
-                                if exclude_import_type_of_export_equals && import_type_node.qualifier.is_none() {
+                                if exclude_import_type_of_export_equals
+                                    && import_type_node.qualifier.is_none()
+                                {
                                     return None;
                                 }
                             }
@@ -2068,51 +2622,65 @@ impl LanguageService {
 
         // Add references to the module declarations themselves
         if !symbol.declarations().is_empty() {
-            for &decl in symbol.declarations() {
+            references.extend(symbol.declarations().iter().filter_map(|&decl| {
                 match decl.kind() {
                     Kind::SourceFile => {
                         // Don't include the source file itself. (This may not be ideal behavior, but awkward to include an entire file as a reference.)
-                        continue;
+                        None
                     }
                     Kind::ModuleDeclaration => {
-                        if source_files_set.has(&ast::get_source_file_of_node(decl).unwrap().file_name().to_string()) {
-                            references.push(new_node_entry(decl.name().unwrap()));
+                        if source_files_set.has(
+                            &ast::get_source_file_of_node(decl).unwrap().file_name().to_string(),
+                        ) {
+                            Some(new_node_entry(decl.name().unwrap()))
+                        } else {
+                            None
                         }
                     }
                     _ => {
                         // This may be merged with something (e.g. a class merged with a namespace).
-                        continue;
+                        None
                     }
                 }
-            }
+            }));
         }
 
         // Handle export equals declarations
-        let exported = symbol.exports().and_then(|exports| exports.lookup(ast::InternalSymbolNameExportEquals));
+        let exported = symbol
+            .exports()
+            .and_then(|exports| exports.lookup(ast::InternalSymbolNameExportEquals));
         if let Some(exported) = exported {
-            for &decl in exported.declarations() {
+            references.extend(exported.declarations().iter().filter_map(|&decl| {
                 let source_file = ast::get_source_file_of_node(decl).unwrap();
                 if source_files_set.has(&source_file.file_name().to_string()) {
-                    let node: P<Node>;
                     // At `module.exports = ...`, reference node is `module`
-                    if ast::is_binary_expression(decl) && ast::is_property_access_expression(decl.as_binary_expression().left) {
-                        node = decl.as_binary_expression().left.expression().unwrap();
+                    let node: P<Node> = if ast::is_binary_expression(decl)
+                        && ast::is_property_access_expression(decl.as_binary_expression().left)
+                    {
+                        decl.as_binary_expression().left.expression().unwrap()
                     } else if ast::is_export_assignment(decl) {
                         // Find the export keyword
                         let n = astnav::find_child_of_kind(decl, Kind::ExportKeyword, source_file);
                         assert!(n.is_some(), "Expected to find export keyword");
-                        node = n.unwrap();
+                        n.unwrap()
                     } else {
-                        node = ast::get_name_of_declaration(Some(decl)).unwrap_or(decl);
-                    }
-                    references.push(new_node_entry(node));
+                        ast::get_name_of_declaration(Some(decl)).unwrap_or(decl)
+                    };
+                    Some(new_node_entry(node))
+                } else {
+                    None
                 }
-            }
+            }));
         }
 
         if !references.is_empty() {
             return vec![SymbolAndEntries {
-                definition: Some(Definition { kind: DefinitionKind::Symbol, symbol: Some(symbol), node: None, triple_slash_file_ref: None }),
+                definition: Some(Definition {
+                    kind: DefinitionKind::Symbol,
+                    symbol: Some(symbol),
+                    node: None,
+                    triple_slash_file_ref: None,
+                }),
                 references,
             }];
         }
@@ -2130,7 +2698,7 @@ pub(crate) fn get_special_search_kind(node: Option<P<Node>>) -> &'static str {
         Kind::Constructor | Kind::ConstructorKeyword => "constructor",
         Kind::Identifier => {
             if ast::is_class_like(node.parent().unwrap()) {
-                assert!(node.parent().unwrap().name() == Some(node));
+                assert_eq!(node.parent().unwrap().name(), Some(node));
                 return "class";
             }
             "none"
@@ -2152,31 +2720,81 @@ pub(crate) fn get_referenced_symbols_for_symbol(
 ) -> Vec<SymbolAndEntries> {
     // Core find-all-references algorithm for a normal symbol.
 
-    let symbol = skip_past_export_or_import_specifier_or_union(original_symbol, node, checker /*useLocalSymbolForExportSpecifier*/, !is_for_rename_with_prefix_and_suffix_text(options))
-        .unwrap_or(original_symbol);
+    let symbol = skip_past_export_or_import_specifier_or_union(
+        original_symbol,
+        node,
+        checker, /*useLocalSymbolForExportSpecifier*/
+        !is_for_rename_with_prefix_and_suffix_text(options),
+    )
+    .unwrap_or(original_symbol);
 
     // Compute the meaning from the location and the symbol it references
     let mut search_meaning = SemanticMeaning::All;
     if options.use_ != ReferenceUse::Rename {
-        search_meaning = get_intersecting_meaning_from_declarations(node, symbol, SemanticMeaning::All);
+        search_meaning =
+            get_intersecting_meaning_from_declarations(node, symbol, SemanticMeaning::All);
     }
-    let mut state = new_state(ctx, program, source_files, source_files_set, node, checker, search_meaning, options);
+    let mut state = new_state(
+        ctx,
+        program,
+        source_files,
+        source_files_set,
+        node,
+        checker,
+        search_meaning,
+        options,
+    );
 
     let mut export_specifier: Option<P<Node>> = None;
     if is_for_rename_with_prefix_and_suffix_text(options) && !symbol.declarations().is_empty() {
-        export_specifier = symbol.declarations().iter().copied().find(|&d| ast::is_export_specifier(d));
+        export_specifier =
+            symbol.declarations().iter().copied().find(|&d| ast::is_export_specifier(d));
     }
     if let Some(export_specifier) = export_specifier {
         // When renaming at an export specifier, rename the export and not the thing being exported.
-        let search = state.create_search(node, original_symbol, ImpExpKind::Unknown /*comingFrom*/, "", Vec::new());
-        state.get_references_at_export_specifier(export_specifier.name().unwrap(), Some(symbol), export_specifier, &search, true /*addReferencesHere*/, true /*alwaysGetReferences*/);
-    } else if node.is_some_and(|node| node.kind() == Kind::DefaultKeyword) && symbol.name() == ast::InternalSymbolNameDefault && symbol.parent().is_some() {
+        let search = state.create_search(
+            node,
+            original_symbol,
+            ImpExpKind::Unknown, /*comingFrom*/
+            "",
+            Vec::new(),
+        );
+        state.get_references_at_export_specifier(
+            export_specifier.name().unwrap(),
+            Some(symbol),
+            export_specifier,
+            &search,
+            true, /*addReferencesHere*/
+            true, /*alwaysGetReferences*/
+        );
+    } else if node.is_some_and(|node| node.kind() == Kind::DefaultKeyword)
+        && symbol.name() == ast::InternalSymbolNameDefault
+        && symbol.parent().is_some()
+    {
         state.add_reference(node.unwrap(), symbol, EntryKind::Node);
-        state.search_for_imports_of_export(node.unwrap(), symbol, ExportInfo { exporting_module_symbol: symbol.parent().unwrap(), export_kind: ExportKind::Default });
+        state.search_for_imports_of_export(
+            node.unwrap(),
+            symbol,
+            ExportInfo {
+                exporting_module_symbol: symbol.parent().unwrap(),
+                export_kind: ExportKind::Default,
+            },
+        );
     } else {
-        let all_search_symbols =
-            state.populate_search_symbol_set(symbol, node, options.use_ == ReferenceUse::Rename, options.use_aliases_for_rename, options.implementations);
-        let search = state.create_search(node, symbol, ImpExpKind::Unknown /*comingFrom*/, "", all_search_symbols);
+        let all_search_symbols = state.populate_search_symbol_set(
+            symbol,
+            node,
+            options.use_ == ReferenceUse::Rename,
+            options.use_aliases_for_rename,
+            options.implementations,
+        );
+        let search = state.create_search(
+            node,
+            symbol,
+            ImpExpKind::Unknown, /*comingFrom*/
+            "",
+            all_search_symbols,
+        );
         state.get_references_in_container_or_files(symbol, &search);
     }
 
@@ -2266,19 +2884,34 @@ pub(crate) fn new_state<'a>(
     }
 }
 
-impl<'a> RefState<'a> {
+impl RefState<'_> {
     // findallreferences.go:1942
     pub(crate) fn includes_source_file(&self, source_file: P<SourceFile>) -> bool {
         self.source_files_set.has(&source_file.file_name().to_string())
     }
 
     // findallreferences.go:1946
-    pub(crate) fn get_import_searches(&mut self, export_symbol: P<Symbol>, export_info: ExportInfo) -> ImportsResult {
+    pub(crate) fn get_import_searches(
+        &mut self,
+        export_symbol: P<Symbol>,
+        export_info: ExportInfo,
+    ) -> ImportsResult {
         if self.import_tracker.is_none() {
-            self.import_tracker = Some(create_import_tracker(self.ctx, self.program, self.source_files, self.source_files_set, self.checker));
+            self.import_tracker = Some(create_import_tracker(
+                self.ctx,
+                self.program,
+                self.source_files,
+                self.source_files_set,
+                self.checker,
+            ));
         }
         let is_for_rename = self.options.use_ == ReferenceUse::Rename;
-        self.import_tracker.as_ref().unwrap().call(self.checker, export_symbol, export_info, is_for_rename)
+        self.import_tracker.as_ref().unwrap().call(
+            self.checker,
+            export_symbol,
+            export_info,
+            is_for_rename,
+        )
     }
 
     // @param allSearchSymbols set of additional symbols for use by `includes`
@@ -2297,9 +2930,13 @@ impl<'a> RefState<'a> {
         // here appears to be intentional).
         let mut text = text.to_string();
         if text.is_empty() {
-            let s = tsrs_binder::get_local_symbol_for_export_default(symbol).or_else(|| get_non_module_symbol_of_merged_module_symbol(symbol)).unwrap_or(symbol);
+            let s = tsrs_binder::get_local_symbol_for_export_default(symbol)
+                .or_else(|| get_non_module_symbol_of_merged_module_symbol(symbol))
+                .unwrap_or(symbol);
             let symbol_name = ast::symbol_name(s);
-            if let Some(module_name) = ast::try_get_ambient_module_name_from_symbol_name(symbol_name) {
+            if let Some(module_name) =
+                ast::try_get_ambient_module_name_from_symbol_name(symbol_name)
+            {
                 text = module_name.to_string();
             } else {
                 text = symbol_name.to_string();
@@ -2309,10 +2946,18 @@ impl<'a> RefState<'a> {
         if all_search_symbols.is_empty() {
             all_search_symbols = vec![symbol];
         }
-        let mut search = RefSearch { symbol, coming_from, escaped_text: text.clone(), text, all_search_symbols, parents: Vec::new() };
+        let mut search = RefSearch {
+            symbol,
+            coming_from,
+            escaped_text: text.clone(),
+            text,
+            all_search_symbols,
+            parents: Vec::new(),
+        };
         if self.options.implementations {
             if let Some(location) = location {
-                search.parents = get_parent_symbols_of_property_access(location, symbol, self.checker);
+                search.parents =
+                    get_parent_symbols_of_property_access(location, symbol, self.checker);
             }
         }
         search
@@ -2322,14 +2967,16 @@ impl<'a> RefState<'a> {
     // (see `add_to_group`).
     // findallreferences.go:1991
     pub(crate) fn reference_adder(&mut self, search_symbol: P<Symbol>) -> usize {
-        if let Some(&index) = self.symbol_to_references.get(&search_symbol) {
-            return index;
-        }
-        let symbol_and_entries = new_symbol_and_entries(DefinitionKind::Symbol, None, Some(search_symbol), Vec::new());
-        self.result.push(symbol_and_entries);
-        let index = self.result.len() - 1;
-        self.symbol_to_references.insert(search_symbol, index);
-        index
+        *self.symbol_to_references.entry(search_symbol).or_insert_with(|| {
+            let symbol_and_entries = new_symbol_and_entries(
+                DefinitionKind::Symbol,
+                None,
+                Some(search_symbol),
+                Vec::new(),
+            );
+            self.result.push(symbol_and_entries);
+            self.result.len() - 1
+        })
     }
 
     fn add_to_group(&mut self, index: usize, node: P<Node>, kind: EntryKind) {
@@ -2337,9 +2984,16 @@ impl<'a> RefState<'a> {
     }
 
     // findallreferences.go:2003
-    pub(crate) fn add_reference(&mut self, reference_location: P<Node>, symbol: P<Symbol>, kind: EntryKind) {
+    pub(crate) fn add_reference(
+        &mut self,
+        reference_location: P<Node>,
+        symbol: P<Symbol>,
+        kind: EntryKind,
+    ) {
         // if rename symbol from default export anonymous function, for example `export default function() {}`, we do not need to add reference
-        if self.options.use_ == ReferenceUse::Rename && reference_location.kind() == Kind::DefaultKeyword {
+        if self.options.use_ == ReferenceUse::Rename
+            && reference_location.kind() == Kind::DefaultKeyword
+        {
             return;
         }
 
@@ -2357,7 +3011,11 @@ impl<'a> RefState<'a> {
 }
 
 // findallreferences.go:2017
-pub(crate) fn get_reference_entries_for_shorthand_property_assignment(node: P<Node>, checker: &mut Checker, add_reference: &mut dyn FnMut(P<Node>)) {
+pub(crate) fn get_reference_entries_for_shorthand_property_assignment(
+    node: P<Node>,
+    checker: &mut Checker,
+    add_reference: &mut dyn FnMut(P<Node>),
+) {
     let Some(ref_symbol) = checker.get_symbol_at_location_exported(node) else {
         return;
     };
@@ -2376,12 +3034,18 @@ pub(crate) fn get_reference_entries_for_shorthand_property_assignment(node: P<No
 
 // findallreferences.go:2032
 pub(crate) fn is_method_or_accessor(node: P<Node>) -> bool {
-    node.kind() == Kind::MethodDeclaration || node.kind() == Kind::GetAccessor || node.kind() == Kind::SetAccessor
+    node.kind() == Kind::MethodDeclaration
+        || node.kind() == Kind::GetAccessor
+        || node.kind() == Kind::SetAccessor
 }
 
 // findallreferences.go:2036
-pub(crate) fn try_get_class_by_extending_identifier(node: P<Node>) -> Option<P<Node> /*ClassLikeDeclaration*/> {
-    ast::try_get_class_extending_expression_with_type_arguments(ast::climb_past_property_access(node).parent().unwrap())
+pub(crate) fn try_get_class_by_extending_identifier(
+    node: P<Node>,
+) -> Option<P<Node> /*ClassLikeDeclaration*/> {
+    ast::try_get_class_extending_expression_with_type_arguments(
+        ast::climb_past_property_access(node).parent().unwrap(),
+    )
 }
 
 // findallreferences.go:2040
@@ -2391,17 +3055,23 @@ pub(crate) fn get_class_constructor_symbol(class_symbol: P<Symbol>) -> Option<P<
 }
 
 // findallreferences.go:2047
-pub(crate) fn has_own_constructor(class_declaration: P<Node> /*ClassLikeDeclaration*/) -> bool {
+pub(crate) fn has_own_constructor(class_declaration: P<Node>, /*ClassLikeDeclaration*/) -> bool {
     get_class_constructor_symbol(class_declaration.symbol().unwrap()).is_some()
 }
 
 // findallreferences.go:2051
-pub(crate) fn find_own_constructor_references(class_symbol: P<Symbol>, source_file: P<SourceFile>, add_node: &mut dyn FnMut(P<Node>)) {
+pub(crate) fn find_own_constructor_references(
+    class_symbol: P<Symbol>,
+    source_file: P<SourceFile>,
+    add_node: &mut dyn FnMut(P<Node>),
+) {
     let constructor_symbol = get_class_constructor_symbol(class_symbol);
     if let Some(constructor_symbol) = constructor_symbol {
         for &decl in constructor_symbol.declarations() {
             if decl.kind() == Kind::Constructor {
-                if let Some(ctr_keyword) = astnav::find_child_of_kind(decl, Kind::ConstructorKeyword, source_file) {
+                if let Some(ctr_keyword) =
+                    astnav::find_child_of_kind(decl, Kind::ConstructorKeyword, source_file)
+                {
                     add_node(ctr_keyword);
                 }
             }
@@ -2428,8 +3098,13 @@ pub(crate) fn find_own_constructor_references(class_symbol: P<Symbol>, source_fi
 }
 
 // findallreferences.go:2080
-pub(crate) fn find_super_constructor_accesses(class_declaration: P<Node> /*ClassLikeDeclaration*/, add_node: &mut dyn FnMut(P<Node>)) {
-    let Some(constructor_symbol) = get_class_constructor_symbol(class_declaration.symbol().unwrap()) else {
+pub(crate) fn find_super_constructor_accesses(
+    class_declaration: P<Node>, /*ClassLikeDeclaration*/
+    add_node: &mut dyn FnMut(P<Node>),
+) {
+    let Some(constructor_symbol) =
+        get_class_constructor_symbol(class_declaration.symbol().unwrap())
+    else {
         return;
     };
     if constructor_symbol.declarations().is_empty() {
@@ -2451,7 +3126,11 @@ pub(crate) fn find_super_constructor_accesses(class_declaration: P<Node> /*Class
 }
 
 // findallreferences.go:2100
-pub(crate) fn for_each_descendant_of_kind(node: P<Node>, kind: Kind, action: &mut dyn FnMut(P<Node>)) {
+pub(crate) fn for_each_descendant_of_kind(
+    node: P<Node>,
+    kind: Kind,
+    action: &mut dyn FnMut(P<Node>),
+) {
     node.for_each_child(&mut |child| {
         if child.kind() == kind {
             action(child);
@@ -2461,9 +3140,13 @@ pub(crate) fn for_each_descendant_of_kind(node: P<Node>, kind: Kind, action: &mu
     });
 }
 
-impl<'a> RefState<'a> {
+impl RefState<'_> {
     // findallreferences.go:2110
-    pub(crate) fn add_implementation_references(&mut self, ref_node: P<Node>, add_ref: &mut dyn FnMut(P<Node>)) {
+    pub(crate) fn add_implementation_references(
+        &mut self,
+        ref_node: P<Node>,
+        add_ref: &mut dyn FnMut(P<Node>),
+    ) {
         // Check if we found a function/propertyAssignment/method with an implementation or initializer
         if ast::is_declaration_name(ref_node) && is_implementation(ref_node.parent().unwrap()) {
             add_ref(ref_node);
@@ -2476,7 +3159,11 @@ impl<'a> RefState<'a> {
 
         if ref_node.parent().unwrap().kind() == Kind::ShorthandPropertyAssignment {
             // Go ahead and dereference the shorthand assignment by going to its definition
-            get_reference_entries_for_shorthand_property_assignment(ref_node, self.checker, add_ref);
+            get_reference_entries_for_shorthand_property_assignment(
+                ref_node,
+                self.checker,
+                add_ref,
+            );
         }
 
         // Check if the node is within an extends or implements clause
@@ -2490,7 +3177,9 @@ impl<'a> RefState<'a> {
         // Find the first node whose parent isn't a type node -- i.e., the highest type node.
         let type_node = ast::find_ancestor(Some(ref_node), |a| {
             let a_parent = a.parent().unwrap();
-            !ast::is_qualified_name(a_parent) && !ast::is_type_node(a_parent) && !ast::is_type_element(a_parent)
+            !ast::is_qualified_name(a_parent)
+                && !ast::is_type_node(a_parent)
+                && !ast::is_type_element(a_parent)
         });
 
         let Some(type_node) = type_node else {
@@ -2501,7 +3190,9 @@ impl<'a> RefState<'a> {
         }
 
         let type_having_node = type_node.parent().unwrap();
-        if type_having_node.type_node() == Some(type_node) && self.seen_containing_type_references.insert(type_having_node) {
+        if type_having_node.type_node() == Some(type_node)
+            && self.seen_containing_type_references.insert(type_having_node)
+        {
             let mut add_if_implementation = |e: P<Node>| {
                 if is_implementation_expression(e) {
                     add_ref(e);
@@ -2509,7 +3200,9 @@ impl<'a> RefState<'a> {
             };
             if ast::has_initializer(type_having_node) {
                 add_if_implementation(type_having_node.initializer().unwrap());
-            } else if ast::is_function_like(Some(type_having_node)) && type_having_node.body().is_some() {
+            } else if ast::is_function_like(Some(type_having_node))
+                && type_having_node.body().is_some()
+            {
                 let body = type_having_node.body().unwrap();
                 if body.kind() == Kind::Block {
                     ast::for_each_return_statement(body, |return_statement: P<Node>| {
@@ -2521,19 +3214,31 @@ impl<'a> RefState<'a> {
                 } else {
                     add_if_implementation(body);
                 }
-            } else if ast::is_assertion_expression(type_having_node) || ast::is_satisfies_expression(type_having_node) {
+            } else if ast::is_assertion_expression(type_having_node)
+                || ast::is_satisfies_expression(type_having_node)
+            {
                 add_if_implementation(type_having_node.expression().unwrap());
             }
         }
     }
 
     // findallreferences.go:2170
-    pub(crate) fn get_references_in_container_or_files(&mut self, symbol: P<Symbol>, search: &RefSearch) {
+    pub(crate) fn get_references_in_container_or_files(
+        &mut self,
+        symbol: P<Symbol>,
+        search: &RefSearch,
+    ) {
         // Try to get the smallest valid scope that we can limit our search to;
         // otherwise we'll need to search globally (i.e. include each file).
         if let Some(scope) = get_symbol_scope(symbol) {
-            let add_references_here = scope.kind() != Kind::SourceFile || self.source_files.contains(&scope.as_source_file_p());
-            self.get_references_in_container(scope, ast::get_source_file_of_node(scope).unwrap(), search, add_references_here);
+            let add_references_here = scope.kind() != Kind::SourceFile
+                || self.source_files.contains(&scope.as_source_file_p());
+            self.get_references_in_container(
+                scope,
+                ast::get_source_file_of_node(scope).unwrap(),
+                search,
+                add_references_here,
+            );
         } else {
             // Global search
             for &source_file in self.source_files {
@@ -2544,13 +3249,29 @@ impl<'a> RefState<'a> {
     }
 
     // findallreferences.go:2185
-    pub(crate) fn get_references_in_source_file(&mut self, source_file: P<SourceFile>, search: &RefSearch, add_references_here: bool) {
+    pub(crate) fn get_references_in_source_file(
+        &mut self,
+        source_file: P<SourceFile>,
+        search: &RefSearch,
+        add_references_here: bool,
+    ) {
         // state.cancellationToken.throwIfCancellationRequested();
-        self.get_references_in_container(source_file.as_node(), source_file, search, add_references_here);
+        self.get_references_in_container(
+            source_file.as_node(),
+            source_file,
+            search,
+            add_references_here,
+        );
     }
 
     // findallreferences.go:2190
-    pub(crate) fn get_references_in_container(&mut self, container: P<Node>, source_file: P<SourceFile>, search: &RefSearch, add_references_here: bool) {
+    pub(crate) fn get_references_in_container(
+        &mut self,
+        container: P<Node>,
+        source_file: P<SourceFile>,
+        search: &RefSearch,
+        add_references_here: bool,
+    ) {
         // Search within node "container" for references for a search value, where the search value is defined as a
         //     tuple of (searchSymbol, searchText, searchLocation, and searchMeaning).
         // searchLocation: a node where the search value
@@ -2558,25 +3279,39 @@ impl<'a> RefState<'a> {
             return;
         }
 
-        for position in get_possible_symbol_reference_positions(source_file, &search.text, Some(container)) {
+        for position in
+            get_possible_symbol_reference_positions(source_file, &search.text, Some(container))
+        {
             self.get_references_at_location(source_file, position, search, add_references_here);
         }
     }
 
     // findallreferences.go:2203
-    pub(crate) fn mark_searched_symbols(&mut self, source_file: P<SourceFile>, symbols: &[P<Symbol>]) -> bool {
+    pub(crate) fn mark_searched_symbols(
+        &mut self,
+        source_file: P<SourceFile>,
+        symbols: &[P<Symbol>],
+    ) -> bool {
         let seen_symbols = self.source_file_to_seen_symbols.entry(source_file).or_default();
         let mut any_new_symbols = false;
-        for &sym in symbols {
+        any_new_symbols = symbols.iter().fold(any_new_symbols, |mut any_new_symbols, &sym| {
             if seen_symbols.insert(sym) {
                 any_new_symbols = true;
             }
-        }
+
+            any_new_symbols
+        });
         any_new_symbols
     }
 
     // findallreferences.go:2218
-    pub(crate) fn get_references_at_location(&mut self, source_file: P<SourceFile>, position: i32, search: &RefSearch, add_references_here: bool) {
+    pub(crate) fn get_references_at_location(
+        &mut self,
+        source_file: P<SourceFile>,
+        position: u32,
+        search: &RefSearch,
+        add_references_here: bool,
+    ) {
         let reference_location = astnav::get_touching_property_name(source_file, position);
 
         if !is_valid_reference_position(reference_location, &search.text) {
@@ -2600,22 +3335,34 @@ impl<'a> RefState<'a> {
             return;
         }
 
-        let Some(mut reference_symbol) = self.checker.get_symbol_at_location_exported(reference_location) else {
+        let Some(mut reference_symbol) =
+            self.checker.get_symbol_at_location_exported(reference_location)
+        else {
             return;
         };
 
         let parent = reference_location.parent().unwrap();
-        if parent.kind() == Kind::ImportSpecifier && parent.property_name() == Some(reference_location) {
+        if parent.kind() == Kind::ImportSpecifier
+            && parent.property_name() == Some(reference_location)
+        {
             // This is added through `singleReferences` in ImportsResult. If we happen to see it again, don't add it again.
             return;
         }
 
         if parent.kind() == Kind::ExportSpecifier {
-            self.get_references_at_export_specifier(reference_location, Some(reference_symbol), parent, search, add_references_here, false /*alwaysGetReferences*/);
+            self.get_references_at_export_specifier(
+                reference_location,
+                Some(reference_symbol),
+                parent,
+                search,
+                add_references_here,
+                false, /*alwaysGetReferences*/
+            );
             return;
         }
 
-        let (related_symbol, related_symbol_kind) = self.get_related_symbol(search, reference_symbol, reference_location);
+        let (related_symbol, related_symbol_kind) =
+            self.get_related_symbol(search, reference_symbol, reference_location);
         let Some(related_symbol) = related_symbol else {
             self.get_reference_for_shorthand_property(reference_symbol, search);
             return;
@@ -2627,15 +3374,27 @@ impl<'a> RefState<'a> {
                     self.add_reference(reference_location, related_symbol, related_symbol_kind);
                 }
             }
-            "constructor" => self.add_constructor_references(reference_location, related_symbol, search, add_references_here),
-            "class" => self.add_class_static_this_references(reference_location, related_symbol, search, add_references_here),
+            "constructor" => self.add_constructor_references(
+                reference_location,
+                related_symbol,
+                search,
+                add_references_here,
+            ),
+            "class" => self.add_class_static_this_references(
+                reference_location,
+                related_symbol,
+                search,
+                add_references_here,
+            ),
             _ => {}
         }
 
         // Use the parent symbol if the location is commonjs require syntax on javascript files only.
         if ast::is_in_js_file(Some(reference_location))
             && reference_location.parent().unwrap().kind() == Kind::BindingElement
-            && ast::is_variable_declaration_initialized_to_bare_or_accessed_require(reference_location.parent().unwrap().parent().unwrap().parent().unwrap())
+            && ast::is_variable_declaration_initialized_to_bare_or_accessed_require(
+                reference_location.parent().unwrap().parent().unwrap().parent().unwrap(),
+            )
         {
             // The parent will not have a symbol if it's an ObjectBindingPattern (when destructuring is used).  In
             // this case, just skip it, since the bound identifiers are not an alias of the import.
@@ -2649,7 +3408,13 @@ impl<'a> RefState<'a> {
     }
 
     // findallreferences.go:2289
-    pub(crate) fn add_constructor_references(&mut self, reference_location: P<Node>, symbol: P<Symbol>, search: &RefSearch, add_references_here: bool) {
+    pub(crate) fn add_constructor_references(
+        &mut self,
+        reference_location: P<Node>,
+        symbol: P<Symbol>,
+        search: &RefSearch,
+        add_references_here: bool,
+    ) {
         if ast::is_new_expression_target(reference_location, false, false) && add_references_here {
             self.add_reference(reference_location, symbol, EntryKind::Node);
         }
@@ -2665,7 +3430,8 @@ impl<'a> RefState<'a> {
             }
         } else {
             // If this class appears in `extends C`, then the extending class' "super" calls are references.
-            if let Some(class_extending) = try_get_class_by_extending_identifier(reference_location) {
+            if let Some(class_extending) = try_get_class_by_extending_identifier(reference_location)
+            {
                 let mut nodes: Vec<P<Node>> = Vec::new();
                 find_super_constructor_accesses(class_extending, &mut |n| nodes.push(n));
                 for n in nodes {
@@ -2678,7 +3444,13 @@ impl<'a> RefState<'a> {
     }
 
     // findallreferences.go:2315
-    pub(crate) fn add_class_static_this_references(&mut self, reference_location: P<Node>, symbol: P<Symbol>, search: &RefSearch, add_references_here: bool) {
+    pub(crate) fn add_class_static_this_references(
+        &mut self,
+        reference_location: P<Node>,
+        symbol: P<Symbol>,
+        search: &RefSearch,
+        add_references_here: bool,
+    ) {
         if add_references_here {
             self.add_reference(reference_location, symbol, EntryKind::Node);
         }
@@ -2716,7 +3488,10 @@ impl<'a> RefState<'a> {
     }
 
     // findallreferences.go:2352
-    pub(crate) fn find_inherited_constructor_references(&mut self, class_declaration: P<Node> /*ClassLikeDeclaration*/) {
+    pub(crate) fn find_inherited_constructor_references(
+        &mut self,
+        class_declaration: P<Node>, /*ClassLikeDeclaration*/
+    ) {
         if has_own_constructor(class_declaration) {
             return;
         }
@@ -2726,8 +3501,18 @@ impl<'a> RefState<'a> {
     }
 
     // findallreferences.go:2361
-    pub(crate) fn get_import_or_export_references(&mut self, reference_location: P<Node>, reference_symbol: P<Symbol>, search: &RefSearch) {
-        let import_or_export = get_import_or_export_symbol(reference_location, reference_symbol, self.checker, search.coming_from == ImpExpKind::Export);
+    pub(crate) fn get_import_or_export_references(
+        &mut self,
+        reference_location: P<Node>,
+        reference_symbol: P<Symbol>,
+        search: &RefSearch,
+    ) {
+        let import_or_export = get_import_or_export_symbol(
+            reference_location,
+            reference_symbol,
+            self.checker,
+            search.coming_from == ImpExpKind::Export,
+        );
         let Some(import_or_export) = import_or_export else {
             return;
         };
@@ -2736,7 +3521,11 @@ impl<'a> RefState<'a> {
                 self.search_for_imported_symbol(import_or_export.symbol.unwrap());
             }
         } else {
-            self.search_for_imports_of_export(reference_location, import_or_export.symbol.unwrap(), import_or_export.export_info.unwrap());
+            self.search_for_imports_of_export(
+                reference_location,
+                import_or_export.symbol.unwrap(),
+                import_or_export.export_info.unwrap(),
+            );
         }
     }
 
@@ -2755,13 +3544,22 @@ impl<'a> RefState<'a> {
         add_references_here: bool,
         always_get_references: bool,
     ) {
-        assert!(!always_get_references || self.options.use_aliases_for_rename, "If alwaysGetReferences is true, then prefix/suffix text must be enabled");
+        assert!(
+            !always_get_references || self.options.use_aliases_for_rename,
+            "If alwaysGetReferences is true, then prefix/suffix text must be enabled"
+        );
 
         let export_declaration = export_specifier.parent().unwrap().parent().unwrap();
-        let export_declaration_module_specifier = export_declaration.as_export_declaration().module_specifier;
+        let export_declaration_module_specifier =
+            export_declaration.as_export_declaration().module_specifier;
         let property_name = export_specifier.property_name();
         let name = export_specifier.name().unwrap();
-        let local_symbol = get_local_symbol_for_export_specifier(reference_location, reference_symbol, export_specifier, self.checker);
+        let local_symbol = get_local_symbol_for_export_specifier(
+            reference_location,
+            reference_symbol,
+            export_specifier,
+            self.checker,
+        );
 
         if !always_get_references && !search.includes(local_symbol) {
             return;
@@ -2776,7 +3574,9 @@ impl<'a> RefState<'a> {
         match property_name {
             None => {
                 // Don't rename at `export { default } from "m";`. (but do continue to search for imports of the re-export)
-                if !(self.options.use_ == ReferenceUse::Rename && ast::module_export_name_is_default(name)) {
+                if !(self.options.use_ == ReferenceUse::Rename
+                    && ast::module_export_name_is_default(name))
+                {
                     add_ref(self);
                 }
             }
@@ -2787,7 +3587,10 @@ impl<'a> RefState<'a> {
                     add_ref(self);
                 }
 
-                if add_references_here && self.options.use_ != ReferenceUse::Rename && self.mark_seen_re_export_rhs(name) {
+                if add_references_here
+                    && self.options.use_ != ReferenceUse::Rename
+                    && self.mark_seen_re_export_rhs(name)
+                {
                     let export_symbol = export_specifier.symbol();
                     assert!(export_symbol.is_some(), "exportSpecifier.Symbol() should not be nil");
                     self.add_reference(name, export_symbol.unwrap(), EntryKind::Node);
@@ -2802,7 +3605,8 @@ impl<'a> RefState<'a> {
 
         // For `export { foo as bar }`, rename `foo`, but not `bar`.
         if !is_for_rename_with_prefix_and_suffix_text(self.options) || always_get_references {
-            let is_default_export = ast::module_export_name_is_default(reference_location) || ast::module_export_name_is_default(export_specifier.name().unwrap());
+            let is_default_export = ast::module_export_name_is_default(reference_location)
+                || ast::module_export_name_is_default(export_specifier.name().unwrap());
             let mut export_kind = ExportKind::Named;
             if is_default_export {
                 export_kind = ExportKind::Default;
@@ -2835,7 +3639,8 @@ impl<'a> RefState<'a> {
         for &declaration in symbol.declarations() {
             let exporting_file = ast::get_source_file_of_node(declaration).unwrap();
             // Need to search in the file even if it's not in the search-file set, because it might export the symbol.
-            let search = self.create_search(Some(declaration), symbol, ImpExpKind::Import, "", Vec::new());
+            let search =
+                self.create_search(Some(declaration), symbol, ImpExpKind::Import, "", Vec::new());
             let add_references_here = self.includes_source_file(exporting_file);
             self.get_references_in_source_file(exporting_file, &search, add_references_here);
         }
@@ -2843,7 +3648,12 @@ impl<'a> RefState<'a> {
 
     // Search for all imports of a given exported symbol using `State.getImportSearches`. */
     // findallreferences.go:2461
-    pub(crate) fn search_for_imports_of_export(&mut self, export_location: P<Node>, export_symbol: P<Symbol>, export_info: ExportInfo) {
+    pub(crate) fn search_for_imports_of_export(
+        &mut self,
+        export_location: P<Node>,
+        export_symbol: P<Symbol>,
+        export_info: ExportInfo,
+    ) {
         let r = self.get_import_searches(export_symbol, export_info);
 
         // For `import { foo as bar }` just add the reference to `foo`, and don't otherwise search in the file.
@@ -2858,23 +3668,45 @@ impl<'a> RefState<'a> {
 
         // For each import, find all references to that import in its source file.
         for i in &r.import_searches {
-            let search = self.create_search(Some(i.import_location), i.import_symbol.unwrap(), ImpExpKind::Export, "", Vec::new());
-            self.get_references_in_source_file(ast::get_source_file_of_node(i.import_location).unwrap(), &search, true /*addReferencesHere*/);
+            let search = self.create_search(
+                Some(i.import_location),
+                i.import_symbol.unwrap(),
+                ImpExpKind::Export,
+                "",
+                Vec::new(),
+            );
+            self.get_references_in_source_file(
+                ast::get_source_file_of_node(i.import_location).unwrap(),
+                &search,
+                true, /*addReferencesHere*/
+            );
         }
 
         if !r.indirect_users.is_empty() {
             let mut indirect_search: Option<RefSearch> = None;
             match export_info.export_kind {
                 ExportKind::Named => {
-                    indirect_search = Some(self.create_search(Some(export_location), export_symbol, ImpExpKind::Export, "", Vec::new()));
+                    indirect_search = Some(self.create_search(
+                        Some(export_location),
+                        export_symbol,
+                        ImpExpKind::Export,
+                        "",
+                        Vec::new(),
+                    ));
                 }
                 ExportKind::Default => {
                     // Search for a property access to '.default'. This can't be renamed.
                     if self.options.use_ != ReferenceUse::Rename {
-                        indirect_search = Some(self.create_search(Some(export_location), export_symbol, ImpExpKind::Export, "default", Vec::new()));
+                        indirect_search = Some(self.create_search(
+                            Some(export_location),
+                            export_symbol,
+                            ImpExpKind::Export,
+                            "default",
+                            Vec::new(),
+                        ));
                     }
                 }
-                _ => {}
+                ExportKind::ExportEquals => {}
             }
             if let Some(indirect_search) = indirect_search {
                 for &indirect_user in &r.indirect_users {
@@ -2893,11 +3725,14 @@ impl<'a> RefState<'a> {
             return true;
         }
         // Don't rename an import type `import("./module-name")` when renaming `name` in `export = name;`
-        if !ast::is_identifier(single_ref) && !ast::is_import_or_export_specifier(single_ref.parent().unwrap()) {
+        if !ast::is_identifier(single_ref)
+            && !ast::is_import_or_export_specifier(single_ref.parent().unwrap())
+        {
             return false;
         }
         // At `default` in `import { default as x }` or `export { default as x }`, do add a reference, but do not rename.
-        !(ast::is_import_or_export_specifier(single_ref.parent().unwrap()) && ast::module_export_name_is_default(single_ref))
+        !(ast::is_import_or_export_specifier(single_ref.parent().unwrap())
+            && ast::module_export_name_is_default(single_ref))
     }
 
     // findallreferences.go:2513
@@ -2906,14 +3741,19 @@ impl<'a> RefState<'a> {
     }
 
     // findallreferences.go:2517
-    pub(crate) fn get_reference_for_shorthand_property(&mut self, reference_symbol: P<Symbol>, search: &RefSearch) {
+    pub(crate) fn get_reference_for_shorthand_property(
+        &mut self,
+        reference_symbol: P<Symbol>,
+        search: &RefSearch,
+    ) {
         if reference_symbol.flags().intersects(SymbolFlags::Transient) {
             return;
         }
         let Some(value_declaration) = reference_symbol.value_declaration() else {
             return;
         };
-        let shorthand_value_symbol = self.checker.get_shorthand_assignment_value_symbol(Some(value_declaration));
+        let shorthand_value_symbol =
+            self.checker.get_shorthand_assignment_value_symbol(Some(value_declaration));
         let name = ast::get_name_of_declaration(Some(value_declaration));
 
         // Because in short-hand property assignment, an identifier which stored as name of the short-hand property assignment
@@ -2964,8 +3804,14 @@ impl<'a> RefState<'a> {
     }
 
     // findallreferences.go:2560
-    pub(crate) fn get_related_symbol(&mut self, search: &RefSearch, reference_symbol: P<Symbol>, reference_location: P<Node>) -> (Option<P<Symbol>>, EntryKind) {
-        let only_include_binding_element_at_reference_location = self.options.use_ != ReferenceUse::Rename || self.options.use_aliases_for_rename;
+    pub(crate) fn get_related_symbol(
+        &mut self,
+        search: &RefSearch,
+        reference_symbol: P<Symbol>,
+        reference_location: P<Node>,
+    ) -> (Option<P<Symbol>>, EntryKind) {
+        let only_include_binding_element_at_reference_location =
+            self.options.use_ != ReferenceUse::Rename || self.options.use_aliases_for_rename;
         self.for_each_related_symbol(
             reference_symbol,
             reference_location,
@@ -2982,7 +3828,8 @@ impl<'a> RefState<'a> {
                 }
                 let search_sym = base_symbol.or(root_symbol).unwrap_or(sym);
                 if search.includes(Some(search_sym)) {
-                    if root_symbol.is_some() && !sym.check_flags().intersects(CheckFlags::Synthetic) {
+                    if root_symbol.is_some() && !sym.check_flags().intersects(CheckFlags::Synthetic)
+                    {
                         return root_symbol;
                     }
                     return Some(sym);
@@ -2992,16 +3839,26 @@ impl<'a> RefState<'a> {
             },
             &mut |state, root_symbol| {
                 !(!search.parents.is_empty()
-                    && !search.parents.iter().any(|&parent| state.explicitly_inherits_from(root_symbol.parent().unwrap(), parent)))
+                    && !search.parents.iter().any(|&parent| {
+                        state.explicitly_inherits_from(root_symbol.parent().unwrap(), parent)
+                    }))
             },
         )
     }
 
     // Go's `fromRoot` closure; it receives the state and the callbacks first (PORTING.md callback rule).
     // findallreferences.go:2600
+    #[expect(
+        clippy::wrong_self_convention,
+        reason = "The method name and mutable receiver match the upstream Go operation."
+    )]
     fn from_root(
         &mut self,
-        cb_symbol: &mut dyn FnMut(P<Symbol>, Option<P<Symbol>>, Option<P<Symbol>>) -> Option<P<Symbol>>,
+        cb_symbol: &mut dyn FnMut(
+            P<Symbol>,
+            Option<P<Symbol>>,
+            Option<P<Symbol>>,
+        ) -> Option<P<Symbol>>,
         allow_base_types: &mut dyn FnMut(&mut RefState, P<Symbol>) -> bool,
         sym: P<Symbol>,
     ) -> Option<P<Symbol>> {
@@ -3011,21 +3868,32 @@ impl<'a> RefState<'a> {
         // If the symbol is an instantiation from a another symbol (e.g. widened symbol):
         //   - In populateSearchSymbolsSet, add the root the list
         //   - In findRelatedSymbol, return the source symbol if that is in the search. (Do not return the instantiation symbol.)
-        for root_symbol in self.checker.get_root_symbols(sym) {
-            if let Some(result) = cb_symbol(sym, Some(root_symbol), None /*baseSymbol*/) {
-                return Some(result);
-            }
-            // Add symbol of properties/methods of the same name in base classes and implemented interfaces definitions
-            if let Some(root_parent) = root_symbol.parent() {
-                if root_parent.flags().intersects(SymbolFlags::Class | SymbolFlags::Interface) && allow_base_types(self, root_symbol) {
-                    let result = get_property_symbols_from_base_types(root_parent, root_symbol.name(), self.checker, &mut |_c, base| {
-                        cb_symbol(sym, Some(root_symbol), Some(base))
-                    });
-                    if result.is_some() {
-                        return result;
+        if let Some(result) =
+            self.checker.get_root_symbols(sym).into_iter().find_map(|root_symbol| {
+                if let Some(result) = cb_symbol(sym, Some(root_symbol), None /*baseSymbol*/) {
+                    return Some(Some(result));
+                }
+                // Add symbol of properties/methods of the same name in base classes and implemented interfaces definitions
+                if let Some(root_parent) = root_symbol.parent() {
+                    if root_parent.flags().intersects(SymbolFlags::Class | SymbolFlags::Interface)
+                        && allow_base_types(self, root_symbol)
+                    {
+                        let result = get_property_symbols_from_base_types(
+                            root_parent,
+                            root_symbol.name(),
+                            self.checker,
+                            &mut |_c, base| cb_symbol(sym, Some(root_symbol), Some(base)),
+                        );
+                        if result.is_some() {
+                            return Some(result);
+                        }
                     }
                 }
-            }
+
+                None
+            })
+        {
+            return result;
         }
         None
     }
@@ -3037,10 +3905,16 @@ impl<'a> RefState<'a> {
         location: P<Node>,
         is_for_rename_populate_search_symbol_set: bool,
         only_include_binding_element_at_reference_location: bool,
-        cb_symbol: &mut dyn FnMut(P<Symbol>, Option<P<Symbol>>, Option<P<Symbol>>) -> Option<P<Symbol>>,
+        cb_symbol: &mut dyn FnMut(
+            P<Symbol>,
+            Option<P<Symbol>>,
+            Option<P<Symbol>>,
+        ) -> Option<P<Symbol>>,
         allow_base_types: &mut dyn FnMut(&mut RefState, P<Symbol>) -> bool,
     ) -> (Option<P<Symbol>>, EntryKind) {
-        if let Some(containing_object_literal_element) = get_containing_object_literal_element(location) {
+        if let Some(containing_object_literal_element) =
+            get_containing_object_literal_element(location)
+        {
             /* Because in short-hand property assignment, location has two meaning : property name and as value of the property
              * When we do findAllReference at the position of the short-hand property assignment, we would want to have references to position of
              * property name and variable declaration of the identifier.
@@ -3052,43 +3926,76 @@ impl<'a> RefState<'a> {
              * so that when matching with potential reference symbol, both symbols from property declaration and variable declaration
              * will be included correctly.
              */
-            let shorthand_value_symbol = self.checker.get_shorthand_assignment_value_symbol(location.parent());
+            let shorthand_value_symbol =
+                self.checker.get_shorthand_assignment_value_symbol(location.parent());
             // gets the local symbol
             if let Some(shorthand_value_symbol) = shorthand_value_symbol {
                 if is_for_rename_populate_search_symbol_set {
                     // When renaming 'x' in `const o = { x }`, just rename the local variable, not the property.
-                    return (cb_symbol(shorthand_value_symbol, None /*rootSymbol*/, None /*baseSymbol*/), EntryKind::SearchedLocalFoundProperty);
+                    return (
+                        cb_symbol(
+                            shorthand_value_symbol,
+                            None, /*rootSymbol*/
+                            None, /*baseSymbol*/
+                        ),
+                        EntryKind::SearchedLocalFoundProperty,
+                    );
                 }
             }
             // If the location is in a context sensitive location (i.e. in an object literal) try
             // to get a contextual type for it, and add the property symbol from the contextual
             // type to the search set
-            if let Some(contextual_type) = self.checker.get_contextual_type_exported(containing_object_literal_element.parent().unwrap(), ContextFlags::None) {
-                let symbols = self.checker.get_property_symbols_from_contextual_type(containing_object_literal_element, contextual_type, true /*unionSymbolOk*/);
-                for sym in symbols {
+            if let Some(contextual_type) = self.checker.get_contextual_type_exported(
+                containing_object_literal_element.parent().unwrap(),
+                ContextFlags::None,
+            ) {
+                let symbols = self.checker.get_property_symbols_from_contextual_type(
+                    containing_object_literal_element,
+                    contextual_type,
+                    true, /*unionSymbolOk*/
+                );
+                if let Some(result) = symbols.into_iter().find_map(|sym| {
                     if let Some(res) = self.from_root(cb_symbol, allow_base_types, sym) {
-                        return (Some(res), EntryKind::SearchedPropertyFoundLocal);
+                        return Some((Some(res), EntryKind::SearchedPropertyFoundLocal));
                     }
+
+                    None
+                }) {
+                    return result;
                 }
             }
             // If the location is name of property symbol from object literal destructuring pattern
             // Search the property symbol
             //      for ( { property: p2 } of elems) { }
-            if let Some(property_symbol) = self.checker.get_property_symbol_of_destructuring_assignment(location) {
-                if let Some(res) = cb_symbol(property_symbol, None /*rootSymbol*/, None /*baseSymbol*/) {
+            if let Some(property_symbol) =
+                self.checker.get_property_symbol_of_destructuring_assignment(location)
+            {
+                if let Some(res) =
+                    cb_symbol(property_symbol, None /*rootSymbol*/, None /*baseSymbol*/)
+                {
                     return (Some(res), EntryKind::SearchedPropertyFoundLocal);
                 }
             }
             if let Some(shorthand_value_symbol) = shorthand_value_symbol {
-                if let Some(res) = cb_symbol(shorthand_value_symbol, None /*rootSymbol*/, None /*baseSymbol*/) {
+                if let Some(res) = cb_symbol(
+                    shorthand_value_symbol,
+                    None, /*rootSymbol*/
+                    None, /*baseSymbol*/
+                ) {
                     return (Some(res), EntryKind::SearchedLocalFoundProperty);
                 }
             }
         }
 
-        if let Some(aliased_symbol) = get_merged_aliased_symbol_of_namespace_export_declaration(location, symbol, self.checker) {
+        if let Some(aliased_symbol) = get_merged_aliased_symbol_of_namespace_export_declaration(
+            location,
+            symbol,
+            self.checker,
+        ) {
             // In case of UMD module and global merging, search for global as well
-            if let Some(res) = cb_symbol(aliased_symbol, None /*rootSymbol*/, None /*baseSymbol*/) {
+            if let Some(res) =
+                cb_symbol(aliased_symbol, None /*rootSymbol*/, None /*baseSymbol*/)
+            {
                 return (Some(res), EntryKind::Node);
             }
         }
@@ -3099,21 +4006,39 @@ impl<'a> RefState<'a> {
 
         if let Some(value_declaration) = symbol.value_declaration() {
             // (Go passes a possibly nil parent; IsParameterPropertyDeclaration reads it only for parameters, which have one.)
-            if value_declaration.parent().is_some_and(|parent| ast::is_parameter_property_declaration(value_declaration, parent)) {
-                let (param_prop1, param_prop2) = self.checker.get_symbols_of_parameter_property_declaration(value_declaration, symbol.name());
+            if value_declaration.parent().is_some_and(|parent| {
+                ast::is_parameter_property_declaration(value_declaration, parent)
+            }) {
+                let (param_prop1, param_prop2) =
+                    self.checker.get_symbols_of_parameter_property_declaration(
+                        value_declaration,
+                        symbol.name(),
+                    );
                 assert!(
-                    param_prop1.flags().intersects(SymbolFlags::FunctionScopedVariable) && param_prop2.flags().intersects(SymbolFlags::ClassMember),
+                    param_prop1.flags().intersects(SymbolFlags::FunctionScopedVariable)
+                        && param_prop2.flags().intersects(SymbolFlags::ClassMember),
                     "GetSymbolsOfParameterPropertyDeclaration must return (parameter, member) pair"
                 );
-                let sym = if symbol.flags().intersects(SymbolFlags::FunctionScopedVariable) { param_prop2 } else { param_prop1 };
+                let sym = if symbol.flags().intersects(SymbolFlags::FunctionScopedVariable) {
+                    param_prop2
+                } else {
+                    param_prop1
+                };
                 return (self.from_root(cb_symbol, allow_base_types, sym), EntryKind::Node);
             }
         }
 
-        if let Some(export_specifier) = ast::get_declaration_of_kind(symbol, Kind::ExportSpecifier) {
-            if !is_for_rename_populate_search_symbol_set || export_specifier.property_name().is_none() {
-                if let Some(local_symbol) = self.checker.get_export_specifier_local_target_symbol(export_specifier) {
-                    if let Some(res) = cb_symbol(local_symbol, None /*rootSymbol*/, None /*baseSymbol*/) {
+        if let Some(export_specifier) = ast::get_declaration_of_kind(symbol, Kind::ExportSpecifier)
+        {
+            if !is_for_rename_populate_search_symbol_set
+                || export_specifier.property_name().is_none()
+            {
+                if let Some(local_symbol) =
+                    self.checker.get_export_specifier_local_target_symbol(export_specifier)
+                {
+                    if let Some(res) =
+                        cb_symbol(local_symbol, None /*rootSymbol*/, None /*baseSymbol*/)
+                    {
                         return (Some(res), EntryKind::Node);
                     }
                 }
@@ -3123,30 +4048,49 @@ impl<'a> RefState<'a> {
         // symbolAtLocation for a binding element is the local symbol. See if the search symbol is the property.
         // Don't do this when populating search set for a rename when prefix and suffix text will be provided -- just rename the local.
         if !is_for_rename_populate_search_symbol_set {
-            let binding_element_property_symbol: Option<P<Symbol>>;
-            if only_include_binding_element_at_reference_location {
-                if !is_object_binding_element_without_property_name(location.parent().unwrap()) {
-                    return (None, EntryKind::None);
-                }
-                binding_element_property_symbol = get_property_symbol_from_binding_element(self.checker, location.parent().unwrap());
-            } else {
-                binding_element_property_symbol = get_property_symbol_of_object_binding_pattern_without_property_name(symbol, self.checker);
-            }
+            let binding_element_property_symbol: Option<P<Symbol>> =
+                if only_include_binding_element_at_reference_location {
+                    if !is_object_binding_element_without_property_name(location.parent().unwrap())
+                    {
+                        return (None, EntryKind::None);
+                    }
+                    get_property_symbol_from_binding_element(
+                        self.checker,
+                        location.parent().unwrap(),
+                    )
+                } else {
+                    get_property_symbol_of_object_binding_pattern_without_property_name(
+                        symbol,
+                        self.checker,
+                    )
+                };
             let Some(binding_element_property_symbol) = binding_element_property_symbol else {
                 return (None, EntryKind::None);
             };
-            return (self.from_root(cb_symbol, allow_base_types, binding_element_property_symbol), EntryKind::SearchedPropertyFoundLocal);
+            return (
+                self.from_root(cb_symbol, allow_base_types, binding_element_property_symbol),
+                EntryKind::SearchedPropertyFoundLocal,
+            );
         }
 
         assert!(is_for_rename_populate_search_symbol_set);
 
         // due to the above assert and the arguments at the uses of this function,
         // (onlyIncludeBindingElementAtReferenceLocation <=> !providePrefixAndSuffixTextForRename) holds
-        let include_original_symbol_of_binding_element = only_include_binding_element_at_reference_location;
+        let include_original_symbol_of_binding_element =
+            only_include_binding_element_at_reference_location;
 
         if include_original_symbol_of_binding_element {
-            if let Some(binding_element_property_symbol) = get_property_symbol_of_object_binding_pattern_without_property_name(symbol, self.checker) {
-                return (self.from_root(cb_symbol, allow_base_types, binding_element_property_symbol), EntryKind::SearchedPropertyFoundLocal);
+            if let Some(binding_element_property_symbol) =
+                get_property_symbol_of_object_binding_pattern_without_property_name(
+                    symbol,
+                    self.checker,
+                )
+            {
+                return (
+                    self.from_root(cb_symbol, allow_base_types, binding_element_property_symbol),
+                    EntryKind::SearchedPropertyFoundLocal,
+                );
             }
         }
         (None, EntryKind::None)
@@ -3156,12 +4100,20 @@ impl<'a> RefState<'a> {
     // findallreferences.go:2729
     pub(crate) fn search_for_name(&mut self, source_file: P<SourceFile>, search: &RefSearch) {
         if source_file.get_name_table().contains_key(search.escaped_text.as_str()) {
-            self.get_references_in_source_file(source_file, search, true /*addReferencesHere*/);
+            self.get_references_in_source_file(
+                source_file,
+                search,
+                true, /*addReferencesHere*/
+            );
         }
     }
 
     // findallreferences.go:2735
-    pub(crate) fn explicitly_inherits_from(&mut self, symbol: P<Symbol>, parent: P<Symbol>) -> bool {
+    pub(crate) fn explicitly_inherits_from(
+        &mut self,
+        symbol: P<Symbol>,
+        parent: P<Symbol>,
+    ) -> bool {
         if symbol == parent {
             return true;
         }
@@ -3183,7 +4135,8 @@ impl<'a> RefState<'a> {
             let super_type_nodes = get_all_super_type_nodes(declaration);
             super_type_nodes.iter().any(|&type_reference| {
                 let typ = self.checker.get_type_at_location(type_reference);
-                typ.symbol().is_some_and(|typ_symbol| self.explicitly_inherits_from(typ_symbol, parent))
+                typ.symbol()
+                    .is_some_and(|typ_symbol| self.explicitly_inherits_from(typ_symbol, parent))
             })
         });
 

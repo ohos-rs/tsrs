@@ -2437,11 +2437,11 @@ function generateCode() {
         return structFields.get(name) ?? unionFields.get(name);
     }
 
-    // Derivable traits: Copy when every field is Copy; Eq + Hash when every field is (no float, any or map).
-    function traitHolds(t: RType, trait: "copy" | "hash", visiting: Set<string>): boolean {
+    // Derivable traits: Copy, Eq and Hash when every field supports the trait.
+    function traitHolds(t: RType, trait: "copy" | "eq" | "hash", visiting: Set<string>): boolean {
         switch (t.k) {
             case "prim":
-                return t[trait];
+                return trait === "eq" ? t.hash : t[trait];
             case "named": {
                 if (enumerationMap.has(t.name) || typeInfo.literalTypes.has(t.name) || [...typeInfo.literalTypes.values()].includes(t.name)) {
                     return true;
@@ -2456,13 +2456,13 @@ function generateCode() {
                 return result;
             }
             case "vec":
-                return trait === "hash" && traitHolds(t.el, trait, visiting);
+                return trait !== "copy" && traitHolds(t.el, trait, visiting);
             case "map":
-                return false;
+                return trait === "eq" && traitHolds(t.key, trait, visiting) && traitHolds(t.val, trait, visiting);
             case "opt":
                 return traitHolds(t.el, trait, visiting);
             case "box":
-                return trait === "hash" && traitHolds(t.el, trait, visiting);
+                return trait !== "copy" && traitHolds(t.el, trait, visiting);
         }
     }
 
@@ -2474,7 +2474,8 @@ function generateCode() {
             return `#[derive(Clone, Debug, Default, PartialEq)]`;
         }
         if (fields.every(f => traitHolds(f.type, "copy", new Set([name])))) extra.push("Copy");
-        if (fields.every(f => traitHolds(f.type, "hash", new Set([name])))) extra.push("Eq", "Hash");
+        if (fields.every(f => traitHolds(f.type, "eq", new Set([name])))) extra.push("Eq");
+        if (fields.every(f => traitHolds(f.type, "hash", new Set([name])))) extra.push("Hash");
         return `#[derive(Clone, Debug, Default, PartialEq${extra.map(e => ", " + e).join("")})]`;
     }
 
@@ -2542,7 +2543,8 @@ function generateCode() {
                     method = "value";
                 }
             }
-            writeLine(`        w.${method}(${rustStr(prop.name)}, &self.${f.rust});`);
+            const value = method === "opt" ? `self.${f.rust}.as_ref()` : `&self.${f.rust}`;
+            writeLine(`        w.${method}(${rustStr(prop.name)}, ${value});`);
         }
         writeLine("        w.finish()");
         writeLine("    }");
@@ -2562,7 +2564,10 @@ function generateCode() {
                 writeLine("        let mut seen = 0u64;");
             }
             writeLine("        for (k, v) in members {");
-            writeLine("            match k.as_str() {");
+            const singleField = fields.length === 1;
+            if (!singleField) {
+                writeLine("            match k.as_str() {");
+            }
             for (const f of fields) {
                 const prop = f.prop!;
                 const isOpt = f.type.k === "opt";
@@ -2580,18 +2585,28 @@ function generateCode() {
                 else {
                     expr = "field(k, v)?";
                 }
-                if (bit >= 0) {
+                if (singleField) {
+                    writeLine(`            if k.as_str() == ${rustStr(prop.name)} {`);
+                    if (bit >= 0) {
+                        writeLine(`                seen |= 1 << ${bit};`);
+                    }
+                    writeLine(`                s.${f.rust} = ${expr};`);
+                    writeLine("            }");
+                }
+                else if (bit >= 0) {
                     writeLine(`                ${rustStr(prop.name)} => {`);
                     writeLine(`                    seen |= 1 << ${bit};`);
                     writeLine(`                    s.${f.rust} = ${expr};`);
                     writeLine("                }");
                 }
                 else {
-                    writeLine(`                ${rustStr(prop.name)} => s.${f.rust} = ${expr},`);
+                    writeLine(`                ${rustStr(prop.name)} => { s.${f.rust} = ${expr}; },`);
                 }
             }
-            writeLine("                _ => {}");
-            writeLine("            }");
+            if (!singleField) {
+                writeLine("                _ => {}");
+                writeLine("            }");
+            }
             writeLine("        }");
             if (required.length > 0) {
                 writeLine(`        check_required(seen, &[${required.map(f => rustStr(f.prop!.name)).join(", ")}], Self::GO_TYPE)?;`);
@@ -2716,8 +2731,9 @@ function generateCode() {
     }
 
     function generateCompareMethod(structure: Structure, fields: RField[]) {
+        const passByValue = structure.name === "Position";
         writeLine(`impl ${structure.name} {`);
-        writeLine(`    pub fn compare(&self, other: &${structure.name}) -> i32 {`);
+        writeLine(`    pub fn compare(${passByValue ? "self" : "&self"}, other: ${passByValue ? structure.name : `&${structure.name}`}) -> std::cmp::Ordering {`);
         for (let i = 0; i < fields.length; i++) {
             const f = fields[i];
             const isLast = i === fields.length - 1;
@@ -2727,7 +2743,7 @@ function generateCode() {
             }
             else {
                 writeLine(`        let c = ${expr};`);
-                writeLine(`        if c != 0 {`);
+                writeLine(`        if c != std::cmp::Ordering::Equal {`);
                 writeLine(`            return c;`);
                 writeLine(`        }`);
             }
@@ -2745,7 +2761,8 @@ function generateCode() {
                 if (f.type.k !== "named") {
                     throw new Error(`Cannot generate Compare for ${structName}.${f.goField}: pointer field`);
                 }
-                return `self.${f.rust}.compare(&other.${f.rust})`;
+                const other = refName === "Position" ? `other.${f.rust}` : `&other.${f.rust}`;
+                return `self.${f.rust}.compare(${other})`;
             }
         }
 
@@ -2898,7 +2915,7 @@ function generateCode() {
         if (enumeration.type.name !== "string") {
             const sortedValues = [...enumValues].sort((a, b) => a.numericValue - b.numericValue);
             writeLine(`impl ${enumeration.name} {`);
-            writeLine(`    pub fn string(&self) -> String {`);
+            writeLine(`    pub fn string(self) -> String {`);
             if (isBitflagEnum(enumeration)) {
                 writeLine(`        if self.0 == 0 {`);
                 writeLine(`            return "0".to_string();`);
@@ -3003,6 +3020,7 @@ function generateCode() {
 
     // Go's Method(method) conversion of a decoded string, matched against the known methods.
     writeLine("impl Method {");
+    writeLine("    #[expect(clippy::should_implement_trait, reason = \"this conversion is infallible, unlike FromStr\")]");
     writeLine("    pub fn from_str(s: &str) -> Method {");
     writeLine("        match s {");
     const knownMethods = new Set<string>();
@@ -3133,9 +3151,9 @@ function generateCode() {
         const errInvalidValueExpr = `Err(JsonError::method(Self::GO_TYPE, err_invalid_value(${rustStr(name)}, v)))`;
         const errInvalidKindExpr = `Err(JsonError::method(Self::GO_TYPE, err_invalid_kind(${rustStr(name)}, k)))`;
 
-        function armAssign(entry: UnionArm, indent: string, expr: string) {
+        function armAssign(entry: UnionArm, indent: string, expr: string, tail = false) {
             writeLine(`${indent}o.${rustField.get(entry.fieldName)} = ${expr};`);
-            writeLine(`${indent}return Ok(o);`);
+            writeLine(`${indent}${tail ? "" : "return "}Ok(o)${tail ? "" : ";"}`);
         }
 
         // Try-each decoding of the given entries (Go's speculative json.Unmarshal).
@@ -3152,10 +3170,12 @@ function generateCode() {
             disc: NonNullable<ReturnType<typeof findDiscriminatorField>>,
             indent: string,
         ): boolean {
+            const presence = disc.unmapped.length > 1 ? findPresenceDiscriminator(disc.unmapped) : undefined;
+            const tail = disc.unmapped.length === 1 || !!presence && collectAllPresenceChecks(presence).finalUnmapped.length === 1;
             writeLine(`${indent}match json_object_raw_field(v, ${rustStr(disc.fieldName)}).and_then(value_str) {`);
             for (const [value, entry] of disc.mapping) {
                 writeLine(`${indent}    Some(${rustStr(value)}) => {`);
-                armAssign(entry, indent + "        ", "arm_buffered(v)?");
+                armAssign(entry, indent + "        ", "arm_buffered(v)?", tail);
                 writeLine(`${indent}    }`);
             }
             let exhaustive = false;
@@ -3179,16 +3199,16 @@ function generateCode() {
             writeLine(`${indent}match state.discriminator_str() {`);
             for (const [value, entry] of disc.mapping) {
                 writeLine(`${indent}    Some(${rustStr(value)}) => {`);
-                armAssign(entry, indent + "        ", `Some(unmarshal_discriminated_arm(v, Self::GO_TYPE, ${rustStr(disc.fieldName)})?)`);
+                armAssign(entry, indent + "        ", `Some(unmarshal_discriminated_arm(v, Self::GO_TYPE, ${rustStr(disc.fieldName)})?)`, true);
                 writeLine(`${indent}    }`);
             }
             if (disc.unmapped.length === 1) {
                 writeLine(`${indent}    _ => {`);
-                armAssign(disc.unmapped[0], indent + "        ", `Some(unmarshal_discriminated_arm(v, Self::GO_TYPE, ${rustStr(disc.fieldName)})?)`);
+                armAssign(disc.unmapped[0], indent + "        ", `Some(unmarshal_discriminated_arm(v, Self::GO_TYPE, ${rustStr(disc.fieldName)})?)`, true);
                 writeLine(`${indent}    }`);
             }
             else {
-                writeLine(`${indent}    _ => return Err(state.invalid_discriminator(Self::GO_TYPE)),`);
+                writeLine(`${indent}    _ => Err(state.invalid_discriminator(Self::GO_TYPE)),`);
             }
             writeLine(`${indent}}`);
         }
@@ -3214,7 +3234,7 @@ function generateCode() {
                 // Exactly 1 entry: it's the only remaining variant after dispatch,
                 // so use a hard error return instead of speculative decoding.
                 for (const entry of unmapped) {
-                    armAssign(entry, indent, "arm_buffered(v)?");
+                    armAssign(entry, indent, "arm_buffered(v)?", true);
                 }
                 return unmapped.length === 1;
             }
@@ -3248,19 +3268,35 @@ function generateCode() {
             indent: string,
         ): boolean {
             const { allChecks, finalUnmapped } = collectAllPresenceChecks(pres);
+            const tail = finalUnmapped.length === 1;
             const args = allChecks.map(c => rustStr(c.jsonFieldName)).join(", ");
+            if (allChecks.length === 1) {
+                writeLine(`${indent}if json_object_has_key(v, &[${args}]) == Some(0) {`);
+                armAssign(allChecks[0].entry, indent + "    ", "arm_buffered(v)?", tail);
+                if (finalUnmapped.length > 0) {
+                    writeLine(`${indent}} else {`);
+                    if (tail) {
+                        armAssign(finalUnmapped[0], indent + "    ", "arm_buffered(v)?", tail);
+                    }
+                    else {
+                        tryEach(finalUnmapped, indent + "    ");
+                    }
+                }
+                writeLine(`${indent}}`);
+                return tail;
+            }
             writeLine(`${indent}match json_object_has_key(v, &[${args}]) {`);
             for (let i = 0; i < allChecks.length; i++) {
                 writeLine(`${indent}    // ${allChecks[i].jsonFieldName}`);
-                writeLine(`${indent}    ${i} => {`);
-                armAssign(allChecks[i].entry, indent + "        ", "arm_buffered(v)?");
+                writeLine(`${indent}    Some(${i}) => {`);
+                armAssign(allChecks[i].entry, indent + "        ", "arm_buffered(v)?", tail);
                 writeLine(`${indent}    }`);
             }
             if (finalUnmapped.length > 0) {
                 writeLine(`${indent}    _ => {`);
                 if (finalUnmapped.length === 1) {
                     // Only one variant left after dispatch — use hard error return.
-                    armAssign(finalUnmapped[0], indent + "        ", "arm_buffered(v)?");
+                    armAssign(finalUnmapped[0], indent + "        ", "arm_buffered(v)?", tail);
                 }
                 else {
                     tryEach(finalUnmapped, indent + "        ");
@@ -3347,10 +3383,10 @@ function generateCode() {
 
         function unambiguousArm(kind: string, entry: UnionArm, indent: string) {
             if (kind === "boolean") {
-                armAssign(entry, indent, "Some(k == b't')");
+                armAssign(entry, indent, "Some(k == b't')", true);
             }
             else {
-                armAssign(entry, indent, "arm(v)?");
+                armAssign(entry, indent, "arm(v)?", true);
             }
         }
 
@@ -3513,7 +3549,10 @@ function generateCode() {
                     const refStructure = model.structures.find(s => s.name === type.name);
                     if (refStructure) {
                         if (f.type.k === "opt") {
-                            lines.push(`${indent}${f.rust}: self.${f.rust}.as_ref().map(|v| v.resolve()).unwrap_or_default(),`);
+                            const refFields = structFields.get(type.name)!;
+                            const resolveByValue = refFields.every(field => traitHolds(field.type, "copy", new Set([type.name])));
+                            const resolve = f.type.el.k === "box" || resolveByValue ? `|v| v.resolve()` : `${type.name}::resolve`;
+                            lines.push(`${indent}${f.rust}: self.${f.rust}.as_ref().map(${resolve}).unwrap_or_default(),`);
                         }
                         else {
                             lines.push(`${indent}${f.rust}: self.${f.rust}.resolve(),`);
@@ -3523,10 +3562,12 @@ function generateCode() {
                 }
 
                 if (f.type.k === "opt") {
-                    lines.push(`${indent}${f.rust}: self.${f.rust}.clone().unwrap_or_default(),`);
+                    const value = traitHolds(f.type, "copy", new Set([structure.name])) ? `self.${f.rust}` : `self.${f.rust}.clone()`;
+                    lines.push(`${indent}${f.rust}: ${value}.unwrap_or_default(),`);
                 }
                 else {
-                    lines.push(`${indent}${f.rust}: self.${f.rust}.clone(),`);
+                    const value = traitHolds(f.type, "copy", new Set([structure.name])) ? `self.${f.rust}` : `self.${f.rust}.clone()`;
+                    lines.push(`${indent}${f.rust}: ${value},`);
                 }
             }
             return lines;
@@ -3555,6 +3596,7 @@ function generateCode() {
 
         function generateResolvedTypeAndHelper(structure: Structure, isMain: boolean = false): string[] {
             const lines: string[] = [];
+            const fields = structFields.get(structure.name)!;
             const typeName = `Resolved${structure.name}`;
             // Main method is exported (Resolve), helpers are unexported (resolve)
             const visibility = isMain ? `pub` : `pub(crate)`;
@@ -3577,14 +3619,16 @@ function generateCode() {
                 }
             }
 
-            lines.push(`#[derive(Clone, Debug, Default, PartialEq)]`);
+            const derivesEq = fields.every(f => traitHolds(f.type, "eq", new Set([structure.name])));
+            lines.push(`#[derive(Clone, Debug, Default, PartialEq${derivesEq ? ", Eq" : ""})]`);
             lines.push(`pub struct ${typeName} {`);
             lines.push(...generateResolvedStruct(structure, "    "));
             lines.push(`}`);
             lines.push(``);
 
+            const passByValue = fields.every(f => traitHolds(f.type, "copy", new Set([structure.name])));
             lines.push(`impl ${structure.name} {`);
-            lines.push(`    ${visibility} fn resolve(&self) -> ${typeName} {`);
+            lines.push(`    ${visibility} fn resolve(${passByValue ? "self" : "&self"}) -> ${typeName} {`);
             lines.push(`        ${typeName} {`);
             lines.push(...generateResolveConversion(structure, "            "));
             lines.push(`        }`);

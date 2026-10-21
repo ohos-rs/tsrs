@@ -1,10 +1,13 @@
-use crate::stringutil;
-use crate::stringutil::{decode_rune, push_rune, unicode_to_lower};
-use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Borrow;
 use std::cmp::Ordering;
+use std::collections::hash_map::Entry;
 use std::fmt;
 use std::ops::Deref;
+
+use rustc_hash::{FxHashMap, FxHashSet};
+
+use crate::stringutil;
+use crate::stringutil::{decode_rune, push_rune, unicode_to_lower};
 
 #[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
 pub struct Path(pub std::sync::Arc<str>);
@@ -65,6 +68,26 @@ impl fmt::Display for Path {
 pub const DIRECTORY_SEPARATOR: u8 = b'/';
 const URL_SCHEME_SEPARATOR: &str = "://";
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EncodedRootLength {
+    Relative,
+    Disk(usize),
+    Url(usize),
+}
+
+impl EncodedRootLength {
+    #[expect(
+        clippy::len_without_is_empty,
+        reason = "This accessor reports a position or optional diagnostic length, not a container size."
+    )]
+    pub fn len(self) -> usize {
+        match self {
+            Self::Relative => 0,
+            Self::Disk(length) | Self::Url(length) => length,
+        }
+    }
+}
+
 // Path Tests
 
 // Determines whether a byte corresponds to `/` or `\`.
@@ -74,19 +97,18 @@ fn is_any_directory_separator(char: u8) -> bool {
 
 // Determines whether a path starts with a URL scheme (e.g. starts with `http://`, `ftp://`, `file://`, etc.).
 pub fn is_url(path: &str) -> bool {
-    get_encoded_root_length(path) < 0
+    matches!(get_encoded_root_length(path), EncodedRootLength::Url(_))
 }
 
 // Determines whether a path is an absolute disk path (e.g. starts with `/`, or a dos path
 // like `c:`, `c:\` or `c:/`).
 pub fn is_rooted_disk_path(path: &str) -> bool {
-    get_encoded_root_length(path) > 0
+    matches!(get_encoded_root_length(path), EncodedRootLength::Disk(_))
 }
 
 // Determines whether a path consists only of a path root.
 pub fn is_disk_path_root(path: &str) -> bool {
-    let root_length = get_encoded_root_length(path);
-    root_length > 0 && root_length as usize == path.len()
+    matches!(get_encoded_root_length(path), EncodedRootLength::Disk(root_length) if root_length == path.len())
 }
 
 // IsDynamicFileName returns true if the file name represents a dynamic/virtual file
@@ -97,7 +119,7 @@ pub fn is_dynamic_file_name(file_name: &str) -> bool {
 
 // Determines whether a path starts with an absolute path component (i.e. `/`, `c:/`, `file://`, etc.).
 pub fn path_is_absolute(path: &str) -> bool {
-    get_encoded_root_length(path) != 0
+    get_encoded_root_length(path) != EncodedRootLength::Relative
 }
 
 pub fn has_trailing_directory_separator(path: &str) -> bool {
@@ -115,9 +137,17 @@ pub fn has_trailing_directory_separator(path: &str) -> bool {
 pub fn combine_paths(first_path: &str, paths: &[&str]) -> String {
     // Each absolute path replaces everything before it, so start from the last one without normalizing what it
     // replaces (`first_path` is often the current directory).
-    let is_absolute = |p: &str| if p.as_bytes().contains(&b'\\') { get_root_length(&normalize_slashes(p)) != 0 } else { get_root_length(p) != 0 };
+    let is_absolute = |p: &str| {
+        if p.as_bytes().contains(&b'\\') {
+            get_root_length(&normalize_slashes(p)) != 0
+        } else {
+            get_root_length(p) != 0
+        }
+    };
     let (mut result, paths) = match paths.iter().rposition(|p| is_absolute(p)) {
-        Some(last_absolute) => (normalize_slashes(paths[last_absolute]), &paths[last_absolute + 1..]),
+        Some(last_absolute) => {
+            (normalize_slashes(paths[last_absolute]), &paths[last_absolute + 1..])
+        }
         None => (normalize_slashes(first_path), paths),
     };
     for &trailing_path in paths {
@@ -151,7 +181,7 @@ fn path_components(path: &str, root_length: usize) -> Vec<String> {
     }
     let mut result = Vec::with_capacity(rest.len() + 1);
     result.push(root.to_string());
-    result.extend(rest.into_iter().map(|s| s.to_string()));
+    result.extend(rest.into_iter().map(std::string::ToString::to_string));
     result
 }
 
@@ -159,64 +189,68 @@ pub fn is_volume_character(char: u8) -> bool {
     char.is_ascii_lowercase() || char.is_ascii_uppercase()
 }
 
-fn get_file_url_volume_separator_end(url: &str, start: usize) -> i32 {
+fn get_file_url_volume_separator_end(url: &str, start: usize) -> Option<usize> {
     let url = url.as_bytes();
     if url.len() <= start {
-        return -1;
+        return None;
     }
     let ch0 = url[start];
     if ch0 == b':' {
-        return (start + 1) as i32;
+        return Some(start + 1);
     }
     if ch0 == b'%' && url.len() > start + 2 && url[start + 1] == b'3' {
         let ch2 = url[start + 2];
         if ch2 == b'a' || ch2 == b'A' {
-            return (start + 3) as i32;
+            return Some(start + 3);
         }
     }
-    -1
+    None
 }
 
-pub fn get_encoded_root_length(path: &str) -> i32 {
+pub fn get_encoded_root_length(path: &str) -> EncodedRootLength {
     let bytes = path.as_bytes();
     let ln = bytes.len();
     if ln == 0 {
-        return 0;
+        return EncodedRootLength::Relative;
     }
     let ch0 = bytes[0];
 
     // POSIX or UNC
     if ch0 == b'/' || ch0 == b'\\' {
         if ln == 1 || bytes[1] != ch0 {
-            return 1; // POSIX: "/" (or non-normalized "\")
+            return EncodedRootLength::Disk(1); // POSIX: "/" (or non-normalized "\")
         }
 
         let offset = 2;
         let Some(p1) = memchr::memchr(ch0, &bytes[offset..]) else {
-            return ln as i32; // UNC: "//server" or "\\server"
+            return EncodedRootLength::Disk(ln); // UNC: "//server" or "\\server"
         };
 
-        return (p1 + offset + 1) as i32; // UNC: "//server/" or "\\server\"
+        return EncodedRootLength::Disk(p1 + offset + 1); // UNC: "//server/" or "\\server\"
     }
 
     // DOS
     if is_volume_character(ch0) && ln > 1 && bytes[1] == b':' {
         if ln == 2 {
-            return 2; // DOS: "c:" (but not "c:d")
+            return EncodedRootLength::Disk(2); // DOS: "c:" (but not "c:d")
         }
         let ch2 = bytes[2];
         if ch2 == b'/' || ch2 == b'\\' {
-            return 3; // DOS: "c:/" or "c:\"
+            return EncodedRootLength::Disk(3); // DOS: "c:/" or "c:\"
         }
     }
 
     // Untitled paths (e.g., "^/untitled/ts-nul-authority/Untitled-1")
     if ch0 == b'^' && ln > 1 && bytes[1] == b'/' {
-        return 2; // Untitled: "^/"
+        return EncodedRootLength::Disk(2); // Untitled: "^/"
     }
 
     // URL
-    if let Some(scheme_end) = path.find(URL_SCHEME_SEPARATOR) {
+    // `path.find("://")` by its colons: the substring searcher's setup cost more than the search (most paths here are
+    // relative module names without a colon).
+    if let Some(scheme_end) =
+        memchr::memchr_iter(b':', bytes).find(|&i| bytes[i + 1..].starts_with(b"//"))
+    {
         let authority_start = scheme_end + URL_SCHEME_SEPARATOR.len();
         if let Some(authority_length) = path[authority_start..].find('/') {
             // URL: "file:///", "file://server/", "file://server/path"
@@ -227,42 +261,40 @@ pub fn get_encoded_root_length(path: &str) -> i32 {
             // special case interpreted as "the machine from which the URL is being interpreted".
             let scheme = &path[..scheme_end];
             let authority = &path[authority_start..authority_end];
-            if scheme == "file" && (authority.is_empty() || authority == "localhost") && (ln > authority_end + 2) && is_volume_character(bytes[authority_end + 1]) {
-                let volume_separator_end = get_file_url_volume_separator_end(path, authority_end + 2);
-                if volume_separator_end != -1 {
-                    if volume_separator_end as usize == ln {
+            if scheme == "file"
+                && (authority.is_empty() || authority == "localhost")
+                && (ln > authority_end + 2)
+                && is_volume_character(bytes[authority_end + 1])
+            {
+                let volume_separator_end =
+                    get_file_url_volume_separator_end(path, authority_end + 2);
+                if let Some(volume_separator_end) = volume_separator_end {
+                    if volume_separator_end == ln {
                         // URL: "file:///c:", "file://localhost/c:", "file:///c$3a", "file://localhost/c%3a"
                         // but not "file:///c:d" or "file:///c%3ad"
-                        return !volume_separator_end;
+                        return EncodedRootLength::Url(volume_separator_end);
                     }
-                    if bytes[volume_separator_end as usize] == b'/' {
+                    if bytes[volume_separator_end] == b'/' {
                         // URL: "file:///c:/", "file://localhost/c:/", "file:///c%3a/", "file://localhost/c%3a/"
-                        return !(volume_separator_end + 1);
+                        return EncodedRootLength::Url(volume_separator_end + 1);
                     }
                 }
             }
-            return !((authority_end + 1) as i32); // URL: "file://server/", "http://server/"
+            return EncodedRootLength::Url(authority_end + 1); // URL: "file://server/", "http://server/"
         }
-        return !(ln as i32); // URL: "file://server", "http://server"
+        return EncodedRootLength::Url(ln); // URL: "file://server", "http://server"
     }
 
     // relative
-    0
+    EncodedRootLength::Relative
 }
 
 pub fn get_root_length(path: &str) -> usize {
-    let root_length = get_encoded_root_length(path);
-    if root_length < 0 {
-        return (!root_length) as usize;
-    }
-    root_length as usize
+    get_encoded_root_length(path).len()
 }
 
-fn last_index_byte(s: &str, b: u8) -> i32 {
-    match memchr::memrchr(b, s.as_bytes()) {
-        Some(i) => i as i32,
-        None => -1,
-    }
+fn last_index_byte(s: &str, b: u8) -> Option<usize> {
+    memchr::memrchr(b, s.as_bytes())
 }
 
 pub fn get_directory_path(path: &str) -> String {
@@ -277,10 +309,13 @@ pub fn get_directory_path(path: &str) -> String {
     // return the leading portion of the path up to the last (non-terminal) directory separator
     // but not including any trailing directory separator.
     let path = remove_trailing_directory_separator(&path);
-    path[..(root_length as i32).max(last_index_byte(path, b'/')) as usize].to_string()
+    let directory_end =
+        last_index_byte(path, b'/').map_or(root_length, |index| root_length.max(index));
+    path[..directory_end].to_string()
 }
 
 impl Path {
+    #[must_use]
     pub fn get_directory_path(&self) -> Path {
         Path::new(get_directory_path(&self.0))
     }
@@ -292,13 +327,16 @@ pub fn get_path_from_path_components<S: AsRef<str>>(path_components: &[S]) -> St
     }
 
     let root = path_components[0].as_ref();
-    let mut result = if !root.is_empty() { ensure_trailing_directory_separator(root) } else { String::new() };
-    for (i, c) in path_components[1..].iter().enumerate() {
+    let mut result =
+        if !root.is_empty() { ensure_trailing_directory_separator(root) } else { String::new() };
+    result = path_components[1..].iter().enumerate().fold(result, |mut result, (i, c)| {
         if i > 0 {
             result.push('/');
         }
         result.push_str(c.as_ref());
-    }
+
+        result
+    });
     result
 }
 
@@ -343,7 +381,8 @@ fn reduce_path_components(components: &[String]) -> Vec<String> {
 // resolvePath("/path", "to", "file.ext/") == "path/to/file.ext/"
 // resolvePath("/path", "dir", "..", "to", "file.ext") == "path/to/file.ext"
 pub fn resolve_path(path: &str, paths: &[&str]) -> String {
-    let combined_path = if !paths.is_empty() { combine_paths(path, paths) } else { normalize_slashes(path) };
+    let combined_path =
+        if !paths.is_empty() { combine_paths(path, paths) } else { normalize_slashes(path) };
     normalize_path(&combined_path)
 }
 
@@ -370,17 +409,13 @@ fn get_normalized_path_components_from_combined(path: &str) -> Vec<String> {
     let mut i = root_length;
     while i < bytes.len() {
         // Skip directory separators (handles consecutive separators and trailing '/').
-        while i < bytes.len() && bytes[i] == b'/' {
-            i += 1;
-        }
+        i += (i..bytes.len()).take_while(|&index| bytes[index] == b'/').count();
         if i >= bytes.len() {
             break;
         }
 
         let start = i;
-        while i < bytes.len() && bytes[i] != b'/' {
-            i += 1;
-        }
+        i += (i..bytes.len()).take_while(|&index| bytes[index] != b'/').count();
         let component = &path[start..i];
 
         if component.is_empty() || component == "." {
@@ -404,7 +439,10 @@ fn get_normalized_path_components_from_combined(path: &str) -> Vec<String> {
     components
 }
 
-pub fn get_normalized_absolute_path_without_root(file_name: &str, current_directory: &str) -> String {
+pub fn get_normalized_absolute_path_without_root(
+    file_name: &str,
+    current_directory: &str,
+) -> String {
     let absolute_path = get_normalized_absolute_path(file_name, current_directory);
     let root_length = get_root_length(&absolute_path);
     absolute_path[root_length..].to_string()
@@ -443,7 +481,9 @@ pub fn get_normalized_absolute_path(file_name: &str, current_directory: &str) ->
     let mut normalized_up_to = index;
     let mut seen_non_dot_dot_segment = root_length != 0;
     let seen_non_dot_dot = |normalized: &str| -> bool {
-        (normalized.len() != root_length || root_length != 0) && normalized != ".." && !normalized.ends_with("/..")
+        (normalized.len() != root_length || root_length != 0)
+            && normalized != ".."
+            && !normalized.ends_with("/..")
     };
     while index < length {
         // At beginning of segment
@@ -495,7 +535,9 @@ pub fn get_normalized_absolute_path(file_name: &str, current_directory: &str) ->
             } else if !changed {
                 if normalized_up_to >= 1 {
                     let last = last_index_byte(&file_name[..normalized_up_to - 1], b'/');
-                    normalized = file_name[..(root_length as i32).max(last) as usize].to_string();
+                    normalized = file_name
+                        [..last.map_or(root_length, |index| root_length.max(index))]
+                        .to_string();
                 } else {
                     normalized = file_name[..normalized_up_to].to_string();
                 }
@@ -503,8 +545,8 @@ pub fn get_normalized_absolute_path(file_name: &str, current_directory: &str) ->
                 seen_non_dot_dot_segment = seen_non_dot_dot(&normalized);
             } else {
                 let last_slash = last_index_byte(&normalized, b'/');
-                if last_slash != -1 {
-                    normalized.truncate(root_length.max(last_slash as usize));
+                if let Some(last_slash) = last_slash {
+                    normalized.truncate(root_length.max(last_slash));
                 } else {
                     normalized = root.to_string();
                 }
@@ -543,7 +585,10 @@ fn simple_normalize_path(path: &str) -> Option<std::borrow::Cow<'_, str>> {
     // Some paths only require cleanup of `/./` or leading `./`
     let simplified = path.replace("/./", "/");
     let trimmed = simplified.strip_prefix("./").unwrap_or(&simplified);
-    if trimmed != path && !has_relative_path_segment(trimmed) && !(trimmed != simplified && trimmed.starts_with('/')) {
+    if trimmed != path
+        && !has_relative_path_segment(trimmed)
+        && !(trimmed != simplified && trimmed.starts_with('/'))
+    {
         // If we trimmed a leading "./" and the path now starts with "/", we changed the meaning
         return Some(Cow::Owned(trimmed.to_string()));
     }
@@ -580,19 +625,14 @@ pub fn has_relative_path_segment(p: &str) -> bool {
         }
         i += 7;
     }
-    while i + 1 < n {
-        if relative_segment_after(p, i) {
-            return true;
-        }
-        i += 1;
-    }
-    false
+    (i..n.saturating_sub(1)).any(|i| relative_segment_after(p, i))
 }
 
 // Whether p[slash] is a slash that ends an empty segment or starts a "." or ".." segment (`has_relative_path_segment`).
 #[inline]
 fn relative_segment_after(p: &[u8], slash: usize) -> bool {
-    p[slash] == b'/' && p.get(slash + 1).is_some_and(|&c| c == b'/' || c == b'.' && dot_segment_at(p, slash + 1))
+    p[slash] == b'/'
+        && p.get(slash + 1).is_some_and(|&c| c == b'/' || c == b'.' && dot_segment_at(p, slash + 1))
 }
 
 // Whether the segment at p[start] (a dot) is "." or "..".
@@ -640,12 +680,19 @@ pub fn get_canonical_file_name(file_name: &str, use_case_sensitive_file_names: b
 // changing its rune count (e.g. the Kelvin sign '\u212A' case-folds to the
 // single-byte 'k'), so path and prefix can disagree in byte length even when
 // one is (a case-insensitive match for) a prefix of the other.
-pub fn trim_file_path_prefix<'a>(path: &'a str, prefix: &str, use_case_sensitive_file_names: bool) -> Option<&'a str> {
+pub fn trim_file_path_prefix<'a>(
+    path: &'a str,
+    prefix: &str,
+    use_case_sensitive_file_names: bool,
+) -> Option<&'a str> {
     if use_case_sensitive_file_names {
         return path.strip_prefix(prefix);
     }
-    let canonical_prefix = get_canonical_file_name(prefix, false /*useCaseSensitiveFileNames*/);
-    if !get_canonical_file_name(path, false /*useCaseSensitiveFileNames*/).starts_with(&canonical_prefix) {
+    let canonical_prefix =
+        get_canonical_file_name(prefix, false /*useCaseSensitiveFileNames*/);
+    if !get_canonical_file_name(path, false /*useCaseSensitiveFileNames*/)
+        .starts_with(&canonical_prefix)
+    {
         return None;
     }
     Some(trim_rune_count(path, rune_count_in_string(&canonical_prefix)))
@@ -698,7 +745,7 @@ fn trim_rune_count(s: &str, rune_count: usize) -> &str {
 // Rest special characters are either already in lower case format or
 // they have corresponding upper case character so they dont need special handling
 pub fn to_file_name_lower_case(file_name: &str) -> String {
-    const I_WITH_DOT: i32 = 0x130;
+    const I_WITH_DOT: stringutil::Rune = 0x130;
 
     if file_name.is_ascii() {
         return file_name.to_ascii_lowercase();
@@ -720,8 +767,11 @@ pub fn to_file_name_lower_case(file_name: &str) -> String {
 }
 
 pub fn to_path(file_name: &str, base_path: &str, use_case_sensitive_file_names: bool) -> Path {
-    let mut non_canonicalized_path =
-        if is_rooted_disk_path(file_name) { normalize_path(file_name) } else { get_normalized_absolute_path(file_name, base_path) };
+    let mut non_canonicalized_path = if is_rooted_disk_path(file_name) {
+        normalize_path(file_name)
+    } else {
+        get_normalized_absolute_path(file_name, base_path)
+    };
     // get_canonical_file_name, reusing the owned string
     if use_case_sensitive_file_names {
         return Path::new(non_canonicalized_path);
@@ -741,6 +791,7 @@ pub fn remove_trailing_directory_separator(path: &str) -> &str {
 }
 
 impl Path {
+    #[must_use]
     pub fn remove_trailing_directory_separator(&self) -> Path {
         Path::from(remove_trailing_directory_separator(&self.0))
     }
@@ -766,6 +817,7 @@ pub fn ensure_trailing_directory_separator(path: &str) -> String {
 }
 
 impl Path {
+    #[must_use]
     pub fn ensure_trailing_directory_separator(&self) -> Path {
         Path::new(ensure_trailing_directory_separator(&self.0))
     }
@@ -773,9 +825,15 @@ impl Path {
 
 // Relative Paths
 
-pub fn get_path_components_relative_to(from: &str, to: &str, options: &ComparePathsOptions) -> Vec<String> {
-    let from_components = reduce_path_components(&get_path_components(from, &options.current_directory));
-    let to_components = reduce_path_components(&get_path_components(to, &options.current_directory));
+pub fn get_path_components_relative_to(
+    from: &str,
+    to: &str,
+    options: &ComparePathsOptions,
+) -> Vec<String> {
+    let from_components =
+        reduce_path_components(&get_path_components(from, &options.current_directory));
+    let to_components =
+        reduce_path_components(&get_path_components(to, &options.current_directory));
 
     let mut start = 0;
     let max_common_components = from_components.len().min(to_components.len());
@@ -802,33 +860,48 @@ pub fn get_path_components_relative_to(from: &str, to: &str, options: &ComparePa
 
     result.push(String::new());
     // Add all the relative components until we hit a common directory.
-    for _ in 0..num_dot_dot_slashes {
-        result.push("..".to_string());
-    }
+    result.extend(std::iter::repeat_with(|| "..".to_string()).take(num_dot_dot_slashes));
     // Now add all the remaining components of the "to" path.
     result.extend(to_components[start..].iter().cloned());
 
     result
 }
 
-pub fn get_relative_path_from_directory(from_directory: &str, to: &str, options: &ComparePathsOptions) -> String {
-    if (get_root_length(from_directory) > 0) != (get_root_length(to) > 0) {
-        panic!("paths must either both be absolute or both be relative");
-    }
+pub fn get_relative_path_from_directory(
+    from_directory: &str,
+    to: &str,
+    options: &ComparePathsOptions,
+) -> String {
+    assert!(
+        (get_root_length(from_directory) > 0) == (get_root_length(to) > 0),
+        "paths must either both be absolute or both be relative"
+    );
     let path_components = get_path_components_relative_to(from_directory, to, options);
     get_path_from_path_components(&path_components)
 }
 
 pub fn get_relative_path_from_file(from: &str, to: &str, options: &ComparePathsOptions) -> String {
-    ensure_path_is_non_module_name(&get_relative_path_from_directory(&get_directory_path(from), to, options))
+    ensure_path_is_non_module_name(&get_relative_path_from_directory(
+        &get_directory_path(from),
+        to,
+        options,
+    ))
 }
 
-pub fn convert_to_relative_path(absolute_or_relative_path: &str, options: &ComparePathsOptions) -> String {
+pub fn convert_to_relative_path(
+    absolute_or_relative_path: &str,
+    options: &ComparePathsOptions,
+) -> String {
     if !is_rooted_disk_path(absolute_or_relative_path) {
         return absolute_or_relative_path.to_string();
     }
 
-    get_relative_path_to_directory_or_url(&options.current_directory, absolute_or_relative_path, false /*isAbsolutePathAnUrl*/, options)
+    get_relative_path_to_directory_or_url(
+        &options.current_directory,
+        absolute_or_relative_path,
+        false, /*isAbsolutePathAnUrl*/
+        options,
+    )
 }
 
 pub fn get_relative_path_to_directory_or_url(
@@ -837,11 +910,16 @@ pub fn get_relative_path_to_directory_or_url(
     is_absolute_path_an_url: bool,
     options: &ComparePathsOptions,
 ) -> String {
-    let mut path_components = get_path_components_relative_to(directory_path_or_url, relative_or_absolute_path, options);
+    let mut path_components =
+        get_path_components_relative_to(directory_path_or_url, relative_or_absolute_path, options);
 
     let first_component = path_components[0].clone();
     if is_absolute_path_an_url && is_rooted_disk_path(&first_component) {
-        let prefix = if first_component.as_bytes()[0] == DIRECTORY_SEPARATOR { "file://" } else { "file:///" };
+        let prefix = if first_component.as_bytes()[0] == DIRECTORY_SEPARATOR {
+            "file://"
+        } else {
+            "file:///"
+        };
         path_components[0] = format!("{prefix}{first_component}");
     }
 
@@ -877,7 +955,10 @@ pub fn get_base_file_name(path: &str) -> String {
     // return the trailing portion of the path starting after the last (non-terminal) directory
     // separator but not including any trailing directory separator.
     let path = remove_trailing_directory_separator(&path);
-    path[(get_root_length(path) as i32).max(last_index_byte(path, DIRECTORY_SEPARATOR) + 1) as usize..].to_string()
+    let root_length = get_root_length(path);
+    let base_start = last_index_byte(path, DIRECTORY_SEPARATOR)
+        .map_or(root_length, |index| root_length.max(index + 1));
+    path[base_start..].to_string()
 }
 
 // Gets the file extension for a path.
@@ -909,7 +990,11 @@ pub fn get_any_extension_from_path(path: &str, extensions: &[&str], ignore_case:
     String::new()
 }
 
-pub fn get_longest_extension_from_path(path: &str, extensions: &[&str], ignore_case: bool) -> String {
+pub fn get_longest_extension_from_path(
+    path: &str,
+    extensions: &[&str],
+    ignore_case: bool,
+) -> String {
     let path = remove_trailing_directory_separator(path);
     let comparer = stringutil::get_string_equality_comparer(ignore_case);
     let mut longest = String::new();
@@ -924,18 +1009,30 @@ pub fn get_longest_extension_from_path(path: &str, extensions: &[&str], ignore_c
     longest
 }
 
-fn get_any_extension_from_path_worker(path: &str, extensions: &[&str], string_equality_comparer: fn(&str, &str) -> bool) -> String {
-    for extension in extensions {
+fn get_any_extension_from_path_worker(
+    path: &str,
+    extensions: &[&str],
+    string_equality_comparer: fn(&str, &str) -> bool,
+) -> String {
+    if let Some(result) = extensions.iter().find_map(|extension| {
         let result = try_get_extension_from_path_with(path, extension, string_equality_comparer);
         if !result.is_empty() {
-            return result;
+            return Some(result);
         }
+
+        None
+    }) {
+        return result;
     }
     String::new()
 }
 
 // Go's unexported tryGetExtensionFromPath; renamed because it collides with TryGetExtensionFromPath after snake-casing.
-fn try_get_extension_from_path_with(path: &str, extension: &str, string_equality_comparer: fn(&str, &str) -> bool) -> String {
+fn try_get_extension_from_path_with(
+    path: &str,
+    extension: &str,
+    string_equality_comparer: fn(&str, &str) -> bool,
+) -> String {
     // Go prefixes a missing "." to the extension; both comparers match the "." alike, so the rest is compared
     // without building the prefixed string (this runs once per candidate extension of every changeExtension).
     let without_dot = extension.strip_prefix('.').unwrap_or(extension);
@@ -992,7 +1089,7 @@ pub struct ComparePathsOptions {
 }
 
 impl ComparePathsOptions {
-    pub fn get_comparer(&self) -> fn(&str, &str) -> i32 {
+    pub fn get_comparer(&self) -> fn(&str, &str) -> Ordering {
         stringutil::get_string_comparer(!self.use_case_sensitive_file_names)
     }
 
@@ -1001,26 +1098,18 @@ impl ComparePathsOptions {
     }
 }
 
-fn cmp_to_i32(o: Ordering) -> i32 {
-    match o {
-        Ordering::Less => -1,
-        Ordering::Equal => 0,
-        Ordering::Greater => 1,
-    }
-}
-
-pub fn compare_paths(a: &str, b: &str, options: &ComparePathsOptions) -> i32 {
+pub fn compare_paths(a: &str, b: &str, options: &ComparePathsOptions) -> Ordering {
     let a = combine_paths(&options.current_directory, &[a]);
     let b = combine_paths(&options.current_directory, &[b]);
 
     if a == b {
-        return 0;
+        return Ordering::Equal;
     }
     if a.is_empty() {
-        return -1;
+        return Ordering::Less;
     }
     if b.is_empty() {
-        return 1;
+        return Ordering::Greater;
     }
 
     // NOTE: Performance optimization - shortcut if the root segments differ as there would be no
@@ -1028,7 +1117,7 @@ pub fn compare_paths(a: &str, b: &str, options: &ComparePathsOptions) -> i32 {
     let a_root = &a[..get_root_length(&a)];
     let b_root = &b[..get_root_length(&b)];
     let result = stringutil::compare_strings_case_insensitive(a_root, b_root);
-    if result != 0 {
+    if result != Ordering::Equal {
         return result;
     }
 
@@ -1045,21 +1134,35 @@ pub fn compare_paths(a: &str, b: &str, options: &ComparePathsOptions) -> i32 {
     let a_components = reduce_path_components(&get_path_components(&a, ""));
     let b_components = reduce_path_components(&get_path_components(&b, ""));
     let shared_length = a_components.len().min(b_components.len());
-    for i in 1..shared_length {
-        let result = options.get_comparer()(&a_components[i], &b_components[i]);
-        if result != 0 {
-            return result;
-        }
+    if let Some(result) = (1..shared_length)
+        .map(|i| options.get_comparer()(&a_components[i], &b_components[i]))
+        .find(|&result| result != Ordering::Equal)
+    {
+        return result;
     }
-    cmp_to_i32(a_components.len().cmp(&b_components.len()))
+    a_components.len().cmp(&b_components.len())
 }
 
-pub fn compare_paths_case_sensitive(a: &str, b: &str, current_directory: &str) -> i32 {
-    compare_paths(a, b, &ComparePathsOptions { use_case_sensitive_file_names: true, current_directory: current_directory.to_string() })
+pub fn compare_paths_case_sensitive(a: &str, b: &str, current_directory: &str) -> Ordering {
+    compare_paths(
+        a,
+        b,
+        &ComparePathsOptions {
+            use_case_sensitive_file_names: true,
+            current_directory: current_directory.to_string(),
+        },
+    )
 }
 
-pub fn compare_paths_case_insensitive(a: &str, b: &str, current_directory: &str) -> i32 {
-    compare_paths(a, b, &ComparePathsOptions { use_case_sensitive_file_names: false, current_directory: current_directory.to_string() })
+pub fn compare_paths_case_insensitive(a: &str, b: &str, current_directory: &str) -> Ordering {
+    compare_paths(
+        a,
+        b,
+        &ComparePathsOptions {
+            use_case_sensitive_file_names: false,
+            current_directory: current_directory.to_string(),
+        },
+    )
 }
 
 pub fn contains_path(parent: &str, child: &str, options: &ComparePathsOptions) -> bool {
@@ -1078,11 +1181,12 @@ pub fn contains_path(parent: &str, child: &str, options: &ComparePathsOptions) -
     }
 
     let component_comparer = options.get_equality_comparer();
-    for (i, parent_component) in parent_components.iter().enumerate() {
-        let comparer: fn(&str, &str) -> bool = if i == 0 { stringutil::equate_string_case_insensitive } else { component_comparer };
-        if !comparer(parent_component, &child_components[i]) {
-            return false;
-        }
+    if parent_components.iter().enumerate().any(|(i, parent_component)| {
+        let comparer: fn(&str, &str) -> bool =
+            if i == 0 { stringutil::equate_string_case_insensitive } else { component_comparer };
+        !comparer(parent_component, &child_components[i])
+    }) {
+        return false;
     }
 
     true
@@ -1098,7 +1202,10 @@ impl Path {
         if p.is_empty() {
             return false;
         }
-        p == c || c.len() > p.len() && c.starts_with(p) && (p[p.len() - 1] == b'/' || c[p.len()] == b'/')
+        p == c
+            || c.len() > p.len()
+                && c.starts_with(p)
+                && (p[p.len() - 1] == b'/' || c[p.len()] == b'/')
     }
 }
 
@@ -1127,7 +1234,10 @@ pub fn for_each_ancestor_directory_stopping_at_global_cache<T: Default>(
 }
 
 /// Go callback `(result T, stop bool)` is `Option<T>` here: `Some(result)` stops the walk.
-pub fn for_each_ancestor_directory<T>(directory: &str, mut callback: impl FnMut(&str) -> Option<T>) -> Option<T> {
+pub fn for_each_ancestor_directory<T>(
+    directory: &str,
+    mut callback: impl FnMut(&str) -> Option<T>,
+) -> Option<T> {
     let mut directory = directory.to_string();
     loop {
         if let Some(result) = callback(&directory) {
@@ -1144,7 +1254,10 @@ pub fn for_each_ancestor_directory<T>(directory: &str, mut callback: impl FnMut(
 }
 
 impl Path {
-    pub fn for_each_ancestor_directory<T>(&self, mut callback: impl FnMut(&Path) -> Option<T>) -> Option<T> {
+    pub fn for_each_ancestor_directory<T>(
+        &self,
+        mut callback: impl FnMut(&Path) -> Option<T>,
+    ) -> Option<T> {
         for_each_ancestor_directory(&self.0, |directory| callback(&Path::from(directory)))
     }
 }
@@ -1176,14 +1289,14 @@ pub fn get_common_parents(
     get_path_components: fn(&str, &str) -> Vec<String>,
     options: &ComparePathsOptions,
 ) -> (Vec<String>, FxHashSet<String>) {
-    if min_components < 1 {
-        panic!("minComponents must be at least 1");
-    }
+    assert!(min_components >= 1, "minComponents must be at least 1");
     if paths.is_empty() {
         return (Vec::new(), FxHashSet::default());
     }
     if paths.len() == 1 {
-        if reduce_path_components(&get_path_components(&paths[0], &options.current_directory)).len() < min_components {
+        if reduce_path_components(&get_path_components(&paths[0], &options.current_directory)).len()
+            < min_components
+        {
             let mut ignored = FxHashSet::default();
             ignored.insert(paths[0].clone());
             return (Vec::new(), ignored);
@@ -1194,7 +1307,8 @@ pub fn get_common_parents(
     let mut ignored = FxHashSet::default();
     let mut path_components: Vec<Vec<String>> = Vec::with_capacity(paths.len());
     for path in paths {
-        let components = reduce_path_components(&get_path_components(path, &options.current_directory));
+        let components =
+            reduce_path_components(&get_path_components(path, &options.current_directory));
         if components.len() < min_components {
             ignored.insert(path.clone());
         } else {
@@ -1208,17 +1322,23 @@ pub fn get_common_parents(
     (result_paths, ignored)
 }
 
-fn get_common_parents_worker(component_groups: &[Vec<String>], min_components: usize, options: &ComparePathsOptions) -> Vec<Vec<String>> {
+fn get_common_parents_worker(
+    component_groups: &[Vec<String>],
+    min_components: usize,
+    options: &ComparePathsOptions,
+) -> Vec<Vec<String>> {
     if component_groups.is_empty() {
         return Vec::new();
     }
     // Determine the maximum depth we can consider
     let mut max_depth = component_groups[0].len();
-    for comps in &component_groups[1..] {
+    max_depth = component_groups[1..].iter().fold(max_depth, |mut max_depth, comps| {
         if comps.len() < max_depth {
             max_depth = comps.len();
         }
-    }
+
+        max_depth
+    });
 
     let equality = options.get_equality_comparer();
     for last_common_index in 0..max_depth {
@@ -1229,31 +1349,40 @@ fn get_common_parents_worker(component_groups: &[Vec<String>], min_components: u
                 if last_common_index < min_components {
                     // Not enough components, we need to fan out
                     let mut ordered_groups: Vec<Path> = Vec::new();
-                    let mut new_groups: FxHashMap<Path, (Vec<String>, Vec<Vec<String>>)> = FxHashMap::default();
+                    let mut new_groups: FxHashMap<Path, (Vec<String>, Vec<Vec<String>>)> =
+                        FxHashMap::default();
                     for g in component_groups {
-                        let key = to_path(&g[last_common_index], &options.current_directory, options.use_case_sensitive_file_names);
-                        if !new_groups.contains_key(&key) {
-                            ordered_groups.push(key.clone());
-                        }
-                        let entry = new_groups.entry(key).or_default();
-                        entry.0 = g[..last_common_index + 1].to_vec();
+                        let key = to_path(
+                            &g[last_common_index],
+                            &options.current_directory,
+                            options.use_case_sensitive_file_names,
+                        );
+                        let entry = match new_groups.entry(key) {
+                            Entry::Occupied(entry) => entry.into_mut(),
+                            Entry::Vacant(entry) => {
+                                ordered_groups.push(entry.key().clone());
+                                entry.insert(Default::default())
+                            }
+                        };
+                        entry.0 = g[..=last_common_index].to_vec();
                         entry.1.push(g[last_common_index + 1..].to_vec());
                     }
                     ordered_groups.sort();
                     let mut result = Vec::with_capacity(new_groups.len());
-                    for key in &ordered_groups {
+                    result.extend(ordered_groups.iter().flat_map(|key| {
                         let group = &new_groups[key];
-                        let sub_results = get_common_parents_worker(&group.1, min_components - (last_common_index + 1), options);
-                        for sr in sub_results {
-                            if sr.is_empty() {
-                                result.push(group.0.clone());
-                            } else {
-                                let mut v = group.0.clone();
-                                v.extend(sr);
-                                result.push(v);
-                            }
-                        }
-                    }
+                        get_common_parents_worker(
+                            &group.1,
+                            min_components - (last_common_index + 1),
+                            options,
+                        )
+                        .into_iter()
+                        .map(move |sr| {
+                            let mut v = group.0.clone();
+                            v.extend(sr);
+                            v
+                        })
+                    }));
                     return result;
                 }
                 return vec![component_groups[0][..last_common_index].to_vec()];
@@ -1264,21 +1393,31 @@ fn get_common_parents_worker(component_groups: &[Vec<String>], min_components: u
     vec![component_groups[0][..max_depth].to_vec()]
 }
 
-pub fn starts_with_directory(file_name: &str, directory_name: &str, use_case_sensitive_file_names: bool) -> bool {
+pub fn starts_with_directory(
+    file_name: &str,
+    directory_name: &str,
+    use_case_sensitive_file_names: bool,
+) -> bool {
     if directory_name.is_empty() {
         return false;
     }
 
     let canonical_file_name = get_canonical_file_name(file_name, use_case_sensitive_file_names);
-    let canonical_directory_name = get_canonical_file_name(directory_name, use_case_sensitive_file_names);
-    let canonical_directory_name = canonical_directory_name.strip_suffix('/').unwrap_or(&canonical_directory_name);
-    let canonical_directory_name = canonical_directory_name.strip_suffix('\\').unwrap_or(canonical_directory_name);
+    let canonical_directory_name =
+        get_canonical_file_name(directory_name, use_case_sensitive_file_names);
+    let canonical_directory_name =
+        canonical_directory_name.strip_suffix('/').unwrap_or(&canonical_directory_name);
+    let canonical_directory_name =
+        canonical_directory_name.strip_suffix('\\').unwrap_or(canonical_directory_name);
 
-    canonical_file_name.starts_with(&format!("{canonical_directory_name}/")) || canonical_file_name.starts_with(&format!("{canonical_directory_name}\\"))
+    canonical_file_name.starts_with(&format!("{canonical_directory_name}/"))
+        || canonical_file_name.starts_with(&format!("{canonical_directory_name}\\"))
 }
 
-pub fn compare_number_of_directory_separators(path1: &str, path2: &str) -> i32 {
-    cmp_to_i32(memchr::memchr_iter(b'/', path1.as_bytes()).count().cmp(&memchr::memchr_iter(b'/', path2.as_bytes()).count()))
+pub fn compare_number_of_directory_separators(path1: &str, path2: &str) -> Ordering {
+    memchr::memchr_iter(b'/', path1.as_bytes())
+        .count()
+        .cmp(&memchr::memchr_iter(b'/', path2.as_bytes()).count())
 }
 
 #[cfg(test)]

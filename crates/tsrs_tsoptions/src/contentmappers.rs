@@ -5,11 +5,11 @@
 // A mapper is declared in tsconfig (Definition), its implementation is described by fields in its npm
 // package's package.json (Manifest), and the two are combined once the package is resolved (Mapper).
 
-use tsrs_ast::{new_compiler_diagnostic, Diagnostic};
-use tsrs_core::collections::{new_ordered_map_with_size_hint, OrderedMap};
+use tsrs_ast::{Diagnostic, new_compiler_diagnostic};
+use tsrs_core::collections::{OrderedMap, new_ordered_map_with_size_hint};
 use tsrs_core::json;
 use tsrs_core::tspath;
-use tsrs_core::{CompilerOptions, ModuleResolutionKind, RESOLUTION_MODE_NONE, P};
+use tsrs_core::{CompilerOptions, ModuleResolutionKind, P, RESOLUTION_MODE_NONE};
 use tsrs_diagnostics as diagnostics;
 use tsrs_module::packagejson;
 
@@ -19,7 +19,7 @@ use crate::tsconfigparsing::{ParseConfigHost, ResolverHost};
 // Definition is a content mapper as declared in a tsconfig's "contentMappers": the npm package that
 // implements the mapper and the otherwise unsupported file extensions it registers.
 // contentmapper.go:30
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Definition {
     pub package: String,
     pub extensions: Vec<String>,
@@ -31,7 +31,7 @@ pub struct Definition {
 // (which form the mapper's identity), the argv used to run it, and the compiler options it declares it
 // depends on.
 // contentmapper.go:39
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Manifest {
     pub name: String,
     pub version: String,
@@ -43,7 +43,7 @@ pub struct Manifest {
 // Mapper is a resolved content mapper: its tsconfig Definition combined with the Manifest resolved from
 // the package's package.json, plus the package directory used as the mapper's working directory.
 // contentmapper.go:49
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Mapper {
     pub definition: Definition,
     pub manifest: Manifest,
@@ -54,7 +54,8 @@ pub struct Mapper {
 }
 
 // contentmapper.go:58
-pub(crate) const SUPPORTED_VIRTUAL_EXTENSIONS: [&str; 9] = [".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts", ".json"];
+pub(crate) const SUPPORTED_VIRTUAL_EXTENSIONS: [&str; 9] =
+    [".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts", ".json"];
 
 // contentmapper.go:62
 pub fn is_supported_virtual_extension(extension: &str) -> bool {
@@ -117,7 +118,9 @@ impl Mapper {
         }
         options_json.push('}');
         let identity = self.identity();
-        let mut buf = Vec::with_capacity(identity.len() + 2 + self.definition.options.len() + options_json.len());
+        let mut buf = Vec::with_capacity(
+            identity.len() + 2 + self.definition.options.len() + options_json.len(),
+        );
         buf.extend_from_slice(identity.as_bytes());
         buf.push(0);
         buf.extend_from_slice(self.definition.options.as_bytes());
@@ -131,7 +134,10 @@ impl Mapper {
     // whole CompilerOptions when a mapper depends on few options (or none).
     // contentmapper.go:119 (Go finds each field by its json tag through reflection, `compilerOptionFields`;
     // `gojson::compiler_option_to_go_json` does that lookup and the marshaling. The values are raw JSON text.)
-    pub fn marshal_declared_options(&self, options: Option<&CompilerOptions>) -> Result<OrderedMap<String, String>, String> {
+    pub fn marshal_declared_options(
+        &self,
+        options: Option<&CompilerOptions>,
+    ) -> Result<OrderedMap<String, String>, String> {
         let mut out = new_ordered_map_with_size_hint(self.manifest.compiler_options.len());
         let Some(options) = options else {
             return Ok(out);
@@ -139,16 +145,17 @@ impl Mapper {
         if self.manifest.compiler_options.is_empty() {
             return Ok(out);
         }
-        for name in &self.manifest.compiler_options {
+        out = self.manifest.compiler_options.iter().try_fold(out, |mut out, name| {
             let Some(field) = gojson::compiler_option_to_go_json(options, name) else {
-                continue;
+                return Ok(out);
             };
             let Some(value) = field else {
-                continue;
+                return Ok(out);
             };
             let raw = json::marshal(&value)?;
             out.insert(name.clone(), raw);
-        }
+            Ok::<_, String>(out)
+        })?;
         Ok(out)
     }
 }
@@ -174,14 +181,25 @@ pub(crate) fn resolve_content_mapper_manifest(
     let resolver_host: &'static ResolverHost = P::new(ResolverHost { host }).get();
     let resolver = tsrs_module::new_resolver(tsrs_module::ResolverOptions::new(
         resolver_host,
-        P::new(CompilerOptions { module_resolution: ModuleResolutionKind::Bundler, ..Default::default() }),
+        P::new(CompilerOptions {
+            module_resolution: ModuleResolutionKind::Bundler,
+            ..Default::default()
+        }),
     ));
-    let resolved = resolver.resolve_package_directory(package_name, containing_file, RESOLUTION_MODE_NONE, None);
+    let resolved = resolver.resolve_package_directory(
+        package_name,
+        containing_file,
+        RESOLUTION_MODE_NONE,
+        None,
+    );
     let Some(resolved) = resolved.filter(|resolved| !resolved.resolved_file_name.is_empty()) else {
         return (
             Manifest::default(),
             String::new(),
-            Some(new_compiler_diagnostic(&diagnostics::The_content_mapper_package_0_could_not_be_resolved, &[&package_name])),
+            Some(new_compiler_diagnostic(
+                &diagnostics::The_content_mapper_package_0_could_not_be_resolved,
+                &[&package_name],
+            )),
         );
     };
     let package_directory = resolved.resolved_file_name.to_string();
@@ -191,21 +209,21 @@ pub(crate) fn resolve_content_mapper_manifest(
         return (
             Manifest::default(),
             package_directory,
-            Some(new_compiler_diagnostic(&diagnostics::The_content_mapper_package_0_could_not_be_resolved, &[&package_name])),
+            Some(new_compiler_diagnostic(
+                &diagnostics::The_content_mapper_package_0_could_not_be_resolved,
+                &[&package_name],
+            )),
         );
     };
-    let fields = match packagejson::parse(&contents) {
-        Ok(fields) => fields,
-        Err(_) => {
-            return (
-                Manifest::default(),
-                package_directory,
-                Some(new_compiler_diagnostic(
-                    &diagnostics::The_package_json_of_the_content_mapper_package_0_could_not_be_parsed,
-                    &[&package_name],
-                )),
-            );
-        }
+    let Ok(fields) = packagejson::parse(&contents) else {
+        return (
+            Manifest::default(),
+            package_directory,
+            Some(new_compiler_diagnostic(
+                &diagnostics::The_package_json_of_the_content_mapper_package_0_could_not_be_parsed,
+                &[&package_name],
+            )),
+        );
     };
     // Go `name, _ := fields.Name.GetValue()`: the decoded value whether or not it was valid.
     let name = fields.name.value.clone();

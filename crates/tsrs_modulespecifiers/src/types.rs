@@ -6,7 +6,7 @@ use std::sync::{LazyLock, RwLock};
 use rustc_hash::FxHashMap;
 use tsrs_ast::{Node, SourceFile, Symbol};
 use tsrs_core::tspath::Path;
-use tsrs_core::{ResolutionMode, P};
+use tsrs_core::{P, ResolutionMode};
 use tsrs_module::packagejson;
 
 use crate::*;
@@ -48,16 +48,21 @@ pub struct ModulePath {
     pub is_redirect: bool,
 }
 
-/// Go `ModuleSpecifierGenerationHost`. `CommonSourceDirectory`, `ContentMapperExtensions`, `GetCurrentDirectory` and
-/// `UseCaseSensitiveFileNames` come from the supertrait `outputpaths.OutputPathsHost` (Go passes the host to
-/// `outputpaths` functions). `ast.HasFileName` parameters are `P<SourceFile>`.
+/// Go `ModuleSpecifierGenerationHost`.
+///
+/// `CommonSourceDirectory`, `ContentMapperExtensions`, `GetCurrentDirectory` and `UseCaseSensitiveFileNames`
+/// come from the supertrait `outputpaths.OutputPathsHost` (Go passes the host to `outputpaths` functions).
+/// `ast.HasFileName` parameters are `P<SourceFile>`.
 pub trait ModuleSpecifierGenerationHost: OutputPathsHost {
     // GetModuleResolutionCache() any // !!! TODO: adapt new resolution cache model
     fn get_symlink_cache(&self) -> P<KnownSymlinks>;
     // GetFileIncludeReasons() any // !!! TODO: adapt new resolution cache model
     fn get_global_typings_cache_location(&self) -> String;
 
-    fn get_project_reference_from_source(&self, path: &Path) -> Option<P<SourceOutputAndProjectReference>>;
+    fn get_project_reference_from_source(
+        &self,
+        path: &Path,
+    ) -> Option<P<SourceOutputAndProjectReference>>;
     fn get_redirect_targets(&self, path: &Path) -> Vec<String>;
     fn get_source_of_project_reference_if_output_included(&self, file: P<SourceFile>) -> String;
 
@@ -66,21 +71,33 @@ pub trait ModuleSpecifierGenerationHost: OutputPathsHost {
     fn get_nearest_ancestor_directory_with_package_json(&self, dirname: &str) -> String;
     fn get_package_json_info(&self, pkg_json_path: &str) -> Option<P<packagejson::InfoCacheEntry>>;
     fn get_default_resolution_mode_for_file(&self, file: P<SourceFile>) -> ResolutionMode;
-    fn get_resolved_module_from_module_specifier(&self, file: P<SourceFile>, module_specifier: P<Node>) -> Option<P<ResolvedModule>>;
-    fn get_mode_for_usage_location(&self, file: P<SourceFile>, module_specifier: P<Node>) -> ResolutionMode;
+    fn get_resolved_module_from_module_specifier(
+        &self,
+        file: P<SourceFile>,
+        module_specifier: P<Node>,
+    ) -> Option<P<ResolvedModule>>;
+    fn get_mode_for_usage_location(
+        &self,
+        file: P<SourceFile>,
+        module_specifier: P<Node>,
+    ) -> ResolutionMode;
 
     // tsrs-only: the host's memo for `try_get_module_name_from_exports` under `options`, if it keeps one (see
     // `ExportsModuleNameCache`).
-    fn exports_module_name_cache(&self, _options: &tsrs_core::CompilerOptions) -> Option<&ExportsModuleNameCache> {
+    fn exports_module_name_cache(
+        &self,
+        _options: &tsrs_core::CompilerOptions,
+    ) -> Option<&ExportsModuleNameCache> {
         None
     }
 }
 
-/// tsrs-only: memo for `try_get_module_name_from_exports`, a pure function of its arguments and of the program (its
-/// compiler options, package.json contents and output paths). Declaration emit asks for the same (module file,
-/// package) pair from every file that prints a type from that module, and each answer walks the package's
-/// `exports` map. A host returns one only if it lives as long as the program it describes, and only for that
-/// program's own options object.
+/// tsrs-only: memo for `try_get_module_name_from_exports`, a pure function of its arguments and of the
+/// program (its compiler options, package.json contents and output paths).
+///
+/// Declaration emit asks for the same (module file, package) pair from every file that prints a type from
+/// that module, and each answer walks the package's `exports` map. A host returns one only if it lives as
+/// long as the program it describes, and only for that program's own options object.
 #[derive(Default)]
 pub struct ExportsModuleNameCache(std::sync::Mutex<FxHashMap<String, String>>);
 
@@ -184,10 +201,13 @@ pub enum MatchingMode {
 
 // preferences.go
 
+/// Carries borrowed inputs into the preferred-ending callback.
+///
 /// Go's `getAllowedEndingsInPreferredOrder` func field closes over `(prefs, host, compilerOptions,
-/// importingSourceFile, oldImportSpecifier)`; a `'static` boxed closure cannot capture the borrowed host and options,
-/// so the owned captures are stored here and `get_allowed_endings_in_preferred_order(host, compiler_options, mode)`
-/// (preferences.rs) takes the other two from the caller, which always holds the same ones Go captured.
+/// importingSourceFile, oldImportSpecifier)`; a `'static` boxed closure cannot capture the borrowed host and
+/// options, so the owned captures are stored here and `get_allowed_endings_in_preferred_order(host,
+/// compiler_options, mode)` (preferences.rs) takes the other two from the caller, which always holds the same
+/// ones Go captured.
 pub struct ModuleSpecifierPreferences {
     pub relative_preference: RelativePreferenceKind,
     pub exclude_regexes: Vec<String>,
@@ -205,15 +225,16 @@ pub struct regexPatternCacheKey {
 }
 
 /// Go `regexPatternCache` guarded by `regexPatternCacheMu` (one `RwLock`).
-pub(crate) static regexPatternCache: LazyLock<RwLock<FxHashMap<regexPatternCacheKey, Option<P<regex::Regex>>>>> =
-    LazyLock::new(|| RwLock::new(FxHashMap::default()));
+pub(crate) static regexPatternCache: LazyLock<
+    RwLock<FxHashMap<regexPatternCacheKey, Option<P<regex::Regex>>>>,
+> = LazyLock::new(|| RwLock::new(FxHashMap::default()));
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct NodeModulePathParts {
-    pub top_level_node_modules_index: i32,
-    pub top_level_package_name_index: i32,
-    pub package_root_index: i32,
-    pub file_name_index: i32,
+    pub top_level_node_modules_index: usize,
+    pub top_level_package_name_index: usize,
+    pub package_root_index: Option<usize>,
+    pub file_name_index: usize,
 }
 
 #[repr(u8)]

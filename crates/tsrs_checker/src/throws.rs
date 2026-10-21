@@ -100,7 +100,7 @@ impl ThrowsChecker {
             let Some(found) = pattern.find(&comment) else { continue; };
             let from = found.group(1).and_then(|range| comment[range].parse::<f64>().ok()).unwrap_or_default();
             let to = found.group(2).map(|range| &comment[range]).unwrap_or_default();
-            if to.is_empty() { return !(version >= from); }
+            if to.is_empty() { return version < from; }
             let to = to.parse::<f64>().unwrap_or_default();
             return !(version >= from.min(to) && version <= from.max(to));
         }
@@ -110,7 +110,9 @@ impl ThrowsChecker {
 
 fn raw_throws_tag_comment(tag: P<Node>) -> String {
     if let Some(file) = ast::get_source_file_of_node(tag) {
-        if let Some(text) = file.text().get(tag.pos() as usize..tag.end() as usize) {
+        if let Some(text) = file.text().get(
+            tag.pos().source_offset().unwrap_or(0) as usize..tag.end().source_offset().unwrap_or(0) as usize,
+        ) {
             if let Some(index) = text.find("@throws") { return text[index + "@throws".len()..].trim().to_string(); }
         }
     }

@@ -4,7 +4,7 @@ use std::time::SystemTime;
 use tsrs_core::tspath;
 
 use crate::internal::{self, Common, IoDirEntry, IoFS};
-use crate::{Entries, FileInfo, FileMode, FsError, FS};
+use crate::{Entries, FS, FileInfo, FileMode, FsError};
 
 pub trait RealpathFS: IoFS {
     fn realpath(&self, path: &str) -> Result<String, FsError>;
@@ -43,15 +43,14 @@ pub fn from<T: IoFS + 'static>(fsys: T, use_case_sensitive_file_names: bool) -> 
                     if tspath::is_url(root) {
                         return None;
                     }
-                    panic!("vfs: failed to create sub file system for {:?}: sub {}: invalid argument", p, p);
+                    panic!(
+                        "vfs: failed to create sub file system for {p:?}: sub {p}: invalid argument"
+                    );
                 }
                 if p == "." {
                     return Some(Box::new(Arc::clone(&root_fsys)));
                 }
-                Some(Box::new(SubFS {
-                    fsys: Arc::clone(&root_fsys),
-                    dir: p.to_string(),
-                }))
+                Some(Box::new(SubFS { fsys: Arc::clone(&root_fsys), dir: p.to_string() }))
             }),
             is_reparse_point: None,
         },
@@ -120,7 +119,7 @@ impl<T: IoFS> IoVFS<T> {
                 let (rest, had_slash) = cut_slash(path);
                 let rp = fsys.realpath(rest)?;
                 if had_slash {
-                    return Ok(format!("/{}", rp));
+                    return Ok(format!("/{rp}"));
                 }
                 Ok(rp)
             }
@@ -131,7 +130,7 @@ impl<T: IoFS> IoVFS<T> {
     fn writable(&self, what: &str) -> &dyn WritableFS {
         match self.fsys.as_writable_fs() {
             Some(fsys) => fsys,
-            None => panic!("{} not supported", what),
+            None => panic!("{what} not supported"),
         }
     }
 
@@ -150,7 +149,12 @@ impl<T: IoFS> IoVFS<T> {
         self.writable("mkdirAll").mkdir_all(rest, FileMode::from_bits_retain(0o777))
     }
 
-    fn write_file_ensuring_dir(&self, path: &str, content: &str, write: fn(&Self, &str, &str) -> Result<(), FsError>) -> Result<(), String> {
+    fn write_file_ensuring_dir(
+        &self,
+        path: &str,
+        content: &str,
+        write: fn(&Self, &str, &str) -> Result<(), FsError>,
+    ) -> Result<(), String> {
         let _ = internal::root_length(path); // Assert path is rooted
         if write(self, path, content).is_ok() {
             return Ok(());
@@ -202,7 +206,7 @@ impl<T: IoFS> FS for IoVFS<T> {
         let (root, rest) = internal::split_path(path);
         // splitPath normalizes the path into parts (e.g. "c:/foo/bar" -> "c:/", "foo/bar")
         // Put them back together to call realpath.
-        match self.realpath_impl(&format!("{}{}", root, rest)) {
+        match self.realpath_impl(&format!("{root}{rest}")) {
             Ok(realpath) => realpath,
             Err(_) => path.to_string(),
         }
