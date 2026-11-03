@@ -1,5 +1,26 @@
 # Dynamic ArkTS and Arkdown service port (2026-10-11)
 
+## SDK linter alias and enum regressions (2026-11-03)
+
+The current SDK's `ArkTSLinter_1_1::isStdRecordType` follows
+`type.target.aliasSymbol`, including named, chained and generic aliases of a
+global `Record`. The native linter checked only the outer alias name and
+reported TS38 for otherwise valid object initializers. It now checks the mapped
+type's target alias and retains the SDK's global-symbol qualification rule.
+
+`ArkTSLinter_1_1::isEnumType` accepts either an enum symbol or Enum/EnumLiteral
+type flags. A `typeof Enum` object has the enum symbol without those type flags;
+the native element-access check now accepts it, including nested enum objects.
+
+Three API regressions compare both linter and build-diagnostic channels. The
+SDK returns code sequences `[8]`, `[38, 83, 38]` and `[29, 8]` for the same
+sources: valid aliases and enum indexes pass, while `any`, unquoted Record keys,
+shadowed mapped types and ordinary class-field indexing remain restricted.
+The native baseline failed two tests; all three pass after the fix. This is a
+focused comparison against the installed SDK TypeScript 4.9.5 linter, not a rerun
+of the historical full-corpus totals below. No emit or diagnostic suppression
+was added.
+
 ## Real-build regressions (2026-10-12)
 
 The local working tree based on `7308ab7f` exposed three issues during a real Arkdown debug HAP build:

@@ -121,7 +121,15 @@ impl ArkTsLinter<'_> {
     }
     fn has_methods(&mut self, typ: P<Type>) -> bool { self.checker.get_properties_of_type(typ).iter().any(|s| s.flags().intersects(SymbolFlags::Method)) }
     pub(super) fn is_std_record_type(&mut self, typ: P<Type>) -> bool {
-        typ.alias().and_then(|a| a.symbol()).is_some_and(|s| s.name() == "Record" && self.checker.get_fully_qualified_name_exported(s) == "Record")
+        // SDK ArkTSLinter_1_1::isStdRecordType follows target.aliasSymbol.
+        if typ.alias().is_none() || !typ.flags().intersects(TypeFlags::Object) { return false; }
+        typ.object_target().and_then(|target| target.alias()).and_then(|alias| alias.symbol()).is_some_and(|symbol| {
+            symbol.name() == "Record" && matches!(self.checker.get_fully_qualified_name_exported(symbol).as_str(), "Record" | "global.Record")
+        })
+    }
+    pub(super) fn is_enum_type(&self, typ: P<Type>) -> bool {
+        // SDK ArkTSLinter_1_1::isEnumType also accepts typeof Enum's symbol.
+        typ.flags().intersects(TypeFlags::EnumLike) || typ.symbol().is_some_and(|symbol| symbol.flags().intersects(SymbolFlags::Enum))
     }
     fn has_valid_record_keys(&mut self, node: P<Node>) -> bool {
         node.as_object_literal_expression().properties.nodes().iter().all(|p| p.name().is_some_and(|n| ast::is_string_literal(n) || ast::is_numeric_literal(n) || ast::is_computed_property_name(n) && self.is_valid_computed_property_name(n, true)))
