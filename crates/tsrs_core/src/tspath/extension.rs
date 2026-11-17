@@ -1,4 +1,4 @@
-use super::path::{file_extension_is, get_any_extension_from_path, get_base_file_name};
+use super::path::{file_extension_is, get_any_extension_from_path, get_base_file_name_cow};
 
 pub const EXTENSION_TS: &str = ".ts";
 pub const EXTENSION_ETS: &str = ".ets";
@@ -52,8 +52,7 @@ pub static SUPPORTED_TS_EXTENSIONS_FLAT: &[&str] = &[
     EXTENSION_ETS,
     EXTENSION_DETS,
 ];
-pub static SUPPORTED_JS_EXTENSIONS: &[&[&str]] =
-    &[&[EXTENSION_JS, EXTENSION_JSX], &[EXTENSION_MJS], &[EXTENSION_CJS]];
+
 pub static SUPPORTED_JS_EXTENSIONS_FLAT: &[&str] =
     &[EXTENSION_JS, EXTENSION_JSX, EXTENSION_MJS, EXTENSION_CJS];
 pub static ALL_SUPPORTED_EXTENSIONS_WITH_JSON: &[&[&str]] = &[
@@ -186,20 +185,28 @@ pub fn extension_is_one_of(ext: &str, extensions: &[&str]) -> bool {
     extensions.contains(&ext)
 }
 
-pub fn get_declaration_file_extension(file_name: &str) -> String {
-    let base = get_base_file_name(file_name);
-    if let Some(result) = SUPPORTED_DECLARATION_EXTENSIONS
-        .iter()
-        .find_map(|ext| if base.ends_with(ext) { Some(ext.to_string()) } else { None })
+/// The declaration extension at the end of `file_name`, as a slice of it; empty when there is none.
+///
+/// `.d.ts`, `.d.mts`, `.d.cts` or a custom `.d.x.ts`. Borrowed because every module-resolution probe asks
+/// `is_declaration_file_name` (notes/perf-reparse-cloner.md).
+pub fn get_declaration_file_extension(file_name: &str) -> &str {
+    let base = get_base_file_name_cow(file_name);
+    let len = if let Some(ext) =
+        SUPPORTED_DECLARATION_EXTENSIONS.iter().find(|ext| base.ends_with(*ext))
     {
-        return result;
+        ext.len()
+    } else if base.ends_with(EXTENSION_TS) {
+        base.find(".d.").map_or(0, |index| base.len() - index)
+    } else {
+        0
+    };
+    if len == 0 {
+        return "";
     }
-    if base.ends_with(EXTENSION_TS) {
-        if let Some(index) = base.find(".d.") {
-            return base[index..].to_string();
-        }
-    }
-    String::new()
+    // The base name is the last segment of the path with at most one trailing separator removed, so the extension
+    // is the tail of the path before that separator (an extension has no separator in it).
+    let trimmed = file_name.trim_end_matches(['/', '\\']);
+    &trimmed[trimmed.len() - len..]
 }
 
 pub fn get_declaration_emit_extension_for_path(path: &str) -> String {
@@ -260,10 +267,10 @@ pub fn change_extension(path: &str, new_extension: &str) -> String {
 pub fn change_full_extension(path: &str, new_extension: &str) -> String {
     let declaration_extension = get_declaration_file_extension(path);
     if !declaration_extension.is_empty() {
-        let ext = if !new_extension.starts_with('.') {
-            format!(".{new_extension}")
-        } else {
+        let ext = if new_extension.starts_with('.') {
             new_extension.to_string()
+        } else {
+            format!(".{new_extension}")
         };
         return format!("{}{}", &path[..path.len() - declaration_extension.len()], ext);
     }

@@ -3,10 +3,9 @@
 // whose spec is not nullable. Without reflection, the generator emits the per-type field loop and the
 // strictness decisions (which fields are required / reject null) itself, and calls the helpers below.
 
-use tsrs_core::collections::OrderedMap;
-
 use crate::json::{Json, JsonError, Value, is_null, kind};
 use crate::lsp::{err_missing, err_not_object, err_null};
+use tsrs_core::json::JsonMap;
 
 // unmarshalStruct's object check. A non-strict structure (one Go decodes with json/v2's default struct
 // codec) decodes null as its zero value and rejects other non-objects with json/v2's kind error.
@@ -14,7 +13,7 @@ pub fn struct_members<'a>(
     v: &'a Value,
     go_type: &str,
     strict: bool,
-) -> Result<Option<&'a OrderedMap<String, Value>>, JsonError> {
+) -> Result<Option<&'a JsonMap>, JsonError> {
     match v {
         Value::Object(members) => Ok(Some(members)),
         Value::Null if !strict => Ok(None),
@@ -29,7 +28,11 @@ pub fn field<T: Json>(name: &str, v: &Value) -> Result<T, JsonError> {
 }
 
 // A required nilable field that rejects null.
-pub fn field_non_null<T: Json>(name: &str, v: &Value, go_type: &str) -> Result<T, JsonError> {
+pub(crate) fn field_non_null<T: Json>(
+    name: &str,
+    v: &Value,
+    go_type: &str,
+) -> Result<T, JsonError> {
     if is_null(v) {
         return Err(JsonError::method(go_type, err_null(name)).within(name));
     }
@@ -37,7 +40,7 @@ pub fn field_non_null<T: Json>(name: &str, v: &Value, go_type: &str) -> Result<T
 }
 
 // An optional (pointer) field: null decodes as nil.
-pub fn opt<T: Json>(name: &str, v: &Value) -> Result<Option<T>, JsonError> {
+pub(crate) fn opt<T: Json>(name: &str, v: &Value) -> Result<Option<T>, JsonError> {
     if is_null(v) {
         return Ok(None);
     }
@@ -71,16 +74,16 @@ pub fn check_required(seen: u64, required_names: &[&str], go_type: &str) -> Resu
 }
 
 // A union arm decoded with the union's decoder (Go `o.X = new(T); json.UnmarshalDecode(dec, o.X)`).
-pub fn arm<T: Json>(v: &Value) -> Result<Option<T>, JsonError> {
+pub(crate) fn arm<T: Json>(v: &Value) -> Result<Option<T>, JsonError> {
     T::from_json(v).map(Some)
 }
 
 // A union arm decoded from the buffered value (Go `o.X = new(T); json.Unmarshal(data, o.X)`).
-pub fn arm_buffered<T: Json>(v: &Value) -> Result<Option<T>, JsonError> {
+pub(crate) fn arm_buffered<T: Json>(v: &Value) -> Result<Option<T>, JsonError> {
     T::from_json(v).map(Some).map_err(JsonError::seal)
 }
 
-pub fn value_str(v: &Value) -> Option<&str> {
+fn value_str(v: &Value) -> Option<&str> {
     match v {
         Value::String(s) => Some(s),
         _ => None,
@@ -118,7 +121,7 @@ impl DiscriminatedStructDecoder<'_> {
     }
 
     // structcodec.go:226
-    pub fn invalid_discriminator(&self, go_type: &str) -> JsonError {
+    pub(crate) fn invalid_discriminator(&self, go_type: &str) -> JsonError {
         let Some(value) = self.discriminator_value else {
             return JsonError::method(
                 go_type,
@@ -160,7 +163,7 @@ pub fn unmarshal_discriminated_arm<T: Json>(
     // Go's field order decides which error is reported first.
     let mut err = match discriminator_index {
         Some(d) if d > 0 => {
-            let mut reordered = OrderedMap::default();
+            let mut reordered = JsonMap::new();
             reordered.reserve(members.len());
             reordered.extend(
                 members
@@ -169,7 +172,7 @@ pub fn unmarshal_discriminated_arm<T: Json>(
                     .take(1)
                     .chain(members.iter().take(d))
                     .chain(members.iter().skip(d + 1))
-                    .map(|(k, item)| (k.clone(), item.clone())),
+                    .map(|(k, item)| (k.to_string(), item.clone())),
             );
             match T::from_json(&Value::Object(reordered)) {
                 Ok(arm) => return Ok(arm),
@@ -181,24 +184,24 @@ pub fn unmarshal_discriminated_arm<T: Json>(
     if err.go_type == T::GO_TYPE {
         err.go_type = union_go_type.to_string();
     }
-    if !err.sealed {
-        if let Some(field) = err.pointer.last() {
-            let replayed = match (members.get_index_of(field.as_str()), discriminator_index) {
-                (Some(f), Some(d)) => f <= d,
-                (Some(_), None) => true,
-                _ => false,
-            };
-            if replayed {
-                err.pointer.pop();
-                err = err.seal();
-            }
+    if !err.sealed
+        && let Some(field) = err.pointer.last()
+    {
+        let replayed = match (members.get_index_of(field.as_str()), discriminator_index) {
+            (Some(f), Some(d)) => f <= d,
+            (Some(_), None) => true,
+            _ => false,
+        };
+        if replayed {
+            err.pointer.pop();
+            err = err.seal();
         }
     }
     Err(err)
 }
 
 // Go `cmp.Compare`.
-pub fn cmp_compare<T: PartialOrd>(a: &T, b: &T) -> std::cmp::Ordering {
+pub(crate) fn cmp_compare<T: PartialOrd>(a: &T, b: &T) -> std::cmp::Ordering {
     if a < b {
         std::cmp::Ordering::Less
     } else if a > b {

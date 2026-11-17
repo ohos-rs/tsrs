@@ -22,14 +22,14 @@
 //! reports any diagnostics of its own. Message arguments are pre-formatted into `String`s
 //! (`ScanError::args`); pass them on as `&[&dyn Display]`.
 //!
-//! Speculation (Go `Mark` / `Rewind`). `mark()` returns a `Copy` `ScannerState` snapshot
-//! (positions, token, token value, flags, `JSDoc` asterisk depth and the slice of comment directives
-//! collected so far); `rewind(state)` restores it. Adding a directive copies the slice into a new
-//! arena slice, so a saved snapshot is never modified, which is what Go's shared-backing-array
-//! slice restore amounts to. Buffered
-//! errors are *not* part of the state (in Go they are the callback's business): an owner that
-//! drains after every call has nothing pending at `mark()` time and truncates its own diagnostics
-//! on rewind, as the Go parser does.
+//! Speculation (Go `Mark` / `Rewind`). `mark()` saves the token state and directive count;
+//! `rewind(state)` restores the token state and truncates the directive buffer. These snapshots
+//! are for speculation within the current text. Across temporary text changes (`JSDoc` parsing),
+//! use `take_state()` / `restore_state()` to move the buffer with the state. This preserves Go's
+//! saved directive slice across `set_text` without copying its entries.
+//!
+//! Buffered errors are not part of either snapshot (in Go they are the callback's business).
+//! The owner drains after each scanner call and truncates its own diagnostics on rewind.
 
 use std::borrow::Cow;
 use std::fmt::{Display, Write as _};
@@ -52,7 +52,7 @@ use crate::regexp::{RegExpParser, RegularExpressionFlags, char_code_to_reg_exp_f
 use crate::utilities::token_is_identifier_or_keyword;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum IdentifierVariant {
+pub enum IdentifierVariant {
     Standard,
     #[expect(
         clippy::upper_case_acronyms,
@@ -95,7 +95,7 @@ pub struct ScanError {
 macro_rules! keywords {
     ($($text:literal => $kind:ident,)*) => {
         const KEYWORDS: &[(&str, Kind)] = &[$(($text, Kind::$kind),)*];
-        pub(crate) static TEXT_TO_KEYWORD: &[(&str, Kind)] = KEYWORDS;
+        pub static TEXT_TO_KEYWORD: &[(&str, Kind)] = KEYWORDS;
     };
 }
 
@@ -206,6 +206,7 @@ keywords! {
     "return" => ReturnKeyword,
     "satisfies" => SatisfiesKeyword,
     "set" => SetKeyword,
+    "source" => SourceKeyword,
     "static" => StaticKeyword,
     "string" => StringKeyword,
     "super" => SuperKeyword,
@@ -308,19 +309,26 @@ fn text_to_token() -> &'static FxHashMap<&'static str, Kind> {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ScannerState {
     pub(crate) pos: u32, // Current position in text (and ending position of current token)
-    pub(crate) full_start_pos: u32, // Starting position of current token including preceding whitespace
-    pub(crate) token_start: u32,    // Starting position of non-whitespace part of current token
-    pub(crate) token: Kind,         // Kind of current token
+    full_start_pos: u32, // Starting position of current token including preceding whitespace
+    pub(crate) token_start: u32, // Starting position of non-whitespace part of current token
+    token: Kind,         // Kind of current token
     pub(crate) token_value: &'static str, // Parsed value of current token
-    pub(crate) token_flags: TokenFlags, // Flags for current token
-    pub(crate) comment_directives: &'static [CommentDirective], // a snapshot, like Go's slice header: Rewind restores it
-    pub(crate) skip_jsdoc_leading_asterisks: u32, // Leading asterisks to skip when scanning types inside JSDoc. Should be 0 outside JSDoc
+    token_flags: TokenFlags, // Flags for current token
+    comment_directives_len: usize, // Snapshot of the number of comment directives collected so far
+    skip_jsdoc_leading_asterisks: u32, // Leading asterisks to skip when scanning types inside JSDoc. Should be 0 outside JSDoc
+}
+
+/// An owning snapshot for temporary text changes, unlike a `mark()` snapshot.
+#[must_use]
+pub struct SavedScannerState {
+    state: ScannerState,
+    comment_directives: Vec<CommentDirective>,
 }
 
 #[derive(Default)]
 pub struct Scanner {
     pub(crate) text: &'static str,
-    pub(crate) end: u32,
+    end: u32,
     language_variant: LanguageVariant,
     open_harmony49: bool,
     script_target: ScriptTarget,
@@ -328,6 +336,7 @@ pub struct Scanner {
     errors: Vec<ScanError>,
     skip_trivia: bool,
     pub(crate) state: ScannerState,
+    comment_directives: Vec<CommentDirective>,
 
     number_cache: FxHashMap<&'static str, &'static str>,
     hex_number_cache: FxHashMap<&'static str, &'static str>,
@@ -384,7 +393,7 @@ static BYTE_HANDLERS: [ByteHandler; 256] = {
     table
 };
 
-pub(crate) const RUNE_SELF: Rune = 0x80;
+const RUNE_SELF: Rune = 0x80;
 
 /// `[A-Za-z0-9_$]` by byte.
 static ASCII_IDENTIFIER_PART: [bool; 256] = {
@@ -483,7 +492,7 @@ fn decode_rune_slow(b: &[u8]) -> (Rune, usize) {
 }
 
 /// Go `utf8.DecodeLastRuneInString`.
-pub(crate) fn decode_last_rune(b: &[u8]) -> (Rune, usize) {
+fn decode_last_rune(b: &[u8]) -> (Rune, usize) {
     let end = b.len();
     if end == 0 {
         return (RUNE_ERROR, 0);
@@ -509,7 +518,7 @@ pub(crate) fn decode_last_rune(b: &[u8]) -> (Rune, usize) {
 
 /// Go `string(r)`: invalid code points (surrogates, out of range) become U+FFFD.
 #[inline]
-pub(crate) fn rune_to_char(r: Rune) -> char {
+fn rune_to_char(r: Rune) -> char {
     char::from_u32(r).unwrap_or('\u{FFFD}')
 }
 
@@ -589,16 +598,37 @@ impl Scanner {
         TextRange::new(self.state.token_start, self.state.pos)
     }
 
-    pub fn comment_directives(&self) -> &'static [CommentDirective] {
-        self.state.comment_directives
+    pub fn comment_directives(&self) -> &[CommentDirective] {
+        &self.comment_directives[..self.state.comment_directives_len]
     }
 
+    /// Saves a snapshot for speculation within the current text.
     pub fn mark(&self) -> ScannerState {
         self.state
     }
 
+    /// Restores a snapshot without changing text. Use `restore_state` after `set_text`.
     pub fn rewind(&mut self, state: ScannerState) {
+        debug_assert!(
+            state.comment_directives_len <= self.comment_directives.len(),
+            "rewind requires the saved directive buffer; use take_state across text changes"
+        );
         self.state = state;
+        self.comment_directives.truncate(state.comment_directives_len);
+    }
+
+    /// Moves the token state and directive buffer out before a temporary text change.
+    pub fn take_state(&mut self) -> SavedScannerState {
+        SavedScannerState {
+            state: std::mem::take(&mut self.state),
+            comment_directives: std::mem::take(&mut self.comment_directives),
+        }
+    }
+
+    /// Restores the owned snapshot after the caller has restored the scanner's text.
+    pub fn restore_state(&mut self, saved: SavedScannerState) {
+        self.state = saved.state;
+        self.comment_directives = saved.comment_directives;
     }
 
     /// Go: `onError != nil`. Enables buffering of scanner diagnostics (see the module docs).
@@ -700,6 +730,7 @@ impl Scanner {
         self.text = text;
         self.end = text.len() as u32;
         self.state = ScannerState::default();
+        self.comment_directives.clear();
     }
 
     pub fn set_open_harmony49(&mut self, enabled: bool) { self.open_harmony49 = enabled; }
@@ -713,13 +744,13 @@ impl Scanner {
     }
 
     pub(crate) fn language_version(&self) -> ScriptTarget {
-        if self.script_target == ScriptTarget::None {
-            return ScriptTarget::Latest;
+        if self.script_target == ScriptTarget::NONE {
+            return ScriptTarget::LATEST;
         }
         self.script_target
     }
 
-    pub(crate) fn error(&mut self, diagnostic: &'static Message) {
+    fn error(&mut self, diagnostic: &'static Message) {
         self.error_at(diagnostic, self.state.pos, 0, &[]);
     }
 
@@ -758,7 +789,7 @@ impl Scanner {
     }
 
     #[inline]
-    pub(crate) fn char_and_size(&self) -> (Rune, u32) {
+    fn char_and_size(&self) -> (Rune, u32) {
         // Fast path: a single ASCII byte.
         if self.state.pos < self.end {
             let b = self.text.as_bytes()[self.state.pos as usize];
@@ -1191,7 +1222,7 @@ impl Scanner {
             self.process_comment_directive(last_line_start, self.state.pos, true);
 
             if !comment_closed {
-                self.error(&diagnostics::Asterisk_Slash_expected);
+                self.error(&diagnostics::ASTERISK_SLASH_EXPECTED);
             }
 
             if self.skip_trivia {
@@ -1261,7 +1292,7 @@ impl Scanner {
                     self.state.pos += 2;
                     let mut digits = self.scan_hex_digits(1, true, true);
                     if digits.is_empty() {
-                        self.error(&diagnostics::Hexadecimal_digit_expected);
+                        self.error(&diagnostics::HEXADECIMAL_DIGIT_EXPECTED);
                         digits = "0";
                     }
                     let raw_text = self.slice(start, self.state.pos);
@@ -1283,11 +1314,11 @@ impl Scanner {
                 if self.char_at(1) == Some(b'B') || self.char_at(1) == Some(b'b') {
                     self.state.pos += 2;
                     let (value, has_digits) = self.scan_binary_or_octal_digits(2, "0b");
-                    if !has_digits {
-                        self.error(&diagnostics::Binary_digit_expected);
-                        self.state.token_value = "0b0";
-                    } else {
+                    if has_digits {
                         self.state.token_value = value;
+                    } else {
+                        self.error(&diagnostics::BINARY_DIGIT_EXPECTED);
+                        self.state.token_value = "0b0";
                     }
                     self.state.token_flags |= TokenFlags::BinarySpecifier;
                     break 'digit self.scan_big_int_suffix();
@@ -1295,11 +1326,11 @@ impl Scanner {
                 if self.char_at(1) == Some(b'O') || self.char_at(1) == Some(b'o') {
                     self.state.pos += 2;
                     let (value, has_digits) = self.scan_binary_or_octal_digits(8, "0o");
-                    if !has_digits {
-                        self.error(&diagnostics::Octal_digit_expected);
-                        self.state.token_value = "0o0";
-                    } else {
+                    if has_digits {
                         self.state.token_value = value;
+                    } else {
+                        self.error(&diagnostics::OCTAL_DIGIT_EXPECTED);
+                        self.state.token_value = "0o0";
                     }
                     self.state.token_flags |= TokenFlags::OctalSpecifier;
                     break 'digit self.scan_big_int_suffix();
@@ -1562,7 +1593,7 @@ impl Scanner {
                     return None;
                 }
                 self.error_at(
-                    &diagnostics::X_can_only_be_used_at_the_start_of_a_file,
+                    &diagnostics::X_CAN_ONLY_BE_USED_AT_THE_START_OF_A_FILE,
                     self.state.pos,
                     2,
                     &[],
@@ -1571,7 +1602,7 @@ impl Scanner {
                 break 'hash Kind::Unknown;
             }
             if !self.scan_identifier(1, IdentifierVariant::Standard) {
-                self.error_at(&diagnostics::Invalid_character, self.state.pos - 1, 1, &[]);
+                self.error_at(&diagnostics::INVALID_CHARACTER, self.state.pos - 1, 1, &[]);
                 self.state.token_value = "#";
             }
             Kind::PrivateIdentifier
@@ -1586,7 +1617,7 @@ impl Scanner {
             }
             let (mut ch, mut size) = self.char_and_size();
             if ch == RUNE_ERROR {
-                self.error_at(&diagnostics::File_appears_to_be_binary, 0, 0, &[]);
+                self.error_at(&diagnostics::FILE_APPEARS_TO_BE_BINARY, 0, 0, &[]);
                 self.state.pos = self.text.len() as u32;
                 break 'default Kind::NonTextFileMarkerTrivia;
             }
@@ -1667,11 +1698,8 @@ impl Scanner {
         } else {
             return;
         };
-        // Directives are rare; copying keeps every saved state's snapshot intact (Go shares the backing array,
-        // but never rewrites elements below a saved length).
-        let mut directives = self.state.comment_directives.to_vec();
-        directives.push(CommentDirective { loc: TextRange::new(start, end), kind });
-        self.state.comment_directives = tsrs_core::alloc_vec(directives);
+        self.comment_directives.push(CommentDirective { loc: TextRange::new(start, end), kind });
+        self.state.comment_directives_len += 1;
     }
 
     pub fn re_scan_less_than_token(&mut self) -> Kind {
@@ -1839,7 +1867,7 @@ impl Scanner {
                     }
                 }
                 self.error_at(
-                    &diagnostics::Unterminated_regular_expression_literal,
+                    &diagnostics::UNTERMINATED_REGULAR_EXPRESSION_LITERAL,
                     self.state.token_start,
                     p - self.state.token_start,
                     &[],
@@ -1857,14 +1885,14 @@ impl Scanner {
                     if should_report_errors {
                         match char_code_to_reg_exp_flag(ch) {
                             None => self.error_at(
-                                &diagnostics::Unknown_regular_expression_flag,
+                                &diagnostics::UNKNOWN_REGULAR_EXPRESSION_FLAG,
                                 p,
                                 size,
                                 &[],
                             ),
                             Some(flag) if reg_exp_flags.intersects(flag) => {
                                 self.error_at(
-                                    &diagnostics::Duplicate_regular_expression_flag,
+                                    &diagnostics::DUPLICATE_REGULAR_EXPRESSION_FLAG,
                                     p,
                                     size,
                                     &[],
@@ -1875,7 +1903,7 @@ impl Scanner {
                                     .contains(RegularExpressionFlags::AnyUnicodeMode) =>
                             {
                                 self.error_at(
-                                    &diagnostics::The_Unicode_u_flag_and_the_Unicode_Sets_v_flag_cannot_be_set_simultaneously,
+                                    &diagnostics::THE_UNICODE_U_FLAG_AND_THE_UNICODE_SETS_V_FLAG_CANNOT_BE_SET_SIMULTANEOUSLY,
                                     p,
                                     size,
                                     &[],
@@ -1935,13 +1963,13 @@ impl Scanner {
         loop {
             if pos >= self.end {
                 self.state.token_flags |= TokenFlags::Unterminated;
-                self.error(&diagnostics::Unterminated_regular_expression_literal);
+                self.error(&diagnostics::UNTERMINATED_REGULAR_EXPRESSION_LITERAL);
                 break;
             }
             let (ch, size) = decode_rune(&text[pos as usize..]);
             if stringutil::is_line_break(ch) {
                 self.state.token_flags |= TokenFlags::Unterminated;
-                self.error(&diagnostics::Unterminated_regular_expression_literal);
+                self.error(&diagnostics::UNTERMINATED_REGULAR_EXPRESSION_LITERAL);
                 break;
             }
             if in_escape {
@@ -1998,7 +2026,7 @@ impl Scanner {
         self.scan_jsx_token_ex(true /*allowMultilineJsxText*/)
     }
 
-    pub fn scan_jsx_token_ex(&mut self, allow_multiline_jsx_text: bool) -> Kind {
+    fn scan_jsx_token_ex(&mut self, allow_multiline_jsx_text: bool) -> Kind {
         self.state.full_start_pos = self.state.pos;
         self.state.token_start = self.state.pos;
         let Some(ch) = self.char() else {
@@ -2036,14 +2064,14 @@ impl Scanner {
                 }
                 if ch == '>' as Rune {
                     self.error_at(
-                        &diagnostics::Unexpected_token_Did_you_mean_or_gt,
+                        &diagnostics::UNEXPECTED_TOKEN_DID_YOU_MEAN_OR_GT,
                         self.state.pos,
                         1,
                         &[],
                     );
                 } else if ch == '}' as Rune {
                     self.error_at(
-                        &diagnostics::Unexpected_token_Did_you_mean_or_rbrace,
+                        &diagnostics::UNEXPECTED_TOKEN_DID_YOU_MEAN_OR_RBRACE,
                         self.state.pos,
                         1,
                         &[],
@@ -2281,19 +2309,19 @@ impl Scanner {
             }
             return true;
         }
-        if ch == '\\' as Rune {
-            if let Some(escaped) = self.scan_identifier_escape(
+        if ch == '\\' as Rune
+            && let Some(escaped) = self.scan_identifier_escape(
                 is_identifier_start,
                 variant == IdentifierVariant::RegExpGroupName,
-            ) {
-                let mut value =
-                    ArenaStringBuilder::with_capacity((self.state.pos - start) as usize * 2);
-                value.push_str(self.slice(start, identifier_start));
-                value.push(rune_to_char(escaped));
-                value.push_str(self.scan_identifier_parts(variant));
-                self.state.token_value = value.into_str();
-                return true;
-            }
+            )
+        {
+            let mut value =
+                ArenaStringBuilder::with_capacity((self.state.pos - start) as usize * 2);
+            value.push_str(self.slice(start, identifier_start));
+            value.push(rune_to_char(escaped));
+            value.push_str(self.scan_identifier_parts(variant));
+            self.state.token_value = value.into_str();
+            return true;
         }
         false
     }
@@ -2360,12 +2388,11 @@ impl Scanner {
             let _ = self.scan_unicode_escape(false);
             // scanLowSurrogateEscape also accepts the braced form used in string literals,
             // but RegExpIdentifierName does not allow it.
-            if self.char_at(2) != Some(b'{') {
-                if let Some(code_point) = self.scan_low_surrogate_escape(escaped) {
-                    if is_valid(code_point) {
-                        return Some(code_point);
-                    }
-                }
+            if self.char_at(2) != Some(b'{')
+                && let Some(code_point) = self.scan_low_surrogate_escape(escaped)
+                && is_valid(code_point)
+            {
+                return Some(code_point);
             }
             self.state.pos = saved_pos;
             self.state.token_flags = saved_token_flags;
@@ -2434,7 +2461,7 @@ impl Scanner {
             sb.push_str(self.slice(start, self.state.pos));
             let Some(ch) = self.char() else {
                 self.state.token_flags |= TokenFlags::Unterminated;
-                self.error(&diagnostics::Unterminated_string_literal);
+                self.error(&diagnostics::UNTERMINATED_STRING_LITERAL);
                 break;
             };
             if ch == quote {
@@ -2452,7 +2479,7 @@ impl Scanner {
             }
             debug_assert!(ch == b'\n' || ch == b'\r');
             self.state.token_flags |= TokenFlags::Unterminated;
-            self.error(&diagnostics::Unterminated_string_literal);
+            self.error(&diagnostics::UNTERMINATED_STRING_LITERAL);
             break;
         }
         sb.into_str()
@@ -2477,7 +2504,7 @@ impl Scanner {
                     self.state.pos += 1;
                 } else {
                     self.state.token_flags |= TokenFlags::Unterminated;
-                    self.error(&diagnostics::Unterminated_template_literal);
+                    self.error(&diagnostics::UNTERMINATED_TEMPLATE_LITERAL);
                 }
                 self.finish_template_parts(&mut parts, start, part_end);
                 token = if started_with_backtick {
@@ -2553,7 +2580,7 @@ impl Scanner {
         let start = self.state.pos;
         self.state.pos += 1;
         let Some(ch) = self.char() else {
-            self.error(&diagnostics::Unexpected_end_of_text);
+            self.error(&diagnostics::UNEXPECTED_END_OF_TEXT);
             return Cow::Borrowed("");
         };
         self.state.pos += 1;
@@ -2605,13 +2632,13 @@ impl Scanner {
                         && ch != b'0'
                     {
                         self.error_at(
-                            &diagnostics::Octal_escape_sequences_and_backreferences_are_not_allowed_in_a_character_class_If_this_was_intended_as_an_escape_sequence_use_the_syntax_0_instead,
+                            &diagnostics::OCTAL_ESCAPE_SEQUENCES_AND_BACKREFERENCES_ARE_NOT_ALLOWED_IN_A_CHARACTER_CLASS_IF_THIS_WAS_INTENDED_AS_AN_ESCAPE_SEQUENCE_USE_THE_SYNTAX_0_INSTEAD,
                             start,
                             self.state.pos - start,
                             &[&arg],
                         );
                     } else {
-                        self.error_at(&diagnostics::Octal_escape_sequences_are_not_allowed_Use_the_syntax_0, start, self.state.pos - start, &[&arg]);
+                        self.error_at(&diagnostics::OCTAL_ESCAPE_SEQUENCES_ARE_NOT_ALLOWED_USE_THE_SYNTAX_0, start, self.state.pos - start, &[&arg]);
                     }
                     return Cow::Owned(rune_string(code));
                 }
@@ -2624,14 +2651,14 @@ impl Scanner {
                 if flags.intersects(EscapeSequenceScanningFlags::ReportInvalidEscapeErrors) {
                     if flags.intersects(EscapeSequenceScanningFlags::RegularExpression) && !flags.intersects(EscapeSequenceScanningFlags::AtomEscape) {
                         self.error_at(
-                            &diagnostics::Decimal_escape_sequences_and_backreferences_are_not_allowed_in_a_character_class,
+                            &diagnostics::DECIMAL_ESCAPE_SEQUENCES_AND_BACKREFERENCES_ARE_NOT_ALLOWED_IN_A_CHARACTER_CLASS,
                             start,
                             self.state.pos - start,
                             &[],
                         );
                     } else {
                         let text = self.slice(start, self.state.pos);
-                        self.error_at(&diagnostics::Escape_sequence_0_is_not_allowed, start, self.state.pos - start, &[&text]);
+                        self.error_at(&diagnostics::ESCAPE_SEQUENCE_0_IS_NOT_ALLOWED, start, self.state.pos - start, &[&text]);
                     }
                     return Cow::Owned(rune_string(u32::from(ch)));
                 }
@@ -2655,7 +2682,7 @@ impl Scanner {
                         self.state.token_flags |= TokenFlags::ContainsInvalidEscape;
                         if flags.intersects(EscapeSequenceScanningFlags::ReportInvalidEscapeErrors) {
                             self.error_at(
-                                &diagnostics::Unicode_escape_sequences_are_only_available_when_the_Unicode_u_flag_or_the_Unicode_Sets_v_flag_is_set,
+                                &diagnostics::UNICODE_ESCAPE_SEQUENCES_ARE_ONLY_AVAILABLE_WHEN_THE_UNICODE_U_FLAG_OR_THE_UNICODE_SETS_V_FLAG_IS_SET,
                                 start,
                                 self.state.pos - start,
                                 &[],
@@ -2668,11 +2695,10 @@ impl Scanner {
                     // In string literals, a high surrogate \u{...} followed by a low
                     // surrogate escape forms a single code point, exactly as adjacent
                     // UTF-16 code units would in a JavaScript string.
-                    if !flags.intersects(EscapeSequenceScanningFlags::RegularExpression) && stringutil::is_high_surrogate(code_point) {
-                        if let Some(combined) = self.scan_low_surrogate_escape(code_point) {
+                    if !flags.intersects(EscapeSequenceScanningFlags::RegularExpression) && stringutil::is_high_surrogate(code_point)
+                        && let Some(combined) = self.scan_low_surrogate_escape(code_point) {
                             return Cow::Owned(rune_string(combined));
                         }
-                    }
                     return Cow::Owned(stringutil::encode_js_string_rune(code_point));
                 }
                 let Some(code_point) = code_point else {
@@ -2712,7 +2738,7 @@ impl Scanner {
                     if !self.char().is_some_and(|ch| stringutil::is_hex_digit(u32::from(ch))) {
                         self.state.token_flags |= TokenFlags::ContainsInvalidEscape;
                         if flags.intersects(EscapeSequenceScanningFlags::ReportInvalidEscapeErrors) {
-                            self.error(&diagnostics::Hexadecimal_digit_expected);
+                            self.error(&diagnostics::HEXADECIMAL_DIGIT_EXPECTED);
                         }
                         return Cow::Borrowed(self.slice(start, self.state.pos));
                     }
@@ -2750,7 +2776,7 @@ impl Scanner {
                         && !flags.intersects(EscapeSequenceScanningFlags::AnnexB)
                         && is_identifier_part(ch)
                 {
-                    self.error_at(&diagnostics::This_character_cannot_be_escaped_in_a_regular_expression, start, self.state.pos - start, &[]);
+                    self.error_at(&diagnostics::THIS_CHARACTER_CANNOT_BE_ESCAPED_IN_A_REGULAR_EXPRESSION, start, self.state.pos - start, &[]);
                 }
                 if ch < RUNE_SELF {
                     // Single ASCII characters are always slices of the text.
@@ -2762,10 +2788,7 @@ impl Scanner {
     }
 
     // Known to be at \u
-    pub(crate) fn scan_unicode_escape(
-        &mut self,
-        should_emit_invalid_escape_error: bool,
-    ) -> Option<u32> {
+    fn scan_unicode_escape(&mut self, should_emit_invalid_escape_error: bool) -> Option<u32> {
         self.state.pos += 2;
         let start = self.state.pos;
         let extended = self.char() == Some(b'{');
@@ -2780,7 +2803,7 @@ impl Scanner {
         if hex_digits.is_empty() {
             self.state.token_flags |= TokenFlags::ContainsInvalidEscape;
             if should_emit_invalid_escape_error {
-                self.error(&diagnostics::Hexadecimal_digit_expected);
+                self.error(&diagnostics::HEXADECIMAL_DIGIT_EXPECTED);
             }
             return None;
         }
@@ -2790,7 +2813,7 @@ impl Scanner {
             if hex_value > 0x0010_FFFF {
                 if should_emit_invalid_escape_error {
                     self.error_at(
-                        &diagnostics::An_extended_Unicode_escape_value_must_be_between_0x0_and_0x10FFFF_inclusive,
+                        &diagnostics::AN_EXTENDED_UNICODE_ESCAPE_VALUE_MUST_BE_BETWEEN_0X0_AND_0X10_FFFF_INCLUSIVE,
                         start + 1,
                         self.state.pos - start - 1,
                         &[],
@@ -2800,14 +2823,14 @@ impl Scanner {
             }
             if self.state.pos >= self.end {
                 if should_emit_invalid_escape_error {
-                    self.error(&diagnostics::Unexpected_end_of_text);
+                    self.error(&diagnostics::UNEXPECTED_END_OF_TEXT);
                 }
                 is_invalid_extended_escape = true;
             } else if self.char() == Some(b'}') {
                 self.state.pos += 1;
             } else {
                 if should_emit_invalid_escape_error {
-                    self.error(&diagnostics::Unterminated_Unicode_escape_sequence);
+                    self.error(&diagnostics::UNTERMINATED_UNICODE_ESCAPE_SEQUENCE);
                 }
                 is_invalid_extended_escape = true;
             }
@@ -2868,7 +2891,7 @@ impl Scanner {
                 self.state.token_flags |=
                     TokenFlags::ContainsSeparator | TokenFlags::ContainsInvalidSeparator;
                 self.error_at(
-                    &diagnostics::Numeric_separators_are_not_allowed_here,
+                    &diagnostics::NUMERIC_SEPARATORS_ARE_NOT_ALLOWED_HERE,
                     self.state.pos,
                     1,
                     &[],
@@ -2894,7 +2917,7 @@ impl Scanner {
                         start -= 1;
                     }
                     self.error_at(
-                        &diagnostics::Octal_literals_are_not_allowed_Use_the_syntax_0,
+                        &diagnostics::OCTAL_LITERALS_ARE_NOT_ALLOWED_USE_THE_SYNTAX_0,
                         start,
                         self.state.pos - start,
                         &[&literal],
@@ -2923,7 +2946,7 @@ impl Scanner {
             let start_numeric_part = self.state.pos;
             exponent_part = self.scan_number_fragment();
             if exponent_part.is_empty() {
-                self.error(&diagnostics::Digit_expected);
+                self.error(&diagnostics::DIGIT_EXPECTED);
             } else {
                 exponent_preamble = self.slice(end, start_numeric_part);
                 end = self.state.pos;
@@ -2951,7 +2974,7 @@ impl Scanner {
         }
         if self.state.token_flags.intersects(TokenFlags::ContainsLeadingZero) {
             self.error_at(
-                &diagnostics::Decimals_with_leading_zeros_are_not_allowed,
+                &diagnostics::DECIMALS_WITH_LEADING_ZEROS_ARE_NOT_ALLOWED,
                 start,
                 self.state.pos - start,
                 &[],
@@ -2976,7 +2999,7 @@ impl Scanner {
             {
                 if self.state.token_flags.intersects(TokenFlags::Scientific) {
                     self.error_at(
-                        &diagnostics::A_bigint_literal_cannot_use_exponential_notation,
+                        &diagnostics::A_BIGINT_LITERAL_CANNOT_USE_EXPONENTIAL_NOTATION,
                         start,
                         self.state.pos - start,
                         &[],
@@ -2985,7 +3008,7 @@ impl Scanner {
                 }
                 if fixed_part_end < id_start {
                     self.error_at(
-                        &diagnostics::A_bigint_literal_must_be_an_integer,
+                        &diagnostics::A_BIGINT_LITERAL_MUST_BE_AN_INTEGER,
                         start,
                         self.state.pos - start,
                         &[],
@@ -2994,7 +3017,7 @@ impl Scanner {
                 }
             }
             self.error_at(
-                &diagnostics::An_identifier_or_keyword_cannot_immediately_follow_a_numeric_literal,
+                &diagnostics::AN_IDENTIFIER_OR_KEYWORD_CANNOT_IMMEDIATELY_FOLLOW_A_NUMERIC_LITERAL,
                 id_start,
                 self.state.pos - id_start,
                 &[],
@@ -3047,14 +3070,14 @@ impl Scanner {
                     self.state.token_flags |= TokenFlags::ContainsInvalidSeparator;
                     if is_previous_token_separator {
                         self.error_at(
-                            &diagnostics::Multiple_consecutive_numeric_separators_are_not_permitted,
+                            &diagnostics::MULTIPLE_CONSECUTIVE_NUMERIC_SEPARATORS_ARE_NOT_PERMITTED,
                             self.state.pos,
                             1,
                             &[],
                         );
                     } else {
                         self.error_at(
-                            &diagnostics::Numeric_separators_are_not_allowed_here,
+                            &diagnostics::NUMERIC_SEPARATORS_ARE_NOT_ALLOWED_HERE,
                             self.state.pos,
                             1,
                             &[],
@@ -3070,7 +3093,7 @@ impl Scanner {
         if is_previous_token_separator {
             self.state.token_flags |= TokenFlags::ContainsInvalidSeparator;
             self.error_at(
-                &diagnostics::Numeric_separators_are_not_allowed_here,
+                &diagnostics::NUMERIC_SEPARATORS_ARE_NOT_ALLOWED_HERE,
                 self.state.pos - 1,
                 1,
                 &[],
@@ -3095,7 +3118,7 @@ impl Scanner {
         (self.slice(start, self.state.pos), is_octal)
     }
 
-    pub(crate) fn scan_hex_digits(
+    fn scan_hex_digits(
         &mut self,
         min_count: u32,
         scan_as_many_as_possible: bool,
@@ -3118,14 +3141,14 @@ impl Scanner {
                     is_previous_token_separator = true;
                 } else if is_previous_token_separator {
                     self.error_at(
-                        &diagnostics::Multiple_consecutive_numeric_separators_are_not_permitted,
+                        &diagnostics::MULTIPLE_CONSECUTIVE_NUMERIC_SEPARATORS_ARE_NOT_PERMITTED,
                         self.state.pos,
                         1,
                         &[],
                     );
                 } else {
                     self.error_at(
-                        &diagnostics::Numeric_separators_are_not_allowed_here,
+                        &diagnostics::NUMERIC_SEPARATORS_ARE_NOT_ALLOWED_HERE,
                         self.state.pos,
                         1,
                         &[],
@@ -3138,7 +3161,7 @@ impl Scanner {
         }
         if is_previous_token_separator {
             self.error_at(
-                &diagnostics::Numeric_separators_are_not_allowed_here,
+                &diagnostics::NUMERIC_SEPARATORS_ARE_NOT_ALLOWED_HERE,
                 self.state.pos - 1,
                 1,
                 &[],
@@ -3196,14 +3219,14 @@ impl Scanner {
                     is_previous_token_separator = true;
                 } else if is_previous_token_separator {
                     self.error_at(
-                        &diagnostics::Multiple_consecutive_numeric_separators_are_not_permitted,
+                        &diagnostics::MULTIPLE_CONSECUTIVE_NUMERIC_SEPARATORS_ARE_NOT_PERMITTED,
                         self.state.pos,
                         1,
                         &[],
                     );
                 } else {
                     self.error_at(
-                        &diagnostics::Numeric_separators_are_not_allowed_here,
+                        &diagnostics::NUMERIC_SEPARATORS_ARE_NOT_ALLOWED_HERE,
                         self.state.pos,
                         1,
                         &[],
@@ -3216,7 +3239,7 @@ impl Scanner {
         }
         if is_previous_token_separator {
             self.error_at(
-                &diagnostics::Numeric_separators_are_not_allowed_here,
+                &diagnostics::NUMERIC_SEPARATORS_ARE_NOT_ALLOWED_HERE,
                 self.state.pos - 1,
                 1,
                 &[],
@@ -3254,7 +3277,7 @@ impl Scanner {
 
     fn scan_invalid_character(&mut self) {
         let (_, size) = self.char_and_size();
-        self.error_at(&diagnostics::Invalid_character, self.state.pos, size, &[]);
+        self.error_at(&diagnostics::INVALID_CHARACTER, self.state.pos, size, &[]);
         self.state.pos += size;
         self.state.token = Kind::Unknown;
     }
@@ -3291,7 +3314,7 @@ fn parse_int_64(s: &str, base: u32) -> i64 {
 // hasJSDocTag reports whether text starts with one of the given tag names followed
 // by a valid JSDoc tag terminator (whitespace, '}', '*', or end-of-string).
 fn has_jsdoc_tag(text: &[u8], tags: &[&str]) -> bool {
-    if tags.iter().any(|tag| {
+    tags.iter().any(|tag| {
         let tag = tag.as_bytes();
         if !text.starts_with(tag) {
             return false;
@@ -3301,10 +3324,7 @@ fn has_jsdoc_tag(text: &[u8], tags: &[&str]) -> bool {
         }
         let ch = text[tag.len()];
         ch == b' ' || ch == b'\t' || ch == b'\n' || ch == b'\r' || ch == b'}' || ch == b'*'
-    }) {
-        return true;
-    }
-    false
+    })
 }
 
 #[inline]
@@ -3347,7 +3367,7 @@ pub fn is_identifier_part(ch: Rune) -> bool {
 }
 
 #[inline]
-pub fn is_identifier_part_ex(ch: Rune, language_variant: LanguageVariant) -> bool {
+pub(crate) fn is_identifier_part_ex(ch: Rune, language_variant: LanguageVariant) -> bool {
     is_word_character(ch)
         || ch == '$' as Rune
         || ch >= RUNE_SELF && stringutil::is_unicode_identifier_part(ch)
@@ -3494,7 +3514,7 @@ pub fn skip_trivia_ex(text: &str, pos: u32, options: Option<&SkipTriviaOptions>)
 const MERGE_CONFLICT_MARKER_LENGTH: u32 = "<<<<<<<".len() as u32;
 const MAX_ASCII_CHARACTER: u8 = 127;
 
-pub(crate) fn is_conflict_marker_trivia(text: &str, pos: u32) -> bool {
+fn is_conflict_marker_trivia(text: &str, pos: u32) -> bool {
     let bytes = text.as_bytes();
     let len = bytes.len() as u32;
 
@@ -3527,14 +3547,14 @@ pub(crate) fn is_conflict_marker_trivia(text: &str, pos: u32) -> bool {
     false
 }
 
-pub(crate) fn scan_conflict_marker_trivia(
+fn scan_conflict_marker_trivia(
     text: &str,
     pos: u32,
     report_error: Option<&mut dyn FnMut(&'static Message, u32, u32)>,
 ) -> u32 {
     if let Some(report_error) = report_error {
         report_error(
-            &diagnostics::Merge_conflict_marker_encountered,
+            &diagnostics::MERGE_CONFLICT_MARKER_ENCOUNTERED,
             pos,
             MERGE_CONFLICT_MARKER_LENGTH,
         );
@@ -3572,7 +3592,7 @@ pub(crate) fn scan_conflict_marker_trivia(
     pos
 }
 
-pub(crate) fn is_shebang_trivia(text: &str, pos: u32) -> bool {
+fn is_shebang_trivia(text: &str, pos: u32) -> bool {
     let bytes = text.as_bytes();
     if bytes.len() < 2 {
         return false;
@@ -3581,7 +3601,7 @@ pub(crate) fn is_shebang_trivia(text: &str, pos: u32) -> bool {
     bytes[0] == b'#' && bytes[1] == b'!'
 }
 
-pub(crate) fn scan_shebang_trivia(text: &str, pos: u32) -> u32 {
+fn scan_shebang_trivia(text: &str, pos: u32) -> u32 {
     let bytes = text.as_bytes();
     let mut pos = pos + 2;
     while (pos as usize) < bytes.len() {
@@ -3666,22 +3686,22 @@ fn get_error_range_for_arrow_function(source_file: P<SourceFile>, node: P<Node>)
         node.pos().expect_source("parsed nodes have source positions"),
     );
     let body = node.body();
-    if let Some(body) = body {
-        if body.kind() == Kind::Block {
-            let start_line = get_ecma_line_of_position(
-                &*source_file,
-                body.pos().expect_source("parsed nodes have source positions"),
-            );
-            let end_line = get_ecma_line_of_position(
-                &*source_file,
-                body.end().expect_source("parsed nodes have source positions"),
-            );
-            if start_line < end_line {
-                // The arrow function spans multiple lines, make the error span be the first line, inclusive.
-                let end =
-                    get_ecma_end_line_position(source_file, start_line).map_or(pos, |end| end + 1);
-                return TextRange::new(pos, end);
-            }
+    if let Some(body) = body
+        && body.kind() == Kind::Block
+    {
+        let start_line = get_ecma_line_of_position(
+            &*source_file,
+            body.pos().expect_source("parsed nodes have source positions"),
+        );
+        let end_line = get_ecma_line_of_position(
+            &*source_file,
+            body.end().expect_source("parsed nodes have source positions"),
+        );
+        if start_line < end_line {
+            // The arrow function spans multiple lines, make the error span be the first line, inclusive.
+            let end =
+                get_ecma_end_line_position(source_file, start_line).map_or(pos, |end| end + 1);
+            return TextRange::new(pos, end);
         }
     }
     TextRange::new(pos, node.end().expect_source("parsed nodes have source positions"))
@@ -3712,10 +3732,10 @@ fn find_originating_jsdoc_satisfies_tag(
                         first_satisfies_tag = Some(tag);
                     }
                     let type_expr = tag.as_jsdoc_satisfies_tag().type_expression;
-                    if let Some(t) = type_expr.type_node() {
-                        if t.loc() == target_type.loc() {
-                            return Some(tag);
-                        }
+                    if let Some(t) = type_expr.type_node()
+                        && t.loc() == target_type.loc()
+                    {
+                        return Some(tag);
                     }
                 }
             }
@@ -3918,20 +3938,6 @@ pub fn get_ecma_end_line_position(source_file: P<SourceFile>, line: usize) -> Op
 // GetECMAPositionOfLineAndUTF16Character converts a 0-based line number and UTF-16
 // code unit character offset back to an absolute byte position in the source text.
 // Uses ECMAScript line separators.
-pub fn get_ecma_position_of_line_and_utf16_character(
-    source_file: &(impl SourceFileLike + ?Sized),
-    line: usize,
-    character: UTF16Offset,
-) -> u32 {
-    let line_starts = get_ecma_line_starts(source_file);
-    compute_position_of_line_and_utf16_character(
-        line_starts,
-        line,
-        character,
-        source_file.text(),
-        false,
-    )
-}
 
 // GetECMAPositionOfLineAndByteOffset converts a 0-based line number and byte offset
 // from line start back to an absolute byte position in the source text.
@@ -3946,7 +3952,7 @@ pub fn get_ecma_position_of_line_and_byte_offset(
 
 // ComputePositionOfLineAndByteOffset computes a byte position from a line and
 // raw byte offset from the line start. This is a simple addition with validation.
-pub fn compute_position_of_line_and_byte_offset(
+fn compute_position_of_line_and_byte_offset(
     line_starts: &[u32],
     line: usize,
     byte_offset: u32,

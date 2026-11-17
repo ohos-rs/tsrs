@@ -9,7 +9,7 @@ use tsrs_compiler::{
 use tsrs_core::arena::{Region, RegionScope};
 use tsrs_core::context::{CheckerLifetime, Context, get_checker_lifetime, get_request_id};
 
-use crate::memregions::{log_region, programOwner};
+use crate::memregions::{ProgramOwner, log_region};
 use tsrs_core::P;
 
 use crate::background::{Timer, after_func};
@@ -17,7 +17,7 @@ use crate::background::{Timer, after_func};
 // checkerHeldAnonymous is a sentinel stored in heldBy when a checker is held
 // by a caller that has no request ID (e.g., context.Background()). This
 // distinguishes "held without ID" from "not held" (empty string).
-const checkerHeldAnonymous: &str = "<anonymous>";
+const CHECKER_HELD_ANONYMOUS: &str = "<anonymous>";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CheckerPoolOptions {
@@ -31,36 +31,52 @@ pub struct CheckerPoolOptions {
 }
 
 // Go's buffered channel used as a counting semaphore (`sem <- struct{}{}` / `<-sem`).
-struct semaphore {
-    used: Mutex<usize>,
+struct Semaphore {
+    state: Mutex<SemaphoreState>,
     capacity: usize,
     freed: Condvar,
 }
 
-impl semaphore {
-    fn new(capacity: usize) -> semaphore {
-        semaphore { used: Mutex::new(0), capacity, freed: Condvar::new() }
+#[derive(Default)]
+struct SemaphoreState {
+    used: usize,
+    /// Acquirers waiting on `freed` (counted under the lock, so a release with none skips the wake).
+    waiters: usize,
+}
+
+impl Semaphore {
+    fn new(capacity: usize) -> Semaphore {
+        Semaphore { state: Mutex::default(), capacity, freed: Condvar::new() }
     }
 
     fn acquire(&self) {
-        let mut used = self.used.lock().unwrap();
-        if *used >= self.capacity {
+        let mut state = self.state.lock().unwrap();
+        if state.used >= self.capacity {
             // Waits for another request's checker without holding a run slot (`runslots`).
-            drop(used);
-            used = tsrs_core::runslots::blocking(|| {
-                let mut used = self.used.lock().unwrap();
-                while *used >= self.capacity {
-                    used = self.freed.wait(used).unwrap();
+            drop(state);
+            state = tsrs_core::runslots::blocking(|| {
+                let mut state = self.state.lock().unwrap();
+                while state.used >= self.capacity {
+                    state.waiters += 1;
+                    state = self.freed.wait(state).unwrap();
+                    state.waiters -= 1;
                 }
-                used
+                state
             });
         }
-        *used += 1;
+        state.used += 1;
     }
 
     fn release(&self) {
-        *self.used.lock().unwrap() -= 1;
-        self.freed.notify_one();
+        let waiters = {
+            let mut state = self.state.lock().unwrap();
+            state.used -= 1;
+            state.waiters
+        };
+        // A wake is a system call even when nobody waits.
+        if waiters > 0 {
+            self.freed.notify_one();
+        }
     }
 }
 
@@ -73,18 +89,18 @@ impl semaphore {
 //   - API: A single checker for API operations, providing stable
 //     instance identity for reference equality on type/symbol handles.
 //     Never idle-cleaned.
-pub struct checkerPool {
+pub struct CheckerPoolImpl {
     opts: CheckerPoolOptions,
     program: &'static Program,
 
-    mu: Mutex<checkerPoolState>,
+    mu: Mutex<CheckerPoolState>,
 
-    diag_sem: semaphore,
-    query_sem: semaphore,
-    persistent_sem: semaphore,
+    diag_sem: Semaphore,
+    query_sem: Semaphore,
+    persistent_sem: Semaphore,
 
     log: Box<dyn Fn(&str) + Send + Sync>,
-    self_ref: Weak<checkerPool>,
+    self_ref: Weak<CheckerPoolImpl>,
 
     // Memory regions (docs/LSP.md "Memory management"), not in Go. Each checker allocates in its own region (keyed by
     // the checker's address): while it is created and while it is held, the region is the holding thread's
@@ -96,14 +112,14 @@ pub struct checkerPool {
     // processor's diagnostics). Those are parked until the pool is freed (`free_checkers`, called when the program is
     // freed). Declared last: dropped after the checkers in `mu`.
     parked: Mutex<Vec<PooledChecker>>,
-    instances: Mutex<FxHashMap<usize, checkerInstance>>,
+    instances: Mutex<FxHashMap<usize, CheckerInstance>>,
     // The program's owner (memregions.rs), once the project system created it. A held checker keeps it alive, and
     // a pool whose program was freed refuses to hand out checkers (Go's GC would keep the program alive through the
     // pool's program pointer; here the project values own it).
-    owner: Mutex<Option<Weak<programOwner>>>,
+    owner: Mutex<Option<Weak<ProgramOwner>>>,
 }
 
-struct checkerPoolState {
+struct CheckerPoolState {
     // discarded is set when the pool's program has been replaced. The pool
     // remains fully functional but stops its idle-cleanup timer so that
     // query checkers are not disposed until the pool is GC'd.
@@ -136,7 +152,7 @@ struct checkerPoolState {
 
 // Region bookkeeping of one checker (see `checkerPool::instances`). Dropping it frees the disposed checker, then the
 // region (field order).
-struct checkerInstance {
+struct CheckerInstance {
     // Disposed, waiting for its last lease to end.
     disposed: Option<PooledChecker>,
     region: Region,
@@ -154,38 +170,38 @@ struct checkerInstance {
 // `context.Background()`, as in Go); it ends when the last clone of that context and the last scope are dropped,
 // after the handler returned.
 #[derive(Default)]
-struct checkerDataLease {
-    held: Mutex<Vec<(Weak<checkerPool>, usize)>>,
+struct CheckerDataLease {
+    held: Mutex<Vec<(Weak<CheckerPoolImpl>, usize)>>,
 }
 
 // The context value (`Context::value` hands out references; the thread's lease needs its own handle).
-struct checkerDataLeaseKey(Arc<checkerDataLease>);
+struct CheckerDataLeaseKey(Arc<CheckerDataLease>);
 
 thread_local! {
-    static THREAD_LEASE: std::cell::RefCell<Option<Arc<checkerDataLease>>> = const { std::cell::RefCell::new(None) };
+    static THREAD_LEASE: std::cell::RefCell<Option<Arc<CheckerDataLease>>> = const { std::cell::RefCell::new(None) };
 }
 
 // While alive, checkers this thread takes with a context that has no lease get the lease of `ctx`
 // (`enter_checker_data_lease`).
-pub struct checkerDataLeaseScope {
-    saved: Option<Arc<checkerDataLease>>,
+pub struct CheckerDataLeaseScope {
+    saved: Option<Arc<CheckerDataLease>>,
     _not_send: std::marker::PhantomData<*const ()>,
 }
 
-impl Drop for checkerDataLeaseScope {
+impl Drop for CheckerDataLeaseScope {
     fn drop(&mut self) {
         let saved = self.saved.take();
         THREAD_LEASE.with(|l| *l.borrow_mut() = saved);
     }
 }
 
-pub fn enter_checker_data_lease(ctx: &Context) -> checkerDataLeaseScope {
-    let lease = ctx.value::<checkerDataLeaseKey>().map(|k| Arc::clone(&k.0));
+pub fn enter_checker_data_lease(ctx: &Context) -> CheckerDataLeaseScope {
+    let lease = ctx.value::<CheckerDataLeaseKey>().map(|k| Arc::clone(&k.0));
     let saved = THREAD_LEASE.with(|l| std::mem::replace(&mut *l.borrow_mut(), lease));
-    checkerDataLeaseScope { saved, _not_send: std::marker::PhantomData }
+    CheckerDataLeaseScope { saved, _not_send: std::marker::PhantomData }
 }
 
-impl Drop for checkerDataLease {
+impl Drop for CheckerDataLease {
     fn drop(&mut self) {
         for (pool, key) in std::mem::take(self.held.get_mut().unwrap()) {
             if let Some(pool) = pool.upgrade() {
@@ -197,13 +213,13 @@ impl Drop for checkerDataLease {
 
 // A context whose holders get a lease (see `checkerDataLease`).
 pub fn with_checker_data_lease(ctx: &Context) -> Context {
-    ctx.with_value(checkerDataLeaseKey(Arc::new(checkerDataLease::default())))
+    ctx.with_value(CheckerDataLeaseKey(Arc::new(CheckerDataLease::default())))
 }
 
 // mergeGlobalDiagnosticsFromCheckerLocked's merge. Region hook: the pool keeps the regions of the diagnostics it
 // accumulates, including those a merged copy refers to (`compact_and_merge_related_infos` clones a diagnostic outside
 // the checker's region, sharing its text, chain and related information).
-fn accumulate_global_diagnostics(all: &[P<Diagnostic>]) -> Vec<P<Diagnostic>> {
+pub fn accumulate_global_diagnostics(all: &[P<Diagnostic>]) -> Vec<P<Diagnostic>> {
     let accumulated = sort_and_deduplicate_diagnostics(all);
     for &d in &accumulated {
         tsrs_ast::note_diagnostic_escape(d);
@@ -212,11 +228,11 @@ fn accumulate_global_diagnostics(all: &[P<Diagnostic>]) -> Vec<P<Diagnostic>> {
 }
 
 // checkerpool.go:84
-pub(crate) fn new_checker_pool(
+pub fn new_checker_pool(
     mut opts: CheckerPoolOptions,
     program: &'static Program,
     log: Option<Box<dyn Fn(&str) + Send + Sync>>,
-) -> Arc<checkerPool> {
+) -> Arc<CheckerPoolImpl> {
     if opts.max_checkers == 0 {
         opts.max_checkers = 4;
     } else if opts.max_checkers < 2 {
@@ -227,10 +243,10 @@ pub(crate) fn new_checker_pool(
     }
     let query_slots = opts.max_checkers - 1;
     let log = log.unwrap_or_else(|| Box::new(|_msg: &str| {}));
-    Arc::new_cyclic(|self_ref| checkerPool {
+    Arc::new_cyclic(|self_ref| CheckerPoolImpl {
         program,
         opts,
-        mu: Mutex::new(checkerPoolState {
+        mu: Mutex::new(CheckerPoolState {
             discarded: false,
             checkers: std::iter::repeat_with(|| None).take(opts.max_checkers).collect(),
             held_by: vec![String::new(); opts.max_checkers],
@@ -244,9 +260,9 @@ pub(crate) fn new_checker_pool(
             global_diag_changed: false,
             global_diag_checker_count: vec![0; opts.max_checkers],
         }),
-        diag_sem: semaphore::new(1),
-        query_sem: semaphore::new(query_slots),
-        persistent_sem: semaphore::new(1),
+        diag_sem: Semaphore::new(1),
+        query_sem: Semaphore::new(query_slots),
+        persistent_sem: Semaphore::new(1),
         log,
         self_ref: Weak::clone(self_ref),
         parked: Mutex::new(Vec::new()),
@@ -259,21 +275,21 @@ pub(crate) fn new_checker_pool(
 // holdTag returns the value to store in heldBy for the given request ID.
 fn hold_tag(request_id: &str) -> String {
     if request_id.is_empty() {
-        return checkerHeldAnonymous.to_string();
+        return CHECKER_HELD_ANONYMOUS.to_string();
     }
     request_id.to_string()
 }
 
 // The `CheckerPool` the program calls (Go: `*checkerPool` itself).
-pub(crate) struct checkerPoolHandle(pub(crate) Arc<checkerPool>);
+pub struct CheckerPoolHandle(pub(crate) Arc<CheckerPoolImpl>);
 
-impl CheckerPool for checkerPoolHandle {
+impl CheckerPool for CheckerPoolHandle {
     fn get_checker(&self, ctx: &Context, file: Option<P<SourceFile>>) -> CheckerHandle {
         self.0.get_checker(ctx, file)
     }
 }
 
-impl checkerPool {
+impl CheckerPoolImpl {
     // Region hook: a new checker is created inside its own region. `pinned`: see `checkerInstance`.
     fn new_pooled_checker(&self, pinned: bool) -> PooledChecker {
         let region = Region::new(1 << 20);
@@ -283,7 +299,7 @@ impl checkerPool {
         };
         self.instances.lock().unwrap().insert(
             checker.as_non_null().as_ptr() as usize,
-            checkerInstance { disposed: None, region, leases: 0, pinned },
+            CheckerInstance { disposed: None, region, leases: 0, pinned },
         );
         checker
     }
@@ -295,10 +311,10 @@ impl checkerPool {
         &self,
         ctx: Option<&Context>,
         c: std::ptr::NonNull<Checker>,
-    ) -> (Option<RegionScope>, Option<Arc<programOwner>>) {
+    ) -> (Option<RegionScope>, Option<Arc<ProgramOwner>>) {
         let key = c.as_ptr() as usize;
         let lease = ctx.and_then(|ctx| {
-            ctx.value::<checkerDataLeaseKey>()
+            ctx.value::<CheckerDataLeaseKey>()
                 .map(|k| Arc::clone(&k.0))
                 .or_else(|| THREAD_LEASE.with(|l| l.borrow().clone()))
         });
@@ -344,7 +360,7 @@ impl checkerPool {
 
     // Frees a disposed checker and its region, or parks it until the pool is freed if its data may be referenced
     // from longer-lived structures (see `parked`).
-    fn free_or_park(&self, key: usize, mut instance: checkerInstance) {
+    fn free_or_park(&self, key: usize, mut instance: CheckerInstance) {
         if instance.pinned || instance.region.escaped() {
             log_region(|| {
                 format!(
@@ -367,11 +383,11 @@ impl checkerPool {
         drop(instance);
     }
 
-    pub(crate) fn set_owner(&self, owner: Weak<programOwner>) {
+    pub(crate) fn set_owner(&self, owner: Weak<ProgramOwner>) {
         *self.owner.lock().unwrap() = Some(owner);
     }
 
-    fn live_owner(&self) -> Option<Arc<programOwner>> {
+    fn live_owner(&self) -> Option<Arc<ProgramOwner>> {
         (*self.owner.lock().unwrap())
             .as_ref()
             .map(|w| w.upgrade().expect("checker pool used after its program was freed"))
@@ -379,7 +395,7 @@ impl checkerPool {
 
     // Region hook: frees every checker of the pool and their regions. Called when the program is freed (nothing
     // holds a checker or refers to checker data any more).
-    pub(crate) fn free_checkers(&self) {
+    pub fn free_checkers(&self) {
         let mut checkers: Vec<PooledChecker> = std::mem::take(&mut *self.parked.lock().unwrap());
         {
             let mut st = self.mu.lock().unwrap();
@@ -393,7 +409,7 @@ impl checkerPool {
         drop(instances);
     }
 
-    fn arc(&self) -> Arc<checkerPool> {
+    fn arc(&self) -> Arc<CheckerPoolImpl> {
         self.self_ref.upgrade().expect("checker pool used after it was dropped")
     }
 
@@ -436,7 +452,7 @@ impl checkerPool {
         &self,
         ctx: &Context,
         request_id: &str,
-        sem: &semaphore,
+        sem: &Semaphore,
         is_diag: bool,
     ) -> Option<CheckerHandle> {
         sem.acquire();
@@ -471,7 +487,7 @@ impl checkerPool {
     // getDiagnosticsChecker returns the dedicated diagnostics checker (index 0).
     // Creates it on first use. Blocks on diagSem if it's currently in use.
     fn get_diagnostics_checker(&self, ctx: &Context, request_id: &str) -> CheckerHandle {
-        const diagIndex: usize = 0;
+        const DIAG_INDEX: usize = 0;
 
         if let Some(handle) = self.try_reacquire_for_request(ctx, request_id, &self.diag_sem, true)
         {
@@ -481,21 +497,21 @@ impl checkerPool {
         // Token consumed — proceed with normal acquisition.
         let mut st = self.mu.lock().unwrap();
 
-        if st.checkers[diagIndex].is_none() {
+        if st.checkers[DIAG_INDEX].is_none() {
             (self.log)("checkerpool: Creating diagnostics checker");
-            st.checkers[diagIndex] = Some(self.new_pooled_checker(false));
+            st.checkers[DIAG_INDEX] = Some(self.new_pooled_checker(false));
         }
 
-        st.held_by[diagIndex] = hold_tag(request_id);
+        st.held_by[DIAG_INDEX] = hold_tag(request_id);
         (self.log)(&format!(
             "checkerpool: Acquired diagnostics checker for request {}",
             hold_tag(request_id)
         ));
         if !request_id.is_empty() && !st.request_associations.contains_key(request_id) {
-            st.request_associations.insert(request_id.to_string(), diagIndex);
+            st.request_associations.insert(request_id.to_string(), DIAG_INDEX);
             self.register_request_cleanup(ctx, request_id);
         }
-        self.create_release(ctx, &mut st, request_id, diagIndex)
+        self.create_release(ctx, &mut st, request_id, DIAG_INDEX)
     }
 
     // checkerpool.go:226
@@ -518,17 +534,18 @@ impl checkerPool {
         let mut st = self.mu.lock().unwrap();
 
         // Try file affinity.
-        if let Some(file) = file {
-            if let Some(&index) = st.file_associations.get(&file) {
-                if index > 0 && st.checkers[index].is_some() && st.held_by[index].is_empty() {
-                    st.held_by[index] = hold_tag(request_id);
-                    if !request_id.is_empty() && !st.request_associations.contains_key(request_id) {
-                        st.request_associations.insert(request_id.to_string(), index);
-                        self.register_request_cleanup(ctx, request_id);
-                    }
-                    return self.create_release(ctx, &mut st, request_id, index);
-                }
+        if let Some(file) = file
+            && let Some(&index) = st.file_associations.get(&file)
+            && index > 0
+            && st.checkers[index].is_some()
+            && st.held_by[index].is_empty()
+        {
+            st.held_by[index] = hold_tag(request_id);
+            if !request_id.is_empty() && !st.request_associations.contains_key(request_id) {
+                st.request_associations.insert(request_id.to_string(), index);
+                self.register_request_cleanup(ctx, request_id);
             }
+            return self.create_release(ctx, &mut st, request_id, index);
         }
 
         // Find any available query checker or create one.
@@ -553,7 +570,7 @@ impl checkerPool {
     // findOrCreateQueryCheckerLocked returns an idle query checker or creates one
     // in the first empty slot. The semaphore guarantees at least one slot is
     // available. Must be called with p.mu held.
-    fn find_or_create_query_checker_locked(&self, st: &mut checkerPoolState) -> usize {
+    fn find_or_create_query_checker_locked(&self, st: &mut CheckerPoolState) -> usize {
         // Prefer an existing idle checker.
         for i in 1..st.checkers.len() {
             if st.checkers[i].is_some() && st.held_by[i].is_empty() {
@@ -620,7 +637,7 @@ impl checkerPool {
     fn create_release(
         &self,
         ctx: &Context,
-        st: &mut checkerPoolState,
+        st: &mut CheckerPoolState,
         request_id: &str,
         index: usize,
     ) -> CheckerHandle {
@@ -642,11 +659,11 @@ impl checkerPool {
                     index,
                     hold_tag(&request_id)
                 ));
-                disposed = checkerPool::dispose_checker_locked(&mut st, index, c);
+                disposed = CheckerPoolImpl::dispose_checker_locked(&mut st, index, c);
             } else {
                 // Query checkers can produce incidental errors while serializing types.
                 if index == 0 {
-                    checkerPool::merge_global_diagnostics_from_checker_locked(&mut st, index);
+                    CheckerPoolImpl::merge_global_diagnostics_from_checker_locked(&mut st, index);
                 }
                 st.held_by[index] = String::new();
                 st.last_released[index] = Some(Instant::now());
@@ -699,7 +716,7 @@ impl checkerPool {
     // the earliest pending checker-expiration deadline among all currently idle,
     // unheld checkers.
     // Must be called with p.mu held. Must NOT be called on discarded pools.
-    fn schedule_cleanup_locked(&self, st: &mut checkerPoolState) {
+    fn schedule_cleanup_locked(&self, st: &mut CheckerPoolState) {
         let mut earliest_deadline: Option<Instant> = None;
         for i in 0..st.checkers.len() {
             let Some(last_released) = st.last_released[i] else {
@@ -784,7 +801,7 @@ impl checkerPool {
     // Region hook: returns the checker, for `dispose_checker` once p.mu is released.
     #[must_use]
     fn dispose_checker_locked(
-        st: &mut checkerPoolState,
+        st: &mut CheckerPoolState,
         index: usize,
         c: std::ptr::NonNull<Checker>,
     ) -> Option<PooledChecker> {
@@ -802,7 +819,7 @@ impl checkerPool {
     // mergeGlobalDiagnosticsFromCheckerLocked checks if the given checker has produced new global
     // diagnostics since the last time we looked, and if so merges them into the accumulated set.
     // Must be called with p.mu held.
-    fn merge_global_diagnostics_from_checker_locked(st: &mut checkerPoolState, index: usize) {
+    fn merge_global_diagnostics_from_checker_locked(st: &mut CheckerPoolState, index: usize) {
         let globals = st.checkers[index].as_mut().unwrap().get_global_diagnostics();
         if globals.len() == st.global_diag_checker_count[index] {
             return;
@@ -827,7 +844,7 @@ impl checkerPool {
     // checkerpool.go:481
     // TakeNewGlobalDiagnostics reports whether new global diagnostics have been
     // accumulated since the last call, and resets the flag.
-    pub fn take_new_global_diagnostics(&self) -> bool {
+    pub(crate) fn take_new_global_diagnostics(&self) -> bool {
         let mut st = self.mu.lock().unwrap();
         std::mem::replace(&mut st.global_diag_changed, false)
     }
@@ -849,29 +866,24 @@ impl checkerPool {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn checker_ptr(&self, index: usize) -> Option<*const Checker> {
+    pub fn checker_ptr(&self, index: usize) -> Option<*const Checker> {
         self.mu.lock().unwrap().checkers[index].as_ref().map(|c| &raw const **c)
     }
 
-    #[cfg(test)]
-    pub(crate) fn persistent_ptr(&self) -> Option<*const Checker> {
+    pub fn persistent_ptr(&self) -> Option<*const Checker> {
         self.mu.lock().unwrap().persistent_checker.as_ref().map(|c| &raw const **c)
     }
 
-    #[cfg(test)]
-    pub(crate) fn opts(&self) -> CheckerPoolOptions {
+    pub fn opts(&self) -> CheckerPoolOptions {
         self.opts
     }
 
-    #[cfg(test)]
-    pub(crate) fn query_sem_used(&self) -> usize {
-        *self.query_sem.used.lock().unwrap()
+    pub fn query_sem_used(&self) -> usize {
+        self.query_sem.state.lock().unwrap().used
     }
 
     // (checker regions, disposed checkers waiting for their leases, parked checkers)
-    #[cfg(test)]
-    pub(crate) fn region_counts(&self) -> (usize, usize, usize) {
+    pub fn region_counts(&self) -> (usize, usize, usize) {
         let instances = self.instances.lock().unwrap();
         (
             instances.len(),
@@ -880,10 +892,9 @@ impl checkerPool {
         )
     }
 
-    #[cfg(test)]
-    pub(crate) fn test_state<R>(&self, f: impl FnOnce(&checkerPoolTestView) -> R) -> R {
+    pub fn test_state<R>(&self, f: impl FnOnce(&CheckerPoolTestView) -> R) -> R {
         let st = self.mu.lock().unwrap();
-        let view = checkerPoolTestView {
+        let view = CheckerPoolTestView {
             checkers: st.checkers.iter().map(std::option::Option::is_some).collect(),
             held_by: st.held_by.clone(),
             file_associations: st.file_associations.clone(),
@@ -897,27 +908,26 @@ impl checkerPool {
     }
 }
 
-#[cfg(test)]
-pub(crate) struct checkerPoolTestView {
-    pub(crate) checkers: Vec<bool>,
+pub struct CheckerPoolTestView {
+    pub checkers: Vec<bool>,
     #[expect(
         dead_code,
         reason = "Retained in the Go-shaped pool test view; the currently ported cases inspect other fields."
     )]
-    pub(crate) held_by: Vec<String>,
-    pub(crate) file_associations: FxHashMap<P<SourceFile>, usize>,
-    pub(crate) request_associations: FxHashMap<String, usize>,
-    pub(crate) has_cleanup_timer: bool,
-    pub(crate) discarded: bool,
-    pub(crate) persistent: bool,
+    held_by: Vec<String>,
+    pub file_associations: FxHashMap<P<SourceFile>, usize>,
+    pub request_associations: FxHashMap<String, usize>,
+    pub has_cleanup_timer: bool,
+    pub discarded: bool,
+    pub persistent: bool,
     #[expect(
         dead_code,
         reason = "Retained in the Go-shaped pool test view; the currently ported cases inspect other fields."
     )]
-    pub(crate) persistent_held: bool,
+    persistent_held: bool,
 }
 
-impl checkerPool {
+impl CheckerPoolImpl {
     // Go drops the pool's reference and lets the GC reclaim the checker. Region hook: the checker and its region are
     // freed now if no lease is left, when the last lease ends otherwise, or with the pool if its data may be
     // referenced from longer-lived structures (see `parked`). Must NOT be called with p.mu held.
@@ -934,7 +944,3 @@ impl checkerPool {
         self.free_or_park(key, instance);
     }
 }
-
-#[cfg(test)]
-#[path = "checkerpool_test.rs"]
-mod checkerpool_test;

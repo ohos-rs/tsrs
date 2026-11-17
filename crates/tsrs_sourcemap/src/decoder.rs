@@ -58,11 +58,6 @@ pub fn decode_mappings(mappings: &str) -> MappingsDecoder {
 }
 
 impl MappingsDecoder {
-    // decoder.go:59
-    pub fn mappings_string(&self) -> &str {
-        &self.mappings
-    }
-
     // decoder.go:63
     pub fn pos(&self) -> usize {
         self.pos
@@ -258,6 +253,7 @@ impl MappingsDecoder {
 }
 
 // decoder.go:238
+#[expect(clippy::redundant_pub_crate, reason = "Shared with the generator through the crate root.")]
 pub(crate) fn base64_format_decode(ch: u8) -> Option<u8> {
     match ch {
         b'A'..=b'Z' => Some(ch - b'A'),

@@ -11,7 +11,7 @@ $env:TSRS_LIB_PATH = Join-Path $env:GITHUB_WORKSPACE "crates/tsrs_vfs/libs"
 $env:TSRS_TEST_RESULTS = Join-Path $env:RUNNER_TEMP "pgo/test-results"
 
 $env:LLVM_PROFILE_FILE = Join-Path $RawDir "suite-%m.profraw"
-& (Join-Path $BinDir "tsrs-test.exe") run --suite all --jobs 2 --timeout 120
+& (Join-Path $BinDir "tsrs-test.exe") run --suite all --baselines all --jobs 2 --timeout 120
 if ($LASTEXITCODE -ne 0) { throw "tsrs-test exited with $LASTEXITCODE" }
 
 $summary = Join-Path $env:TSRS_TEST_RESULTS "summary.json"
@@ -29,7 +29,24 @@ $env:LLVM_PROFILE_FILE = Join-Path $RawDir "cli-%m.profraw"
 & (Join-Path $BinDir "tsrs.exe") -p testdata/split-check/declaration-errors --noEmit --incremental false --pretty false | Out-Null
 if ($LASTEXITCODE -notin @(0, 2)) { throw "tsrs CLI training exited with $LASTEXITCODE" }
 
-foreach ($prefix in @("suite", "cli")) {
+# The fast preset runs code default mode never does (notes/perf-pgo-fast-training.md).
+$env:LLVM_PROFILE_FILE = Join-Path $RawDir "fast-cli-%m.profraw"
+& (Join-Path $BinDir "tsrs.exe") -p testdata/split-check/declaration-errors --noEmit --incremental false --pretty false `
+    --fast | Out-Null
+if ($LASTEXITCODE -notin @(0, 2)) { throw "tsrs --fast CLI training exited with $LASTEXITCODE" }
+
+# `tsrs --lint` with every rule on the lint fixtures (no bench projects on Windows).
+$request = Join-Path $env:RUNNER_TEMP "pgo/lint-request.json"
+$fixtures = @(Get-ChildItem crates/tsrs_lint/tests/fixtures -Recurse -Include *.ts, *.tsx | ForEach-Object FullName)
+node bench/lint.mjs request --out $request --files @fixtures
+if ($LASTEXITCODE -ne 0) { throw "bench/lint.mjs request exited with $LASTEXITCODE" }
+$env:LLVM_PROFILE_FILE = Join-Path $RawDir "lint-%m.profraw"
+$lint = Start-Process -FilePath (Join-Path $BinDir "tsrs.exe") -ArgumentList "--lint", "headless" -NoNewWindow -Wait -PassThru `
+    -RedirectStandardInput $request -RedirectStandardOutput (Join-Path $env:RUNNER_TEMP "pgo/lint-output.bin")
+if ($lint.ExitCode -ne 0) { throw "tsrs --lint training exited with $($lint.ExitCode)" }
+
+foreach ($prefix in @("suite", "cli", "fast-cli", "lint")) {
     $profiles = @(Get-ChildItem $RawDir -Filter "$prefix-*.profraw" | Where-Object Length -gt 0)
     if ($profiles.Count -eq 0) { throw "no nonempty $prefix profile" }
 }
+exit 0

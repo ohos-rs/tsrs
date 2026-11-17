@@ -78,16 +78,16 @@ impl NodeVisitor {
             return Some(node);
         };
         let mut visited = visit(self, node);
-        if let Some(v) = visited {
-            if v.kind() == Kind::SyntaxList {
-                let nodes = v.as_syntax_list().children;
-                assert!(nodes.len() == 1, "Expected only a single node to be written to output");
-                visited = Some(nodes[0]);
-                assert!(
-                    nodes[0].kind() != Kind::SyntaxList,
-                    "The result of visiting and lifting a Node may not be SyntaxList"
-                );
-            }
+        if let Some(v) = visited
+            && v.kind() == Kind::SyntaxList
+        {
+            let nodes = v.as_syntax_list().children;
+            assert!(nodes.len() == 1, "Expected only a single node to be written to output");
+            visited = Some(nodes[0]);
+            assert!(
+                nodes[0].kind() != Kind::SyntaxList,
+                "The result of visiting and lifting a Node may not be SyntaxList"
+            );
         }
         visited
     }
@@ -311,7 +311,7 @@ pub fn required_child<T>(visited: Option<T>, original: T) -> T {
 }
 
 /// Go `core.SameMap` over a raw node slice: returns `nodes` itself when `f` maps every element to itself.
-pub fn same_map_nodes(
+pub(crate) fn same_map_nodes(
     nodes: &'static [P<Node>],
     mut f: impl FnMut(P<Node>) -> P<Node>,
 ) -> &'static [P<Node>] {

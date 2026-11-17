@@ -5,16 +5,16 @@ use std::sync::{Arc, Mutex, Weak};
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsrs_core::collections::SyncMap as LockedMap;
 
-use super::entry::mapEntry;
+use super::entry::EntryState;
 use super::interfaces::{Cloneable, Shared, Value};
 use super::map::SharedMap;
 
-struct lockedEntry<'a, K: Hash + Eq, T> {
+struct LockedEntry<'a, K: Hash + Eq, T> {
     e: &'a Arc<SyncMapEntry<K, T>>,
-    st: RefCell<&'a mut syncEntryState<K, T>>,
+    st: RefCell<&'a mut SyncEntryState<K, T>>,
 }
 
-impl<K: Hash + Eq + Clone + Send + Sync, T: Cloneable + Clone> Value<T> for lockedEntry<'_, K, T> {
+impl<K: Hash + Eq + Clone + Send + Sync, T: Cloneable + Clone> Value<T> for LockedEntry<'_, K, T> {
     // syncmap.go:14
     fn value(&self) -> Option<Shared<T>> {
         self.st.borrow().e.value()
@@ -38,12 +38,12 @@ impl<K: Hash + Eq + Clone + Send + Sync, T: Cloneable + Clone> Value<T> for lock
     // syncmap.go:30
     fn change_if(&self, cond: &mut dyn FnMut(&T) -> bool, apply: &mut dyn FnMut(&mut T)) -> bool {
         let value = self.st.borrow().e.value();
-        if let Some(value) = value {
-            if cond(&value) {
-                drop(value);
-                self.e.change_locked(&mut self.st.borrow_mut(), apply);
-                return true;
-            }
+        if let Some(value) = value
+            && cond(&value)
+        {
+            drop(value);
+            self.e.change_locked(&mut self.st.borrow_mut(), apply);
+            return true;
         }
         false
     }
@@ -60,13 +60,13 @@ impl<K: Hash + Eq + Clone + Send + Sync, T: Cloneable + Clone> Value<T> for lock
 }
 
 pub struct SyncMapEntry<K: Hash + Eq, T> {
-    m: Weak<syncMapInner<K, T>>,
+    m: Weak<SyncMapInner<K, T>>,
     key: K,
-    mu: Mutex<syncEntryState<K, T>>,
+    mu: Mutex<SyncEntryState<K, T>>,
 }
 
-struct syncEntryState<K: Hash + Eq, T> {
-    e: mapEntry<T>,
+struct SyncEntryState<K: Hash + Eq, T> {
+    e: EntryState<T>,
     // proxyFor is set when this entry loses a race to become the dirty entry
     // for a value. Since two goroutines hold a reference to two entries that
     // may try to mutate the same underlying value, all mutations are routed
@@ -79,8 +79,7 @@ impl<K: Hash + Eq + Clone + Send + Sync, T: Cloneable + Clone> SyncMapEntry<K, T
         self.key.clone()
     }
 
-    #[cfg(test)]
-    pub(crate) fn proxy_for(&self) -> Option<Arc<SyncMapEntry<K, T>>> {
+    pub fn proxy_for(&self) -> Option<Arc<SyncMapEntry<K, T>>> {
         self.mu.lock().unwrap().proxy_for.clone()
     }
 
@@ -93,12 +92,12 @@ impl<K: Hash + Eq + Clone + Send + Sync, T: Cloneable + Clone> SyncMapEntry<K, T
         st.e.value()
     }
 
-    pub fn original(&self) -> Option<Shared<T>> {
+    fn original(&self) -> Option<Shared<T>> {
         self.mu.lock().unwrap().e.original()
     }
 
     // syncmap.go:74
-    pub fn dirty(self: &Arc<Self>) -> bool {
+    fn dirty(self: &Arc<Self>) -> bool {
         let st = self.mu.lock().unwrap();
         if let Some(proxy_for) = &st.proxy_for {
             return proxy_for.dirty();
@@ -113,7 +112,7 @@ impl<K: Hash + Eq + Clone + Send + Sync, T: Cloneable + Clone> SyncMapEntry<K, T
             proxy_for.locked(f);
             return;
         }
-        f(&lockedEntry { e: self, st: RefCell::new(&mut st) });
+        f(&LockedEntry { e: self, st: RefCell::new(&mut st) });
     }
 
     // syncmap.go:93
@@ -134,7 +133,7 @@ impl<K: Hash + Eq + Clone + Send + Sync, T: Cloneable + Clone> SyncMapEntry<K, T
     // syncmap.go:103
     fn change_locked(
         self: &Arc<Self>,
-        st: &mut syncEntryState<K, T>,
+        st: &mut SyncEntryState<K, T>,
         apply: &mut dyn FnMut(&mut T),
     ) {
         if st.e.dirty {
@@ -187,12 +186,12 @@ impl<K: Hash + Eq + Clone + Send + Sync, T: Cloneable + Clone> SyncMapEntry<K, T
         }
 
         let value = st.e.value.clone();
-        if let Some(value) = value {
-            if cond(&value) {
-                drop(value);
-                self.change_locked(&mut st, apply);
-                return true;
-            }
+        if let Some(value) = value
+            && cond(&value)
+        {
+            drop(value);
+            self.change_locked(&mut st, apply);
+            return true;
         }
         false
     }
@@ -220,7 +219,7 @@ impl<K: Hash + Eq + Clone + Send + Sync, T: Cloneable + Clone> SyncMapEntry<K, T
     }
 
     // syncmap.go:163
-    fn delete_locked(self: &Arc<Self>, st: &mut syncEntryState<K, T>) {
+    fn delete_locked(self: &Arc<Self>, st: &mut SyncEntryState<K, T>) {
         if st.e.dirty {
             st.e.delete = true;
             return;
@@ -252,11 +251,11 @@ impl<K: Hash + Eq + Clone + Send + Sync, T: Cloneable + Clone> SyncMapEntry<K, T
             return;
         }
         let value = st.e.value.clone();
-        if let Some(value) = value {
-            if cond(&value) {
-                drop(value);
-                self.delete_locked(&mut st);
-            }
+        if let Some(value) = value
+            && cond(&value)
+        {
+            drop(value);
+            self.delete_locked(&mut st);
         }
     }
 }
@@ -295,17 +294,17 @@ impl<K: Hash + Eq + Clone + Send + Sync, T: Cloneable + Clone> Value<T>
 }
 
 pub struct SyncMap<K: Hash + Eq, T> {
-    inner: Arc<syncMapInner<K, T>>,
+    inner: Arc<SyncMapInner<K, T>>,
 }
 
-struct syncMapInner<K: Hash + Eq, T> {
+struct SyncMapInner<K: Hash + Eq, T> {
     base: SharedMap<K, T>,
     dirty: LockedMap<K, Arc<SyncMapEntry<K, T>>>,
 }
 
 // syncmap.go:197
 pub fn new_sync_map<K: Hash + Eq, T>(base: SharedMap<K, T>) -> SyncMap<K, T> {
-    SyncMap { inner: Arc::new(syncMapInner { base, dirty: LockedMap::default() }) }
+    SyncMap { inner: Arc::new(SyncMapInner { base, dirty: LockedMap::default() }) }
 }
 
 pub struct FinalizationHooks<'a, K, T> {
@@ -332,8 +331,8 @@ impl<K: Hash + Eq + Clone + Send + Sync, T: Cloneable + Clone> SyncMap<K, T> {
         Arc::new(SyncMapEntry {
             m: Arc::downgrade(&self.inner),
             key,
-            mu: Mutex::new(syncEntryState {
-                e: mapEntry { original, value, dirty, delete },
+            mu: Mutex::new(SyncEntryState {
+                e: EntryState { original, value, dirty, delete },
                 proxy_for: None,
             }),
         })
@@ -392,26 +391,13 @@ impl<K: Hash + Eq + Clone + Send + Sync, T: Cloneable + Clone> SyncMap<K, T> {
         (Some(entry), loaded)
     }
 
-    // syncmap.go:262
-    pub fn delete(&self, key: &K) {
-        let new_entry =
-            self.new_entry(key.clone(), self.inner.base.get(key).cloned(), None, false, true);
-        let (entry, loaded) = self.inner.dirty.load_or_store(key.clone(), new_entry);
-        if loaded {
-            entry.delete();
-        }
-    }
-
     // syncmap.go:274
     pub fn range(&self, mut f: impl FnMut(&Arc<SyncMapEntry<K, T>>) -> bool) {
         let mut seen_in_dirty: FxHashSet<K> = FxHashSet::default();
         self.inner.dirty.range(|key, entry| {
             seen_in_dirty.insert(key.clone());
             let deleted = entry.mu.lock().unwrap().e.delete;
-            if !deleted && !f(entry) {
-                return false;
-            }
-            true
+            !(!deleted && !f(entry))
         });
         // Go continues with the base map even when the callback stopped the dirty map's Range.
         #[expect(
@@ -484,7 +470,3 @@ impl<K: Hash + Eq + Clone + Send + Sync, T: Cloneable + Clone> SyncMap<K, T> {
         self.finalize_with_hooks(hooks)
     }
 }
-
-#[cfg(test)]
-#[path = "syncmap_test.rs"]
-mod syncmap_test;

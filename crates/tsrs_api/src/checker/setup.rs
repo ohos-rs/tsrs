@@ -117,7 +117,7 @@ impl<'h> SnapshotCtx<'h> {
 
 /// Go `checkerSetup`. Field order matters: the checker handle is released before the snapshot scope.
 pub(crate) struct Setup<'h> {
-    pub(crate) checker: CheckerHandle,
+    checker: CheckerHandle,
     // Dropped after `checker`: the gate is released only once the checker slot is free again.
     _lease: super::lease::ApiCheckerLease,
     pub(crate) checker_id: u32,
@@ -147,7 +147,7 @@ impl<'h> Setup<'h> {
         &mut self.checker
     }
 
-    pub(crate) fn symbol_response(&self, symbol: P<Symbol>) -> CheckerResult<Value> {
+    fn symbol_response(&self, symbol: P<Symbol>) -> CheckerResult<Value> {
         self.sd.symbol_response(symbol, &self.sd.project)
     }
 
@@ -310,10 +310,7 @@ pub(crate) fn symbol_owner_file(symbol: P<Symbol>) -> Option<P<SourceFile>> {
 }
 
 /// Go `newFileSymbolResponse`.
-pub(crate) fn file_symbol_response(
-    host: &dyn CheckerHost,
-    symbol: P<Symbol>,
-) -> CheckerResult<Value> {
+pub fn file_symbol_response(host: &dyn CheckerHost, symbol: P<Symbol>) -> CheckerResult<Value> {
     let file = symbol_owner_file(symbol).expect("Expected a file-owned symbol");
     let mut reference = Obj::new();
     reference.num("kind", SYMBOL_OWNER_KIND_FILE as f64);
@@ -358,10 +355,7 @@ fn build_symbol_response(
 }
 
 /// Go `newSymbolReference` (`CompactSymbolReference`).
-pub(crate) fn compact_symbol_reference(
-    host: &dyn CheckerHost,
-    symbol: P<Symbol>,
-) -> CheckerResult<Value> {
+fn compact_symbol_reference(host: &dyn CheckerHost, symbol: P<Symbol>) -> CheckerResult<Value> {
     let mut o = Obj::new();
     o.num("id", tsrs_ast::get_symbol_id(symbol).0 as f64);
     if let Some(file) = symbol_owner_file(symbol) {
@@ -529,7 +523,10 @@ pub(crate) fn resolve_symbol_for_program(
             let path = r.file_path().unwrap_or_default();
             let source_file = program.get_source_file_by_path(&Path::new(path));
             let matches = match source_file {
-                Some(f) => Some(&sd.host.source_file_descriptor(f)?) == r.file.as_ref(),
+                Some(f) => match &r.file {
+                    Some(descriptor) => sd.host.source_file_descriptor_matches(f, descriptor)?,
+                    None => false,
+                },
                 None => false,
             };
             if !matches {

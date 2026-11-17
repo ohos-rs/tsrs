@@ -36,14 +36,14 @@ impl MessageType {
     }
 }
 
-pub const MSGPACK_FIXED_ARRAY3: u8 = 0x93;
-pub const MSGPACK_BIN8: u8 = 0xC4;
-pub const MSGPACK_BIN16: u8 = 0xC5;
-pub const MSGPACK_BIN32: u8 = 0xC6;
-pub const MSGPACK_U8: u8 = 0xCC;
+const MSGPACK_FIXED_ARRAY3: u8 = 0x93;
+const MSGPACK_BIN8: u8 = 0xC4;
+const MSGPACK_BIN16: u8 = 0xC5;
+const MSGPACK_BIN32: u8 = 0xC6;
+const MSGPACK_U8: u8 = 0xCC;
 
 /// api.ErrInvalidRequest's text.
-pub const ERR_INVALID_REQUEST: &str = "api: invalid request";
+const ERR_INVALID_REQUEST: &str = "api: invalid request";
 
 /// A decoded tuple.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -140,7 +140,9 @@ impl<R: Read + Send> ProtocolReader for MessagePackReader<R> {
     /// `protocol_msgpack.go` `ReadMessage`. The protocol has no request IDs: the method name is the ID.
     fn read_message(&mut self) -> Result<Message, TransportError> {
         let tuple = self.read_tuple()?;
-        let method = tsrs_core::utf8::from_utf8_lossy(&tuple.method).into_owned();
+        // Method names are UTF-8, so the bin's buffer usually becomes the string as it is.
+        let method = String::from_utf8(tuple.method)
+            .unwrap_or_else(|e| tsrs_core::utf8::from_utf8_lossy(e.as_bytes()).into_owned());
         let mut msg = Message::default();
         match tuple.msg_type {
             MessageType::Request => {
@@ -235,26 +237,19 @@ impl<W: Write + Send> ProtocolWriter for MessagePackWriter<W> {
     }
 
     fn write_response(&mut self, id: &Id, result: &Response) -> Result<(), TransportError> {
-        let method = id.to_string();
+        let method = id.text();
         let payload: &[u8] = match result {
             // json.Marshal of a json.Value validates it.
             Response::Json(json) => {
                 crate::jsonrpc::validate_json(json).map_err(TransportError::Protocol)?.as_bytes()
             }
-            Response::Binary(raw) => raw,
+            Response::ValidJson(json) | Response::Binary(json) => json,
         };
         self.write_tuple(MessageType::Response, method.as_bytes(), payload)
     }
 
     fn write_error(&mut self, id: &Id, err: &ResponseError) -> Result<(), TransportError> {
-        let method = id.to_string();
+        let method = id.text();
         self.write_tuple(MessageType::Error, method.as_bytes(), err.message.as_bytes())
     }
-}
-
-/// Encodes a tuple exactly as writeTuple does (test and client helper).
-pub fn encode_tuple(msg_type: MessageType, method: &[u8], payload: &[u8]) -> Vec<u8> {
-    let mut w = MessagePackWriter::new(Vec::new());
-    w.write_tuple(msg_type, method, payload).expect("writing to a Vec cannot fail");
-    w.w.into_inner().map_err(|_| ()).expect("flush to Vec")
 }

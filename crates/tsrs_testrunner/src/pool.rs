@@ -28,11 +28,11 @@ pub struct PoolOptions {
 #[derive(Clone, Debug)]
 pub struct TestResult {
     pub class: Class,
-    pub ms: u64,
-    pub diff: String,
+    pub(crate) ms: u64,
+    pub(crate) diff: String,
     pub panic: String,
-    pub loc: String,
-    pub skip: String,
+    pub(crate) loc: String,
+    pub(crate) skip: String,
     // `.types` / `.symbols` results (class, first difference) when those baselines were requested.
     pub types: Option<(Class, String)>,
     pub symbols: Option<(Class, String)>,
@@ -220,7 +220,7 @@ pub fn run_pool(items: &[TestItem], opts: &PoolOptions) -> Vec<Option<TestResult
                     // Died while running batch[w.done]: record a crash and re-queue the rest.
                     let crashed = w.batch[w.done];
                     let tail = stderr_tail(&w.stderr);
-                    let status_text = status.map(|s| format!("{s}")).unwrap_or_default();
+                    let status_text = status.map_or_default(|s| format!("{s}"));
                     let message = if tail.contains("overflowed its stack") {
                         "stack overflow".to_string()
                     } else if tail.is_empty() {
@@ -240,24 +240,24 @@ pub fn run_pool(items: &[TestItem], opts: &PoolOptions) -> Vec<Option<TestResult
 
         // Timeouts
         for w in workers.iter_mut().filter(|w| w.alive) {
-            if let Some((i, since)) = w.running {
-                if now.duration_since(since) > opts.timeout {
-                    let _ = w.child.kill();
-                    let _ = w.child.wait();
-                    w.alive = false;
-                    active -= 1;
-                    let idx = w.batch[i];
-                    results[idx] = Some(TestResult::harness(
-                        Class::Timeout,
-                        opts.timeout.as_millis() as u64,
-                        String::new(),
-                    ));
-                    completed += 1;
-                    for &rest in w.batch[i + 1..].iter().rev() {
-                        queue.push_front(rest);
-                    }
-                    w.done = w.batch.len();
+            if let Some((i, since)) = w.running
+                && now.duration_since(since) > opts.timeout
+            {
+                let _ = w.child.kill();
+                let _ = w.child.wait();
+                w.alive = false;
+                active -= 1;
+                let idx = w.batch[i];
+                results[idx] = Some(TestResult::harness(
+                    Class::Timeout,
+                    opts.timeout.as_millis() as u64,
+                    String::new(),
+                ));
+                completed += 1;
+                for &rest in w.batch[i + 1..].iter().rev() {
+                    queue.push_front(rest);
                 }
+                w.done = w.batch.len();
             }
         }
 

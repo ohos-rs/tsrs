@@ -1,4 +1,5 @@
 #[expect(dead_code, reason = "This target uses only part of the shared integration helper module.")]
+#[path = "integration/common/mod.rs"]
 mod common;
 use common::*;
 use std::sync::Arc;

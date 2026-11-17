@@ -28,7 +28,7 @@ impl Checker {
                 }
             }
             if !last.is_empty() {
-                message = Some(&diagnostics::Should_not_add_return_type_to_the_function_that_is_annotated_by_Extend);
+                message = Some(&diagnostics::SHOULD_NOT_ADD_RETURN_TYPE_TO_THE_FUNCTION_THAT_IS_ANNOTATED_BY_EXTEND);
                 for component in options.extend.components.as_deref().unwrap_or_default() {
                     if component.name == last {
                         expected = Some(component.r#type.as_str());
@@ -40,7 +40,7 @@ impl Checker {
             && (ast::is_function_declaration(node) || ast::is_method_declaration(node))
             && ast::has_arkui_bare_decorator(node.modifiers(), &[options.styles.decorator.as_deref().unwrap_or("Styles")])
         {
-            message = Some(&diagnostics::Should_not_add_return_type_to_the_function_that_is_annotated_by_Styles);
+            message = Some(&diagnostics::SHOULD_NOT_ADD_RETURN_TYPE_TO_THE_FUNCTION_THAT_IS_ANNOTATED_BY_STYLES);
             expected = options.styles.component.as_ref().map(|c| c.r#type.as_str());
         }
         let Some(message) = message else {

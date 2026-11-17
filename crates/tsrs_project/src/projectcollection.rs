@@ -1,7 +1,7 @@
 use std::sync::{Arc, OnceLock};
 
 use rustc_hash::FxHashMap;
-use tsrs_core::collections::{OrderedMap, OrderedMapExt, Set, SyncSet, new_set_with_size_hint};
+use tsrs_core::collections::{OrderedMap, Set, SyncSet, new_set_with_size_hint};
 use tsrs_core::tspath::Path;
 use tsrs_core::{BreadthFirstSearchOptions, breadth_first_search_parallel_ex};
 use tsrs_ls as ls;
@@ -13,7 +13,7 @@ use crate::project::{ConfiguredProjectID, ID, Project, SyntheticProjectID};
 
 #[derive(Clone)]
 pub struct ProjectCollection {
-    pub(crate) to_path: ToPath,
+    to_path: ToPath,
     pub(crate) config_file_registry: Arc<ConfigFileRegistry>,
     // fileDefaultProjects is a map of file paths to the ID of the default project
     // for that file. This map
@@ -36,13 +36,13 @@ pub struct ProjectCollection {
     pub(crate) api_state: APIState,
 
     // Go: openConfiguredProjectsOnce + openConfiguredProjects (not copied by clone()).
-    pub(crate) open_configured_projects: Arc<OnceLock<Arc<Set<ConfiguredProjectID>>>>,
+    open_configured_projects: Arc<OnceLock<Arc<Set<ConfiguredProjectID>>>>,
 }
 
 // APIState tracks the projects and files that API clients have explicitly opened.
 // Opens and closes are ref-counted so multiple API clients don't clobber each
 // other, and it is carried across snapshots so API-opened resources stay loaded.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct APIState {
     // openProjects is the ref-counted set of projects to keep open for API
     // clients, keyed by config file path.
@@ -50,7 +50,7 @@ pub struct APIState {
     // openFiles is the ref-counted set of files to keep open for API clients,
     // keyed by file path. Files with no configured project are loaded into the
     // inferred project.
-    pub(crate) open_files: FxHashMap<Path, apiOpenedFile>,
+    pub(crate) open_files: FxHashMap<Path, ApiOpenedFile>,
 }
 
 impl APIState {
@@ -66,8 +66,8 @@ impl APIState {
 }
 
 // apiOpenedFile tracks a file kept open by API clients along with its ref count.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub(crate) struct apiOpenedFile {
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ApiOpenedFile {
     pub(crate) file_name: String,
     pub(crate) ref_count: usize,
 }
@@ -113,7 +113,7 @@ impl ProjectCollection {
 
     // projectcollection.go:92
     // ConfiguredProjects returns all configured projects in a stable order.
-    pub fn configured_projects(&self) -> Vec<Shared<Project>> {
+    fn configured_projects(&self) -> Vec<Shared<Project>> {
         let mut projects = Vec::with_capacity(self.configured_projects.len());
         self.fill_configured_projects(&mut projects);
         projects
@@ -124,7 +124,7 @@ impl ProjectCollection {
         let start = projects.len();
         // collected, then sorted by unique project id as in Go
         projects.extend(self.configured_projects.values().map(std::clone::Clone::clone));
-        projects[start..].sort_by_key(|a| a.id());
+        projects[start..].sort_by(|a, b| a.id_ref().cmp(b.id_ref()));
     }
 
     // projectcollection.go:108
@@ -132,7 +132,7 @@ impl ProjectCollection {
     pub fn synthetic_projects(&self) -> Vec<Shared<Project>> {
         let mut projects: Vec<Shared<Project>> =
             self.synthetic_projects.values().cloned().collect();
-        projects.sort_by_key(|a| a.id());
+        projects.sort_by(|a, b| a.id_ref().cmp(b.id_ref()));
         projects
     }
 
@@ -145,7 +145,7 @@ impl ProjectCollection {
         projects
             .extend(self.synthetic_projects().into_iter().map(|project| (project.id(), project)));
         if let Some(inferred_project) = &self.inferred_project {
-            projects.set(inferred_project.id(), inferred_project.clone());
+            projects.insert(inferred_project.id(), inferred_project.clone());
         }
         projects
     }
@@ -184,7 +184,7 @@ impl ProjectCollection {
     // projectcollection.go:165
     // GetLanguageServiceProjectsContainingFile does not consider synthetic projects
     // (ones created by API via createProgram)
-    pub fn get_language_service_projects_containing_file(
+    pub(crate) fn get_language_service_projects_containing_file(
         &self,
         path: &Path,
     ) -> Vec<Arc<dyn ls::Project>> {
@@ -198,17 +198,17 @@ impl ProjectCollection {
                 }
             },
         ));
-        if let Some(inferred_project) = &self.inferred_project {
-            if inferred_project.contains_file(path) {
-                projects.push(Arc::<Project>::clone(inferred_project.arc()));
-            }
+        if let Some(inferred_project) = &self.inferred_project
+            && inferred_project.contains_file(path)
+        {
+            projects.push(Arc::<Project>::clone(inferred_project.arc()));
         }
         projects
     }
 
     // projectcollection.go:179
     // GetOpenConfiguredProjects returns configured projects containing at least one open file.
-    pub fn get_open_configured_projects(&self) -> Arc<Set<ConfiguredProjectID>> {
+    pub(crate) fn get_open_configured_projects(&self) -> Arc<Set<ConfiguredProjectID>> {
         Arc::clone(self.open_configured_projects.get_or_init(|| {
             let mut open_projects = new_set_with_size_hint(self.configured_projects.len());
             #[expect(
@@ -218,13 +218,11 @@ impl ProjectCollection {
             for path in self.open_files.keys() {
                 if let Some(project_id) =
                     self.file_default_projects.as_ref().and_then(|m| m.get(path))
+                    && let Some(configured_id) = project_id.configured()
+                    && self.configured_projects.contains_key(&configured_id)
                 {
-                    if let Some(configured_id) = project_id.configured() {
-                        if self.configured_projects.contains_key(&configured_id) {
-                            open_projects.add(configured_id);
-                            continue;
-                        }
-                    }
+                    open_projects.add(configured_id);
+                    continue;
                 }
 
                 // only inserts into a set; Go ranges the map too
@@ -267,7 +265,7 @@ impl ProjectCollection {
                     }
                 }
                 if first_configured_project.is_none() {
-                    first_configured_project = Some(p.clone());
+                    first_configured_project = Some(p);
                 }
             }
         }
@@ -275,10 +273,10 @@ impl ProjectCollection {
             return Some(containing_projects[0].clone());
         }
         if containing_projects.is_empty() {
-            if let Some(inferred_project) = &self.inferred_project {
-                if inferred_project.contains_file(path) {
-                    return Some(inferred_project.clone());
-                }
+            if let Some(inferred_project) = &self.inferred_project
+                && inferred_project.contains_file(path)
+            {
+                return Some(inferred_project.clone());
             }
             return None;
         }
@@ -364,10 +362,10 @@ impl ProjectCollection {
         // Look for tsconfig.json files higher up the directory tree and do the same. This handles
         // the common case where a higher-level "solution" tsconfig.json contains all projects in a
         // workspace.
-        if let Some(config) = self.config_file_registry.get_config(path) {
-            if config.compiler_options().unwrap().disable_solution_searching.is_true() {
-                return fallback;
-            }
+        if let Some(config) = self.config_file_registry.get_config(path)
+            && config.compiler_options().unwrap().disable_solution_searching.is_true()
+        {
+            return fallback;
         }
         let ancestor_config_name =
             self.config_file_registry.get_ancestor_config_file_name(path, config_file_name);

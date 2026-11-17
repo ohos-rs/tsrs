@@ -26,9 +26,9 @@ fn kit_imports_define_semantic_program() {
     ], true)));
     let mut options = tsrs_core::CompilerOptions::default();
     options.no_emit = Tristate::True;
-    options.target = tsrs_core::ScriptTarget::ESNext;
-    options.module = tsrs_core::ModuleKind::ESNext;
-    options.module_resolution = tsrs_core::ModuleResolutionKind::Bundler;
+    options.target = tsrs_core::ScriptTarget::ES_NEXT;
+    options.module = tsrs_core::ModuleKind::ES_NEXT;
+    options.module_resolution = tsrs_core::ModuleResolutionKind::BUNDLER;
     options.ets_loader_path = LOADER.into();
     options.oh_sdk_configs = Some(vec![tsrs_core::OhSdkConfig { api_paths: vec!["/sdk/api".into()], ..Default::default() }]);
     options.oh_system_modules = Some(vec!["@ohos.default.d.ts".into(), "@ohos.foo.d.ts".into(), "@ohos.bar.d.ts".into()]);

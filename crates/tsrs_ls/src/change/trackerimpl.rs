@@ -23,7 +23,7 @@ impl Tracker {
         // so duplicate edits are emitted once and conflicting edits are rejected regardless of map iteration
         // order.
         let mut projections: OrderedMap<String, usize> = OrderedMap::default();
-        let all: Vec<(P<SourceFile>, Vec<trackerEdit>)> =
+        let all: Vec<(P<SourceFile>, Vec<TrackerEdit>)> =
             self.changes.iter().map(|(k, v)| (*k, v.clone())).collect();
         for (source_file, changes_in_file) in all {
             let file_name = source_file.original_file_name().to_string();
@@ -88,11 +88,11 @@ impl Tracker {
     // trackerimpl.go:136
     fn compute_new_text(
         &mut self,
-        change: &trackerEdit,
+        change: &TrackerEdit,
         target_source_file: P<SourceFile>,
         source_file: P<SourceFile>,
     ) -> String {
-        if change.kind == trackerEditKind::Text {
+        if change.kind == TrackerEditKind::Text {
             return change.new_text.clone();
         }
 
@@ -111,7 +111,7 @@ impl Tracker {
             let pos = mapped.position;
 
             let text = match change.kind {
-                trackerEditKind::ReplaceWithMultipleNodes => {
+                TrackerEditKind::ReplaceWithMultipleNodes => {
                     let mut joiner = change.options.joiner.clone();
                     if joiner.is_empty() {
                         joiner.clone_from(&self.new_line);
@@ -132,14 +132,14 @@ impl Tracker {
                         .collect();
                     parts.join(&joiner)
                 }
-                trackerEditKind::ReplaceWithSingleNode => self.get_formatted_text_of_node(
+                TrackerEditKind::ReplaceWithSingleNode => self.get_formatted_text_of_node(
                     change.node.unwrap(),
                     target_source_file,
                     projection,
                     pos,
                     &change.options,
                 ),
-                trackerEditKind::Text => {
+                TrackerEditKind::Text => {
                     panic!("change kind {} should have been handled earlier", change.kind as i32)
                 }
             };
@@ -190,7 +190,7 @@ impl Tracker {
     fn reindent_inserted_lines(
         &self,
         source_file: P<SourceFile>,
-        change: &trackerEdit,
+        change: &TrackerEdit,
         text: String,
     ) -> String {
         if text.is_empty()
@@ -310,7 +310,7 @@ impl Tracker {
     // trackerimpl.go:308
     // method on the changeTracker because use of converters
     // GetAdjustedRange computes the adjusted range for a node in a source file, accounting for trivia.
-    pub fn get_adjusted_range(
+    pub(crate) fn get_adjusted_range(
         &self,
         source_file: P<SourceFile>,
         start_node: P<Node>,
@@ -625,7 +625,7 @@ fn dedupe_identical_edits(mut edits: Vec<lsproto::TextEdit>) -> Vec<lsproto::Tex
 }
 
 // trackerimpl.go:96
-pub(crate) fn text_edits_conflict(
+pub fn text_edits_conflict(
     a: &lsproto::TextEdit,
     b: &lsproto::TextEdit,
     multiple_projections: bool,
@@ -651,7 +651,7 @@ fn leading_indentation(text: &str) -> &str {
 }
 
 // trackerimpl.go:285
-pub fn get_format_code_settings_for_writing(
+pub(crate) fn get_format_code_settings_for_writing(
     options: FormatCodeSettings,
     source_file: P<SourceFile>,
 ) -> FormatCodeSettings {
@@ -670,7 +670,7 @@ pub fn get_format_code_settings_for_writing(
 // trackerimpl.go:452
 pub(crate) fn has_comments_before_line_break(text: &str, start: u32) -> bool {
     if let Some(result) = text[start as usize..].chars().into_iter().find_map(|ch| {
-        if !stringutil::is_white_space_single_line(ch as u32) { Some(ch == '/') } else { None }
+        if stringutil::is_white_space_single_line(ch as u32) { None } else { Some(ch == '/') }
     }) {
         return result;
     }

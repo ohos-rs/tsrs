@@ -37,7 +37,7 @@ pub(crate) fn new_node_builder_impl(
         NodeBuilderImpl {
             f: e.factory.as_node_factory().clone(),
             e,
-            pc: new_pseudo_checker(ch.strict_null_checks, ch.exact_optional_property_types),
+            pc: new_pseudo_checker(ch.strict_null_checks),
             links: tsrs_core::LinkStore::new_scratch(scratch),
             symbol_links: tsrs_core::LinkStore::new_scratch(scratch),
             ctx: Cell::new(None),
@@ -84,11 +84,11 @@ impl NodeBuilderImpl {
             return ctx.truncating.get();
         }
         let max_length = if ctx.flags.get().intersects(Flags::NoTruncation) {
-            noTruncationMaximumTruncationLength
+            NO_TRUNCATION_MAXIMUM_TRUNCATION_LENGTH
         } else if ctx.max_truncation_length.get() > 0 {
             ctx.max_truncation_length.get()
         } else {
-            defaultMaximumTruncationLength
+            DEFAULT_MAXIMUM_TRUNCATION_LENGTH
         };
         ctx.truncating.set(ctx.approximate_length.get() > max_length);
         ctx.truncating.get()
@@ -109,7 +109,7 @@ impl NodeBuilderImpl {
     // as its structural form during hover expansion. Filters out lib types.
     // When isAlias is true, checks whether t's alias symbol is from user code (not lib).
     // nodebuilderimpl.go:175
-    pub(crate) fn is_expandable_type(c: &Checker, t: P<Type>, is_alias: bool) -> bool {
+    fn is_expandable_type(c: &Checker, t: P<Type>, is_alias: bool) -> bool {
         if is_alias {
             return !c.is_lib_symbol_for_hover_verbosity(t.alias().symbol());
         }
@@ -141,7 +141,7 @@ impl NodeBuilderImpl {
     // isTypeOnStack reports whether t is already being processed in the current expansion,
     // excluding the last element (which is the type currently being serialized by typeToTypeNode).
     // nodebuilderimpl.go:197
-    pub(crate) fn is_type_on_stack(&self, _c: &mut Checker, t: P<Type>) -> bool {
+    fn is_type_on_stack(&self, _c: &mut Checker, t: P<Type>) -> bool {
         let ctx = self.ctx();
         let type_stack = ctx.type_stack.borrow();
 
@@ -311,7 +311,7 @@ impl NodeBuilderImpl {
 }
 
 // nodebuilderimpl.go:325
-pub(crate) fn get_access_stack(ref_: P<Node>) -> Vec<P<Node>> {
+fn get_access_stack(ref_: P<Node>) -> Vec<P<Node>> {
     let mut state: P<Node> = ref_.as_type_reference_node().type_name;
     let mut ids: Vec<P<Node>> = vec![];
     while !is_identifier(state) {
@@ -358,6 +358,12 @@ impl NodeBuilderImpl {
         list: &[P<Type>],
         is_bare_list: bool,
     ) -> Option<P<NodeList>> {
+        #[derive(Clone, Copy)]
+        struct SeenName {
+            t: P<Type>,
+            i: usize,
+        }
+
         if list.is_empty() {
             return None;
         }
@@ -402,12 +408,7 @@ impl NodeBuilderImpl {
 
         let may_have_name_collisions =
             !self.ctx().flags.get().intersects(Flags::UseFullyQualifiedType);
-        #[derive(Clone, Copy)]
-        struct seenName {
-            t: P<Type>,
-            i: usize,
-        }
-        let mut seen_names: Option<tsrs_core::collections::MultiMap<&'static str, seenName>> = None;
+        let mut seen_names: Option<tsrs_core::collections::MultiMap<&'static str, SeenName>> = None;
         if may_have_name_collisions {
             seen_names = Some(tsrs_core::collections::MultiMap::default());
         }
@@ -442,13 +443,13 @@ impl NodeBuilderImpl {
             let type_node = self.type_to_type_node(c, Some(t));
             if let Some(type_node) = type_node {
                 result.push(type_node);
-                if let Some(seen_names) = seen_names.as_mut() {
-                    if is_identifier_type_reference(type_node) {
-                        seen_names.add(
-                            type_node.as_type_reference_node().type_name.text(),
-                            seenName { t, i: result.len() - 1 },
-                        );
-                    }
+                if let Some(seen_names) = seen_names.as_mut()
+                    && is_identifier_type_reference(type_node)
+                {
+                    seen_names.add(
+                        type_node.as_type_reference_node().type_name.text(),
+                        SeenName { t, i: result.len() - 1 },
+                    );
                 }
             }
         }
@@ -465,7 +466,7 @@ impl NodeBuilderImpl {
             let ctx = self.ctx();
             ctx.flags.set(ctx.flags.get() | Flags::UseFullyQualifiedType);
             for types in seen_names.values() {
-                if !array_is_homogeneous(types, |a: seenName, b: seenName| {
+                if !array_is_homogeneous(types, |a: SeenName, b: SeenName| {
                     types_are_same_reference(a.t, b.t)
                 }) {
                     for seen in types {
@@ -515,15 +516,12 @@ impl NodeBuilderImpl {
 }
 
 // nodebuilderimpl.go:463
-pub(crate) fn is_identifier_type_reference(node: P<Node>) -> bool {
+fn is_identifier_type_reference(node: P<Node>) -> bool {
     is_type_reference_node(node) && is_identifier(node.as_type_reference_node().type_name)
 }
 
 // nodebuilderimpl.go:467
-pub(crate) fn array_is_homogeneous<T: Clone>(
-    array: &[T],
-    mut comparer: impl FnMut(T, T) -> bool,
-) -> bool {
+fn array_is_homogeneous<T: Clone>(array: &[T], mut comparer: impl FnMut(T, T) -> bool) -> bool {
     if array.len() < 2 {
         return true;
     }
@@ -538,7 +536,7 @@ pub(crate) fn array_is_homogeneous<T: Clone>(
 }
 
 // nodebuilderimpl.go:481
-pub(crate) fn types_are_same_reference(a: P<Type>, b: P<Type>) -> bool {
+fn types_are_same_reference(a: P<Type>, b: P<Type>) -> bool {
     a == b
         || a.symbol().is_some() && a.symbol() == b.symbol()
         || a.alias().is_some() && a.alias() == b.alias()
@@ -552,18 +550,17 @@ impl NodeBuilderImpl {
         node: P<Node>,
         range_: Option<P<Node>>,
     ) {
-        if let Some(range_) = range_ {
-            if self.ctx().enclosing_file.get().is_some()
-                && self.ctx().enclosing_file.get() == get_source_file_of_node(range_)
-            {
-                // Copy comments to node for declaration emit
-                self.e.assign_comment_range(node, range_);
-            }
+        if let Some(range_) = range_
+            && self.ctx().enclosing_file.get().is_some()
+            && self.ctx().enclosing_file.get() == get_source_file_of_node(range_)
+        {
+            // Copy comments to node for declaration emit
+            self.e.assign_comment_range(node, range_);
         }
     }
 
     // nodebuilderimpl.go:492
-    pub(crate) fn type_node_is_equivalent_to_type(
+    fn type_node_is_equivalent_to_type(
         c: &mut Checker,
         annotated_declaration: Option<P<Node>>,
         t: P<Type>,
@@ -605,7 +602,7 @@ impl NodeBuilderImpl {
     }
 
     // nodebuilderimpl.go:524
-    pub(crate) fn existing_type_node_is_not_reference_or_is_reference_with_compatible_type_argument_count(
+    fn existing_type_node_is_not_reference_or_is_reference_with_compatible_type_argument_count(
         c: &mut Checker,
         existing: P<Node>,
         t: P<Type>,
@@ -652,14 +649,13 @@ impl NodeBuilderImpl {
         if annotation_type.is_none() {
             annotation_type = self.get_type_from_type_node(c, existing, true);
         }
-        if let Some(annotation_type) = annotation_type {
-            if Self::type_node_is_equivalent_to_type(c, host, t, annotation_type)
-                && Self::can_reuse_existing_js_type_node(c, existing, t)
-            {
-                let result = self.try_reuse_existing_node_helper(c, existing);
-                if result.is_some() {
-                    return result;
-                }
+        if let Some(annotation_type) = annotation_type
+            && Self::type_node_is_equivalent_to_type(c, host, t, annotation_type)
+            && Self::can_reuse_existing_js_type_node(c, existing, t)
+        {
+            let result = self.try_reuse_existing_node_helper(c, existing);
+            if result.is_some() {
+                return result;
             }
         }
         None
@@ -711,32 +707,28 @@ impl NodeBuilderImpl {
         if self.ctx().internal_flags.get().intersects(InternalFlags::WriteComputedProps) {
             if let Some(value_declaration) = symbol.value_declaration() {
                 let name = get_name_of_declaration(value_declaration);
-                if let Some(name) = name {
-                    if is_computed_property_name(name) {
-                        return name;
-                    }
+                if let Some(name) = name
+                    && is_computed_property_name(name)
+                {
+                    return name;
                 }
             }
             if c.value_symbol_links.has(symbol) {
                 let name_type = c.value_symbol_links.get(symbol).name_type();
-                if let Some(name_type) = name_type {
-                    if name_type
+                if let Some(name_type) = name_type
+                    && name_type
                         .flags()
                         .intersects(TypeFlags::EnumLiteral | TypeFlags::UniqueESSymbol)
-                    {
-                        let old_enclosing = self.ctx().enclosing_declaration.get();
-                        self.ctx()
-                            .enclosing_declaration
-                            .set(name_type.symbol().unwrap().value_declaration());
-                        let result =
-                            self.f.new_computed_property_name(self.symbol_to_expression_worker(
-                                c,
-                                name_type.symbol().unwrap(),
-                                meaning,
-                            ));
-                        self.ctx().enclosing_declaration.set(old_enclosing);
-                        return result;
-                    }
+                {
+                    let old_enclosing = self.ctx().enclosing_declaration.get();
+                    self.ctx()
+                        .enclosing_declaration
+                        .set(name_type.symbol().unwrap().value_declaration());
+                    let result = self.f.new_computed_property_name(
+                        self.symbol_to_expression_worker(c, name_type.symbol().unwrap(), meaning),
+                    );
+                    self.ctx().enclosing_declaration.set(old_enclosing);
+                    return result;
                 }
             }
         }
@@ -764,7 +756,7 @@ impl NodeBuilderImpl {
     }
 
     // nodebuilderimpl.go:614
-    pub(crate) fn create_entity_name_from_symbol_chain(
+    fn create_entity_name_from_symbol_chain(
         &self,
         c: &mut Checker,
         chain: &[P<Symbol>],
@@ -850,22 +842,21 @@ impl NodeBuilderImpl {
                 self.e.most_original(self.ctx().enclosing_declaration.get()),
             ); // TODO: Just use b.ctx.enclosingFile ? Or is the delayed lookup important for context moves?
             let target_file = get_source_file_of_module(chain[0]);
-            let mut specifier_result = moduleSpecifierResult::default();
+            let mut specifier_result = ModuleSpecifierResult::default();
             let mut import_mode_override = RESOLUTION_MODE_NONE;
             let module_resolution_kind = c.compiler_options.get_module_resolution_kind();
-            if module_resolution_kind == ModuleResolutionKind::Node16
-                || module_resolution_kind == ModuleResolutionKind::NodeNext
+            if module_resolution_kind == ModuleResolutionKind::NODE16
+                || module_resolution_kind == ModuleResolutionKind::NODE_NEXT
             {
                 // An `import` type directed at an esm format file is only going to resolve in esm mode - set the esm mode assertion
-                if let (Some(target_file), Some(context_file)) = (target_file, context_file) {
-                    if c.emit_module_format_of_file(target_file) == ModuleKind::ESNext
-                        && c.emit_module_format_of_file(target_file)
-                            != c.emit_module_format_of_file(context_file)
-                    {
-                        specifier_result =
-                            self.get_specifier_for_module_symbol(c, chain[0], ModuleKind::ESNext);
-                        import_mode_override = ModuleKind::ESNext;
-                    }
+                if let (Some(target_file), Some(context_file)) = (target_file, context_file)
+                    && c.emit_module_format_of_file(target_file) == ModuleKind::ES_NEXT
+                    && c.emit_module_format_of_file(target_file)
+                        != c.emit_module_format_of_file(context_file)
+                {
+                    specifier_result =
+                        self.get_specifier_for_module_symbol(c, chain[0], ModuleKind::ES_NEXT);
+                    import_mode_override = ModuleKind::ES_NEXT;
                 }
             }
             if specifier_result.specifier.is_empty() {
@@ -877,13 +868,13 @@ impl NodeBuilderImpl {
                 let old_specifier_result = specifier_result;
 
                 let module_resolution_kind = c.compiler_options.get_module_resolution_kind();
-                if module_resolution_kind == ModuleResolutionKind::Node16
-                    || module_resolution_kind == ModuleResolutionKind::NodeNext
+                if module_resolution_kind == ModuleResolutionKind::NODE16
+                    || module_resolution_kind == ModuleResolutionKind::NODE_NEXT
                 {
                     // We might be able to write a portable import type using a mode override; try specifier generation again, but with a different mode set
-                    let mut swapped_mode = ModuleKind::ESNext;
-                    if c.emit_module_format_of_file(context_file.unwrap()) == ModuleKind::ESNext {
-                        swapped_mode = ModuleKind::CommonJS;
+                    let mut swapped_mode = ModuleKind::ES_NEXT;
+                    if c.emit_module_format_of_file(context_file.unwrap()) == ModuleKind::ES_NEXT {
+                        swapped_mode = ModuleKind::COMMON_JS;
                     }
                     specifier_result =
                         self.get_specifier_for_module_symbol(c, chain[0], swapped_mode);
@@ -971,7 +962,7 @@ impl NodeBuilderImpl {
 }
 
 // nodebuilderimpl.go:745
-pub(crate) fn get_topmost_indexed_access_type(node: P<Node>) -> P<Node> {
+fn get_topmost_indexed_access_type(node: P<Node>) -> P<Node> {
     let object_type = node.as_indexed_access_type_node().object_type;
     if is_indexed_access_type_node(object_type) {
         return get_topmost_indexed_access_type(object_type);
@@ -981,7 +972,7 @@ pub(crate) fn get_topmost_indexed_access_type(node: P<Node>) -> P<Node> {
 
 impl NodeBuilderImpl {
     // nodebuilderimpl.go:752
-    pub(crate) fn create_access_from_symbol_chain(
+    fn create_access_from_symbol_chain(
         &self,
         c: &mut Checker,
         chain: &[P<Symbol>],
@@ -1013,7 +1004,7 @@ impl NodeBuilderImpl {
                 if let Some(exports) = exports {
                     // avoid exhaustive iteration in the common case
                     let res = exports.lookup(symbol.name());
-                    if symbol.name() != ast::InternalSymbolNameExportEquals
+                    if symbol.name() != ast::INTERNAL_SYMBOL_NAME_EXPORT_EQUALS
                         && !is_late_bound_name(symbol.name())
                         && res.is_some()
                         && c.get_symbol_if_same_reference(res.unwrap(), symbol).is_some()
@@ -1024,7 +1015,7 @@ impl NodeBuilderImpl {
                         results.extend(exports.entries().into_iter().filter_map(|(name, ex)| {
                             if c.get_symbol_if_same_reference(ex, symbol).is_some()
                                 && !is_late_bound_name(name)
-                                && name != ast::InternalSymbolNameExportEquals
+                                && name != ast::INTERNAL_SYMBOL_NAME_EXPORT_EQUALS
                             {
                                 Some((ex, name))
                                 // break // must collect all results and sort them - exports are randomly iterated
@@ -1051,24 +1042,24 @@ impl NodeBuilderImpl {
                     break;
                 }
             }
-            if let Some(name) = name {
-                if is_computed_property_name(name) && is_entity_name(name.expression().unwrap()) {
-                    let lhs = self.create_access_from_symbol_chain(
-                        c,
-                        chain,
-                        index - 1,
-                        stopper,
-                        override_type_arguments,
+            if let Some(name) = name
+                && is_computed_property_name(name)
+                && is_entity_name(name.expression().unwrap())
+            {
+                let lhs = self.create_access_from_symbol_chain(
+                    c,
+                    chain,
+                    index - 1,
+                    stopper,
+                    override_type_arguments,
+                );
+                if is_entity_name(lhs) {
+                    return self.f.new_indexed_access_type_node(
+                        self.f.new_parenthesized_type_node(self.f.new_type_query_node(lhs, None)),
+                        self.f.new_type_query_node(name.expression().unwrap(), None),
                     );
-                    if is_entity_name(lhs) {
-                        return self.f.new_indexed_access_type_node(
-                            self.f
-                                .new_parenthesized_type_node(self.f.new_type_query_node(lhs, None)),
-                            self.f.new_type_query_node(name.expression().unwrap(), None),
-                        );
-                    }
-                    return lhs;
                 }
+                return lhs;
             }
             symbol_name = self.get_name_of_symbol_as_written(c, symbol);
         }
@@ -1157,7 +1148,7 @@ impl NodeBuilderImpl {
     }
 
     // nodebuilderimpl.go:858
-    pub(crate) fn create_expression_from_symbol_chain(
+    fn create_expression_from_symbol_chain(
         &self,
         c: &mut Checker,
         chain: &[P<Symbol>],
@@ -1250,7 +1241,7 @@ impl NodeBuilderImpl {
 }
 
 // nodebuilderimpl.go:912
-pub(crate) fn can_use_property_access(name: &str) -> bool {
+fn can_use_property_access(name: &str) -> bool {
     if name.is_empty() {
         return false;
     }
@@ -1264,27 +1255,23 @@ pub(crate) fn can_use_property_access(name: &str) -> bool {
 }
 
 // nodebuilderimpl.go:924
-pub(crate) fn starts_with_single_or_double_quote(str: &str) -> bool {
+fn starts_with_single_or_double_quote(str: &str) -> bool {
     str.starts_with('\'') || str.starts_with('"')
 }
 
 // nodebuilderimpl.go:928
-pub(crate) fn starts_with_square_bracket(str: &str) -> bool {
+fn starts_with_square_bracket(str: &str) -> bool {
     str.starts_with('[')
 }
 
 // nodebuilderimpl.go:932
-pub(crate) fn is_default_binding_context(location: P<Node>) -> bool {
+fn is_default_binding_context(location: P<Node>) -> bool {
     location.kind() == Kind::SourceFile || is_ambient_module(location)
 }
 
 impl NodeBuilderImpl {
     // nodebuilderimpl.go:936
-    pub(crate) fn get_name_of_symbol_from_name_type(
-        &self,
-        c: &mut Checker,
-        symbol: P<Symbol>,
-    ) -> String {
+    fn get_name_of_symbol_from_name_type(&self, c: &mut Checker, symbol: P<Symbol>) -> String {
         if c.value_symbol_links.has(symbol) {
             let Some(name_type) = c.value_symbol_links.get(symbol).name_type() else {
                 return String::new();
@@ -1322,11 +1309,7 @@ impl NodeBuilderImpl {
      * It will also use a representation of a number as written instead of a decimal form, e.g. `0o11` instead of `9`.
      */
     // nodebuilderimpl.go:973
-    pub(crate) fn get_name_of_symbol_as_written(
-        &self,
-        c: &mut Checker,
-        symbol: P<Symbol>,
-    ) -> String {
+    fn get_name_of_symbol_as_written(&self, c: &mut Checker, symbol: P<Symbol>) -> String {
         let mut symbol = symbol;
         let result =
             self.ctx().remapped_symbol_references.borrow().get(&get_symbol_id(symbol)).copied();
@@ -1334,7 +1317,7 @@ impl NodeBuilderImpl {
             symbol = result;
         }
         let ctx = self.ctx();
-        if symbol.name() == ast::InternalSymbolNameDefault
+        if symbol.name() == ast::INTERNAL_SYMBOL_NAME_DEFAULT
             && !ctx.flags.get().intersects(Flags::UseAliasDefinedOutsideCurrentScope)
             // If it's not the first part of an entity name, it must print as `default`
             && (!ctx.flags.get().intersects(Flags::InInitialEntityName)
@@ -1356,31 +1339,29 @@ impl NodeBuilderImpl {
                 // }
                 if is_computed_property_name(name)
                     && !symbol.check_flags().intersects(CheckFlags::Late)
+                    && c.value_symbol_links.has(symbol)
+                    && c.value_symbol_links.get(symbol).name_type().is_some()
+                    && c.value_symbol_links
+                        .get(symbol)
+                        .name_type()
+                        .unwrap()
+                        .flags()
+                        .intersects(TypeFlags::StringOrNumberLiteral)
                 {
-                    if c.value_symbol_links.has(symbol)
-                        && c.value_symbol_links.get(symbol).name_type().is_some()
-                        && c.value_symbol_links
-                            .get(symbol)
-                            .name_type()
-                            .unwrap()
-                            .flags()
-                            .intersects(TypeFlags::StringOrNumberLiteral)
-                    {
-                        let result = self.get_name_of_symbol_from_name_type(c, symbol);
-                        if !result.is_empty() {
-                            return result;
-                        }
+                    let result = self.get_name_of_symbol_from_name_type(c, symbol);
+                    if !result.is_empty() {
+                        return result;
                     }
                 }
                 return tsrs_scanner::declaration_name_to_string(Some(name));
             }
             let declaration = declarations[0]; // Declaration may be nameless, but we'll try anyway
-            if let Some(parent) = declaration.parent() {
-                if parent.kind() == Kind::VariableDeclaration {
-                    return tsrs_scanner::declaration_name_to_string(Some(
-                        parent.as_variable_declaration().name,
-                    ));
-                }
+            if let Some(parent) = declaration.parent()
+                && parent.kind() == Kind::VariableDeclaration
+            {
+                return tsrs_scanner::declaration_name_to_string(Some(
+                    parent.as_variable_declaration().name,
+                ));
             }
             if is_class_expression(declaration)
                 || is_function_expression(declaration)
@@ -1422,7 +1403,7 @@ impl NodeBuilderImpl {
     }
 
     // nodebuilderimpl.go:1036
-    pub(crate) fn lookup_type_parameter_nodes(
+    fn lookup_type_parameter_nodes(
         &self,
         c: &mut Checker,
         chain: &[P<Symbol>],
@@ -1469,7 +1450,7 @@ impl NodeBuilderImpl {
     }
 
     // nodebuilderimpl.go:1066
-    pub(crate) fn lookup_symbol_chain_worker(
+    fn lookup_symbol_chain_worker(
         &self,
         c: &mut Checker,
         symbol: P<Symbol>,
@@ -1502,7 +1483,7 @@ impl NodeBuilderImpl {
 
     /** @param endOfChain Set to false for recursive calls; non-recursive calls should always output something. */
     // nodebuilderimpl.go:1087
-    pub(crate) fn get_symbol_chain(
+    fn get_symbol_chain(
         &self,
         c: &mut Checker,
         symbol: P<Symbol>,
@@ -1535,7 +1516,7 @@ impl NodeBuilderImpl {
             }
             let parents = c.get_containers_of_symbol(root, enclosing_declaration, meaning);
             if !parents.is_empty() {
-                let mut parent_specifiers: Vec<sortedSymbolNamePair> = parents
+                let mut parent_specifiers: Vec<SortedSymbolNamePair> = parents
                     .iter()
                     .map(|&symbol| {
                         if symbol
@@ -1543,7 +1524,7 @@ impl NodeBuilderImpl {
                             .iter()
                             .any(|&d| has_non_global_augmentation_external_module_symbol(d))
                         {
-                            return sortedSymbolNamePair {
+                            return SortedSymbolNamePair {
                                 sym: symbol,
                                 name: self
                                     .get_specifier_for_module_symbol(
@@ -1555,7 +1536,7 @@ impl NodeBuilderImpl {
                                     .to_string(),
                             };
                         }
-                        sortedSymbolNamePair { sym: symbol, name: String::new() }
+                        SortedSymbolNamePair { sym: symbol, name: String::new() }
                     })
                     .collect();
                 parent_specifiers.sort_by(|a, b| Self::sort_by_best_name(c, a, b));
@@ -1570,14 +1551,14 @@ impl NodeBuilderImpl {
                     );
                     if !parent_chain.is_empty() {
                         if let Some(exports) = parent.exports() {
-                            let exported = exports.lookup(ast::InternalSymbolNameExportEquals);
-                            if let Some(exported) = exported {
-                                if c.get_symbol_if_same_reference(exported, symbol).is_some() {
-                                    // parentChain root _is_ symbol - symbol is a module export=, so it kinda looks like it's own parent
-                                    // No need to lookup an alias for the symbol in itself
-                                    accessible_symbol_chain = parent_chain;
-                                    break;
-                                }
+                            let exported = exports.lookup(ast::INTERNAL_SYMBOL_NAME_EXPORT_EQUALS);
+                            if let Some(exported) = exported
+                                && c.get_symbol_if_same_reference(exported, symbol).is_some()
+                            {
+                                // parentChain root _is_ symbol - symbol is a module export=, so it kinda looks like it's own parent
+                                // No need to lookup an alias for the symbol in itself
+                                accessible_symbol_chain = parent_chain;
+                                break;
                             }
                         }
                         let mut next_syms = accessible_symbol_chain.clone();
@@ -1621,10 +1602,10 @@ impl NodeBuilderImpl {
     }
 
     // nodebuilderimpl.go:1153
-    pub(crate) fn sort_by_best_name(
+    fn sort_by_best_name(
         c: &mut Checker,
-        a: &sortedSymbolNamePair,
-        b: &sortedSymbolNamePair,
+        a: &SortedSymbolNamePair,
+        b: &SortedSymbolNamePair,
     ) -> std::cmp::Ordering {
         let specifier_a = &a.name;
         let specifier_b = &b.name;
@@ -1647,7 +1628,7 @@ impl NodeBuilderImpl {
 }
 
 // nodebuilderimpl.go:1172
-pub(crate) fn can_have_module_specifier(node: Option<P<Node>>) -> bool {
+fn can_have_module_specifier(node: Option<P<Node>>) -> bool {
     let Some(node) = node else {
         return false;
     };
@@ -1677,7 +1658,7 @@ pub fn try_get_module_specifier_from_declaration(node: P<Node>) -> Option<P<Node
 }
 
 // nodebuilderimpl.go:1201
-pub(crate) fn try_get_module_specifier_from_declaration_worker(node: P<Node>) -> Option<P<Node>> {
+fn try_get_module_specifier_from_declaration_worker(node: P<Node>) -> Option<P<Node>> {
     match node.kind() {
         Kind::VariableDeclaration | Kind::BindingElement => {
             let module_call = find_ancestor(node.initializer(), |node| {
@@ -1696,10 +1677,10 @@ pub(crate) fn try_get_module_specifier_from_declaration_worker(node: P<Node>) ->
             }
             ref_.expression()
         }
-        Kind::ImportClause => node.parent().unwrap().module_specifier(),
-        Kind::NamespaceExport => node.parent().unwrap().module_specifier(),
-        Kind::NamespaceImport => node.parent().unwrap().parent().unwrap().module_specifier(),
-        Kind::ExportSpecifier => node.parent().unwrap().parent().unwrap().module_specifier(),
+        Kind::ImportClause | Kind::NamespaceExport => node.parent().unwrap().module_specifier(),
+        Kind::NamespaceImport | Kind::ExportSpecifier => {
+            node.parent().unwrap().parent().unwrap().module_specifier()
+        }
         Kind::ImportSpecifier => {
             node.parent().unwrap().parent().unwrap().parent().unwrap().module_specifier()
         }
@@ -1720,7 +1701,7 @@ impl NodeBuilderImpl {
         c: &mut Checker,
         symbol: P<Symbol>,
         override_import_mode: ModuleKind,
-    ) -> moduleSpecifierResult {
+    ) -> ModuleSpecifierResult {
         let enclosing_declaration = self.e.most_original(self.ctx().enclosing_declaration.get());
         let mut original_module_specifier: Option<P<Node>> = None;
         if can_have_module_specifier(enclosing_declaration) {
@@ -1760,25 +1741,25 @@ impl NodeBuilderImpl {
                         symbol,
                     )
                 {
-                    return moduleSpecifierResult {
+                    return ModuleSpecifierResult {
                         specifier,
                         import_attributes_type: original_import_attributes_type,
                     };
                 }
-                return moduleSpecifierResult {
+                return ModuleSpecifierResult {
                     specifier,
                     import_attributes_type: Some(c.get_type_of_module_import_attributes(symbol)),
                 };
             }
             if let Some(specifier) = try_get_ambient_module_name_from_symbol_name(symbol.name()) {
-                return moduleSpecifierResult { specifier, import_attributes_type: None };
+                return ModuleSpecifierResult { specifier, import_attributes_type: None };
             }
         }
         if self.ctx().enclosing_file.get().is_none() {
             if let Some(specifier) = try_get_ambient_module_name_from_symbol_name(symbol.name()) {
-                return moduleSpecifierResult { specifier, import_attributes_type: None };
+                return ModuleSpecifierResult { specifier, import_attributes_type: None };
             }
-            return moduleSpecifierResult {
+            return ModuleSpecifierResult {
                 specifier: get_source_file_of_module(symbol).unwrap().get().file_name(),
                 import_attributes_type: None,
             };
@@ -1836,7 +1817,7 @@ impl NodeBuilderImpl {
             false, /*forAutoImports*/
         );
         assert_ne!(module_specifiers_result.specifiers, [] as [std::string::String; 0]);
-        let mut result = moduleSpecifierResult {
+        let mut result = ModuleSpecifierResult {
             specifier: self.f.alloc_text(&module_specifiers_result.specifiers[0]),
             import_attributes_type: None,
         };
@@ -1849,29 +1830,52 @@ impl NodeBuilderImpl {
     }
 
     // nodebuilderimpl.go:1340
-    pub(crate) fn module_specifier_result_for_symbol(
+    fn module_specifier_result_for_symbol(
         &self,
         c: &mut Checker,
-        result: moduleSpecifierResult,
+        result: ModuleSpecifierResult,
         import_attributes_type: Option<P<Type>>,
         symbol: P<Symbol>,
-    ) -> moduleSpecifierResult {
+    ) -> ModuleSpecifierResult {
         let mut result = result;
-        if let Some(import_attributes_type) = import_attributes_type {
-            if self.module_specifier_resolves_to_symbol(
+        if let Some(import_attributes_type) = import_attributes_type
+            && self.module_specifier_resolves_to_symbol(
                 c,
                 result.specifier,
                 import_attributes_type,
                 symbol,
-            ) {
-                result.import_attributes_type = Some(import_attributes_type);
-            }
+            )
+        {
+            result.import_attributes_type = Some(import_attributes_type);
+        }
+        if let Some(specifier) = self.rewrite_content_mapped_module_specifier(c, result.specifier) {
+            result.specifier = self.f.alloc_text(&specifier);
         }
         result
     }
 
+    pub(crate) fn rewrite_content_mapped_module_specifier(
+        &self,
+        c: &Checker,
+        specifier: &str,
+    ) -> Option<String> {
+        let ctx = self.ctx();
+        if !ctx.internal_flags.get().intersects(InternalFlags::RewriteModuleSpecifiers)
+            || !c.compiler_options.rewrite_relative_import_extensions.is_true()
+        {
+            return None;
+        }
+        let rewrites = ctx.host.content_mapper_extension_rewrites();
+        let case_sensitive = ctx.host.use_case_sensitive_file_names();
+        if tspath::should_rewrite_extension(specifier, &rewrites, case_sensitive) {
+            let (rewritten, _) = tspath::rewrite_extension(specifier, &rewrites, case_sensitive);
+            return Some(rewritten);
+        }
+        None
+    }
+
     // nodebuilderimpl.go:1347
-    pub(crate) fn module_specifier_resolves_to_symbol(
+    fn module_specifier_resolves_to_symbol(
         &self,
         c: &mut Checker,
         specifier: &str,
@@ -1879,10 +1883,10 @@ impl NodeBuilderImpl {
         symbol: P<Symbol>,
     ) -> bool {
         let mut location = self.ctx().enclosing_declaration.get();
-        if location.is_none() {
-            if let Some(enclosing_file) = self.ctx().enclosing_file.get() {
-                location = Some(enclosing_file.as_node());
-            }
+        if location.is_none()
+            && let Some(enclosing_file) = self.ctx().enclosing_file.get()
+        {
+            location = Some(enclosing_file.as_node());
         }
         if location.is_none() {
             return false;
@@ -1902,10 +1906,10 @@ impl NodeBuilderImpl {
     }
 
     // nodebuilderimpl.go:1359
-    pub(crate) fn create_import_attributes_for_module_specifier(
+    fn create_import_attributes_for_module_specifier(
         &self,
         c: &mut Checker,
-        result: moduleSpecifierResult,
+        result: ModuleSpecifierResult,
         import_mode_override: ModuleKind,
     ) -> Option<P<Node>> {
         let is_empty_attributes_type = result.import_attributes_type.is_none()
@@ -2057,7 +2061,7 @@ impl NodeBuilderImpl {
     }
 
     // nodebuilderimpl.go:1468
-    pub(crate) fn type_parameter_shadows_other_type_parameter_in_scope(
+    fn type_parameter_shadows_other_type_parameter_in_scope(
         &self,
         c: &mut Checker,
         name: &str,
@@ -2071,10 +2075,10 @@ impl NodeBuilderImpl {
             false,
             false,
         );
-        if let Some(result) = result {
-            if result.flags().intersects(SymbolFlags::TypeParameter) {
-                return Some(result) != type_parameter.symbol();
-            }
+        if let Some(result) = result
+            && result.flags().intersects(SymbolFlags::TypeParameter)
+        {
+            return Some(result) != type_parameter.symbol();
         }
         false
     }
@@ -2102,10 +2106,10 @@ impl NodeBuilderImpl {
         }
         if let Some(symbol) = type_parameter.symbol() {
             let decl = symbol.declarations().first().copied();
-            if let Some(decl) = decl {
-                if is_type_parameter_declaration(decl) {
-                    result = self.set_text_range(c, result, decl.name());
-                }
+            if let Some(decl) = decl
+                && is_type_parameter_declaration(decl)
+            {
+                result = self.set_text_range(c, result, decl.name());
             }
         }
         if self.ctx().flags.get().intersects(Flags::GenerateNamesForShadowedTypeParams) {
@@ -2154,13 +2158,13 @@ impl NodeBuilderImpl {
     }
 
     // nodebuilderimpl.go:1522
-    pub(crate) fn is_mapped_type_homomorphic(c: &mut Checker, mapped: P<Type>) -> bool {
+    fn is_mapped_type_homomorphic(c: &mut Checker, mapped: P<Type>) -> bool {
         c.get_homomorphic_type_variable(mapped).is_some()
     }
 
     // Go passes the `*MappedType`; Rust passes the type itself (the payload has no back pointer for `mapped.AsType()`).
     // nodebuilderimpl.go:1526
-    pub(crate) fn is_homomorphic_mapped_type_with_non_homomorphic_instantiation(
+    fn is_homomorphic_mapped_type_with_non_homomorphic_instantiation(
         c: &mut Checker,
         mapped: P<Type>,
     ) -> bool {
@@ -2385,7 +2389,7 @@ impl NodeBuilderImpl {
     }
 
     // nodebuilderimpl.go:1669
-    pub(crate) fn type_to_type_node_helper_with_possible_reusable_type_node(
+    fn type_to_type_node_helper_with_possible_reusable_type_node(
         &self,
         c: &mut Checker,
         t: Option<P<Type>>,
@@ -2466,7 +2470,7 @@ impl NodeBuilderImpl {
 }
 
 // nodebuilderimpl.go:1715
-pub(crate) fn get_effective_parameter_declaration(symbol: P<Symbol>) -> Option<P<Node>> {
+fn get_effective_parameter_declaration(symbol: P<Symbol>) -> Option<P<Node>> {
     let parameter_declaration = get_declaration_of_kind(symbol, Kind::Parameter);
     if parameter_declaration.is_some() {
         return parameter_declaration;
@@ -2577,7 +2581,7 @@ impl NodeBuilderImpl {
     }
 
     // nodebuilderimpl.go:1785
-    pub(crate) fn clone_binding_name(&self, c: &mut Checker, node: P<Node>) -> P<Node> {
+    fn clone_binding_name(&self, c: &mut Checker, node: P<Node>) -> P<Node> {
         if is_computed_property_name(node) && c.is_late_bindable_name(node) {
             self.track_computed_name(
                 c,
@@ -2654,7 +2658,7 @@ impl NodeBuilderImpl {
     }
 
     // nodebuilderimpl.go:1837
-    pub(crate) fn type_predicate_to_type_predicate_node_helper(
+    fn type_predicate_to_type_predicate_node_helper(
         &self,
         c: &mut Checker,
         type_predicate: P<TypePredicate>,

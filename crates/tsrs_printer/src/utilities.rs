@@ -7,7 +7,8 @@ use crate::*;
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Default)]
-    pub(crate) struct getLiteralTextFlags: u32 {
+    #[expect(non_camel_case_types, reason = "Keep the upstream bitflags type name.")]
+    pub struct getLiteralTextFlags: u32 {
         const None = 0;
         const NeverAsciiEscape = 1 << 0;
         const JsxAttributeEscape = 1 << 1;
@@ -70,7 +71,7 @@ fn encode_utf16_escape_sequence(b: &mut String, char_code: stringutil::Rune) {
 // Based heavily on the abstract 'Quote'/'QuoteJSONString' operation from ECMA-262 (24.3.2.2),
 // but augmented for a few select characters (e.g. lineSeparator, paragraphSeparator, nextLine)
 // Note that this doesn't actually wrap the input in double quotes.
-pub(crate) fn escape_string_worker(
+fn escape_string_worker(
     s: &str,
     quote_char: QuoteChar,
     flags: getLiteralTextFlags,
@@ -82,7 +83,7 @@ pub(crate) fn escape_string_worker(
     while i < bytes.len() {
         let (mut ch, mut size) = if i == 0
             && flags.intersects(getLiteralTextFlags::InternalSymbolName)
-            && bytes[0] == InternalSymbolNamePrefixByte
+            && bytes[0] == INTERNAL_SYMBOL_NAME_PREFIX_BYTE
         {
             // An internal symbol name the node builder put into a string literal (`(typeof E)["�missing"]`):
             // Go's prefix is the invalid byte 0xFE, which it decodes as a stray RuneError. Any other U+007F is user
@@ -195,13 +196,13 @@ pub fn escape_string(s: &str, quote_char: QuoteChar) -> String {
     b
 }
 
-pub(crate) fn escape_non_ascii_string(s: &str, quote_char: QuoteChar) -> String {
+pub fn escape_non_ascii_string(s: &str, quote_char: QuoteChar) -> String {
     let mut b = String::with_capacity(s.len() + 2);
     escape_string_worker(s, quote_char, getLiteralTextFlags::None, &mut b);
     b
 }
 
-pub(crate) fn escape_jsx_attribute_string(s: &str, quote_char: QuoteChar) -> String {
+pub fn escape_jsx_attribute_string(s: &str, quote_char: QuoteChar) -> String {
     let mut b = String::with_capacity(s.len() + 2);
     escape_string_worker(
         s,
@@ -212,7 +213,7 @@ pub(crate) fn escape_jsx_attribute_string(s: &str, quote_char: QuoteChar) -> Str
     b
 }
 
-pub(crate) fn can_use_original_text(node: P<Node>, flags: getLiteralTextFlags) -> bool {
+fn can_use_original_text(node: P<Node>, flags: getLiteralTextFlags) -> bool {
     // A synthetic node has no original text, nor does a node without a parent as we would be unable to find the
     // containing SourceFile. We also cannot use the original text if the literal was unterminated and the caller has
     // requested proper termination of unterminated literals
@@ -251,14 +252,14 @@ pub(crate) fn get_literal_text(
 ) -> String {
     // If we don't need to downlevel and we can reach the original source text using
     // the node's parent reference, then simply get the text as it was originally written.
-    if let Some(source_file) = source_file {
-        if can_use_original_text(node, flags) {
-            return scanner::get_source_text_of_node_from_source_file(
-                source_file,
-                node,
-                false, /*includeTrivia*/
-            );
-        }
+    if let Some(source_file) = source_file
+        && can_use_original_text(node, flags)
+    {
+        return scanner::get_source_text_of_node_from_source_file(
+            source_file,
+            node,
+            false, /*includeTrivia*/
+        );
     }
 
     // If we can't reach the original source text, use the canonical form if it's a number,
@@ -330,10 +331,8 @@ pub(crate) fn get_literal_text(
 
             // Write trailing quote character
             match node.kind() {
-                Kind::NoSubstitutionTemplateLiteral => b.push('`'),
-                Kind::TemplateHead => b.push_str("${"),
-                Kind::TemplateMiddle => b.push_str("${"),
-                Kind::TemplateTail => b.push('`'),
+                Kind::TemplateHead | Kind::TemplateMiddle => b.push_str("${"),
+                Kind::NoSubstitutionTemplateLiteral | Kind::TemplateTail => b.push('`'),
                 _ => {}
             }
             b
@@ -389,7 +388,7 @@ pub(crate) fn range_end_positions_are_on_same_line(
     positions_are_on_same_line(range1.end(), range2.end(), source_file)
 }
 
-pub(crate) fn range_start_is_on_same_line_as_range_end(
+fn range_start_is_on_same_line_as_range_end(
     range1: TextRange,
     range2: TextRange,
     source_file: P<SourceFile>,
@@ -413,7 +412,7 @@ pub(crate) fn range_end_is_on_same_line_as_range_start(
     )
 }
 
-pub(crate) fn get_start_position_of_range(
+fn get_start_position_of_range(
     r: TextRange,
     source_file: P<SourceFile>,
     include_comments: bool,
@@ -538,7 +537,7 @@ pub(crate) fn get_lines_between_position_and_next_non_whitespace_character(
     get_lines_between_positions(source_file, pos.into(), stop_pos.min(next_pos).into())
 }
 
-pub(crate) fn get_previous_non_whitespace_position(
+fn get_previous_non_whitespace_position(
     pos: u32,
     stop_pos: u32,
     source_file: P<SourceFile>,
@@ -592,7 +591,7 @@ fn modifier_node_list(modifiers: P<ModifierList>) -> P<NodeList> {
     P::from_static(&modifiers.get().list)
 }
 
-pub(crate) fn get_containing_node_array(node: P<Node>) -> Option<P<NodeList>> {
+fn get_containing_node_array(node: P<Node>) -> Option<P<NodeList>> {
     let parent = node.parent()?;
 
     match node.kind() {
@@ -616,10 +615,10 @@ pub(crate) fn get_containing_node_array(node: P<Node>) -> Option<P<NodeList>> {
         }
         Kind::TemplateSpan => return Some(parent.as_template_expression().template_spans),
         Kind::Decorator => {
-            if can_have_decorators(parent) {
-                if let Some(modifiers) = parent.modifiers() {
-                    return Some(modifier_node_list(modifiers));
-                }
+            if can_have_decorators(parent)
+                && let Some(modifiers) = parent.modifiers()
+            {
+                return Some(modifier_node_list(modifiers));
             }
             return None;
         }
@@ -699,16 +698,16 @@ pub(crate) fn get_containing_node_array(node: P<Node>) -> Option<P<NodeList>> {
         _ => {}
     }
 
-    if is_modifier(node) {
-        if let Some(modifiers) = parent.modifiers() {
-            return Some(modifier_node_list(modifiers));
-        }
+    if is_modifier(node)
+        && let Some(modifiers) = parent.modifiers()
+    {
+        return Some(modifier_node_list(modifiers));
     }
 
     None
 }
 
-pub(crate) fn can_have_decorators(node: P<Node>) -> bool {
+fn can_have_decorators(node: P<Node>) -> bool {
     matches!(
         node.kind(),
         Kind::Parameter
@@ -737,7 +736,7 @@ pub(crate) fn original_nodes_have_same_parent(
 }
 
 /// Go `tryGetEnd`: the values `greatestEnd` accepts (nil-able nodes, node lists, modifier lists, text ranges).
-pub(crate) trait TryGetEnd {
+pub trait TryGetEnd {
     fn try_get_end(&self) -> Option<TextPos>;
 }
 
@@ -774,10 +773,10 @@ impl TryGetEnd for TextRange {
 pub(crate) fn greatest_end(end: TextPos, nodes: &[&dyn TryGetEnd]) -> TextPos {
     let mut end = end;
     for node in nodes.iter().rev() {
-        if let Some(node_end) = node.try_get_end() {
-            if end < node_end {
-                end = node_end;
-            }
+        if let Some(node_end) = node.try_get_end()
+            && end < node_end
+        {
+            end = node_end;
         }
     }
     end
@@ -820,7 +819,7 @@ pub(crate) fn is_immediately_invoked_function_expression_or_arrow_function(node:
     is_function_expression(node) || is_arrow_function(node)
 }
 
-pub(crate) fn has_leading_hash(text: &str) -> bool {
+fn has_leading_hash(text: &str) -> bool {
     !text.is_empty() && text.as_bytes()[0] == b'#'
 }
 
@@ -832,7 +831,12 @@ pub(crate) fn ensure_leading_hash(text: &str) -> String {
     if has_leading_hash(text) { text.to_string() } else { format!("#{text}") }
 }
 
-pub fn format_generated_name(private_name: bool, prefix: &str, base: &str, suffix: &str) -> String {
+pub(crate) fn format_generated_name(
+    private_name: bool,
+    prefix: &str,
+    base: &str,
+    suffix: &str,
+) -> String {
     let name = format!(
         "{}{}{}",
         remove_leading_hash(prefix),
@@ -845,7 +849,7 @@ pub fn format_generated_name(private_name: bool, prefix: &str, base: &str, suffi
     name
 }
 
-pub(crate) fn is_ascii_word_character(ch: stringutil::Rune) -> bool {
+fn is_ascii_word_character(ch: stringutil::Rune) -> bool {
     stringutil::is_ascii_letter(ch) || stringutil::is_digit(ch) || ch == '_' as stringutil::Rune
 }
 
@@ -1071,20 +1075,20 @@ pub(crate) fn calculate_indent(text: &str, pos: u32, end: u32) -> i32 {
 //
 // Character offsets are measured in UTF-16 code units per the source map specification.
 #[derive(Clone, Copy)]
-pub(crate) struct lineCharacterCache {
-    pub(crate) line_map: &'static [u32],
-    pub(crate) text: &'static str,
-    pub(crate) cached_line: usize,
-    pub(crate) cached_pos: u32,
-    pub(crate) cached_char: UTF16Offset,
-    pub(crate) has_cached: bool,
+pub struct LineCharacterCache {
+    line_map: &'static [u32],
+    text: &'static str,
+    cached_line: usize,
+    cached_pos: u32,
+    cached_char: UTF16Offset,
+    has_cached: bool,
 }
 
 // utilities.go:903
 pub(crate) fn new_line_character_cache(
     source: &'static dyn tsrs_sourcemap::Source,
-) -> lineCharacterCache {
-    lineCharacterCache {
+) -> LineCharacterCache {
+    LineCharacterCache {
         line_map: source.ecma_line_map(),
         text: source.text(),
         cached_line: 0,
@@ -1094,7 +1098,7 @@ pub(crate) fn new_line_character_cache(
     }
 }
 
-impl lineCharacterCache {
+impl LineCharacterCache {
     // utilities.go:912
     // getLineAndCharacter returns the 0-based line number and UTF-16 code unit
     // offset from the start of that line for the given byte position.

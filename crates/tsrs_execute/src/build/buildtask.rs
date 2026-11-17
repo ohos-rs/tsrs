@@ -4,7 +4,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::SystemTime;
 
-use tsrs_ast::{Diagnostic, new_compiler_diagnostic};
+use rustc_hash::FxHashMap;
+
+use tsrs_ast::{Diagnostic, NodeFactory, detach_diagnostic_source_files, new_compiler_diagnostic};
 use tsrs_compiler::{ProgramOptions, WriteFileData, new_program};
 use tsrs_core::P;
 use tsrs_core::arena::Region;
@@ -17,8 +19,8 @@ use tsrs_incremental::{
 use tsrs_tsoptions::ParsedCommandLine;
 use tsrs_vfs::FS;
 
-use super::compilerhost::compilerHost;
-use super::host::incrementalHost;
+use super::compilerhost::CompilerHostImpl;
+use super::host::IncrementalHost;
 use super::orchestrator::{Orchestrator, OrchestratorResult};
 use super::uptodatestatus::*;
 use crate::tsc::{
@@ -30,19 +32,19 @@ use crate::tsc::{
 const MAX_ONE_FILE_CHANGES: usize = 256;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub(crate) enum buildKind {
+pub enum BuildKind {
     #[default]
     None,
     Pseudo,
     Program,
 }
 
-pub(crate) struct upstreamTask {
-    pub(crate) task: P<BuildTask>,
-    pub(crate) ref_index: usize,
+pub struct UpstreamTask {
+    pub task: P<BuildTask>,
+    pub ref_index: usize,
 }
 
-pub(crate) struct buildInfoEntry {
+pub struct BuildInfoEntry {
     build_info: Option<Arc<BuildInfo>>,
     path: Path,
     m_time: Option<SystemTime>,
@@ -53,23 +55,23 @@ pub(crate) struct buildInfoEntry {
     dts_time: Option<Option<SystemTime>>,
 }
 
-pub(crate) struct taskResult {
+pub struct TaskResult {
     pub(crate) builder: Arc<Mutex<String>>,
     pub(crate) report_status: Option<DiagnosticReporter<'static>>,
     pub(crate) diagnostic_reporter: Option<DiagnosticReporter<'static>>,
-    pub(crate) exit_status: ExitStatus,
-    pub(crate) statistics: Option<Statistics>,
+    exit_status: ExitStatus,
+    statistics: Option<Statistics>,
     pub(crate) program: Option<P<tsrs_incremental::Program>>,
     // tsrs-only: what the program's file loader allocated, freed with the program
     // (`Orchestrator::frees_built_programs`).
     pub(crate) program_regions: Option<Arc<tsrs_compiler::ProgramRegions>>,
-    pub(crate) build_kind: buildKind,
-    pub(crate) files_to_delete: Vec<String>,
+    build_kind: BuildKind,
+    files_to_delete: Vec<String>,
 }
 
-impl taskResult {
-    pub(crate) fn new(builder: Arc<Mutex<String>>) -> taskResult {
-        taskResult {
+impl TaskResult {
+    pub(crate) fn new(builder: Arc<Mutex<String>>) -> TaskResult {
+        TaskResult {
             builder,
             report_status: None,
             diagnostic_reporter: None,
@@ -77,7 +79,7 @@ impl taskResult {
             statistics: None,
             program: None,
             program_regions: None,
-            build_kind: buildKind::None,
+            build_kind: BuildKind::None,
             files_to_delete: Vec::new(),
         }
     }
@@ -86,12 +88,12 @@ impl taskResult {
 // A Go `chan struct{}` that is only ever closed (orchestrator.go `task.done`, `task.built`): `wait` blocks until
 // `close`. `abort` also releases waiters (a builder panicked; Go would take the process down instead of hanging).
 #[derive(Default)]
-pub(crate) struct closeSignal {
+pub struct CloseSignal {
     closed: Mutex<bool>,
     cond: std::sync::Condvar,
 }
 
-impl closeSignal {
+impl CloseSignal {
     pub(crate) fn reset(&self) {
         *self.closed.lock().unwrap() = false;
     }
@@ -117,18 +119,18 @@ impl closeSignal {
 }
 
 pub struct BuildTask {
-    pub(crate) config: String,
+    pub config: String,
     pub(crate) resolved: Mutex<Option<P<ParsedCommandLine>>>,
-    pub(crate) up_stream: Mutex<Vec<upstreamTask>>,
+    pub up_stream: Mutex<Vec<UpstreamTask>>,
     pub(crate) down_stream: Mutex<Vec<P<BuildTask>>>, // Only set and used in watch mode
-    pub(crate) status: Mutex<Option<upToDateStatus>>,
-    pub(crate) done: closeSignal,
+    status: Mutex<Option<UpToDateStatus>>,
+    pub(crate) done: CloseSignal,
 
     // task reporting
-    pub(crate) result: Mutex<Option<taskResult>>,
-    pub(crate) built: closeSignal, // closed when result is ready to be reported
+    pub(crate) result: Mutex<Option<TaskResult>>,
+    pub(crate) built: CloseSignal, // closed when result is ready to be reported
 
-    build_info_entry: Mutex<Option<buildInfoEntry>>,
+    build_info_entry: Mutex<Option<BuildInfoEntry>>,
     package_jsons: Mutex<Vec<String>>,
 
     errors: Mutex<Vec<P<Diagnostic>>>,
@@ -146,7 +148,7 @@ pub struct BuildTask {
     watch_program: Mutex<Option<&'static tsrs_compiler::Program>>,
     // tsrs-only, watch mode: what the task's last full build allocated beside its program, which the programs
     // `reuse_program` made since share (`replace_watch_program`).
-    watch_full_build: Mutex<Option<watchFullBuild>>,
+    watch_full_build: Mutex<Option<WatchFullBuild>>,
     // tsrs-only, watch mode: the incremental program of the task's last build, the old state of its next build
     // (`old_watch_state`), and the region of the diagnostics its snapshot keeps (None under the test harness).
     watch_incremental: Mutex<Option<(P<tsrs_incremental::Program>, Option<Region>)>>,
@@ -155,16 +157,13 @@ pub struct BuildTask {
     watch_changes: Mutex<Option<Vec<(Path, tsrs_fswatch::EventKind)>>>,
     // tsrs-only, watch mode: the task built a program this cycle (reset by the orchestrator each cycle).
     pub(crate) built_program: AtomicBool,
-    // tsrs-only: the file loader regions of a freed program whose task reported diagnostics, which point at the files
-    // in them (`free_built_program`).
-    diagnostic_file_regions: Mutex<Option<Arc<tsrs_compiler::ProgramRegions>>>,
 }
 
 // tsrs-only (watch mode): what a task's full build allocated beside its program, which the programs `reuse_program`
 // made from it share (`BuildTask::replace_watch_program`): its processed-file data, the regions of what its file loader
 // allocated (resolutions, include reasons, the processed-file data), and its files, which the processed-file data refers
 // to (`BuildTask::add_live_watch_files`).
-struct watchFullBuild {
+struct WatchFullBuild {
     shared: tsrs_compiler::SharedProgramData,
     regions: Arc<tsrs_compiler::ProgramRegions>,
     files: Vec<P<tsrs_ast::SourceFile>>,
@@ -175,16 +174,16 @@ fn diag(message: &'static Message, args: &[&dyn std::fmt::Display]) -> P<Diagnos
 }
 
 impl BuildTask {
-    pub(crate) fn new(config: String, is_initial_cycle: bool) -> BuildTask {
+    pub fn new(config: String, is_initial_cycle: bool) -> BuildTask {
         BuildTask {
             config,
             resolved: Mutex::new(None),
             up_stream: Mutex::new(Vec::new()),
             down_stream: Mutex::new(Vec::new()),
             status: Mutex::new(None),
-            done: closeSignal::default(),
+            done: CloseSignal::default(),
             result: Mutex::new(None),
-            built: closeSignal::default(),
+            built: CloseSignal::default(),
             build_info_entry: Mutex::new(None),
             package_jsons: Mutex::new(Vec::new()),
             errors: Mutex::new(Vec::new()),
@@ -199,7 +198,6 @@ impl BuildTask {
             watch_incremental: Mutex::new(None),
             watch_changes: Mutex::new(None),
             built_program: AtomicBool::new(false),
-            diagnostic_file_regions: Mutex::new(None),
         }
     }
 
@@ -277,11 +275,11 @@ impl BuildTask {
     }
 
     // orchestrator.go createBuildTasks / clean: a dirty task's build info entry carries over to its replacement.
-    pub(crate) fn take_build_info_entry(&self) -> Option<buildInfoEntry> {
+    pub(crate) fn take_build_info_entry(&self) -> Option<BuildInfoEntry> {
         self.build_info_entry.lock().unwrap().take()
     }
 
-    pub(crate) fn set_build_info_entry(&self, entry: Option<buildInfoEntry>) {
+    pub(crate) fn set_build_info_entry(&self, entry: Option<BuildInfoEntry>) {
         *self.build_info_entry.lock().unwrap() = entry;
     }
 
@@ -293,11 +291,11 @@ impl BuildTask {
         self.resolved_opt().unwrap()
     }
 
-    fn status(&self) -> upToDateStatus {
+    fn status(&self) -> UpToDateStatus {
         self.status.lock().unwrap().clone().unwrap()
     }
 
-    fn set_status(&self, status: upToDateStatus) {
+    fn set_status(&self, status: UpToDateStatus) {
         *self.status.lock().unwrap() = Some(status);
     }
 
@@ -358,15 +356,15 @@ impl BuildTask {
         // If we built the program, or updated timestamps, or had errors, we need to
         // delete files that are no longer needed
         match result.build_kind {
-            buildKind::Program => {
+            BuildKind::Program => {
                 if let (Some(testing), Some(program)) = (orchestrator.opts.testing, result.program)
                 {
                     testing.on_program(program);
                 }
                 build_result.statistics.projects_built += 1;
             }
-            buildKind::Pseudo => build_result.statistics.timestamp_updates += 1,
-            buildKind::None => {}
+            BuildKind::Pseudo => build_result.statistics.timestamp_updates += 1,
+            BuildKind::None => {}
         }
         if !result.files_to_delete.is_empty() {
             build_result
@@ -386,18 +384,18 @@ impl BuildTask {
         if self.pending.load(Ordering::SeqCst) {
             self.set_status(self.get_up_to_date_status(orchestrator, path));
             self.report_up_to_date_status(orchestrator);
-            if !self.handle_status_that_doesnt_require_build(orchestrator) {
-                self.compile_and_emit(orchestrator, path);
-                self.update_downstream(orchestrator, path);
-            } else {
+            if self.handle_status_that_doesnt_require_build(orchestrator) {
                 if let Some(resolved) = self.resolved_opt() {
                     for diagnostic in resolved.get_config_file_parsing_diagnostics() {
                         self.report_diagnostic(diagnostic);
                     }
                 }
                 if !self.errors.lock().unwrap().is_empty() {
-                    self.set_exit_status(ExitStatus::DiagnosticsPresent_OutputsSkipped);
+                    self.set_exit_status(ExitStatus::DiagnosticsPresentOutputsSkipped);
                 }
+            } else {
+                self.compile_and_emit(orchestrator, path);
+                self.update_downstream(orchestrator, path);
             }
         } else if !self.errors.lock().unwrap().is_empty() {
             self.report_up_to_date_status(orchestrator);
@@ -439,30 +437,30 @@ impl BuildTask {
                 let mut status = down_stream.status.lock().unwrap();
                 if let Some(current) = status.as_ref() {
                     let mut kind = current.kind;
-                    if kind == upToDateStatusType::UpToDate && !program.has_changed_dts_file() {
-                        *status = Some(upToDateStatus::with(
-                            upToDateStatusType::UpToDateWithUpstreamTypes,
+                    if kind == UpToDateStatusType::UpToDate && !program.has_changed_dts_file() {
+                        *status = Some(UpToDateStatus::with(
+                            UpToDateStatusType::UpToDateWithUpstreamTypes,
                             current.data.clone(),
                         ));
                     } else {
-                        if kind == upToDateStatusType::UpToDate {
-                            kind = upToDateStatusType::UpToDateWithUpstreamTypes; // Go: fallthrough
+                        if kind == UpToDateStatusType::UpToDate {
+                            kind = UpToDateStatusType::UpToDateWithUpstreamTypes; // Go: fallthrough
                         }
                         match kind {
-                            upToDateStatusType::UpToDateWithUpstreamTypes
-                            | upToDateStatusType::UpToDateWithInputFileText => {
+                            UpToDateStatusType::UpToDateWithUpstreamTypes
+                            | UpToDateStatusType::UpToDateWithInputFileText => {
                                 if program.has_changed_dts_file() {
                                     let output = current.oldest_output_file_name();
-                                    *status = Some(upToDateStatus::with(
-                                        upToDateStatusType::InputFileNewer,
-                                        statusData::InputOutputName(inputOutputName {
+                                    *status = Some(UpToDateStatus::with(
+                                        UpToDateStatusType::InputFileNewer,
+                                        StatusData::InputOutputName(InputOutputName {
                                             input: self.config.clone(),
                                             output,
                                         }),
                                     ));
                                 }
                             }
-                            upToDateStatusType::UpstreamErrors => {
+                            UpToDateStatusType::UpstreamErrors => {
                                 let ref_config =
                                     tsrs_core::resolve_config_file_name_of_project_reference(
                                         &current.upstream_errors().ref_,
@@ -511,7 +509,7 @@ impl BuildTask {
     ) {
         *self.watch_incremental.lock().unwrap() = Some((incremental, snapshot_diagnostics));
         let old_full_build = full_build_regions.and_then(|regions| {
-            let full_build = watchFullBuild {
+            let full_build = WatchFullBuild {
                 shared: tsrs_compiler::shared_program_data(program),
                 regions,
                 files: program.get_source_files().to_vec(),
@@ -542,8 +540,24 @@ impl BuildTask {
     // exhausts the arena reservation.
     //
     // The task's diagnostics stay (the build's error summary reads them): they escape the checker regions when made,
-    // but they point at their files, which the file loader parsed into `regions`, so a task that reported any keeps
-    // those. The declaration and JSON files projects share are in regions of their own (`host::get_source_file`).
+    // but they point at their files, which the file loader parsed into `regions`.  Before the regions are freed,
+    // `detach_diagnostic_files` replaces those file references with minimal copies that hold only what the diagnostic
+    // writer needs (file name, text, line map).  The declaration and JSON files projects share are in regions of their
+    // own (`host::get_source_file`).
+    pub(crate) fn detach_diagnostic_files(&self) {
+        let _diag_scope = tsrs_core::arena::escape_for_diagnostic();
+        let factory = NodeFactory::default();
+        let mut cache = FxHashMap::default();
+        let mut errors = self.errors.lock().unwrap();
+        for i in 0..errors.len() {
+            errors[i] = detach_diagnostic_source_files(errors[i], &factory, &mut cache);
+        }
+    }
+
+    #[expect(
+        clippy::unused_self,
+        reason = "Keeps the same method-call site as before the region-detaching change."
+    )]
     pub(crate) fn free_built_program(
         &self,
         program: P<tsrs_incremental::Program>,
@@ -556,9 +570,9 @@ impl BuildTask {
         // SAFETY: a full build (`new_program`; batch builds never reuse a program), so it shares nothing with another
         // version, and no checker handle of it is held once its task is built.
         unsafe { tsrs_compiler::free_unshared_program(compiler_program) };
-        if !self.errors.lock().unwrap().is_empty() {
-            *self.diagnostic_file_regions.lock().unwrap() = regions;
-        }
+        // The diagnostics were detached in `build_or_clean_project` before this runs, so the loader regions can be
+        // dropped regardless of whether any diagnostics were reported.
+        drop(regions);
     }
 
     // tsrs-only (watch mode): adds the files the task's program, its last full build's processed-file data and the
@@ -658,7 +672,7 @@ impl BuildTask {
         let mut changed = None;
         for (path, kind) in &changes {
             if previous.get_source_file_by_path(path).is_some() {
-                if *kind == tsrs_fswatch::EventKind::Delete
+                if *kind == tsrs_fswatch::EventKind::DELETE
                     || changed.replace(path.clone()).is_some()
                 {
                     return None;
@@ -690,7 +704,7 @@ impl BuildTask {
     pub(crate) fn update_watch(
         &self,
         orchestrator: &Orchestrator,
-        old_cache: &super::host::mTimeCache,
+        old_cache: &super::host::MTimeCache,
     ) {
         if self.resolved_opt().is_some() && self.can_update_js_dts_output_timestamps() {
             for output_file in self.resolved().get_output_file_names() {
@@ -705,7 +719,7 @@ impl BuildTask {
         let build_options = &orchestrator.opts.command.build_options;
         if build_options.verbose.is_true() {
             self.report_status(diag(
-                &diagnostics::Building_project_0,
+                &diagnostics::BUILDING_PROJECT_0,
                 &[&orchestrator.relative_file_name(&self.config)],
             ));
         }
@@ -723,13 +737,13 @@ impl BuildTask {
         let (content_mapper_project, err) = self.get_content_mapper_project(orchestrator);
         if let Some(err) = err {
             self.report_diagnostic(tsrs_compiler::content_mapper_project_diagnostic(&err));
-            self.set_status(upToDateStatus::new(upToDateStatusType::BuildErrors));
-            self.set_exit_status(ExitStatus::DiagnosticsPresent_OutputsSkipped);
+            self.set_status(UpToDateStatus::new(UpToDateStatusType::BuildErrors));
+            self.set_exit_status(ExitStatus::DiagnosticsPresentOutputsSkipped);
             return;
         }
         let builder = Arc::clone(&self.result.lock().unwrap().as_ref().unwrap().builder);
         let trace_builder = Arc::clone(&builder);
-        let compiler_host: Arc<dyn tsrs_compiler::CompilerHost> = Arc::new(compilerHost {
+        let compiler_host: Arc<dyn tsrs_compiler::CompilerHost> = Arc::new(CompilerHostImpl {
             host,
             trace: tsc::get_trace_with_writer_from_sys(
                 Arc::new(move |t: &str| trace_builder.lock().unwrap().push_str(t)),
@@ -773,7 +787,6 @@ impl BuildTask {
             // Other CLI builds free it once the task is built (`free_built_program`); the diagnostics stay.
             let frees = watch || orchestrator.frees_built_programs();
             program_options.checker_regions = frees;
-            // `watch_full_build` keeps the parents of the synthetic imports the reused programs keep.
             program_options.reuse_synthetic_imports = watch;
             program_options.checker_diagnostic_regions =
                 watch && orchestrator.opts.testing.is_none();
@@ -801,7 +814,7 @@ impl BuildTask {
             tsrs_incremental::new_program(
                 program,
                 old_program,
-                Box::new(incrementalHost(host)),
+                Box::new(IncrementalHost(host)),
                 Some(std::time::Instant::now),
                 orchestrator.opts.testing.is_some(),
             )
@@ -856,12 +869,13 @@ impl BuildTask {
         // Go passes `orchestrator.host.mTimes` (the map pointer). Take the Arc here: a guard created inside the call's
         // argument list would live until the call returns, and `host.get_m_time` (WriteFile of a `.d.ts` that differs
         // only in its map, emitfileshandler.go:240) locks the same mutex during emit, which deadlocked.
-        let testing_m_times_cache = host.m_times.lock().unwrap().clone();
+        let testing_m_times_cache = host.m_times.read().unwrap().clone();
         let (result, statistics) = emit_and_report_statistics(&EmitInput {
             sys,
             program,
             config: self.resolved(),
             report_diagnostic: &report_diagnostic,
+            format_diagnostic: None,
             report_error_summary: &report_error_summary,
             compile_times,
             incremental: Some(incremental_program),
@@ -880,29 +894,29 @@ impl BuildTask {
         let emitted_files = result.emitted_files.clone();
         if (!program.options().no_emit_on_error.is_true() || result.diagnostics.is_empty())
             && (!emitted_files.is_empty()
-                || self.status().kind != upToDateStatusType::OutOfDateBuildInfoWithErrors)
+                || self.status().kind != UpToDateStatusType::OutOfDateBuildInfoWithErrors)
         {
             // Update time stamps for rest of the outputs
             self.update_time_stamps(
                 orchestrator,
                 &emitted_files,
-                &diagnostics::Updating_unchanged_output_timestamps_of_project_0,
+                &diagnostics::UPDATING_UNCHANGED_OUTPUT_TIMESTAMPS_OF_PROJECT_0,
             );
         }
-        self.result.lock().unwrap().as_mut().unwrap().build_kind = buildKind::Program;
-        if result.status == ExitStatus::DiagnosticsPresent_OutputsSkipped
-            || result.status == ExitStatus::DiagnosticsPresent_OutputsGenerated
+        self.result.lock().unwrap().as_mut().unwrap().build_kind = BuildKind::Program;
+        if result.status == ExitStatus::DiagnosticsPresentOutputsSkipped
+            || result.status == ExitStatus::DiagnosticsPresentOutputsGenerated
         {
-            self.set_status(upToDateStatus::new(upToDateStatusType::BuildErrors));
+            self.set_status(UpToDateStatus::new(UpToDateStatusType::BuildErrors));
         } else {
-            let oldest_output_file_name = if !emitted_files.is_empty() {
-                emitted_files[0].clone()
-            } else {
+            let oldest_output_file_name = if emitted_files.is_empty() {
                 self.resolved().get_output_file_names().into_iter().next().unwrap_or_default()
+            } else {
+                emitted_files[0].clone()
             };
-            self.set_status(upToDateStatus::with(
-                upToDateStatusType::UpToDate,
-                statusData::String(oldest_output_file_name),
+            self.set_status(UpToDateStatus::with(
+                UpToDateStatusType::UpToDate,
+                StatusData::String(oldest_output_file_name),
             ));
         }
     }
@@ -912,32 +926,32 @@ impl BuildTask {
         let build_options = &orchestrator.opts.command.build_options;
         let status = self.status();
         match status.kind {
-            upToDateStatusType::UpToDate => {
+            UpToDateStatusType::UpToDate => {
                 if build_options.dry.is_true() {
                     self.report_status(diag(
-                        &diagnostics::Project_0_is_up_to_date,
+                        &diagnostics::PROJECT_0_IS_UP_TO_DATE,
                         &[&self.config],
                     ));
                 }
                 return true;
             }
-            upToDateStatusType::UpstreamErrors => {
+            UpToDateStatusType::UpstreamErrors => {
                 let upstream_status = status.upstream_errors();
                 if build_options.verbose.is_true() {
                     self.report_status(diag(
                         if upstream_status.ref_has_upstream_errors {
-                            &diagnostics::Skipping_build_of_project_0_because_its_dependency_1_was_not_built
+                            &diagnostics::SKIPPING_BUILD_OF_PROJECT_0_BECAUSE_ITS_DEPENDENCY_1_WAS_NOT_BUILT
                         } else {
-                            &diagnostics::Skipping_build_of_project_0_because_its_dependency_1_has_errors
+                            &diagnostics::SKIPPING_BUILD_OF_PROJECT_0_BECAUSE_ITS_DEPENDENCY_1_HAS_ERRORS
                         },
                         &[&orchestrator.relative_file_name(&self.config), &orchestrator.relative_file_name(&upstream_status.ref_)],
                     ));
                 }
                 return true;
             }
-            upToDateStatusType::Solution => return true,
-            upToDateStatusType::ConfigFileNotFound => {
-                self.report_diagnostic(diag(&diagnostics::File_0_not_found, &[&self.config]));
+            UpToDateStatusType::Solution => return true,
+            UpToDateStatusType::ConfigFileNotFound => {
+                self.report_diagnostic(diag(&diagnostics::FILE_0_NOT_FOUND, &[&self.config]));
                 return true;
             }
             _ => {}
@@ -947,29 +961,29 @@ impl BuildTask {
         if status.is_pseudo_build() {
             if build_options.dry.is_true() {
                 self.report_status(diag(
-                    &diagnostics::A_non_dry_build_would_update_timestamps_for_output_of_project_0,
+                    &diagnostics::A_NON_DRY_BUILD_WOULD_UPDATE_TIMESTAMPS_FOR_OUTPUT_OF_PROJECT_0,
                     &[&self.config],
                 ));
-                self.set_status(upToDateStatus::new(upToDateStatusType::UpToDate));
+                self.set_status(UpToDateStatus::new(UpToDateStatusType::UpToDate));
                 return true;
             }
 
             self.update_time_stamps(
                 orchestrator,
                 &[],
-                &diagnostics::Updating_output_timestamps_of_project_0,
+                &diagnostics::UPDATING_OUTPUT_TIMESTAMPS_OF_PROJECT_0,
             );
-            self.set_status(upToDateStatus::with(upToDateStatusType::UpToDate, status.data));
-            self.result.lock().unwrap().as_mut().unwrap().build_kind = buildKind::Pseudo;
+            self.set_status(UpToDateStatus::with(UpToDateStatusType::UpToDate, status.data));
+            self.result.lock().unwrap().as_mut().unwrap().build_kind = BuildKind::Pseudo;
             return true;
         }
 
         if build_options.dry.is_true() {
             self.report_status(diag(
-                &diagnostics::A_non_dry_build_would_build_project_0,
+                &diagnostics::A_NON_DRY_BUILD_WOULD_BUILD_PROJECT_0,
                 &[&self.config],
             ));
-            self.set_status(upToDateStatus::new(upToDateStatusType::UpToDate));
+            self.set_status(UpToDateStatus::new(UpToDateStatusType::UpToDate));
             return true;
         }
         false
@@ -980,31 +994,31 @@ impl BuildTask {
         &self,
         orchestrator: &Orchestrator,
         config_path: &Path,
-    ) -> upToDateStatus {
+    ) -> UpToDateStatus {
         let status = self.status.lock().unwrap().clone();
         if let Some(status) = status {
             return status;
         }
         // Config file not found
         let Some(resolved) = self.resolved_opt() else {
-            return upToDateStatus::new(upToDateStatusType::ConfigFileNotFound);
+            return UpToDateStatus::new(UpToDateStatusType::ConfigFileNotFound);
         };
 
         // Solution - nothing to build
         if resolved.file_names().is_empty() && !resolved.project_references_is_nil() {
-            return upToDateStatus::new(upToDateStatusType::Solution);
+            return UpToDateStatus::new(UpToDateStatusType::Solution);
         }
 
         let build_options = &orchestrator.opts.command.build_options;
         let upstream_error = self.up_stream.lock().unwrap().iter().find_map(|upstream| {
             if build_options.stop_build_on_errors.is_true() && upstream.task.status().is_error() {
                 // Upstream project has errors, so we cannot build this project
-                return Some(upToDateStatus::with(
-                    upToDateStatusType::UpstreamErrors,
-                    statusData::UpstreamErrors(upstreamErrors {
+                return Some(UpToDateStatus::with(
+                    UpToDateStatusType::UpstreamErrors,
+                    StatusData::UpstreamErrors(UpstreamErrors {
                         ref_: resolved.project_references()[upstream.ref_index].path.clone(),
                         ref_has_upstream_errors: upstream.task.status().kind
-                            == upToDateStatusType::UpstreamErrors,
+                            == UpToDateStatusType::UpstreamErrors,
                     }),
                 ));
             }
@@ -1016,7 +1030,7 @@ impl BuildTask {
         }
 
         if build_options.force.is_true() {
-            return upToDateStatus::new(upToDateStatusType::ForceBuild);
+            return UpToDateStatus::new(UpToDateStatusType::ForceBuild);
         }
 
         // Check the build info
@@ -1035,17 +1049,17 @@ impl BuildTask {
         let (build_info, build_info_time) =
             self.load_or_store_build_info(orchestrator, config_path, &build_info_path);
         let Some(build_info) = build_info else {
-            return upToDateStatus::with(
-                upToDateStatusType::OutputMissing,
-                statusData::String(build_info_path),
+            return UpToDateStatus::with(
+                UpToDateStatusType::OutputMissing,
+                StatusData::String(build_info_path),
             );
         };
 
         // build info version
         if !build_info.is_valid_version() {
-            return upToDateStatus::with(
-                upToDateStatusType::TsVersionOutputOfDate,
-                statusData::String(build_info.version.clone()),
+            return UpToDateStatus::with(
+                UpToDateStatusType::TsVersionOutputOfDate,
+                StatusData::String(build_info.version.clone()),
             );
         }
 
@@ -1063,9 +1077,9 @@ impl BuildTask {
             || identity_err.is_some()
             || !build_info.content_mapper_identities_match(content_mapper_identities.as_deref())
         {
-            return upToDateStatus::with(
-                upToDateStatusType::OutOfDateOptions,
-                statusData::String(build_info_path),
+            return UpToDateStatus::with(
+                UpToDateStatusType::OutOfDateOptions,
+                StatusData::String(build_info_path),
             );
         }
 
@@ -1075,18 +1089,18 @@ impl BuildTask {
             (!options.no_check.is_true() && (build_info.semantic_errors || build_info.check_pending))
         {
             // Errors without --noCheck
-            return upToDateStatus::with(
-                upToDateStatusType::OutOfDateBuildInfoWithErrors,
-                statusData::String(build_info_path),
+            return UpToDateStatus::with(
+                UpToDateStatusType::OutOfDateBuildInfoWithErrors,
+                StatusData::String(build_info_path),
             );
         }
 
         if options.is_incremental() {
             if !build_info.is_incremental() {
                 // Program options out of date
-                return upToDateStatus::with(
-                    upToDateStatusType::OutOfDateOptions,
-                    statusData::String(build_info_path),
+                return UpToDateStatus::with(
+                    UpToDateStatusType::OutOfDateOptions,
+                    StatusData::String(build_info_path),
                 );
             }
 
@@ -1096,9 +1110,9 @@ impl BuildTask {
                 (!options.no_check.is_true() && // Semantic errors if not --noCheck
                     (!build_info.change_file_set.is_empty() || !build_info.semantic_diagnostics_per_file.is_empty()))
             {
-                return upToDateStatus::with(
-                    upToDateStatusType::OutOfDateBuildInfoWithErrors,
-                    statusData::String(build_info_path),
+                return UpToDateStatus::with(
+                    UpToDateStatusType::OutOfDateBuildInfoWithErrors,
+                    StatusData::String(build_info_path),
                 );
             }
 
@@ -1107,24 +1121,24 @@ impl BuildTask {
                 && (!build_info.change_file_set.is_empty()
                     || !build_info.affected_files_pending_emit.is_empty())
             {
-                return upToDateStatus::with(
-                    upToDateStatusType::OutOfDateBuildInfoWithPendingEmit,
-                    statusData::String(build_info_path),
+                return UpToDateStatus::with(
+                    UpToDateStatusType::OutOfDateBuildInfoWithPendingEmit,
+                    StatusData::String(build_info_path),
                 );
             }
 
             // Some of the emit files like source map or dts etc are not yet done
             if build_info.is_emit_pending(&resolved, &get_build_info_directory()) {
-                return upToDateStatus::with(
-                    upToDateStatusType::OutOfDateOptions,
-                    statusData::String(build_info_path),
+                return UpToDateStatus::with(
+                    UpToDateStatusType::OutOfDateOptions,
+                    StatusData::String(build_info_path),
                 );
             }
         }
         let mut input_text_unchanged = false;
         let mut oldest_output_file_and_time =
-            fileAndTime { file: build_info_path.clone(), time: build_info_time };
-        let mut newest_input_file_and_time = fileAndTime::default();
+            FileAndTime { file: build_info_path.clone(), time: build_info_time };
+        let mut newest_input_file_and_time = FileAndTime::default();
         let mut seen_roots: Set<Path> = Set::default();
         let root_info_reader: std::cell::OnceCell<BuildInfoRootInfoReader> =
             std::cell::OnceCell::new();
@@ -1141,9 +1155,9 @@ impl BuildTask {
         for input_file in resolved.file_names() {
             let input_time = host.get_m_time(input_file);
             if input_time.is_none() {
-                return upToDateStatus::with(
-                    upToDateStatusType::InputFileMissing,
-                    statusData::String(input_file.clone()),
+                return UpToDateStatus::with(
+                    UpToDateStatusType::InputFileMissing,
+                    StatusData::String(input_file.clone()),
                 );
             }
             let input_path = orchestrator.to_path(input_file);
@@ -1155,25 +1169,24 @@ impl BuildTask {
                         get_build_info_root_info_reader().get_build_info_file_info(&input_path);
                     if let Some(file_info) =
                         build_info_file_info.map(tsrs_incremental::BuildInfoFileInfo::get_file_info)
+                        && !file_info.version().is_empty()
                     {
-                        if !file_info.version().is_empty() {
-                            version = file_info.version().to_string();
-                            if let Some(text) = tsrs_compiler::CompilerHost::fs(host)
-                                .read_file(&resolved_input_path)
-                            {
-                                current_version = tsrs_incremental::compute_hash(&text, testing);
-                                if version == current_version {
-                                    input_text_unchanged = true;
-                                }
+                        version = file_info.version().to_string();
+                        if let Some(text) =
+                            tsrs_compiler::CompilerHost::fs(host).read_file(&resolved_input_path)
+                        {
+                            current_version = tsrs_incremental::compute_hash(&text, testing);
+                            if version == current_version {
+                                input_text_unchanged = true;
                             }
                         }
                     }
                 }
 
                 if version.is_empty() || version != current_version {
-                    return upToDateStatus::with(
-                        upToDateStatusType::InputFileNewer,
-                        statusData::InputOutputName(inputOutputName {
+                    return UpToDateStatus::with(
+                        UpToDateStatusType::InputFileNewer,
+                        StatusData::InputOutputName(InputOutputName {
                             input: input_file.clone(),
                             output: build_info_path,
                         }),
@@ -1182,7 +1195,7 @@ impl BuildTask {
             }
             if after(input_time, newest_input_file_and_time.time) {
                 newest_input_file_and_time =
-                    fileAndTime { file: input_file.clone(), time: input_time };
+                    FileAndTime { file: input_file.clone(), time: input_time };
             }
             seen_roots.add(input_path);
         }
@@ -1191,9 +1204,9 @@ impl BuildTask {
             get_build_info_root_info_reader().roots().find(|root| !seen_roots.has(root))
         {
             // File was root file when project was built but its not any more
-            return upToDateStatus::with(
-                upToDateStatusType::OutOfDateRoots,
-                statusData::InputOutputName(inputOutputName {
+            return UpToDateStatus::with(
+                UpToDateStatusType::OutOfDateRoots,
+                StatusData::InputOutputName(InputOutputName {
                     input: root.to_string(),
                     output: build_info_path,
                 }),
@@ -1205,7 +1218,7 @@ impl BuildTask {
             resolved_roots.m.extend(get_build_info_root_info_reader().roots().filter_map(|root| {
                 let (_, resolved) =
                     get_build_info_root_info_reader().get_build_info_file_info(root);
-                if !resolved.is_empty() { Some(resolved) } else { None }
+                if resolved.is_empty() { None } else { Some(resolved) }
             }));
             for (index, build_info_file_info) in build_info.file_infos.iter().enumerate() {
                 let build_info_file_name = &build_info.file_names[index];
@@ -1233,26 +1246,25 @@ impl BuildTask {
                 let input_time = host.get_m_time(&input_file);
                 if input_time.is_none() {
                     // Input file that was part of the program is missing (eg: dependency was removed)
-                    return upToDateStatus::with(
-                        upToDateStatusType::InputFileMissing,
-                        statusData::String(input_file),
+                    return UpToDateStatus::with(
+                        UpToDateStatusType::InputFileMissing,
+                        StatusData::String(input_file),
                     );
                 }
 
                 if after(input_time, oldest_output_file_and_time.time) {
                     let mut current_version = String::new();
                     let version = build_info_file_info.get_file_info().version().to_string();
-                    if !version.is_empty() {
-                        if let Some(text) =
+                    if !version.is_empty()
+                        && let Some(text) =
                             tsrs_compiler::CompilerHost::fs(host).read_file(&input_file)
-                        {
-                            current_version = tsrs_incremental::compute_hash(&text, testing);
-                        }
+                    {
+                        current_version = tsrs_incremental::compute_hash(&text, testing);
                     }
                     if version.is_empty() || version != current_version {
-                        return upToDateStatus::with(
-                            upToDateStatusType::InputFileNewer,
-                            statusData::InputOutputName(inputOutputName {
+                        return UpToDateStatus::with(
+                            UpToDateStatusType::InputFileNewer,
+                            StatusData::InputOutputName(InputOutputName {
                                 input: input_file,
                                 output: build_info_path,
                             }),
@@ -1269,17 +1281,17 @@ impl BuildTask {
                 let output_time = host.get_m_time(&output_file);
                 if output_time.is_none() {
                     // Output file missing
-                    return upToDateStatus::with(
-                        upToDateStatusType::OutputMissing,
-                        statusData::String(output_file),
+                    return UpToDateStatus::with(
+                        UpToDateStatusType::OutputMissing,
+                        StatusData::String(output_file),
                     );
                 }
 
                 if before(output_time, newest_input_file_and_time.time) {
                     // Output file is older than input file
-                    return upToDateStatus::with(
-                        upToDateStatusType::InputFileNewer,
-                        statusData::InputOutputName(inputOutputName {
+                    return UpToDateStatus::with(
+                        UpToDateStatusType::InputFileNewer,
+                        StatusData::InputOutputName(InputOutputName {
                             input: newest_input_file_and_time.file,
                             output: output_file,
                         }),
@@ -1288,7 +1300,7 @@ impl BuildTask {
 
                 if before(output_time, oldest_output_file_and_time.time) {
                     oldest_output_file_and_time =
-                        fileAndTime { file: output_file, time: output_time };
+                        FileAndTime { file: output_file, time: output_time };
                 }
             }
         }
@@ -1296,7 +1308,7 @@ impl BuildTask {
         let mut ref_dts_unchanged = false;
         for upstream in self.up_stream.lock().unwrap().iter() {
             let upstream_status = upstream.task.status();
-            if upstream_status.kind == upToDateStatusType::Solution {
+            if upstream_status.kind == UpToDateStatusType::Solution {
                 // Not dependent on the status or this upstream project
                 // (eg: expected cycle was detected and hence skipped, or is solution)
                 continue;
@@ -1308,23 +1320,21 @@ impl BuildTask {
             // - in that case we do want to either build or update timestamps
             if let Some(ref_input_output_file_and_time) =
                 upstream_status.input_output_file_and_time()
+                && ref_input_output_file_and_time.input.time.is_some()
+                && before(
+                    ref_input_output_file_and_time.input.time,
+                    oldest_output_file_and_time.time,
+                )
             {
-                if ref_input_output_file_and_time.input.time.is_some()
-                    && before(
-                        ref_input_output_file_and_time.input.time,
-                        oldest_output_file_and_time.time,
-                    )
-                {
-                    continue;
-                }
+                continue;
             }
 
             // Check if tsbuildinfo path is shared, then we need to rebuild
             if self.has_conflicting_build_info(upstream.task) {
                 // We have an output older than an upstream output - we are out of date
-                return upToDateStatus::with(
-                    upToDateStatusType::InputFileNewer,
-                    statusData::InputOutputName(inputOutputName {
+                return UpToDateStatus::with(
+                    UpToDateStatusType::InputFileNewer,
+                    StatusData::InputOutputName(InputOutputName {
                         input: resolved.project_references()[upstream.ref_index].path.clone(),
                         output: oldest_output_file_and_time.file,
                     }),
@@ -1342,22 +1352,22 @@ impl BuildTask {
             }
 
             // We have an output older than an upstream output - we are out of date
-            return upToDateStatus::with(
-                upToDateStatusType::InputFileNewer,
-                statusData::InputOutputName(inputOutputName {
+            return UpToDateStatus::with(
+                UpToDateStatusType::InputFileNewer,
+                StatusData::InputOutputName(InputOutputName {
                     input: resolved.project_references()[upstream.ref_index].path.clone(),
                     output: oldest_output_file_and_time.file,
                 }),
             );
         }
 
-        let check_input_file_time = |input_file: &str| -> Option<upToDateStatus> {
+        let check_input_file_time = |input_file: &str| -> Option<UpToDateStatus> {
             let input_time = host.get_m_time(input_file);
             if after(input_time, oldest_output_file_and_time.time) {
                 // Output file is older than input file
-                return Some(upToDateStatus::with(
-                    upToDateStatusType::InputFileNewer,
-                    statusData::InputOutputName(inputOutputName {
+                return Some(UpToDateStatus::with(
+                    UpToDateStatusType::InputFileNewer,
+                    StatusData::InputOutputName(InputOutputName {
                         input: input_file.to_string(),
                         output: oldest_output_file_and_time.file.clone(),
                     }),
@@ -1386,15 +1396,15 @@ impl BuildTask {
         if let Some(result) = package_jsons.iter().find_map(|package_json| {
             let package_json_time = host.get_m_time(package_json);
             if package_json_time.is_none() {
-                return Some(upToDateStatus::with(
-                    upToDateStatusType::InputFileMissing,
-                    statusData::String(package_json.clone()),
+                return Some(UpToDateStatus::with(
+                    UpToDateStatusType::InputFileMissing,
+                    StatusData::String(package_json.clone()),
                 ));
             }
             if after(package_json_time, oldest_output_file_and_time.time) {
-                return Some(upToDateStatus::with(
-                    upToDateStatusType::InputFileNewer,
-                    statusData::InputOutputName(inputOutputName {
+                return Some(UpToDateStatus::with(
+                    UpToDateStatusType::InputFileNewer,
+                    StatusData::InputOutputName(InputOutputName {
                         input: package_json.clone(),
                         output: oldest_output_file_and_time.file.clone(),
                     }),
@@ -1409,9 +1419,9 @@ impl BuildTask {
             build_info.get_missing_package_jsons(&get_build_info_directory());
         if let Some(result) = missing_package_jsons.iter().find_map(|package_json| {
             if host.get_m_time(package_json).is_some() {
-                Some(upToDateStatus::with(
-                    upToDateStatusType::InputFileNewer,
-                    statusData::InputOutputName(inputOutputName {
+                Some(UpToDateStatus::with(
+                    UpToDateStatusType::InputFileNewer,
+                    StatusData::InputOutputName(InputOutputName {
                         input: package_json.clone(),
                         output: oldest_output_file_and_time.file.clone(),
                     }),
@@ -1426,15 +1436,15 @@ impl BuildTask {
         all.extend(missing_package_jsons);
         *self.package_jsons.lock().unwrap() = all;
 
-        upToDateStatus::with(
+        UpToDateStatus::with(
             if ref_dts_unchanged {
-                upToDateStatusType::UpToDateWithUpstreamTypes
+                UpToDateStatusType::UpToDateWithUpstreamTypes
             } else if input_text_unchanged {
-                upToDateStatusType::UpToDateWithInputFileText
+                UpToDateStatusType::UpToDateWithInputFileText
             } else {
-                upToDateStatusType::UpToDate
+                UpToDateStatusType::UpToDate
             },
-            statusData::InputOutputFileAndTime(inputOutputFileAndTime {
+            StatusData::InputOutputFileAndTime(InputOutputFileAndTime {
                 input: newest_input_file_and_time,
                 output: oldest_output_file_and_time,
             }),
@@ -1450,78 +1460,78 @@ impl BuildTask {
         let config = rel(&self.config);
         let status = self.status();
         match status.kind {
-            upToDateStatusType::ConfigFileNotFound => {
-                self.report_status(diag(&diagnostics::Project_0_is_out_of_date_because_config_file_does_not_exist, &[&config]));
+            UpToDateStatusType::ConfigFileNotFound => {
+                self.report_status(diag(&diagnostics::PROJECT_0_IS_OUT_OF_DATE_BECAUSE_CONFIG_FILE_DOES_NOT_EXIST, &[&config]));
             }
-            upToDateStatusType::UpstreamErrors => {
+            UpToDateStatusType::UpstreamErrors => {
                 let upstream_status = status.upstream_errors();
                 self.report_status(diag(
                     if upstream_status.ref_has_upstream_errors {
-                        &diagnostics::Project_0_can_t_be_built_because_its_dependency_1_was_not_built
+                        &diagnostics::PROJECT_0_CAN_T_BE_BUILT_BECAUSE_ITS_DEPENDENCY_1_WAS_NOT_BUILT
                     } else {
-                        &diagnostics::Project_0_can_t_be_built_because_its_dependency_1_has_errors
+                        &diagnostics::PROJECT_0_CAN_T_BE_BUILT_BECAUSE_ITS_DEPENDENCY_1_HAS_ERRORS
                     },
                     &[&config, &rel(&upstream_status.ref_)],
                 ));
             }
-            upToDateStatusType::BuildErrors => self.report_status(diag(&diagnostics::Project_0_is_out_of_date_because_it_has_errors, &[&config])),
-            upToDateStatusType::UpToDate => {
+            UpToDateStatusType::BuildErrors => self.report_status(diag(&diagnostics::PROJECT_0_IS_OUT_OF_DATE_BECAUSE_IT_HAS_ERRORS, &[&config])),
+            UpToDateStatusType::UpToDate => {
                 // This is to ensure skipping verbose log for projects that were built,
                 // and then some other package changed but this package doesnt need update
                 if let Some(input_output_file_and_time) = status.input_output_file_and_time() {
                     self.report_status(diag(
-                        &diagnostics::Project_0_is_up_to_date_because_newest_input_1_is_older_than_output_2,
+                        &diagnostics::PROJECT_0_IS_UP_TO_DATE_BECAUSE_NEWEST_INPUT_1_IS_OLDER_THAN_OUTPUT_2,
                         &[&config, &rel(&input_output_file_and_time.input.file), &rel(&input_output_file_and_time.output.file)],
                     ));
                 }
             }
-            upToDateStatusType::UpToDateWithUpstreamTypes => {
-                self.report_status(diag(&diagnostics::Project_0_is_up_to_date_with_d_ts_files_from_its_dependencies, &[&config]));
+            UpToDateStatusType::UpToDateWithUpstreamTypes => {
+                self.report_status(diag(&diagnostics::PROJECT_0_IS_UP_TO_DATE_WITH_D_TS_FILES_FROM_ITS_DEPENDENCIES, &[&config]));
             }
-            upToDateStatusType::UpToDateWithInputFileText => self.report_status(diag(
-                &diagnostics::Project_0_is_up_to_date_but_needs_to_update_timestamps_of_output_files_that_are_older_than_input_files,
+            UpToDateStatusType::UpToDateWithInputFileText => self.report_status(diag(
+                &diagnostics::PROJECT_0_IS_UP_TO_DATE_BUT_NEEDS_TO_UPDATE_TIMESTAMPS_OF_OUTPUT_FILES_THAT_ARE_OLDER_THAN_INPUT_FILES,
                 &[&config],
             )),
-            upToDateStatusType::InputFileMissing => self.report_status(diag(
-                &diagnostics::Project_0_is_out_of_date_because_input_1_does_not_exist,
+            UpToDateStatusType::InputFileMissing => self.report_status(diag(
+                &diagnostics::PROJECT_0_IS_OUT_OF_DATE_BECAUSE_INPUT_1_DOES_NOT_EXIST,
                 &[&config, &rel(status.data_string())],
             )),
-            upToDateStatusType::OutputMissing => self.report_status(diag(
-                &diagnostics::Project_0_is_out_of_date_because_output_file_1_does_not_exist,
+            UpToDateStatusType::OutputMissing => self.report_status(diag(
+                &diagnostics::PROJECT_0_IS_OUT_OF_DATE_BECAUSE_OUTPUT_FILE_1_DOES_NOT_EXIST,
                 &[&config, &rel(status.data_string())],
             )),
-            upToDateStatusType::InputFileNewer => {
+            UpToDateStatusType::InputFileNewer => {
                 let input_output = status.input_output_name().unwrap();
                 self.report_status(diag(
-                    &diagnostics::Project_0_is_out_of_date_because_output_1_is_older_than_input_2,
+                    &diagnostics::PROJECT_0_IS_OUT_OF_DATE_BECAUSE_OUTPUT_1_IS_OLDER_THAN_INPUT_2,
                     &[&config, &rel(&input_output.output), &rel(&input_output.input)],
                 ));
             }
-            upToDateStatusType::OutOfDateBuildInfoWithPendingEmit => self.report_status(diag(
-                &diagnostics::Project_0_is_out_of_date_because_buildinfo_file_1_indicates_that_some_of_the_changes_were_not_emitted,
+            UpToDateStatusType::OutOfDateBuildInfoWithPendingEmit => self.report_status(diag(
+                &diagnostics::PROJECT_0_IS_OUT_OF_DATE_BECAUSE_BUILDINFO_FILE_1_INDICATES_THAT_SOME_OF_THE_CHANGES_WERE_NOT_EMITTED,
                 &[&config, &rel(status.data_string())],
             )),
-            upToDateStatusType::OutOfDateBuildInfoWithErrors => self.report_status(diag(
-                &diagnostics::Project_0_is_out_of_date_because_buildinfo_file_1_indicates_that_program_needs_to_report_errors,
+            UpToDateStatusType::OutOfDateBuildInfoWithErrors => self.report_status(diag(
+                &diagnostics::PROJECT_0_IS_OUT_OF_DATE_BECAUSE_BUILDINFO_FILE_1_INDICATES_THAT_PROGRAM_NEEDS_TO_REPORT_ERRORS,
                 &[&config, &rel(status.data_string())],
             )),
-            upToDateStatusType::OutOfDateOptions => self.report_status(diag(
-                &diagnostics::Project_0_is_out_of_date_because_buildinfo_file_1_indicates_there_is_change_in_compilerOptions,
+            UpToDateStatusType::OutOfDateOptions => self.report_status(diag(
+                &diagnostics::PROJECT_0_IS_OUT_OF_DATE_BECAUSE_BUILDINFO_FILE_1_INDICATES_THERE_IS_CHANGE_IN_COMPILER_OPTIONS,
                 &[&config, &rel(status.data_string())],
             )),
-            upToDateStatusType::OutOfDateRoots => {
+            UpToDateStatusType::OutOfDateRoots => {
                 let input_output = status.input_output_name().unwrap();
                 self.report_status(diag(
-                    &diagnostics::Project_0_is_out_of_date_because_buildinfo_file_1_indicates_that_file_2_was_root_file_of_compilation_but_not_any_more,
+                    &diagnostics::PROJECT_0_IS_OUT_OF_DATE_BECAUSE_BUILDINFO_FILE_1_INDICATES_THAT_FILE_2_WAS_ROOT_FILE_OF_COMPILATION_BUT_NOT_ANY_MORE,
                     &[&config, &rel(&input_output.output), &rel(&input_output.input)],
                 ));
             }
-            upToDateStatusType::TsVersionOutputOfDate => self.report_status(diag(
-                &diagnostics::Project_0_is_out_of_date_because_output_for_it_was_generated_with_version_1_that_differs_with_current_version_2,
+            UpToDateStatusType::TsVersionOutputOfDate => self.report_status(diag(
+                &diagnostics::PROJECT_0_IS_OUT_OF_DATE_BECAUSE_OUTPUT_FOR_IT_WAS_GENERATED_WITH_VERSION_1_THAT_DIFFERS_WITH_CURRENT_VERSION_2,
                 &[&config, &rel(status.data_string()), &tsrs_core::version()],
             )),
-            upToDateStatusType::ForceBuild => self.report_status(diag(&diagnostics::Project_0_is_being_forcibly_rebuilt, &[&config])),
-            upToDateStatusType::Solution => {
+            UpToDateStatusType::ForceBuild => self.report_status(diag(&diagnostics::PROJECT_0_IS_BEING_FORCIBLY_REBUILT, &[&config])),
+            UpToDateStatusType::Solution => {
                 // Does not need to report status
             }
         }
@@ -1582,8 +1592,8 @@ impl BuildTask {
     // buildtask.go:777
     pub(crate) fn clean_project(&self, orchestrator: &Orchestrator, _path: &Path) {
         let Some(resolved) = self.resolved_opt() else {
-            self.report_diagnostic(diag(&diagnostics::File_0_not_found, &[&self.config]));
-            self.set_exit_status(ExitStatus::DiagnosticsPresent_OutputsSkipped);
+            self.report_diagnostic(diag(&diagnostics::FILE_0_NOT_FOUND, &[&self.config]));
+            self.set_exit_status(ExitStatus::DiagnosticsPresentOutputsSkipped);
             return;
         };
 
@@ -1609,14 +1619,7 @@ impl BuildTask {
         }
         let fs = tsrs_compiler::CompilerHost::fs(orchestrator.host());
         if fs.file_exists(output_file) {
-            if !orchestrator.opts.command.build_options.dry.is_true() {
-                if fs.remove(output_file).is_err() {
-                    self.report_diagnostic(diag(
-                        &diagnostics::Failed_to_delete_file_0,
-                        &[&output_file],
-                    ));
-                }
-            } else {
+            if orchestrator.opts.command.build_options.dry.is_true() {
                 self.result
                     .lock()
                     .unwrap()
@@ -1624,6 +1627,11 @@ impl BuildTask {
                     .unwrap()
                     .files_to_delete
                     .push(output_file.to_string());
+            } else if fs.remove(output_file).is_err() {
+                self.report_diagnostic(diag(
+                    &diagnostics::FAILED_TO_DELETE_FILE_0,
+                    &[&output_file],
+                ));
             }
         }
     }
@@ -1637,10 +1645,10 @@ impl BuildTask {
     ) -> (Option<Arc<BuildInfo>>, Option<SystemTime>) {
         let path = orchestrator.to_path(build_info_file_name);
         let mut entry = self.build_info_entry.lock().unwrap();
-        if let Some(entry) = entry.as_ref() {
-            if entry.path == path {
-                return (entry.build_info.clone(), entry.m_time);
-            }
+        if let Some(entry) = entry.as_ref()
+            && entry.path == path
+        {
+            return (entry.build_info.clone(), entry.m_time);
         }
         let build_info = tsrs_incremental::new_build_info_reader_with_canonical_diagnostics(
             Arc::clone(&orchestrator.host().host),
@@ -1654,7 +1662,7 @@ impl BuildTask {
             None
         };
         *entry =
-            Some(buildInfoEntry { build_info: build_info.clone(), path, m_time, dts_time: None });
+            Some(BuildInfoEntry { build_info: build_info.clone(), path, m_time, dts_time: None });
         (build_info, m_time)
     }
 
@@ -1673,7 +1681,7 @@ impl BuildTask {
         } else {
             entry.as_ref().and_then(|e| e.dts_time)
         };
-        *entry = Some(buildInfoEntry {
+        *entry = Some(BuildInfoEntry {
             build_info: Some(build_info),
             path: orchestrator.to_path(build_info_file_name),
             m_time: Some(m_time),
@@ -1755,7 +1763,7 @@ impl BuildTask {
 }
 
 // buildtask.go:621
-pub(crate) fn is_content_mapper_supplemental_build_info_path<'a>(
+pub fn is_content_mapper_supplemental_build_info_path<'a>(
     input_path: &Path,
     roots: impl IntoIterator<Item = &'a Path>,
 ) -> bool {
@@ -1782,65 +1790,9 @@ pub(crate) fn is_content_mapper_supplemental_build_info_path<'a>(
 
 // Whether a changed file that is not a file of a program could change its module resolution: a file module
 // resolution could find, or a package.json.
-fn could_change_resolution(path: &Path) -> bool {
+pub fn could_change_resolution(path: &Path) -> bool {
     tspath::get_base_file_name(path.as_str()) == "package.json"
         || [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".json"]
             .iter()
             .any(|ext| tspath::file_extension_is(path.as_str(), ext))
-}
-
-#[cfg(test)]
-mod buildtask_contentmapper_test {
-    use tsrs_core::tspath::Path;
-
-    use super::is_content_mapper_supplemental_build_info_path;
-
-    // buildtask_contentmapper_test.go:11. A build info file entry that names a supplemental output of a root file
-    // (`<root>.<n>.<ext>`) is skipped when the file is gone, instead of making the build out of date; anything else
-    // must still be checked.
-    #[test]
-    fn test_is_content_mapper_supplemental_build_info_path() {
-        let roots = [Path::new("/src/app.vue"), Path::new("/src/index.ts")];
-        let path = Path::new;
-
-        assert!(is_content_mapper_supplemental_build_info_path(&path("/src/app.vue.0.ts"), &roots));
-        assert!(is_content_mapper_supplemental_build_info_path(
-            &path("/src/app.vue.12.mts"),
-            &roots
-        ));
-        assert!(!is_content_mapper_supplemental_build_info_path(&path("/src/app.vue.ts"), &roots));
-        assert!(!is_content_mapper_supplemental_build_info_path(
-            &path("/src/app.vue.0.txt"),
-            &roots
-        ));
-        assert!(!is_content_mapper_supplemental_build_info_path(
-            &path("/src/other.vue.0.ts"),
-            &roots
-        ));
-    }
-}
-
-#[cfg(test)]
-mod could_change_resolution_test {
-    use tsrs_core::tspath::Path;
-
-    use super::could_change_resolution;
-
-    #[test]
-    fn paths_module_resolution_could_find() {
-        for path in [
-            "/a/b.ts",
-            "/a/b.d.ts",
-            "/a/b.tsx",
-            "/a/b.mts",
-            "/a/b.cjs",
-            "/a/b.json",
-            "/a/package.json",
-        ] {
-            assert!(could_change_resolution(&Path::new(path)), "{path}");
-        }
-        for path in ["/a/b.md", "/a/b.css", "/a/b.tsbuildinfo", "/a/b.js.map", "/a/4913"] {
-            assert!(!could_change_resolution(&Path::new(path)), "{path}");
-        }
-    }
 }

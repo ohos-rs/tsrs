@@ -83,7 +83,7 @@ impl LanguageService {
 
         Ok(lsproto::VSOnAutoInsertResponse {
             vs_on_auto_insert_response_item: Some(lsproto::VSOnAutoInsertResponseItem {
-                vs_text_edit_format: lsproto::InsertTextFormat::Snippet,
+                vs_text_edit_format: lsproto::InsertTextFormat::SNIPPET,
                 vs_text_edit: lsproto::TextEdit {
                     range: lsproto::Range { start: params.vs_position, end: params.vs_position },
                     // Tag names can contain `$` (valid JSX identifier characters), so
@@ -123,9 +123,5 @@ fn is_unclosed_fragment(node: P<Node>) -> bool {
     }
 
     let parent = node.parent().unwrap();
-    if ast::is_jsx_fragment(parent) && is_unclosed_fragment(parent) {
-        return true;
-    }
-
-    false
+    ast::is_jsx_fragment(parent) && is_unclosed_fragment(parent)
 }

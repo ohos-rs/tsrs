@@ -43,7 +43,7 @@ impl Checker {
         if node.name().is_none() && !ast::has_syntactic_modifier(node, ModifierFlags::Default) {
             self.grammar_error_on_first_token(
                 node,
-                &diagnostics::A_struct_declaration_without_the_default_modifier_must_have_a_name,
+                &diagnostics::A_STRUCT_DECLARATION_WITHOUT_THE_DEFAULT_MODIFIER_MUST_HAVE_A_NAME,
                 &[],
             );
         }
@@ -52,7 +52,7 @@ impl Checker {
             if ast::is_identifier(name) && tsrs_core::ets_contains(self.compiler_options.ets.components.as_deref(), name.text()) {
                 self.error(
                     Some(name),
-                    &diagnostics::The_struct_name_cannot_contain_reserved_tag_name_Colon_0,
+                    &diagnostics::THE_STRUCT_NAME_CANNOT_CONTAIN_RESERVED_TAG_NAME_COLON_0,
                     &[&name.text()],
                 );
             }

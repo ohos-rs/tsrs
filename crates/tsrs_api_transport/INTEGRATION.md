@@ -1,6 +1,6 @@
 > Historical integration review. The duplicate transport request-filesystem implementation and its `requestfs`
 > feature have since been removed. The fixture comparisons below now run against `tsrs_api::requestfs` in
-> `crates/tsrs_api/tests/requestfs_differential.rs`; the fixtures and generator live beside that test.
+> `crates/tsrs_api/tests/integration/requestfs_differential.rs`; the fixtures and generator live beside that test.
 
 # Runtime integration review for core candidate a9b4354
 
@@ -58,7 +58,7 @@ stderr is empty for EOF. Genuine handler panics are still reported.
 long request that makes no callbacks runs to completion before `run` returns and joins it. Go behaves the
 same unless its project code observes ctx.
 
-## Strict JSON for sync request params (core: `session.rs` `parse_params`, line ~406)
+## Strict JSON for sync request params (core: `session.rs` `Session::dispatch`, which now calls `strictjson::decode`)
 
 Async requests are validated by the transport (`jsonrpc::decode_message`). In Go, a violation there is
 fatal to the connection, and tsrs matches. Sync (MessagePack) params reach core as raw bytes and are parsed

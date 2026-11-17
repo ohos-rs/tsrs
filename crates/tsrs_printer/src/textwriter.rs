@@ -15,7 +15,7 @@ pub(crate) fn last_rune_is_white_space_like(s: &str) -> bool {
 }
 
 #[derive(Default)]
-pub struct textWriter {
+pub struct TextWriter {
     new_line: String,
     indent_size: usize,
     builder: String,
@@ -28,10 +28,10 @@ pub struct textWriter {
     has_trailing_comment_state: bool,
 }
 
-impl textWriter {
+impl TextWriter {
     // Go builds `textWriter{newLine: ..., indentSize: ...}` literals inside the package (ChangeTrackerWriter).
-    pub(crate) fn new_with(new_line: &str, indent_size: usize) -> textWriter {
-        textWriter { new_line: new_line.to_string(), indent_size, ..Default::default() }
+    pub(crate) fn new_with(new_line: &str, indent_size: usize) -> TextWriter {
+        TextWriter { new_line: new_line.to_string(), indent_size, ..Default::default() }
     }
 
     fn set_last_written(&mut self, s: &str) {
@@ -61,7 +61,8 @@ impl textWriter {
     fn write_text(&mut self, s: &str) {
         if !s.is_empty() {
             if self.line_start {
-                self.builder.push_str(&get_indent_string(self.indent, self.indent_size));
+                self.builder
+                    .extend(std::iter::repeat_n(' ', self.indent as usize * self.indent_size));
                 self.line_start = false;
             }
             self.builder.push_str(s);
@@ -82,9 +83,9 @@ impl textWriter {
     }
 }
 
-impl EmitTextWriter for textWriter {
+impl EmitTextWriter for TextWriter {
     fn clear(&mut self) {
-        *self = textWriter {
+        *self = TextWriter {
             new_line: std::mem::take(&mut self.new_line),
             indent_size: self.indent_size,
             line_start: true,
@@ -121,6 +122,12 @@ impl EmitTextWriter for textWriter {
 
     fn string(&self) -> String {
         self.builder.clone()
+    }
+
+    fn take_string(&mut self) -> String {
+        let text = std::mem::take(&mut self.builder);
+        self.clear();
+        text
     }
 
     fn get_text_pos(&self) -> u32 {
@@ -222,11 +229,11 @@ impl EmitTextWriter for textWriter {
     }
 }
 
-const defaultIndentSize: usize = 4;
+const DEFAULT_INDENT_SIZE: usize = 4;
 
 // GetDefaultIndentSize returns the default indent size (4 spaces) used when no specific indent size is configured.
 pub fn get_default_indent_size() -> usize {
-    defaultIndentSize
+    DEFAULT_INDENT_SIZE
 }
 
 pub(crate) fn get_indent_string(indent: u32, indent_size: usize) -> String {
@@ -242,7 +249,7 @@ pub fn new_text_writer(new_line: &str, indent_size: usize) -> Box<dyn EmitTextWr
     if indent_size == 0 {
         indent_size = 4;
     }
-    let mut w = textWriter { new_line: new_line.to_string(), indent_size, ..Default::default() };
+    let mut w = TextWriter { new_line: new_line.to_string(), indent_size, ..Default::default() };
     w.clear();
     Box::new(w)
 }

@@ -1,9 +1,15 @@
-// Compatibility for Go-style strings used in errors and baselines. The profiles retain the
-// existing callers' escaping differences; they do not change those approximations to strconv.Quote.
+// Compatibility for Go-style strings used in errors and baselines. The legacy profiles retain
+// existing callers' escaping differences; Go uses strconv.Quote's printable tables.
 
 use std::fmt::Write;
+
+mod isprint_generated;
+use isprint_generated::{IS_NOT_PRINT16, IS_NOT_PRINT32, IS_PRINT16, IS_PRINT32};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum QuoteStyle {
+    /// Go `strconv.Quote`, using its pinned Unicode printable tables.
+    Go,
     /// IPC headers and content-mapper errors: escape Unicode whitespace and selected format characters.
     Header,
     /// API transport errors: hex escapes for ASCII controls other than tab and line endings.
@@ -17,6 +23,7 @@ pub enum QuoteStyle {
 }
 fn escaped(c: char, style: QuoteStyle) -> bool {
     match style {
+        QuoteStyle::Go => !is_print(c as u32),
         QuoteStyle::Header => {
             c != ' '
                 && (c.is_control()
@@ -27,6 +34,35 @@ fn escaped(c: char, style: QuoteStyle) -> bool {
         QuoteStyle::Fourslash => c.is_control(),
         _ => false,
     }
+}
+
+// Go strconv/quote.go:518.
+fn is_print(r: u32) -> bool {
+    if r <= 0xff {
+        if (0x20..=0x7e).contains(&r) {
+            return true;
+        }
+        if (0xa1..=0xff).contains(&r) {
+            return r != 0xad;
+        }
+        return false;
+    }
+    if r < 1 << 16 {
+        let rr = r as u16;
+        let i = IS_PRINT16.partition_point(|&value| value < rr);
+        if i >= IS_PRINT16.len() || rr < IS_PRINT16[i & !1] || IS_PRINT16[i | 1] < rr {
+            return false;
+        }
+        return IS_NOT_PRINT16.binary_search(&rr).is_err();
+    }
+    let i = IS_PRINT32.partition_point(|&value| value < r);
+    if i >= IS_PRINT32.len() || r < IS_PRINT32[i & !1] || IS_PRINT32[i | 1] < r {
+        return false;
+    }
+    if r >= 0x20000 {
+        return true;
+    }
+    IS_NOT_PRINT32.binary_search(&((r - 0x10000) as u16)).is_err()
 }
 fn push_char(out: &mut String, c: char, style: QuoteStyle) {
     match c {
@@ -72,6 +108,23 @@ pub fn quote(b: &[u8], style: QuoteStyle) -> String {
     out.push('"');
     out
 }
+/// Go `strings.ToValidUTF8(s, "�")`: each run of invalid bytes becomes one U+FFFD, where
+/// `String::from_utf8_lossy` writes one per maximal invalid subsequence.
+pub fn to_valid_utf8(b: &[u8]) -> String {
+    let mut out = String::with_capacity(b.len());
+    let mut in_invalid_run = false;
+    for chunk in b.utf8_chunks() {
+        if !chunk.valid().is_empty() {
+            out.push_str(chunk.valid());
+            in_invalid_run = false;
+        }
+        if !chunk.invalid().is_empty() && !in_invalid_run {
+            out.push('\u{FFFD}');
+            in_invalid_run = true;
+        }
+    }
+    out
+}
 pub fn parse_int64(b: &[u8], style: QuoteStyle) -> Result<i64, String> {
     let digits = b.strip_prefix(b"+").or_else(|| b.strip_prefix(b"-")).unwrap_or(b);
     let error = if digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) {
@@ -85,90 +138,4 @@ pub fn parse_int64(b: &[u8], style: QuoteStyle) -> Result<i64, String> {
         "value out of range"
     };
     Err(format!("strconv.ParseInt: parsing {}: {error}", quote(b, style)))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn quote_styles_preserve_control_and_unicode_escapes() {
-        let input = "\x07\x08\x0c\x0b\n\r\t\"\u{7f}\u{85}\u{a0}\u{200b}\u{feff}\\";
-        for (style, expected) in [
-            (
-                QuoteStyle::Header,
-                "\"\\a\\b\\f\\v\\n\\r\\t\\\"\\x7f\\u0085\\u00a0\\u200b\\ufeff\\\\\"",
-            ),
-            (
-                QuoteStyle::Api,
-                "\"\\x07\\x08\\x0c\\x0b\\n\\r\\t\\\"\\x7f\u{85}\u{a0}\u{200b}\u{feff}\\\\\"",
-            ),
-            (QuoteStyle::Lsp, "\"\\a\\b\\f\\v\\n\\r\\t\\\"\\x7f\u{85}\u{a0}\u{200b}\u{feff}\\\\\""),
-            (
-                QuoteStyle::MapperTest,
-                "\"\\a\\b\\f\\v\\n\\r\\t\\\"\\x7f\\u0085\\u00a0\u{200b}\u{feff}\\\\\"",
-            ),
-            (
-                QuoteStyle::Fourslash,
-                "\"\\a\\b\\f\\v\\n\\r\\t\\\"\\x7f\\u0085\u{a0}\u{200b}\u{feff}\\\\\"",
-            ),
-        ] {
-            assert_eq!(quote(input.as_bytes(), style), expected, "{style:?}");
-            assert_eq!(quote(" space é😀".as_bytes(), style), "\" space é😀\"");
-        }
-    }
-
-    #[test]
-    fn quote_invalid_utf8_uses_each_callers_style() {
-        for (input, escaped, replaced) in [
-            (b"\xff".as_slice(), "\"\\xff\"", "\"�\""),
-            (b"\xc0\xaf".as_slice(), "\"\\xc0\\xaf\"", "\"��\""),
-            (b"a\xf0\x9f".as_slice(), "\"a\\xf0\\x9f\"", "\"a�\""),
-        ] {
-            assert_eq!(quote(input, QuoteStyle::Lsp), replaced);
-            for style in
-                [QuoteStyle::Header, QuoteStyle::Api, QuoteStyle::MapperTest, QuoteStyle::Fourslash]
-            {
-                assert_eq!(quote(input, style), escaped, "{style:?}");
-            }
-        }
-    }
-
-    #[test]
-    fn parse_int64_preserves_syntax_range_and_error_text() {
-        for style in [QuoteStyle::Header, QuoteStyle::Api, QuoteStyle::Lsp] {
-            for (input, value) in [
-                ("+0001", 1),
-                ("-0", 0),
-                ("9223372036854775807", i64::MAX),
-                ("-9223372036854775808", i64::MIN),
-            ] {
-                assert_eq!(parse_int64(input.as_bytes(), style), Ok(value));
-            }
-            for (input, expected) in [
-                ("", "strconv.ParseInt: parsing \"\": invalid syntax"),
-                ("+", "strconv.ParseInt: parsing \"+\": invalid syntax"),
-                ("--1", "strconv.ParseInt: parsing \"--1\": invalid syntax"),
-                (" 1", "strconv.ParseInt: parsing \" 1\": invalid syntax"),
-                (
-                    "999999999999999999999999x",
-                    "strconv.ParseInt: parsing \"999999999999999999999999x\": invalid syntax",
-                ),
-                (
-                    "9223372036854775808",
-                    "strconv.ParseInt: parsing \"9223372036854775808\": value out of range",
-                ),
-                (
-                    "-9223372036854775809",
-                    "strconv.ParseInt: parsing \"-9223372036854775809\": value out of range",
-                ),
-            ] {
-                assert_eq!(parse_int64(input.as_bytes(), style), Err(expected.to_string()));
-            }
-        }
-        assert_eq!(
-            parse_int64(b"\xff", QuoteStyle::Header),
-            Err("strconv.ParseInt: parsing \"\\xff\": invalid syntax".to_string()),
-        );
-    }
 }

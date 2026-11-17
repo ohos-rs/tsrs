@@ -60,7 +60,7 @@ impl Json for ImplementationParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "textDocument" => {
                     seen |= 1 << 0;
                     s.text_document = field(k, v)?;
@@ -115,7 +115,7 @@ impl Json for Location {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "uri" => {
                     seen |= 1 << 0;
                     s.uri = field(k, v)?;
@@ -164,7 +164,7 @@ impl Json for ImplementationRegistrationOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "documentSelector" => {
                     seen |= 1 << 0;
                     s.document_selector = field(k, v)?;
@@ -192,11 +192,11 @@ pub struct TypeDefinitionParams {
     pub position: Position,
 
     // An optional token that a server can use to report work done progress.
-    pub work_done_token: Option<IntegerOrString>,
+    work_done_token: Option<IntegerOrString>,
 
     // An optional token that a server can use to report partial results (e.g. streaming) to
     // the client.
-    pub partial_result_token: Option<IntegerOrString>,
+    partial_result_token: Option<IntegerOrString>,
 }
 
 impl HasTextDocumentURI for TypeDefinitionParams {
@@ -231,7 +231,7 @@ impl Json for TypeDefinitionParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "textDocument" => {
                     seen |= 1 << 0;
                     s.text_document = field(k, v)?;
@@ -286,7 +286,7 @@ impl Json for TypeDefinitionRegistrationOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "documentSelector" => {
                     seen |= 1 << 0;
                     s.document_selector = field(k, v)?;
@@ -313,7 +313,7 @@ pub struct WorkspaceFolder {
 
     // The name of the workspace folder. Used to refer to this
     // workspace folder in the user interface.
-    pub name: String,
+    name: String,
 }
 
 impl Json for WorkspaceFolder {
@@ -334,7 +334,7 @@ impl Json for WorkspaceFolder {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "uri" => {
                     seen |= 1 << 0;
                     s.uri = field(k, v)?;
@@ -355,7 +355,7 @@ impl Json for WorkspaceFolder {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct DidChangeWorkspaceFoldersParams {
     // The actual workspace folder change event.
-    pub event: WorkspaceFoldersChangeEvent,
+    event: WorkspaceFoldersChangeEvent,
 }
 
 impl Json for DidChangeWorkspaceFoldersParams {
@@ -375,7 +375,7 @@ impl Json for DidChangeWorkspaceFoldersParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "event" {
+            if k == "event" {
                 seen |= 1 << 0;
                 s.event = field_non_null(k, v, Self::GO_TYPE)?;
             }
@@ -408,7 +408,7 @@ impl Json for ConfigurationParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "items" {
+            if k == "items" {
                 seen |= 1 << 0;
                 s.items = field_non_null(k, v, Self::GO_TYPE)?;
             }
@@ -422,14 +422,14 @@ impl Json for ConfigurationParams {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct DocumentColorParams {
     // An optional token that a server can use to report work done progress.
-    pub work_done_token: Option<IntegerOrString>,
+    work_done_token: Option<IntegerOrString>,
 
     // An optional token that a server can use to report partial results (e.g. streaming) to
     // the client.
-    pub partial_result_token: Option<IntegerOrString>,
+    partial_result_token: Option<IntegerOrString>,
 
     // The text document.
-    pub text_document: TextDocumentIdentifier,
+    text_document: TextDocumentIdentifier,
 }
 
 impl HasTextDocumentURI for DocumentColorParams {
@@ -457,7 +457,7 @@ impl Json for DocumentColorParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workDoneToken" => {
                     s.work_done_token = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -480,10 +480,10 @@ impl Json for DocumentColorParams {
 #[derive(Clone, Debug, Default, PartialEq, Copy)]
 pub struct ColorInformation {
     // The range in the document where this color appears.
-    pub range: Range,
+    range: Range,
 
     // The actual color value for this color range.
-    pub color: Color,
+    color: Color,
 }
 
 impl Json for ColorInformation {
@@ -504,7 +504,7 @@ impl Json for ColorInformation {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "range" => {
                     seen |= 1 << 0;
                     s.range = field(k, v)?;
@@ -525,13 +525,13 @@ impl Json for ColorInformation {
 pub struct DocumentColorRegistrationOptions {
     // A document selector to identify the scope of the registration. If set to null
     // the document selector provided on the client side will be used.
-    pub document_selector: DocumentSelectorOrNull,
+    document_selector: DocumentSelectorOrNull,
 
-    pub work_done_progress: Option<bool>,
+    work_done_progress: Option<bool>,
 
     // The id used to register the request. The id can be used to deregister
     // the request again. See also Registration#id.
-    pub id: Option<String>,
+    id: Option<String>,
 }
 
 impl Json for DocumentColorRegistrationOptions {
@@ -553,7 +553,7 @@ impl Json for DocumentColorRegistrationOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "documentSelector" => {
                     seen |= 1 << 0;
                     s.document_selector = field(k, v)?;
@@ -576,20 +576,20 @@ impl Json for DocumentColorRegistrationOptions {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ColorPresentationParams {
     // An optional token that a server can use to report work done progress.
-    pub work_done_token: Option<IntegerOrString>,
+    work_done_token: Option<IntegerOrString>,
 
     // An optional token that a server can use to report partial results (e.g. streaming) to
     // the client.
-    pub partial_result_token: Option<IntegerOrString>,
+    partial_result_token: Option<IntegerOrString>,
 
     // The text document.
-    pub text_document: TextDocumentIdentifier,
+    text_document: TextDocumentIdentifier,
 
     // The color to request presentations for.
-    pub color: Color,
+    color: Color,
 
     // The range where the color would be inserted. Serves as a context.
-    pub range: Range,
+    range: Range,
 }
 
 impl HasTextDocumentURI for ColorPresentationParams {
@@ -619,7 +619,7 @@ impl Json for ColorPresentationParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workDoneToken" => {
                     s.work_done_token = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -651,16 +651,16 @@ pub struct ColorPresentation {
     // The label of this color presentation. It will be shown on the color
     // picker header. By default this is also the text that is inserted when selecting
     // this color presentation.
-    pub label: String,
+    label: String,
 
     // An edit which is applied to a document when selecting
     // this presentation for the color. When `falsy` the label
     // is used.
-    pub text_edit: Option<TextEdit>,
+    text_edit: Option<TextEdit>,
 
     // An optional array of additional edits that are applied when
     // selecting this color presentation. Edits must not overlap with the main edit nor with themselves.
-    pub additional_text_edits: Option<Vec<TextEdit>>,
+    additional_text_edits: Option<Vec<TextEdit>>,
 }
 
 impl Json for ColorPresentation {
@@ -682,7 +682,7 @@ impl Json for ColorPresentation {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "label" => {
                     seen |= 1 << 0;
                     s.label = field(k, v)?;
@@ -705,11 +705,11 @@ impl Json for ColorPresentation {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct FoldingRangeParams {
     // An optional token that a server can use to report work done progress.
-    pub work_done_token: Option<IntegerOrString>,
+    work_done_token: Option<IntegerOrString>,
 
     // An optional token that a server can use to report partial results (e.g. streaming) to
     // the client.
-    pub partial_result_token: Option<IntegerOrString>,
+    partial_result_token: Option<IntegerOrString>,
 
     // The text document.
     pub text_document: TextDocumentIdentifier,
@@ -740,7 +740,7 @@ impl Json for FoldingRangeParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workDoneToken" => {
                     s.work_done_token = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -812,7 +812,7 @@ impl Json for FoldingRange {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "startLine" => {
                     seen |= 1 << 0;
                     s.start_line = field(k, v)?;
@@ -873,7 +873,7 @@ impl Json for FoldingRangeRegistrationOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "documentSelector" => {
                     seen |= 1 << 0;
                     s.document_selector = field(k, v)?;
@@ -895,17 +895,17 @@ impl Json for FoldingRangeRegistrationOptions {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct DeclarationParams {
     // The text document.
-    pub text_document: TextDocumentIdentifier,
+    text_document: TextDocumentIdentifier,
 
     // The position inside the text document.
-    pub position: Position,
+    position: Position,
 
     // An optional token that a server can use to report work done progress.
-    pub work_done_token: Option<IntegerOrString>,
+    work_done_token: Option<IntegerOrString>,
 
     // An optional token that a server can use to report partial results (e.g. streaming) to
     // the client.
-    pub partial_result_token: Option<IntegerOrString>,
+    partial_result_token: Option<IntegerOrString>,
 }
 
 impl HasTextDocumentURI for DeclarationParams {
@@ -940,7 +940,7 @@ impl Json for DeclarationParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "textDocument" => {
                     seen |= 1 << 0;
                     s.text_document = field(k, v)?;
@@ -965,15 +965,15 @@ impl Json for DeclarationParams {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct DeclarationRegistrationOptions {
-    pub work_done_progress: Option<bool>,
+    work_done_progress: Option<bool>,
 
     // A document selector to identify the scope of the registration. If set to null
     // the document selector provided on the client side will be used.
-    pub document_selector: DocumentSelectorOrNull,
+    document_selector: DocumentSelectorOrNull,
 
     // The id used to register the request. The id can be used to deregister
     // the request again. See also Registration#id.
-    pub id: Option<String>,
+    id: Option<String>,
 }
 
 impl Json for DeclarationRegistrationOptions {
@@ -995,7 +995,7 @@ impl Json for DeclarationRegistrationOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workDoneProgress" => {
                     s.work_done_progress = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -1018,11 +1018,11 @@ impl Json for DeclarationRegistrationOptions {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct SelectionRangeParams {
     // An optional token that a server can use to report work done progress.
-    pub work_done_token: Option<IntegerOrString>,
+    work_done_token: Option<IntegerOrString>,
 
     // An optional token that a server can use to report partial results (e.g. streaming) to
     // the client.
-    pub partial_result_token: Option<IntegerOrString>,
+    partial_result_token: Option<IntegerOrString>,
 
     // The text document.
     pub text_document: TextDocumentIdentifier,
@@ -1057,7 +1057,7 @@ impl Json for SelectionRangeParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workDoneToken" => {
                     s.work_done_token = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -1109,7 +1109,7 @@ impl Json for SelectionRange {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "range" => {
                     seen |= 1 << 0;
                     s.range = field(k, v)?;
@@ -1157,7 +1157,7 @@ impl Json for SelectionRangeRegistrationOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workDoneProgress" => {
                     s.work_done_progress = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -1199,7 +1199,7 @@ impl Json for WorkDoneProgressCreateParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "token" {
+            if k == "token" {
                 seen |= 1 << 0;
                 s.token = field(k, v)?;
             }
@@ -1212,7 +1212,7 @@ impl Json for WorkDoneProgressCreateParams {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct WorkDoneProgressCancelParams {
     // The token to be used to report progress.
-    pub token: IntegerOrString,
+    token: IntegerOrString,
 }
 
 impl Json for WorkDoneProgressCancelParams {
@@ -1232,7 +1232,7 @@ impl Json for WorkDoneProgressCancelParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "token" {
+            if k == "token" {
                 seen |= 1 << 0;
                 s.token = field(k, v)?;
             }
@@ -1254,7 +1254,7 @@ pub struct CallHierarchyPrepareParams {
     pub position: Position,
 
     // An optional token that a server can use to report work done progress.
-    pub work_done_token: Option<IntegerOrString>,
+    work_done_token: Option<IntegerOrString>,
 }
 
 impl HasTextDocumentURI for CallHierarchyPrepareParams {
@@ -1288,7 +1288,7 @@ impl Json for CallHierarchyPrepareParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "textDocument" => {
                     seen |= 1 << 0;
                     s.text_document = field(k, v)?;
@@ -1371,7 +1371,7 @@ impl Json for CallHierarchyItem {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "name" => {
                     seen |= 1 << 0;
                     s.name = field(k, v)?;
@@ -1444,7 +1444,7 @@ impl Json for CallHierarchyRegistrationOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "documentSelector" => {
                     seen |= 1 << 0;
                     s.document_selector = field(k, v)?;
@@ -1469,11 +1469,11 @@ impl Json for CallHierarchyRegistrationOptions {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct CallHierarchyIncomingCallsParams {
     // An optional token that a server can use to report work done progress.
-    pub work_done_token: Option<IntegerOrString>,
+    work_done_token: Option<IntegerOrString>,
 
     // An optional token that a server can use to report partial results (e.g. streaming) to
     // the client.
-    pub partial_result_token: Option<IntegerOrString>,
+    partial_result_token: Option<IntegerOrString>,
 
     pub item: CallHierarchyItem,
 }
@@ -1497,7 +1497,7 @@ impl Json for CallHierarchyIncomingCallsParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workDoneToken" => {
                     s.work_done_token = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -1547,7 +1547,7 @@ impl Json for CallHierarchyIncomingCall {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "from" => {
                     seen |= 1 << 0;
                     s.from = field_non_null(k, v, Self::GO_TYPE)?;
@@ -1598,7 +1598,7 @@ impl Json for CallHierarchyOutgoingCallsParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workDoneToken" => {
                     s.work_done_token = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -1649,7 +1649,7 @@ impl Json for CallHierarchyOutgoingCall {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "to" => {
                     seen |= 1 << 0;
                     s.to = field_non_null(k, v, Self::GO_TYPE)?;
@@ -1670,11 +1670,11 @@ impl Json for CallHierarchyOutgoingCall {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct SemanticTokensParams {
     // An optional token that a server can use to report work done progress.
-    pub work_done_token: Option<IntegerOrString>,
+    work_done_token: Option<IntegerOrString>,
 
     // An optional token that a server can use to report partial results (e.g. streaming) to
     // the client.
-    pub partial_result_token: Option<IntegerOrString>,
+    partial_result_token: Option<IntegerOrString>,
 
     // The text document.
     pub text_document: TextDocumentIdentifier,
@@ -1705,7 +1705,7 @@ impl Json for SemanticTokensParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workDoneToken" => {
                     s.work_done_token = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -1755,7 +1755,7 @@ impl Json for SemanticTokens {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "resultId" => {
                     s.result_id = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -1774,7 +1774,7 @@ impl Json for SemanticTokens {
 // Since: 3.16.0
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct SemanticTokensPartialResult {
-    pub data: Vec<u32>,
+    data: Vec<u32>,
 }
 
 impl Json for SemanticTokensPartialResult {
@@ -1794,7 +1794,7 @@ impl Json for SemanticTokensPartialResult {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "data" {
+            if k == "data" {
                 seen |= 1 << 0;
                 s.data = field_non_null(k, v, Self::GO_TYPE)?;
             }
@@ -1850,7 +1850,7 @@ impl Json for SemanticTokensRegistrationOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "documentSelector" => {
                     seen |= 1 << 0;
                     s.document_selector = field(k, v)?;
@@ -1883,18 +1883,18 @@ impl Json for SemanticTokensRegistrationOptions {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct SemanticTokensDeltaParams {
     // An optional token that a server can use to report work done progress.
-    pub work_done_token: Option<IntegerOrString>,
+    work_done_token: Option<IntegerOrString>,
 
     // An optional token that a server can use to report partial results (e.g. streaming) to
     // the client.
-    pub partial_result_token: Option<IntegerOrString>,
+    partial_result_token: Option<IntegerOrString>,
 
     // The text document.
-    pub text_document: TextDocumentIdentifier,
+    text_document: TextDocumentIdentifier,
 
     // The result id of a previous response. The result Id can either point to a full response
     // or a delta response depending on what was received last.
-    pub previous_result_id: String,
+    previous_result_id: String,
 }
 
 impl HasTextDocumentURI for SemanticTokensDeltaParams {
@@ -1923,7 +1923,7 @@ impl Json for SemanticTokensDeltaParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workDoneToken" => {
                     s.work_done_token = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -1949,10 +1949,10 @@ impl Json for SemanticTokensDeltaParams {
 // Since: 3.16.0
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct SemanticTokensDelta {
-    pub result_id: Option<String>,
+    result_id: Option<String>,
 
     // The semantic token edits to transform a previous result into a new result.
-    pub edits: Vec<SemanticTokensEdit>,
+    edits: Vec<SemanticTokensEdit>,
 }
 
 impl Json for SemanticTokensDelta {
@@ -1973,7 +1973,7 @@ impl Json for SemanticTokensDelta {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "resultId" => {
                     s.result_id = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -1992,7 +1992,7 @@ impl Json for SemanticTokensDelta {
 // Since: 3.16.0
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct SemanticTokensDeltaPartialResult {
-    pub edits: Vec<SemanticTokensEdit>,
+    edits: Vec<SemanticTokensEdit>,
 }
 
 impl Json for SemanticTokensDeltaPartialResult {
@@ -2012,7 +2012,7 @@ impl Json for SemanticTokensDeltaPartialResult {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "edits" {
+            if k == "edits" {
                 seen |= 1 << 0;
                 s.edits = field_non_null(k, v, Self::GO_TYPE)?;
             }
@@ -2026,11 +2026,11 @@ impl Json for SemanticTokensDeltaPartialResult {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct SemanticTokensRangeParams {
     // An optional token that a server can use to report work done progress.
-    pub work_done_token: Option<IntegerOrString>,
+    work_done_token: Option<IntegerOrString>,
 
     // An optional token that a server can use to report partial results (e.g. streaming) to
     // the client.
-    pub partial_result_token: Option<IntegerOrString>,
+    partial_result_token: Option<IntegerOrString>,
 
     // The text document.
     pub text_document: TextDocumentIdentifier,
@@ -2065,7 +2065,7 @@ impl Json for SemanticTokensRangeParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workDoneToken" => {
                     s.work_done_token = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -2094,24 +2094,24 @@ impl Json for SemanticTokensRangeParams {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct ShowDocumentParams {
     // The uri to show.
-    pub uri: URI,
+    uri: URI,
 
     // Indicates to show the resource in an external program.
     // To show, for example, `https://code.visualstudio.com/`
     // in the default WEB browser set `external` to `true`.
-    pub external: Option<bool>,
+    external: Option<bool>,
 
     // An optional property to indicate whether the editor
     // showing the document should take focus or not.
     // Clients might ignore this property if an external
     // program is started.
-    pub take_focus: Option<bool>,
+    take_focus: Option<bool>,
 
     // An optional selection range if the document is a text
     // document. Clients might ignore the property if an
     // external program is started or the file is not a text
     // file.
-    pub selection: Option<Range>,
+    selection: Option<Range>,
 }
 
 impl Json for ShowDocumentParams {
@@ -2134,7 +2134,7 @@ impl Json for ShowDocumentParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "uri" => {
                     seen |= 1 << 0;
                     s.uri = field(k, v)?;
@@ -2162,7 +2162,7 @@ impl Json for ShowDocumentParams {
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct ShowDocumentResult {
     // A boolean indicating if the show was successful.
-    pub success: bool,
+    success: bool,
 }
 
 impl Json for ShowDocumentResult {
@@ -2182,7 +2182,7 @@ impl Json for ShowDocumentResult {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "success" {
+            if k == "success" {
                 seen |= 1 << 0;
                 s.success = field(k, v)?;
             }
@@ -2235,7 +2235,7 @@ impl Json for LinkedEditingRangeParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "textDocument" => {
                     seen |= 1 << 0;
                     s.text_document = field(k, v)?;
@@ -2288,7 +2288,7 @@ impl Json for LinkedEditingRanges {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "ranges" => {
                     seen |= 1 << 0;
                     s.ranges = field_non_null(k, v, Self::GO_TYPE)?;
@@ -2336,7 +2336,7 @@ impl Json for LinkedEditingRangeRegistrationOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "documentSelector" => {
                     seen |= 1 << 0;
                     s.document_selector = field(k, v)?;
@@ -2362,7 +2362,7 @@ impl Json for LinkedEditingRangeRegistrationOptions {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct CreateFilesParams {
     // An array of all files/folders created in this operation.
-    pub files: Vec<FileCreate>,
+    files: Vec<FileCreate>,
 }
 
 impl Json for CreateFilesParams {
@@ -2382,7 +2382,7 @@ impl Json for CreateFilesParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "files" {
+            if k == "files" {
                 seen |= 1 << 0;
                 s.files = field_non_null(k, v, Self::GO_TYPE)?;
             }
@@ -2448,7 +2448,7 @@ impl Json for WorkspaceEdit {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "changes" => {
                     s.changes = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -2491,7 +2491,7 @@ impl Json for FileOperationRegistrationOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "filters" {
+            if k == "filters" {
                 seen |= 1 << 0;
                 s.filters = field_non_null(k, v, Self::GO_TYPE)?;
             }
@@ -2529,7 +2529,7 @@ impl Json for RenameFilesParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "files" {
+            if k == "files" {
                 seen |= 1 << 0;
                 s.files = field_non_null(k, v, Self::GO_TYPE)?;
             }
@@ -2546,7 +2546,7 @@ impl Json for RenameFilesParams {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct DeleteFilesParams {
     // An array of all files/folders deleted in this operation.
-    pub files: Vec<FileDelete>,
+    files: Vec<FileDelete>,
 }
 
 impl Json for DeleteFilesParams {
@@ -2566,7 +2566,7 @@ impl Json for DeleteFilesParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "files" {
+            if k == "files" {
                 seen |= 1 << 0;
                 s.files = field_non_null(k, v, Self::GO_TYPE)?;
             }
@@ -2579,17 +2579,17 @@ impl Json for DeleteFilesParams {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct MonikerParams {
     // The text document.
-    pub text_document: TextDocumentIdentifier,
+    text_document: TextDocumentIdentifier,
 
     // The position inside the text document.
-    pub position: Position,
+    position: Position,
 
     // An optional token that a server can use to report work done progress.
-    pub work_done_token: Option<IntegerOrString>,
+    work_done_token: Option<IntegerOrString>,
 
     // An optional token that a server can use to report partial results (e.g. streaming) to
     // the client.
-    pub partial_result_token: Option<IntegerOrString>,
+    partial_result_token: Option<IntegerOrString>,
 }
 
 impl HasTextDocumentURI for MonikerParams {
@@ -2624,7 +2624,7 @@ impl Json for MonikerParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "textDocument" => {
                     seen |= 1 << 0;
                     s.text_document = field(k, v)?;
@@ -2653,17 +2653,17 @@ impl Json for MonikerParams {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Moniker {
     // The scheme of the moniker. For example tsc or .Net
-    pub scheme: String,
+    scheme: String,
 
     // The identifier of the moniker. The value is opaque in LSIF however
     // schema owners are allowed to define the structure if they want.
-    pub identifier: String,
+    identifier: String,
 
     // The scope in which the moniker is unique
-    pub unique: UniquenessLevel,
+    unique: UniquenessLevel,
 
     // The moniker kind if known.
-    pub kind: Option<MonikerKind>,
+    kind: Option<MonikerKind>,
 }
 
 impl Json for Moniker {
@@ -2686,7 +2686,7 @@ impl Json for Moniker {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "scheme" => {
                     seen |= 1 << 0;
                     s.scheme = field(k, v)?;
@@ -2714,9 +2714,9 @@ impl Json for Moniker {
 pub struct MonikerRegistrationOptions {
     // A document selector to identify the scope of the registration. If set to null
     // the document selector provided on the client side will be used.
-    pub document_selector: DocumentSelectorOrNull,
+    document_selector: DocumentSelectorOrNull,
 
-    pub work_done_progress: Option<bool>,
+    work_done_progress: Option<bool>,
 }
 
 impl Json for MonikerRegistrationOptions {
@@ -2737,7 +2737,7 @@ impl Json for MonikerRegistrationOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "documentSelector" => {
                     seen |= 1 << 0;
                     s.document_selector = field(k, v)?;
@@ -2759,13 +2759,13 @@ impl Json for MonikerRegistrationOptions {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct TypeHierarchyPrepareParams {
     // The text document.
-    pub text_document: TextDocumentIdentifier,
+    text_document: TextDocumentIdentifier,
 
     // The position inside the text document.
-    pub position: Position,
+    position: Position,
 
     // An optional token that a server can use to report work done progress.
-    pub work_done_token: Option<IntegerOrString>,
+    work_done_token: Option<IntegerOrString>,
 }
 
 impl HasTextDocumentURI for TypeHierarchyPrepareParams {
@@ -2799,7 +2799,7 @@ impl Json for TypeHierarchyPrepareParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "textDocument" => {
                     seen |= 1 << 0;
                     s.text_document = field(k, v)?;
@@ -2823,34 +2823,34 @@ impl Json for TypeHierarchyPrepareParams {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct TypeHierarchyItem {
     // The name of this item.
-    pub name: String,
+    name: String,
 
     // The kind of this item.
-    pub kind: SymbolKind,
+    kind: SymbolKind,
 
     // Tags for this item.
-    pub tags: Option<Vec<SymbolTag>>,
+    tags: Option<Vec<SymbolTag>>,
 
     // More detail for this item, e.g. the signature of a function.
-    pub detail: Option<String>,
+    detail: Option<String>,
 
     // The resource identifier of this item.
-    pub uri: DocumentUri,
+    uri: DocumentUri,
 
     // The range enclosing this symbol not including leading/trailing whitespace
     // but everything else, e.g. comments and code.
-    pub range: Range,
+    range: Range,
 
     // The range that should be selected and revealed when this symbol is being
     // picked, e.g. the name of a function. Must be contained by the
     // `range`.
-    pub selection_range: Range,
+    selection_range: Range,
 
     // A data entry field that is preserved between a type hierarchy prepare and
     // supertypes or subtypes requests. It could also be used to identify the
     // type hierarchy in the server, helping improve the performance on
     // resolving supertypes and subtypes.
-    pub data: Option<TypeHierarchyItemData>,
+    data: Option<TypeHierarchyItemData>,
 }
 
 impl HasLocation for TypeHierarchyItem {
@@ -2883,7 +2883,7 @@ impl Json for TypeHierarchyItem {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "name" => {
                     seen |= 1 << 0;
                     s.name = field(k, v)?;
@@ -2928,13 +2928,13 @@ impl Json for TypeHierarchyItem {
 pub struct TypeHierarchyRegistrationOptions {
     // A document selector to identify the scope of the registration. If set to null
     // the document selector provided on the client side will be used.
-    pub document_selector: DocumentSelectorOrNull,
+    document_selector: DocumentSelectorOrNull,
 
-    pub work_done_progress: Option<bool>,
+    work_done_progress: Option<bool>,
 
     // The id used to register the request. The id can be used to deregister
     // the request again. See also Registration#id.
-    pub id: Option<String>,
+    id: Option<String>,
 }
 
 impl Json for TypeHierarchyRegistrationOptions {
@@ -2956,7 +2956,7 @@ impl Json for TypeHierarchyRegistrationOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "documentSelector" => {
                     seen |= 1 << 0;
                     s.document_selector = field(k, v)?;
@@ -2981,13 +2981,13 @@ impl Json for TypeHierarchyRegistrationOptions {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct TypeHierarchySupertypesParams {
     // An optional token that a server can use to report work done progress.
-    pub work_done_token: Option<IntegerOrString>,
+    work_done_token: Option<IntegerOrString>,
 
     // An optional token that a server can use to report partial results (e.g. streaming) to
     // the client.
-    pub partial_result_token: Option<IntegerOrString>,
+    partial_result_token: Option<IntegerOrString>,
 
-    pub item: TypeHierarchyItem,
+    item: TypeHierarchyItem,
 }
 
 impl Json for TypeHierarchySupertypesParams {
@@ -3009,7 +3009,7 @@ impl Json for TypeHierarchySupertypesParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workDoneToken" => {
                     s.work_done_token = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -3034,13 +3034,13 @@ impl Json for TypeHierarchySupertypesParams {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct TypeHierarchySubtypesParams {
     // An optional token that a server can use to report work done progress.
-    pub work_done_token: Option<IntegerOrString>,
+    work_done_token: Option<IntegerOrString>,
 
     // An optional token that a server can use to report partial results (e.g. streaming) to
     // the client.
-    pub partial_result_token: Option<IntegerOrString>,
+    partial_result_token: Option<IntegerOrString>,
 
-    pub item: TypeHierarchyItem,
+    item: TypeHierarchyItem,
 }
 
 impl Json for TypeHierarchySubtypesParams {
@@ -3062,7 +3062,7 @@ impl Json for TypeHierarchySubtypesParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workDoneToken" => {
                     s.work_done_token = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -3087,17 +3087,17 @@ impl Json for TypeHierarchySubtypesParams {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct InlineValueParams {
     // An optional token that a server can use to report work done progress.
-    pub work_done_token: Option<IntegerOrString>,
+    work_done_token: Option<IntegerOrString>,
 
     // The text document.
-    pub text_document: TextDocumentIdentifier,
+    text_document: TextDocumentIdentifier,
 
     // The document range for which inline values information will be returned.
-    pub range: Range,
+    range: Range,
 
     // Additional information about the context in which inline values information was
     // requested.
-    pub context: InlineValueContext,
+    context: InlineValueContext,
 }
 
 impl HasTextDocumentURI for InlineValueParams {
@@ -3126,7 +3126,7 @@ impl Json for InlineValueParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workDoneToken" => {
                     s.work_done_token = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -3155,15 +3155,15 @@ impl Json for InlineValueParams {
 // Since: 3.17.0
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct InlineValueRegistrationOptions {
-    pub work_done_progress: Option<bool>,
+    work_done_progress: Option<bool>,
 
     // A document selector to identify the scope of the registration. If set to null
     // the document selector provided on the client side will be used.
-    pub document_selector: DocumentSelectorOrNull,
+    document_selector: DocumentSelectorOrNull,
 
     // The id used to register the request. The id can be used to deregister
     // the request again. See also Registration#id.
-    pub id: Option<String>,
+    id: Option<String>,
 }
 
 impl Json for InlineValueRegistrationOptions {
@@ -3185,7 +3185,7 @@ impl Json for InlineValueRegistrationOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workDoneProgress" => {
                     s.work_done_progress = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -3210,7 +3210,7 @@ impl Json for InlineValueRegistrationOptions {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct InlayHintParams {
     // An optional token that a server can use to report work done progress.
-    pub work_done_token: Option<IntegerOrString>,
+    work_done_token: Option<IntegerOrString>,
 
     // The text document.
     pub text_document: TextDocumentIdentifier,
@@ -3244,7 +3244,7 @@ impl Json for InlayHintParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workDoneToken" => {
                     s.work_done_token = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -3338,7 +3338,7 @@ impl Json for InlayHint {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "position" => {
                     seen |= 1 << 0;
                     s.position = field(k, v)?;
@@ -3413,7 +3413,7 @@ impl Json for InlayHintRegistrationOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workDoneProgress" => {
                     s.work_done_progress = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -3484,7 +3484,7 @@ impl Json for DocumentDiagnosticParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workDoneToken" => {
                     s.work_done_token = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -3514,7 +3514,7 @@ impl Json for DocumentDiagnosticParams {
 // Since: 3.17.0
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct DiagnosticServerCancellationData {
-    pub retrigger_request: bool,
+    retrigger_request: bool,
 }
 
 impl Json for DiagnosticServerCancellationData {
@@ -3534,7 +3534,7 @@ impl Json for DiagnosticServerCancellationData {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "retriggerRequest" {
+            if k == "retriggerRequest" {
                 seen |= 1 << 0;
                 s.retrigger_request = field(k, v)?;
             }
@@ -3595,7 +3595,7 @@ impl Json for DiagnosticRegistrationOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "documentSelector" => {
                     seen |= 1 << 0;
                     s.document_selector = field(k, v)?;
@@ -3635,18 +3635,18 @@ impl Json for DiagnosticRegistrationOptions {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct WorkspaceDiagnosticParams {
     // An optional token that a server can use to report work done progress.
-    pub work_done_token: Option<IntegerOrString>,
+    work_done_token: Option<IntegerOrString>,
 
     // An optional token that a server can use to report partial results (e.g. streaming) to
     // the client.
-    pub partial_result_token: Option<IntegerOrString>,
+    partial_result_token: Option<IntegerOrString>,
 
     // The additional identifier provided during registration.
-    pub identifier: Option<String>,
+    identifier: Option<String>,
 
     // The currently known diagnostic reports with their
     // previous result ids.
-    pub previous_result_ids: Vec<PreviousResultId>,
+    previous_result_ids: Vec<PreviousResultId>,
 }
 
 impl Json for WorkspaceDiagnosticParams {
@@ -3669,7 +3669,7 @@ impl Json for WorkspaceDiagnosticParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workDoneToken" => {
                     s.work_done_token = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -3696,7 +3696,7 @@ impl Json for WorkspaceDiagnosticParams {
 // Since: 3.17.0
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct WorkspaceDiagnosticReport {
-    pub items: Vec<WorkspaceFullDocumentDiagnosticReportOrUnchangedDocumentDiagnosticReport>,
+    items: Vec<WorkspaceFullDocumentDiagnosticReportOrUnchangedDocumentDiagnosticReport>,
 }
 
 impl Json for WorkspaceDiagnosticReport {
@@ -3716,7 +3716,7 @@ impl Json for WorkspaceDiagnosticReport {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "items" {
+            if k == "items" {
                 seen |= 1 << 0;
                 s.items = field_non_null(k, v, Self::GO_TYPE)?;
             }
@@ -3731,7 +3731,7 @@ impl Json for WorkspaceDiagnosticReport {
 // Since: 3.17.0
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct WorkspaceDiagnosticReportPartialResult {
-    pub items: Vec<WorkspaceFullDocumentDiagnosticReportOrUnchangedDocumentDiagnosticReport>,
+    items: Vec<WorkspaceFullDocumentDiagnosticReportOrUnchangedDocumentDiagnosticReport>,
 }
 
 impl Json for WorkspaceDiagnosticReportPartialResult {
@@ -3751,7 +3751,7 @@ impl Json for WorkspaceDiagnosticReportPartialResult {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "items" {
+            if k == "items" {
                 seen |= 1 << 0;
                 s.items = field_non_null(k, v, Self::GO_TYPE)?;
             }
@@ -3767,17 +3767,17 @@ impl Json for WorkspaceDiagnosticReportPartialResult {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct InlineCompletionParams {
     // The text document.
-    pub text_document: TextDocumentIdentifier,
+    text_document: TextDocumentIdentifier,
 
     // The position inside the text document.
-    pub position: Position,
+    position: Position,
 
     // An optional token that a server can use to report work done progress.
-    pub work_done_token: Option<IntegerOrString>,
+    work_done_token: Option<IntegerOrString>,
 
     // Additional information about the context in which inline completions were
     // requested.
-    pub context: InlineCompletionContext,
+    context: InlineCompletionContext,
 }
 
 impl HasTextDocumentURI for InlineCompletionParams {
@@ -3812,7 +3812,7 @@ impl Json for InlineCompletionParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "textDocument" => {
                     seen |= 1 << 0;
                     s.text_document = field(k, v)?;
@@ -3842,7 +3842,7 @@ impl Json for InlineCompletionParams {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct InlineCompletionList {
     // The inline completion items
-    pub items: Vec<InlineCompletionItem>,
+    items: Vec<InlineCompletionItem>,
 }
 
 impl Json for InlineCompletionList {
@@ -3862,7 +3862,7 @@ impl Json for InlineCompletionList {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "items" {
+            if k == "items" {
                 seen |= 1 << 0;
                 s.items = field_non_null(k, v, Self::GO_TYPE)?;
             }
@@ -3878,16 +3878,16 @@ impl Json for InlineCompletionList {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct InlineCompletionItem {
     // The text to replace the range with. Must be set.
-    pub insert_text: StringOrStringValue,
+    insert_text: StringOrStringValue,
 
     // A text that is used to decide if this inline completion should be shown. When `falsy` the InlineCompletionItem.insertText is used.
-    pub filter_text: Option<String>,
+    filter_text: Option<String>,
 
     // The range to replace. Must begin and end on the same line.
-    pub range: Option<Range>,
+    range: Option<Range>,
 
     // An optional Command that is executed *after* inserting this completion.
-    pub command: Option<Command>,
+    command: Option<Command>,
 }
 
 impl Json for InlineCompletionItem {
@@ -3910,7 +3910,7 @@ impl Json for InlineCompletionItem {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "insertText" => {
                     seen |= 1 << 0;
                     s.insert_text = field(k, v)?;
@@ -3937,15 +3937,15 @@ impl Json for InlineCompletionItem {
 // Since: 3.18.0
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct InlineCompletionRegistrationOptions {
-    pub work_done_progress: Option<bool>,
+    work_done_progress: Option<bool>,
 
     // A document selector to identify the scope of the registration. If set to null
     // the document selector provided on the client side will be used.
-    pub document_selector: DocumentSelectorOrNull,
+    document_selector: DocumentSelectorOrNull,
 
     // The id used to register the request. The id can be used to deregister
     // the request again. See also Registration#id.
-    pub id: Option<String>,
+    id: Option<String>,
 }
 
 impl Json for InlineCompletionRegistrationOptions {
@@ -3967,7 +3967,7 @@ impl Json for InlineCompletionRegistrationOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workDoneProgress" => {
                     s.work_done_progress = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -3992,7 +3992,7 @@ impl Json for InlineCompletionRegistrationOptions {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct TextDocumentContentParams {
     // The uri of the text document.
-    pub uri: DocumentUri,
+    uri: DocumentUri,
 }
 
 impl Json for TextDocumentContentParams {
@@ -4012,7 +4012,7 @@ impl Json for TextDocumentContentParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "uri" {
+            if k == "uri" {
                 seen |= 1 << 0;
                 s.uri = field(k, v)?;
             }
@@ -4031,7 +4031,7 @@ pub struct TextDocumentContentResult {
     // any subsequent open notifications for the text document might differ
     // from the returned content due to whitespace and line ending
     // normalizations done on the client
-    pub text: String,
+    text: String,
 }
 
 impl Json for TextDocumentContentResult {
@@ -4051,7 +4051,7 @@ impl Json for TextDocumentContentResult {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "text" {
+            if k == "text" {
                 seen |= 1 << 0;
                 s.text = field(k, v)?;
             }
@@ -4067,11 +4067,11 @@ impl Json for TextDocumentContentResult {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct TextDocumentContentRegistrationOptions {
     // The schemes for which the server provides content.
-    pub schemes: Vec<String>,
+    schemes: Vec<String>,
 
     // The id used to register the request. The id can be used to deregister
     // the request again. See also Registration#id.
-    pub id: Option<String>,
+    id: Option<String>,
 }
 
 impl Json for TextDocumentContentRegistrationOptions {
@@ -4092,7 +4092,7 @@ impl Json for TextDocumentContentRegistrationOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "schemes" => {
                     seen |= 1 << 0;
                     s.schemes = field_non_null(k, v, Self::GO_TYPE)?;
@@ -4114,7 +4114,7 @@ impl Json for TextDocumentContentRegistrationOptions {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct TextDocumentContentRefreshParams {
     // The uri of the text document to refresh.
-    pub uri: DocumentUri,
+    uri: DocumentUri,
 }
 
 impl Json for TextDocumentContentRefreshParams {
@@ -4134,7 +4134,7 @@ impl Json for TextDocumentContentRefreshParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "uri" {
+            if k == "uri" {
                 seen |= 1 << 0;
                 s.uri = field(k, v)?;
             }
@@ -4166,7 +4166,7 @@ impl Json for RegistrationParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "registrations" {
+            if k == "registrations" {
                 seen |= 1 << 0;
                 s.registrations = field_non_null(k, v, Self::GO_TYPE)?;
             }
@@ -4198,7 +4198,7 @@ impl Json for UnregistrationParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "unregisterations" {
+            if k == "unregisterations" {
                 seen |= 1 << 0;
                 s.unregisterations = field_non_null(k, v, Self::GO_TYPE)?;
             }
@@ -4293,7 +4293,7 @@ impl Json for InitializeParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workDoneToken" => {
                     s.work_done_token = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -4365,7 +4365,7 @@ impl Json for InitializeResult {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "capabilities" => {
                     seen |= 1 << 0;
                     s.capabilities = field_non_null(k, v, Self::GO_TYPE)?;
@@ -4389,7 +4389,7 @@ pub struct InitializeError {
     // (1) show the message provided by the ResponseError to the user
     // (2) user selects retry or cancel
     // (3) if user selected retry the initialize method is sent again.
-    pub retry: bool,
+    retry: bool,
 }
 
 impl Json for InitializeError {
@@ -4409,7 +4409,7 @@ impl Json for InitializeError {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "retry" {
+            if k == "retry" {
                 seen |= 1 << 0;
                 s.retry = field(k, v)?;
             }
@@ -4461,7 +4461,7 @@ impl Json for DidChangeConfigurationParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "settings" {
+            if k == "settings" {
                 seen |= 1 << 0;
                 s.settings = field(k, v)?;
             }
@@ -4492,7 +4492,7 @@ impl Json for DidChangeConfigurationRegistrationOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "section" {
+            if k == "section" {
                 s.section = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -4504,10 +4504,10 @@ impl Json for DidChangeConfigurationRegistrationOptions {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct ShowMessageParams {
     // The message type. See MessageType
-    pub type_: MessageType,
+    type_: MessageType,
 
     // The actual message.
-    pub message: String,
+    message: String,
 }
 
 impl Json for ShowMessageParams {
@@ -4528,7 +4528,7 @@ impl Json for ShowMessageParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "type" => {
                     seen |= 1 << 0;
                     s.type_ = field(k, v)?;
@@ -4548,13 +4548,13 @@ impl Json for ShowMessageParams {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct ShowMessageRequestParams {
     // The message type. See MessageType
-    pub type_: MessageType,
+    type_: MessageType,
 
     // The actual message.
-    pub message: String,
+    message: String,
 
     // The message action items to present.
-    pub actions: Option<Vec<MessageActionItem>>,
+    actions: Option<Vec<MessageActionItem>>,
 }
 
 impl Json for ShowMessageRequestParams {
@@ -4576,7 +4576,7 @@ impl Json for ShowMessageRequestParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "type" => {
                     seen |= 1 << 0;
                     s.type_ = field(k, v)?;
@@ -4599,7 +4599,7 @@ impl Json for ShowMessageRequestParams {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct MessageActionItem {
     // A short title like 'Retry', 'Open Log' etc.
-    pub title: String,
+    title: String,
 }
 
 impl Json for MessageActionItem {
@@ -4619,7 +4619,7 @@ impl Json for MessageActionItem {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "title" {
+            if k == "title" {
                 seen |= 1 << 0;
                 s.title = field(k, v)?;
             }
@@ -4657,7 +4657,7 @@ impl Json for LogMessageParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "type" => {
                     seen |= 1 << 0;
                     s.type_ = field(k, v)?;
@@ -4698,7 +4698,7 @@ impl Json for DidOpenTextDocumentParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "textDocument" {
+            if k == "textDocument" {
                 seen |= 1 << 0;
                 s.text_document = field_non_null(k, v, Self::GO_TYPE)?;
             }
@@ -4733,7 +4733,7 @@ impl Json for TextDocumentRegistrationOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "documentSelector" {
+            if k == "documentSelector" {
                 seen |= 1 << 0;
                 s.document_selector = field(k, v)?;
             }
@@ -4783,7 +4783,7 @@ impl Json for DidChangeTextDocumentParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "textDocument" => {
                     seen |= 1 << 0;
                     s.text_document = field(k, v)?;
@@ -4829,7 +4829,7 @@ impl Json for TextDocumentChangeRegistrationOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "documentSelector" => {
                     seen |= 1 << 0;
                     s.document_selector = field(k, v)?;
@@ -4876,7 +4876,7 @@ impl Json for DidCloseTextDocumentParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "textDocument" {
+            if k == "textDocument" {
                 seen |= 1 << 0;
                 s.text_document = field(k, v)?;
             }
@@ -4894,7 +4894,7 @@ pub struct DidSaveTextDocumentParams {
 
     // Optional the content when saved. Depends on the includeText value
     // when the save notification was requested.
-    pub text: Option<String>,
+    text: Option<String>,
 }
 
 impl HasTextDocumentURI for DidSaveTextDocumentParams {
@@ -4921,7 +4921,7 @@ impl Json for DidSaveTextDocumentParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "textDocument" => {
                     seen |= 1 << 0;
                     s.text_document = field(k, v)?;
@@ -4942,10 +4942,10 @@ impl Json for DidSaveTextDocumentParams {
 pub struct TextDocumentSaveRegistrationOptions {
     // A document selector to identify the scope of the registration. If set to null
     // the document selector provided on the client side will be used.
-    pub document_selector: DocumentSelectorOrNull,
+    document_selector: DocumentSelectorOrNull,
 
     // The client is supposed to include the content on save.
-    pub include_text: Option<bool>,
+    include_text: Option<bool>,
 }
 
 impl Json for TextDocumentSaveRegistrationOptions {
@@ -4966,7 +4966,7 @@ impl Json for TextDocumentSaveRegistrationOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "documentSelector" => {
                     seen |= 1 << 0;
                     s.document_selector = field(k, v)?;
@@ -4986,10 +4986,10 @@ impl Json for TextDocumentSaveRegistrationOptions {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct WillSaveTextDocumentParams {
     // The document that will be saved.
-    pub text_document: TextDocumentIdentifier,
+    text_document: TextDocumentIdentifier,
 
     // The 'TextDocumentSaveReason'.
-    pub reason: TextDocumentSaveReason,
+    reason: TextDocumentSaveReason,
 }
 
 impl HasTextDocumentURI for WillSaveTextDocumentParams {
@@ -5016,7 +5016,7 @@ impl Json for WillSaveTextDocumentParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "textDocument" => {
                     seen |= 1 << 0;
                     s.text_document = field(k, v)?;
@@ -5063,7 +5063,7 @@ impl Json for TextEdit {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "range" => {
                     seen |= 1 << 0;
                     s.range = field(k, v)?;
@@ -5114,7 +5114,7 @@ impl Json for DidChangeWatchedFilesParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "changes" {
+            if k == "changes" {
                 seen |= 1 << 0;
                 s.changes = field_non_null(k, v, Self::GO_TYPE)?;
             }
@@ -5148,7 +5148,7 @@ impl Json for DidChangeWatchedFilesRegistrationOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "watchers" {
+            if k == "watchers" {
                 seen |= 1 << 0;
                 s.watchers = field_non_null(k, v, Self::GO_TYPE)?;
             }
@@ -5192,7 +5192,7 @@ impl Json for PublishDiagnosticsParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "uri" => {
                     seen |= 1 << 0;
                     s.uri = field(k, v)?;
@@ -5266,7 +5266,7 @@ impl Json for CompletionParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "textDocument" => {
                     seen |= 1 << 0;
                     s.text_document = field(k, v)?;
@@ -5469,7 +5469,7 @@ impl Json for CompletionItem {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "label" => {
                     seen |= 1 << 0;
                     s.label = field(k, v)?;
@@ -5606,7 +5606,7 @@ impl Json for CompletionList {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "isIncomplete" => {
                     seen |= 1 << 0;
                     s.is_incomplete = field(k, v)?;
@@ -5691,7 +5691,7 @@ impl Json for CompletionRegistrationOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "documentSelector" => {
                     seen |= 1 << 0;
                     s.document_selector = field(k, v)?;
@@ -5767,7 +5767,7 @@ impl Json for HoverParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "textDocument" => {
                     seen |= 1 << 0;
                     s.text_document = field(k, v)?;
@@ -5827,7 +5827,7 @@ impl Json for Hover {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "contents" => {
                     seen |= 1 << 0;
                     s.contents = field(k, v)?;
@@ -5877,7 +5877,7 @@ impl Json for HoverRegistrationOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "documentSelector" => {
                     seen |= 1 << 0;
                     s.document_selector = field(k, v)?;
@@ -5903,7 +5903,7 @@ pub struct SignatureHelpParams {
     pub position: Position,
 
     // An optional token that a server can use to report work done progress.
-    pub work_done_token: Option<IntegerOrString>,
+    work_done_token: Option<IntegerOrString>,
 
     // The signature help context. This is only available if the client specifies
     // to send this using the client capability `textDocument.signatureHelp.contextSupport === true`
@@ -5944,7 +5944,7 @@ impl Json for SignatureHelpParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "textDocument" => {
                     seen |= 1 << 0;
                     s.text_document = field(k, v)?;
@@ -6027,7 +6027,7 @@ impl Json for SignatureHelp {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "signatures" => {
                     seen |= 1 << 0;
                     s.signatures = field_non_null(k, v, Self::GO_TYPE)?;
@@ -6087,7 +6087,7 @@ impl Json for SignatureHelpRegistrationOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "documentSelector" => {
                     seen |= 1 << 0;
                     s.document_selector = field(k, v)?;
@@ -6119,11 +6119,11 @@ pub struct DefinitionParams {
     pub position: Position,
 
     // An optional token that a server can use to report work done progress.
-    pub work_done_token: Option<IntegerOrString>,
+    work_done_token: Option<IntegerOrString>,
 
     // An optional token that a server can use to report partial results (e.g. streaming) to
     // the client.
-    pub partial_result_token: Option<IntegerOrString>,
+    partial_result_token: Option<IntegerOrString>,
 }
 
 impl HasTextDocumentURI for DefinitionParams {
@@ -6158,7 +6158,7 @@ impl Json for DefinitionParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "textDocument" => {
                     seen |= 1 << 0;
                     s.text_document = field(k, v)?;
@@ -6209,7 +6209,7 @@ impl Json for DefinitionRegistrationOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "documentSelector" => {
                     seen |= 1 << 0;
                     s.document_selector = field(k, v)?;
@@ -6277,7 +6277,7 @@ impl Json for ReferenceParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "textDocument" => {
                     seen |= 1 << 0;
                     s.text_document = field(k, v)?;
@@ -6332,7 +6332,7 @@ impl Json for ReferenceRegistrationOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "documentSelector" => {
                     seen |= 1 << 0;
                     s.document_selector = field(k, v)?;
@@ -6358,11 +6358,11 @@ pub struct DocumentHighlightParams {
     pub position: Position,
 
     // An optional token that a server can use to report work done progress.
-    pub work_done_token: Option<IntegerOrString>,
+    work_done_token: Option<IntegerOrString>,
 
     // An optional token that a server can use to report partial results (e.g. streaming) to
     // the client.
-    pub partial_result_token: Option<IntegerOrString>,
+    partial_result_token: Option<IntegerOrString>,
 }
 
 impl HasTextDocumentURI for DocumentHighlightParams {
@@ -6397,7 +6397,7 @@ impl Json for DocumentHighlightParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "textDocument" => {
                     seen |= 1 << 0;
                     s.text_document = field(k, v)?;
@@ -6450,7 +6450,7 @@ impl Json for DocumentHighlight {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "range" => {
                     seen |= 1 << 0;
                     s.range = field(k, v)?;
@@ -6494,7 +6494,7 @@ impl Json for DocumentHighlightRegistrationOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "documentSelector" => {
                     seen |= 1 << 0;
                     s.document_selector = field(k, v)?;
@@ -6514,11 +6514,11 @@ impl Json for DocumentHighlightRegistrationOptions {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct DocumentSymbolParams {
     // An optional token that a server can use to report work done progress.
-    pub work_done_token: Option<IntegerOrString>,
+    work_done_token: Option<IntegerOrString>,
 
     // An optional token that a server can use to report partial results (e.g. streaming) to
     // the client.
-    pub partial_result_token: Option<IntegerOrString>,
+    partial_result_token: Option<IntegerOrString>,
 
     // The text document.
     pub text_document: TextDocumentIdentifier,
@@ -6549,7 +6549,7 @@ impl Json for DocumentSymbolParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workDoneToken" => {
                     s.work_done_token = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -6628,7 +6628,7 @@ impl Json for SymbolInformation {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "name" => {
                     seen |= 1 << 0;
                     s.name = field(k, v)?;
@@ -6721,7 +6721,7 @@ impl Json for DocumentSymbol {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "name" => {
                     seen |= 1 << 0;
                     s.name = field(k, v)?;
@@ -6793,7 +6793,7 @@ impl Json for DocumentSymbolRegistrationOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "documentSelector" => {
                     seen |= 1 << 0;
                     s.document_selector = field(k, v)?;
@@ -6816,17 +6816,17 @@ impl Json for DocumentSymbolRegistrationOptions {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct CodeActionParams {
     // An optional token that a server can use to report work done progress.
-    pub work_done_token: Option<IntegerOrString>,
+    work_done_token: Option<IntegerOrString>,
 
     // An optional token that a server can use to report partial results (e.g. streaming) to
     // the client.
-    pub partial_result_token: Option<IntegerOrString>,
+    partial_result_token: Option<IntegerOrString>,
 
     // The document in which the command was invoked.
     pub text_document: TextDocumentIdentifier,
 
     // The range for which the command was invoked.
-    pub range: Range,
+    range: Range,
 
     // Context carrying additional information.
     pub context: CodeActionContext,
@@ -6859,7 +6859,7 @@ impl Json for CodeActionParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workDoneToken" => {
                     s.work_done_token = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -6928,7 +6928,7 @@ impl Json for Command {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "title" => {
                     seen |= 1 << 0;
                     s.title = field(k, v)?;
@@ -7039,7 +7039,7 @@ impl Json for CodeAction {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "title" => {
                     seen |= 1 << 0;
                     s.title = field(k, v)?;
@@ -7135,7 +7135,7 @@ impl Json for CodeActionRegistrationOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "documentSelector" => {
                     seen |= 1 << 0;
                     s.document_selector = field(k, v)?;
@@ -7164,11 +7164,11 @@ impl Json for CodeActionRegistrationOptions {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct WorkspaceSymbolParams {
     // An optional token that a server can use to report work done progress.
-    pub work_done_token: Option<IntegerOrString>,
+    work_done_token: Option<IntegerOrString>,
 
     // An optional token that a server can use to report partial results (e.g. streaming) to
     // the client.
-    pub partial_result_token: Option<IntegerOrString>,
+    partial_result_token: Option<IntegerOrString>,
 
     // A query string to filter symbols by. Clients may send an empty
     // string here to request all symbols.
@@ -7204,7 +7204,7 @@ impl Json for WorkspaceSymbolParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workDoneToken" => {
                     s.work_done_token = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -7234,32 +7234,32 @@ impl Json for WorkspaceSymbolParams {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct WorkspaceSymbol {
     // The name of this symbol.
-    pub name: String,
+    name: String,
 
     // The kind of this symbol.
-    pub kind: SymbolKind,
+    kind: SymbolKind,
 
     // Tags for this symbol.
     //
     // Since: 3.16.0
-    pub tags: Option<Vec<SymbolTag>>,
+    tags: Option<Vec<SymbolTag>>,
 
     // The name of the symbol containing this symbol. This information is for
     // user interface purposes (e.g. to render a qualifier in the user interface
     // if necessary). It can't be used to re-infer a hierarchy for the document
     // symbols.
-    pub container_name: Option<String>,
+    container_name: Option<String>,
 
     // The location of the symbol. Whether a server is allowed to
     // return a location without a range depends on the client
     // capability `workspace.symbol.resolveSupport`.
     //
     // See SymbolInformation#location for more details.
-    pub location: LocationOrLocationUriOnly,
+    location: LocationOrLocationUriOnly,
 
     // A data entry field that is preserved on a workspace symbol between a
     // workspace symbol request and a workspace symbol resolve request.
-    pub data: Option<WorkspaceSymbolData>,
+    data: Option<WorkspaceSymbolData>,
 }
 
 impl Json for WorkspaceSymbol {
@@ -7284,7 +7284,7 @@ impl Json for WorkspaceSymbol {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "name" => {
                     seen |= 1 << 0;
                     s.name = field(k, v)?;
@@ -7317,13 +7317,13 @@ impl Json for WorkspaceSymbol {
 // Registration options for a WorkspaceSymbolRequest.
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct WorkspaceSymbolRegistrationOptions {
-    pub work_done_progress: Option<bool>,
+    work_done_progress: Option<bool>,
 
     // The server provides support to resolve additional
     // information for a workspace symbol.
     //
     // Since: 3.17.0
-    pub resolve_provider: Option<bool>,
+    resolve_provider: Option<bool>,
 }
 
 impl Json for WorkspaceSymbolRegistrationOptions {
@@ -7343,7 +7343,7 @@ impl Json for WorkspaceSymbolRegistrationOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workDoneProgress" => {
                     s.work_done_progress = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -7361,11 +7361,11 @@ impl Json for WorkspaceSymbolRegistrationOptions {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct CodeLensParams {
     // An optional token that a server can use to report work done progress.
-    pub work_done_token: Option<IntegerOrString>,
+    work_done_token: Option<IntegerOrString>,
 
     // An optional token that a server can use to report partial results (e.g. streaming) to
     // the client.
-    pub partial_result_token: Option<IntegerOrString>,
+    partial_result_token: Option<IntegerOrString>,
 
     // The document to request code lens for.
     pub text_document: TextDocumentIdentifier,
@@ -7396,7 +7396,7 @@ impl Json for CodeLensParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workDoneToken" => {
                     s.work_done_token = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -7452,7 +7452,7 @@ impl Json for CodeLens {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "range" => {
                     seen |= 1 << 0;
                     s.range = field(k, v)?;
@@ -7503,7 +7503,7 @@ impl Json for CodeLensRegistrationOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "documentSelector" => {
                     seen |= 1 << 0;
                     s.document_selector = field(k, v)?;
@@ -7526,14 +7526,14 @@ impl Json for CodeLensRegistrationOptions {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct DocumentLinkParams {
     // An optional token that a server can use to report work done progress.
-    pub work_done_token: Option<IntegerOrString>,
+    work_done_token: Option<IntegerOrString>,
 
     // An optional token that a server can use to report partial results (e.g. streaming) to
     // the client.
-    pub partial_result_token: Option<IntegerOrString>,
+    partial_result_token: Option<IntegerOrString>,
 
     // The document to provide document links for.
-    pub text_document: TextDocumentIdentifier,
+    text_document: TextDocumentIdentifier,
 }
 
 impl HasTextDocumentURI for DocumentLinkParams {
@@ -7561,7 +7561,7 @@ impl Json for DocumentLinkParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workDoneToken" => {
                     s.work_done_token = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -7585,10 +7585,10 @@ impl Json for DocumentLinkParams {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct DocumentLink {
     // The range this link applies to.
-    pub range: Range,
+    range: Range,
 
     // The uri this link points to. If missing a resolve request is sent later.
-    pub target: Option<URI>,
+    target: Option<URI>,
 
     // The tooltip text when you hover over this link.
     //
@@ -7597,11 +7597,11 @@ pub struct DocumentLink {
     // user settings, and localization.
     //
     // Since: 3.15.0
-    pub tooltip: Option<String>,
+    tooltip: Option<String>,
 
     // A data entry field that is preserved on a document link between a
     // DocumentLinkRequest and a DocumentLinkResolveRequest.
-    pub data: Option<DocumentLinkData>,
+    data: Option<DocumentLinkData>,
 }
 
 impl Json for DocumentLink {
@@ -7624,7 +7624,7 @@ impl Json for DocumentLink {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "range" => {
                     seen |= 1 << 0;
                     s.range = field(k, v)?;
@@ -7651,12 +7651,12 @@ impl Json for DocumentLink {
 pub struct DocumentLinkRegistrationOptions {
     // A document selector to identify the scope of the registration. If set to null
     // the document selector provided on the client side will be used.
-    pub document_selector: DocumentSelectorOrNull,
+    document_selector: DocumentSelectorOrNull,
 
-    pub work_done_progress: Option<bool>,
+    work_done_progress: Option<bool>,
 
     // Document links have a resolve provider as well.
-    pub resolve_provider: Option<bool>,
+    resolve_provider: Option<bool>,
 }
 
 impl Json for DocumentLinkRegistrationOptions {
@@ -7678,7 +7678,7 @@ impl Json for DocumentLinkRegistrationOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "documentSelector" => {
                     seen |= 1 << 0;
                     s.document_selector = field(k, v)?;
@@ -7701,7 +7701,7 @@ impl Json for DocumentLinkRegistrationOptions {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct DocumentFormattingParams {
     // An optional token that a server can use to report work done progress.
-    pub work_done_token: Option<IntegerOrString>,
+    work_done_token: Option<IntegerOrString>,
 
     // The document to format.
     pub text_document: TextDocumentIdentifier,
@@ -7735,7 +7735,7 @@ impl Json for DocumentFormattingParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workDoneToken" => {
                     s.work_done_token = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -7783,7 +7783,7 @@ impl Json for DocumentFormattingRegistrationOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "documentSelector" => {
                     seen |= 1 << 0;
                     s.document_selector = field(k, v)?;
@@ -7803,7 +7803,7 @@ impl Json for DocumentFormattingRegistrationOptions {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct DocumentRangeFormattingParams {
     // An optional token that a server can use to report work done progress.
-    pub work_done_token: Option<IntegerOrString>,
+    work_done_token: Option<IntegerOrString>,
 
     // The document to format.
     pub text_document: TextDocumentIdentifier,
@@ -7841,7 +7841,7 @@ impl Json for DocumentRangeFormattingParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workDoneToken" => {
                     s.work_done_token = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -7899,7 +7899,7 @@ impl Json for DocumentRangeFormattingRegistrationOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "documentSelector" => {
                     seen |= 1 << 0;
                     s.document_selector = field(k, v)?;
@@ -7924,16 +7924,16 @@ impl Json for DocumentRangeFormattingRegistrationOptions {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct DocumentRangesFormattingParams {
     // An optional token that a server can use to report work done progress.
-    pub work_done_token: Option<IntegerOrString>,
+    work_done_token: Option<IntegerOrString>,
 
     // The document to format.
-    pub text_document: TextDocumentIdentifier,
+    text_document: TextDocumentIdentifier,
 
     // The ranges to format
-    pub ranges: Vec<Range>,
+    ranges: Vec<Range>,
 
     // The format options
-    pub options: FormattingOptions,
+    options: FormattingOptions,
 }
 
 impl HasTextDocumentURI for DocumentRangesFormattingParams {
@@ -7962,7 +7962,7 @@ impl Json for DocumentRangesFormattingParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workDoneToken" => {
                     s.work_done_token = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -8039,7 +8039,7 @@ impl Json for DocumentOnTypeFormattingParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "textDocument" => {
                     seen |= 1 << 0;
                     s.text_document = field(k, v)?;
@@ -8097,7 +8097,7 @@ impl Json for DocumentOnTypeFormattingRegistrationOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "documentSelector" => {
                     seen |= 1 << 0;
                     s.document_selector = field(k, v)?;
@@ -8127,7 +8127,7 @@ pub struct RenameParams {
     pub position: Position,
 
     // An optional token that a server can use to report work done progress.
-    pub work_done_token: Option<IntegerOrString>,
+    work_done_token: Option<IntegerOrString>,
 
     // The new name of the symbol. If the given name is not valid the
     // request must return a ResponseError with an
@@ -8167,7 +8167,7 @@ impl Json for RenameParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "textDocument" => {
                     seen |= 1 << 0;
                     s.text_document = field(k, v)?;
@@ -8225,7 +8225,7 @@ impl Json for RenameRegistrationOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "documentSelector" => {
                     seen |= 1 << 0;
                     s.document_selector = field(k, v)?;
@@ -8253,7 +8253,7 @@ pub struct PrepareRenameParams {
     pub position: Position,
 
     // An optional token that a server can use to report work done progress.
-    pub work_done_token: Option<IntegerOrString>,
+    work_done_token: Option<IntegerOrString>,
 }
 
 impl HasTextDocumentURI for PrepareRenameParams {
@@ -8287,7 +8287,7 @@ impl Json for PrepareRenameParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "textDocument" => {
                     seen |= 1 << 0;
                     s.text_document = field(k, v)?;
@@ -8311,13 +8311,13 @@ impl Json for PrepareRenameParams {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ExecuteCommandParams {
     // An optional token that a server can use to report work done progress.
-    pub work_done_token: Option<IntegerOrString>,
+    work_done_token: Option<IntegerOrString>,
 
     // The identifier of the actual command handler.
-    pub command: String,
+    command: String,
 
     // Arguments that the command should be invoked with.
-    pub arguments: Option<Vec<Value>>,
+    arguments: Option<Vec<Value>>,
 }
 
 impl Json for ExecuteCommandParams {
@@ -8339,7 +8339,7 @@ impl Json for ExecuteCommandParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workDoneToken" => {
                     s.work_done_token = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -8361,10 +8361,10 @@ impl Json for ExecuteCommandParams {
 // Registration options for a ExecuteCommandRequest.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct ExecuteCommandRegistrationOptions {
-    pub work_done_progress: Option<bool>,
+    work_done_progress: Option<bool>,
 
     // The commands to be executed on the server
-    pub commands: Vec<String>,
+    commands: Vec<String>,
 }
 
 impl Json for ExecuteCommandRegistrationOptions {
@@ -8385,7 +8385,7 @@ impl Json for ExecuteCommandRegistrationOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workDoneProgress" => {
                     s.work_done_progress = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -8407,15 +8407,15 @@ pub struct ApplyWorkspaceEditParams {
     // An optional label of the workspace edit. This label is
     // presented in the user interface for example on an undo
     // stack to undo the workspace edit.
-    pub label: Option<String>,
+    label: Option<String>,
 
     // The edits to apply.
-    pub edit: WorkspaceEdit,
+    edit: WorkspaceEdit,
 
     // Additional data about the edit.
     //
     // Since: 3.18.0
-    pub metadata: Option<WorkspaceEditMetadata>,
+    metadata: Option<WorkspaceEditMetadata>,
 }
 
 impl Json for ApplyWorkspaceEditParams {
@@ -8437,7 +8437,7 @@ impl Json for ApplyWorkspaceEditParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "label" => {
                     s.label = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -8462,17 +8462,17 @@ impl Json for ApplyWorkspaceEditParams {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct ApplyWorkspaceEditResult {
     // Indicates whether the edit was applied or not.
-    pub applied: bool,
+    applied: bool,
 
     // An optional textual description for why the edit was not applied.
     // This may be used by the server for diagnostic logging or to provide
     // a suitable error for a request that triggered the edit.
-    pub failure_reason: Option<String>,
+    failure_reason: Option<String>,
 
     // Depending on the client's failure handling strategy `failedChange` might
     // contain the index of the change that failed. This property is only available
     // if the client signals a `failureHandlingStrategy` in its client capabilities.
-    pub failed_change: Option<u32>,
+    failed_change: Option<u32>,
 }
 
 impl Json for ApplyWorkspaceEditResult {
@@ -8494,7 +8494,7 @@ impl Json for ApplyWorkspaceEditResult {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "applied" => {
                     seen |= 1 << 0;
                     s.applied = field(k, v)?;
@@ -8565,7 +8565,7 @@ impl Json for WorkDoneProgressBegin {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "kind" => {
                     seen |= 1 << 0;
                     s.kind = field(k, v)?;
@@ -8637,7 +8637,7 @@ impl Json for WorkDoneProgressReport {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "kind" => {
                     seen |= 1 << 0;
                     s.kind = field(k, v)?;
@@ -8661,11 +8661,11 @@ impl Json for WorkDoneProgressReport {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct WorkDoneProgressEnd {
-    pub kind: StringLiteralEnd,
+    kind: StringLiteralEnd,
 
     // Optional, a final message indicating to for example indicate the outcome
     // of the operation.
-    pub message: Option<String>,
+    message: Option<String>,
 }
 
 impl Json for WorkDoneProgressEnd {
@@ -8686,7 +8686,7 @@ impl Json for WorkDoneProgressEnd {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "kind" => {
                     seen |= 1 << 0;
                     s.kind = field(k, v)?;
@@ -8704,7 +8704,7 @@ impl Json for WorkDoneProgressEnd {
 
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct SetTraceParams {
-    pub value: TraceValue,
+    value: TraceValue,
 }
 
 impl Json for SetTraceParams {
@@ -8724,7 +8724,7 @@ impl Json for SetTraceParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "value" {
+            if k == "value" {
                 seen |= 1 << 0;
                 s.value = field(k, v)?;
             }
@@ -8736,9 +8736,9 @@ impl Json for SetTraceParams {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct LogTraceParams {
-    pub message: String,
+    message: String,
 
-    pub verbose: Option<String>,
+    verbose: Option<String>,
 }
 
 impl Json for LogTraceParams {
@@ -8759,7 +8759,7 @@ impl Json for LogTraceParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "message" => {
                     seen |= 1 << 0;
                     s.message = field(k, v)?;
@@ -8798,7 +8798,7 @@ impl Json for CancelParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "id" {
+            if k == "id" {
                 seen |= 1 << 0;
                 s.id = field(k, v)?;
             }
@@ -8835,7 +8835,7 @@ impl Json for ProgressParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "token" => {
                     seen |= 1 << 0;
                     s.token = field(k, v)?;
@@ -8893,7 +8893,7 @@ impl Json for TextDocumentPositionParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "textDocument" => {
                     seen |= 1 << 0;
                     s.text_document = field(k, v)?;
@@ -8913,7 +8913,7 @@ impl Json for TextDocumentPositionParams {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct WorkDoneProgressParams {
     // An optional token that a server can use to report work done progress.
-    pub work_done_token: Option<IntegerOrString>,
+    work_done_token: Option<IntegerOrString>,
 }
 
 impl Json for WorkDoneProgressParams {
@@ -8932,7 +8932,7 @@ impl Json for WorkDoneProgressParams {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "workDoneToken" {
+            if k == "workDoneToken" {
                 s.work_done_token = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -8944,7 +8944,7 @@ impl Json for WorkDoneProgressParams {
 pub struct PartialResultParams {
     // An optional token that a server can use to report partial results (e.g. streaming) to
     // the client.
-    pub partial_result_token: Option<IntegerOrString>,
+    partial_result_token: Option<IntegerOrString>,
 }
 
 impl Json for PartialResultParams {
@@ -8963,7 +8963,7 @@ impl Json for PartialResultParams {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "partialResultToken" {
+            if k == "partialResultToken" {
                 s.partial_result_token = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -9020,7 +9020,7 @@ impl Json for LocationLink {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "originSelectionRange" => {
                     s.origin_selection_range = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -9081,7 +9081,7 @@ impl Json for Range {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "start" => {
                     seen |= 1 << 0;
                     s.start = field(k, v)?;
@@ -9099,7 +9099,7 @@ impl Json for Range {
 }
 
 impl Range {
-    pub fn compare(&self, other: &Range) -> std::cmp::Ordering {
+    fn compare(&self, other: &Range) -> std::cmp::Ordering {
         let c = self.start.compare(other.start);
         if c != std::cmp::Ordering::Equal {
             return c;
@@ -9110,7 +9110,7 @@ impl Range {
 
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct ImplementationOptions {
-    pub work_done_progress: Option<bool>,
+    work_done_progress: Option<bool>,
 }
 
 impl Json for ImplementationOptions {
@@ -9129,7 +9129,7 @@ impl Json for ImplementationOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "workDoneProgress" {
+            if k == "workDoneProgress" {
                 s.work_done_progress = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -9143,7 +9143,7 @@ impl Json for ImplementationOptions {
 pub struct StaticRegistrationOptions {
     // The id used to register the request. The id can be used to deregister
     // the request again. See also Registration#id.
-    pub id: Option<String>,
+    id: Option<String>,
 }
 
 impl Json for StaticRegistrationOptions {
@@ -9162,7 +9162,7 @@ impl Json for StaticRegistrationOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "id" {
+            if k == "id" {
                 s.id = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -9172,7 +9172,7 @@ impl Json for StaticRegistrationOptions {
 
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct TypeDefinitionOptions {
-    pub work_done_progress: Option<bool>,
+    work_done_progress: Option<bool>,
 }
 
 impl Json for TypeDefinitionOptions {
@@ -9191,7 +9191,7 @@ impl Json for TypeDefinitionOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "workDoneProgress" {
+            if k == "workDoneProgress" {
                 s.work_done_progress = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -9203,10 +9203,10 @@ impl Json for TypeDefinitionOptions {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct WorkspaceFoldersChangeEvent {
     // The array of added workspace folders
-    pub added: Vec<WorkspaceFolder>,
+    added: Vec<WorkspaceFolder>,
 
     // The array of the removed workspace folders
-    pub removed: Vec<WorkspaceFolder>,
+    removed: Vec<WorkspaceFolder>,
 }
 
 impl Json for WorkspaceFoldersChangeEvent {
@@ -9227,7 +9227,7 @@ impl Json for WorkspaceFoldersChangeEvent {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "added" => {
                     seen |= 1 << 0;
                     s.added = field_non_null(k, v, Self::GO_TYPE)?;
@@ -9270,7 +9270,7 @@ impl Json for ConfigurationItem {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "scopeUri" => {
                     s.scope_uri = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -9307,7 +9307,7 @@ impl Json for TextDocumentIdentifier {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "uri" {
+            if k == "uri" {
                 seen |= 1 << 0;
                 s.uri = field(k, v)?;
             }
@@ -9321,16 +9321,16 @@ impl Json for TextDocumentIdentifier {
 #[derive(Clone, Debug, Default, PartialEq, Copy)]
 pub struct Color {
     // The red component of this color in the range [0-1].
-    pub red: f64,
+    red: f64,
 
     // The green component of this color in the range [0-1].
-    pub green: f64,
+    green: f64,
 
     // The blue component of this color in the range [0-1].
-    pub blue: f64,
+    blue: f64,
 
     // The alpha component of this color in the range [0-1].
-    pub alpha: f64,
+    alpha: f64,
 }
 
 impl Json for Color {
@@ -9352,7 +9352,7 @@ impl Json for Color {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "red" => {
                     seen |= 1 << 0;
                     s.red = field(k, v)?;
@@ -9379,7 +9379,7 @@ impl Json for Color {
 
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct DocumentColorOptions {
-    pub work_done_progress: Option<bool>,
+    work_done_progress: Option<bool>,
 }
 
 impl Json for DocumentColorOptions {
@@ -9398,7 +9398,7 @@ impl Json for DocumentColorOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "workDoneProgress" {
+            if k == "workDoneProgress" {
                 s.work_done_progress = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -9408,7 +9408,7 @@ impl Json for DocumentColorOptions {
 
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct FoldingRangeOptions {
-    pub work_done_progress: Option<bool>,
+    work_done_progress: Option<bool>,
 }
 
 impl Json for FoldingRangeOptions {
@@ -9427,7 +9427,7 @@ impl Json for FoldingRangeOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "workDoneProgress" {
+            if k == "workDoneProgress" {
                 s.work_done_progress = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -9437,7 +9437,7 @@ impl Json for FoldingRangeOptions {
 
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct DeclarationOptions {
-    pub work_done_progress: Option<bool>,
+    work_done_progress: Option<bool>,
 }
 
 impl Json for DeclarationOptions {
@@ -9456,7 +9456,7 @@ impl Json for DeclarationOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "workDoneProgress" {
+            if k == "workDoneProgress" {
                 s.work_done_progress = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -9520,7 +9520,7 @@ impl Json for Position {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "line" => {
                     seen |= 1 << 0;
                     s.line = field(k, v)?;
@@ -9538,7 +9538,7 @@ impl Json for Position {
 }
 
 impl Position {
-    pub fn compare(self, other: Position) -> std::cmp::Ordering {
+    fn compare(self, other: Position) -> std::cmp::Ordering {
         let c = cmp_compare(&self.line, &other.line);
         if c != std::cmp::Ordering::Equal {
             return c;
@@ -9549,7 +9549,7 @@ impl Position {
 
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct SelectionRangeOptions {
-    pub work_done_progress: Option<bool>,
+    work_done_progress: Option<bool>,
 }
 
 impl Json for SelectionRangeOptions {
@@ -9568,7 +9568,7 @@ impl Json for SelectionRangeOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "workDoneProgress" {
+            if k == "workDoneProgress" {
                 s.work_done_progress = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -9581,7 +9581,7 @@ impl Json for SelectionRangeOptions {
 // Since: 3.16.0
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct CallHierarchyOptions {
-    pub work_done_progress: Option<bool>,
+    work_done_progress: Option<bool>,
 }
 
 impl Json for CallHierarchyOptions {
@@ -9600,7 +9600,7 @@ impl Json for CallHierarchyOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "workDoneProgress" {
+            if k == "workDoneProgress" {
                 s.work_done_progress = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -9644,7 +9644,7 @@ impl Json for SemanticTokensOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workDoneProgress" => {
                     s.work_done_progress = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -9670,13 +9670,13 @@ impl Json for SemanticTokensOptions {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct SemanticTokensEdit {
     // The start offset of the edit.
-    pub start: u32,
+    start: u32,
 
     // The count of elements to remove.
-    pub delete_count: u32,
+    delete_count: u32,
 
     // The elements to insert.
-    pub data: Option<Vec<u32>>,
+    data: Option<Vec<u32>>,
 }
 
 impl Json for SemanticTokensEdit {
@@ -9698,7 +9698,7 @@ impl Json for SemanticTokensEdit {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "start" => {
                     seen |= 1 << 0;
                     s.start = field(k, v)?;
@@ -9720,7 +9720,7 @@ impl Json for SemanticTokensEdit {
 
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct LinkedEditingRangeOptions {
-    pub work_done_progress: Option<bool>,
+    work_done_progress: Option<bool>,
 }
 
 impl Json for LinkedEditingRangeOptions {
@@ -9739,7 +9739,7 @@ impl Json for LinkedEditingRangeOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "workDoneProgress" {
+            if k == "workDoneProgress" {
                 s.work_done_progress = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -9753,7 +9753,7 @@ impl Json for LinkedEditingRangeOptions {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct FileCreate {
     // A URI for the location of the file/folder being created.
-    pub uri: DocumentUri,
+    uri: DocumentUri,
 }
 
 impl Json for FileCreate {
@@ -9773,7 +9773,7 @@ impl Json for FileCreate {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "uri" {
+            if k == "uri" {
                 seen |= 1 << 0;
                 s.uri = field(k, v)?;
             }
@@ -9820,7 +9820,7 @@ impl Json for TextDocumentEdit {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "textDocument" => {
                     seen |= 1 << 0;
                     s.text_document = field(k, v)?;
@@ -9841,18 +9841,18 @@ impl Json for TextDocumentEdit {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct CreateFile {
     // A create
-    pub kind: StringLiteralCreate,
+    kind: StringLiteralCreate,
 
     // An optional annotation identifier describing the operation.
     //
     // Since: 3.16.0
-    pub annotation_id: Option<String>,
+    annotation_id: Option<String>,
 
     // The resource to create.
     pub uri: DocumentUri,
 
     // Additional options
-    pub options: Option<CreateFileOptions>,
+    options: Option<CreateFileOptions>,
 }
 
 impl Json for CreateFile {
@@ -9875,7 +9875,7 @@ impl Json for CreateFile {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "kind" => {
                     seen |= 1 << 0;
                     s.kind = field(k, v)?;
@@ -9940,7 +9940,7 @@ impl Json for RenameFile {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "kind" => {
                     seen |= 1 << 0;
                     s.kind = field(k, v)?;
@@ -9971,18 +9971,18 @@ impl Json for RenameFile {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct DeleteFile {
     // A delete
-    pub kind: StringLiteralDelete,
+    kind: StringLiteralDelete,
 
     // An optional annotation identifier describing the operation.
     //
     // Since: 3.16.0
-    pub annotation_id: Option<String>,
+    annotation_id: Option<String>,
 
     // The file to delete.
     pub uri: DocumentUri,
 
     // Delete options.
-    pub options: Option<DeleteFileOptions>,
+    options: Option<DeleteFileOptions>,
 }
 
 impl Json for DeleteFile {
@@ -10005,7 +10005,7 @@ impl Json for DeleteFile {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "kind" => {
                     seen |= 1 << 0;
                     s.kind = field(k, v)?;
@@ -10035,15 +10035,15 @@ impl Json for DeleteFile {
 pub struct ChangeAnnotation {
     // A human-readable string describing the actual change. The string
     // is rendered prominent in the user interface.
-    pub label: String,
+    label: String,
 
     // A flag which indicates that user confirmation is needed
     // before applying the change.
-    pub needs_confirmation: Option<bool>,
+    needs_confirmation: Option<bool>,
 
     // A human-readable string which is rendered less prominent in
     // the user interface.
-    pub description: Option<String>,
+    description: Option<String>,
 }
 
 impl Json for ChangeAnnotation {
@@ -10065,7 +10065,7 @@ impl Json for ChangeAnnotation {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "label" => {
                     seen |= 1 << 0;
                     s.label = field(k, v)?;
@@ -10115,7 +10115,7 @@ impl Json for FileOperationFilter {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "scheme" => {
                     s.scheme = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -10161,7 +10161,7 @@ impl Json for FileRename {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "oldUri" => {
                     seen |= 1 << 0;
                     s.old_uri = field(k, v)?;
@@ -10184,7 +10184,7 @@ impl Json for FileRename {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct FileDelete {
     // A URI for the location of the file/folder being deleted.
-    pub uri: DocumentUri,
+    uri: DocumentUri,
 }
 
 impl Json for FileDelete {
@@ -10204,7 +10204,7 @@ impl Json for FileDelete {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "uri" {
+            if k == "uri" {
                 seen |= 1 << 0;
                 s.uri = field(k, v)?;
             }
@@ -10216,7 +10216,7 @@ impl Json for FileDelete {
 
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct MonikerOptions {
-    pub work_done_progress: Option<bool>,
+    work_done_progress: Option<bool>,
 }
 
 impl Json for MonikerOptions {
@@ -10235,7 +10235,7 @@ impl Json for MonikerOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "workDoneProgress" {
+            if k == "workDoneProgress" {
                 s.work_done_progress = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -10248,7 +10248,7 @@ impl Json for MonikerOptions {
 // Since: 3.17.0
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct TypeHierarchyOptions {
-    pub work_done_progress: Option<bool>,
+    work_done_progress: Option<bool>,
 }
 
 impl Json for TypeHierarchyOptions {
@@ -10267,7 +10267,7 @@ impl Json for TypeHierarchyOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "workDoneProgress" {
+            if k == "workDoneProgress" {
                 s.work_done_progress = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -10279,11 +10279,11 @@ impl Json for TypeHierarchyOptions {
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct InlineValueContext {
     // The stack frame (as a DAP Id) where the execution has stopped.
-    pub frame_id: i32,
+    frame_id: i32,
 
     // The document range where execution has stopped.
     // Typically the end position of the range denotes the line where the inline values are shown.
-    pub stopped_location: Range,
+    stopped_location: Range,
 }
 
 impl Json for InlineValueContext {
@@ -10304,7 +10304,7 @@ impl Json for InlineValueContext {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "frameId" => {
                     seen |= 1 << 0;
                     s.frame_id = field(k, v)?;
@@ -10327,10 +10327,10 @@ impl Json for InlineValueContext {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct InlineValueText {
     // The document range for which the inline value applies.
-    pub range: Range,
+    range: Range,
 
     // The text of the inline value.
-    pub text: String,
+    text: String,
 }
 
 impl Json for InlineValueText {
@@ -10351,7 +10351,7 @@ impl Json for InlineValueText {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "range" => {
                     seen |= 1 << 0;
                     s.range = field(k, v)?;
@@ -10383,13 +10383,13 @@ pub struct InlineValueVariableLookup {
     //
     // The range could be used to extract the variable name
     // from the underlying document.
-    pub range: Range,
+    range: Range,
 
     // If specified the name of the variable to look up.
-    pub variable_name: Option<String>,
+    variable_name: Option<String>,
 
     // How to perform the lookup.
-    pub case_sensitive_lookup: bool,
+    case_sensitive_lookup: bool,
 }
 
 impl Json for InlineValueVariableLookup {
@@ -10411,7 +10411,7 @@ impl Json for InlineValueVariableLookup {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "range" => {
                     seen |= 1 << 0;
                     s.range = field(k, v)?;
@@ -10446,10 +10446,10 @@ pub struct InlineValueEvaluatableExpression {
     //
     // The range could be used to extract the evaluatable expression
     // from the underlying document.
-    pub range: Range,
+    range: Range,
 
     // If specified the expression could be evaluated instead.
-    pub expression: Option<String>,
+    expression: Option<String>,
 }
 
 impl Json for InlineValueEvaluatableExpression {
@@ -10470,7 +10470,7 @@ impl Json for InlineValueEvaluatableExpression {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "range" => {
                     seen |= 1 << 0;
                     s.range = field(k, v)?;
@@ -10491,7 +10491,7 @@ impl Json for InlineValueEvaluatableExpression {
 // Since: 3.17.0
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct InlineValueOptions {
-    pub work_done_progress: Option<bool>,
+    work_done_progress: Option<bool>,
 }
 
 impl Json for InlineValueOptions {
@@ -10510,7 +10510,7 @@ impl Json for InlineValueOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "workDoneProgress" {
+            if k == "workDoneProgress" {
                 s.work_done_progress = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -10572,7 +10572,7 @@ impl Json for InlayHintLabelPart {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "value" => {
                     seen |= 1 << 0;
                     s.value = field(k, v)?;
@@ -10643,7 +10643,7 @@ impl Json for MarkupContent {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "kind" => {
                     seen |= 1 << 0;
                     s.kind = field(k, v)?;
@@ -10665,11 +10665,11 @@ impl Json for MarkupContent {
 // Since: 3.17.0
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct InlayHintOptions {
-    pub work_done_progress: Option<bool>,
+    work_done_progress: Option<bool>,
 
     // The server provides support to resolve additional
     // information for an inlay hint item.
-    pub resolve_provider: Option<bool>,
+    resolve_provider: Option<bool>,
 }
 
 impl Json for InlayHintOptions {
@@ -10689,7 +10689,7 @@ impl Json for InlayHintOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workDoneProgress" => {
                     s.work_done_progress = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -10751,7 +10751,7 @@ impl Json for RelatedFullDocumentDiagnosticReport {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "kind" => {
                     seen |= 1 << 0;
                     s.kind = field(k, v)?;
@@ -10783,11 +10783,11 @@ pub struct RelatedUnchangedDocumentDiagnosticReport {
     // no changes to the last result. A server can
     // only return `unchanged` if result ids are
     // provided.
-    pub kind: StringLiteralUnchanged,
+    kind: StringLiteralUnchanged,
 
     // A result id which will be sent on the next
     // diagnostic request for the same document.
-    pub result_id: String,
+    result_id: String,
 
     // Diagnostics of related documents. This information is useful
     // in programming languages where code in a file A can generate
@@ -10796,7 +10796,7 @@ pub struct RelatedUnchangedDocumentDiagnosticReport {
     // a.cpp and result in errors in a header file b.hpp.
     //
     // Since: 3.17.0
-    pub related_documents: Option<
+    related_documents: Option<
         OrderedMap<DocumentUri, FullDocumentDiagnosticReportOrUnchangedDocumentDiagnosticReport>,
     >,
 }
@@ -10820,7 +10820,7 @@ impl Json for RelatedUnchangedDocumentDiagnosticReport {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "kind" => {
                     seen |= 1 << 0;
                     s.kind = field(k, v)?;
@@ -10845,7 +10845,7 @@ impl Json for RelatedUnchangedDocumentDiagnosticReport {
 // Since: 3.17.0
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct DocumentDiagnosticReportPartialResult {
-    pub related_documents:
+    related_documents:
         OrderedMap<DocumentUri, FullDocumentDiagnosticReportOrUnchangedDocumentDiagnosticReport>,
 }
 
@@ -10866,7 +10866,7 @@ impl Json for DocumentDiagnosticReportPartialResult {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "relatedDocuments" {
+            if k == "relatedDocuments" {
                 seen |= 1 << 0;
                 s.related_documents = field_non_null(k, v, Self::GO_TYPE)?;
             }
@@ -10917,7 +10917,7 @@ impl Json for DiagnosticOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workDoneProgress" => {
                     s.work_done_progress = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -10947,10 +10947,10 @@ impl Json for DiagnosticOptions {
 pub struct PreviousResultId {
     // The URI for which the client knowns a
     // result id.
-    pub uri: DocumentUri,
+    uri: DocumentUri,
 
     // The value of the previous result id.
-    pub value: String,
+    value: String,
 }
 
 impl Json for PreviousResultId {
@@ -10970,7 +10970,7 @@ impl Json for PreviousResultId {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "uri" => {
                     seen |= 1 << 0;
                     s.uri = field(k, v)?;
@@ -11025,7 +11025,7 @@ impl Json for TextDocumentItem {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "uri" => {
                     seen |= 1 << 0;
                     s.uri = field(k, v)?;
@@ -11056,10 +11056,10 @@ impl Json for TextDocumentItem {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct InlineCompletionContext {
     // Describes how the inline completion was triggered.
-    pub trigger_kind: InlineCompletionTriggerKind,
+    trigger_kind: InlineCompletionTriggerKind,
 
     // Provides information about the currently selected item in the autocomplete widget if it is visible.
-    pub selected_completion_info: Option<SelectedCompletionInfo>,
+    selected_completion_info: Option<SelectedCompletionInfo>,
 }
 
 impl Json for InlineCompletionContext {
@@ -11080,7 +11080,7 @@ impl Json for InlineCompletionContext {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "triggerKind" => {
                     seen |= 1 << 0;
                     s.trigger_kind = field(k, v)?;
@@ -11108,10 +11108,10 @@ impl Json for InlineCompletionContext {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct StringValue {
     // The kind of string value.
-    pub kind: StringLiteralSnippet,
+    kind: StringLiteralSnippet,
 
     // The snippet string.
-    pub value: String,
+    value: String,
 }
 
 impl Json for StringValue {
@@ -11132,7 +11132,7 @@ impl Json for StringValue {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "kind" => {
                     seen |= 1 << 0;
                     s.kind = field(k, v)?;
@@ -11154,7 +11154,7 @@ impl Json for StringValue {
 // Since: 3.18.0
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct InlineCompletionOptions {
-    pub work_done_progress: Option<bool>,
+    work_done_progress: Option<bool>,
 }
 
 impl Json for InlineCompletionOptions {
@@ -11173,7 +11173,7 @@ impl Json for InlineCompletionOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "workDoneProgress" {
+            if k == "workDoneProgress" {
                 s.work_done_progress = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -11187,7 +11187,7 @@ impl Json for InlineCompletionOptions {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct TextDocumentContentOptions {
     // The schemes for which the server provides content.
-    pub schemes: Vec<String>,
+    schemes: Vec<String>,
 }
 
 impl Json for TextDocumentContentOptions {
@@ -11207,7 +11207,7 @@ impl Json for TextDocumentContentOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "schemes" {
+            if k == "schemes" {
                 seen |= 1 << 0;
                 s.schemes = field_non_null(k, v, Self::GO_TYPE)?;
             }
@@ -11459,9 +11459,10 @@ impl Json for Registration {
     }
 
     fn from_json(v: &Value) -> Result<Self, JsonError> {
-        let mut s = Registration::default();
         const MISSING_ID: u32 = 1 << 0;
         const MISSING_METHOD: u32 = 1 << 1;
+
+        let mut s = Registration::default();
         let mut missing = MISSING_ID | MISSING_METHOD;
 
         let Some(members) = struct_members(v, Self::GO_TYPE, true)? else { unreachable!() };
@@ -11470,7 +11471,7 @@ impl Json for Registration {
         let mut raw_register_options: Option<&Value> = None;
 
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "id" => {
                     missing &= !MISSING_ID;
                     s.id = field(k, v)?;
@@ -11498,179 +11499,179 @@ impl Json for Registration {
         if let Some(raw_register_options) = raw_register_options {
             let mut register_options = RegisterOptions::default();
             match Method::from_str(&method) {
-                Method::TextDocumentImplementation => {
+                Method::TEXT_DOCUMENT_IMPLEMENTATION => {
                     register_options.text_document_implementation =
                         arm_buffered(raw_register_options)?;
                 }
-                Method::TextDocumentTypeDefinition => {
+                Method::TEXT_DOCUMENT_TYPE_DEFINITION => {
                     register_options.text_document_type_definition =
                         arm_buffered(raw_register_options)?;
                 }
-                Method::TextDocumentDocumentColor => {
+                Method::TEXT_DOCUMENT_DOCUMENT_COLOR => {
                     register_options.text_document_document_color =
                         arm_buffered(raw_register_options)?;
                 }
-                Method::TextDocumentColorPresentation => {
+                Method::TEXT_DOCUMENT_COLOR_PRESENTATION => {
                     register_options.text_document_color_presentation =
                         arm_buffered(raw_register_options)?;
                 }
-                Method::TextDocumentFoldingRange => {
+                Method::TEXT_DOCUMENT_FOLDING_RANGE => {
                     register_options.text_document_folding_range =
                         arm_buffered(raw_register_options)?;
                 }
-                Method::TextDocumentDeclaration => {
+                Method::TEXT_DOCUMENT_DECLARATION => {
                     register_options.text_document_declaration =
                         arm_buffered(raw_register_options)?;
                 }
-                Method::TextDocumentSelectionRange => {
+                Method::TEXT_DOCUMENT_SELECTION_RANGE => {
                     register_options.text_document_selection_range =
                         arm_buffered(raw_register_options)?;
                 }
-                Method::TextDocumentPrepareCallHierarchy => {
+                Method::TEXT_DOCUMENT_PREPARE_CALL_HIERARCHY => {
                     register_options.text_document_prepare_call_hierarchy =
                         arm_buffered(raw_register_options)?;
                 }
-                Method::TextDocumentSemanticTokens => {
+                Method::TEXT_DOCUMENT_SEMANTIC_TOKENS => {
                     register_options.text_document_semantic_tokens =
                         arm_buffered(raw_register_options)?;
                 }
-                Method::TextDocumentLinkedEditingRange => {
+                Method::TEXT_DOCUMENT_LINKED_EDITING_RANGE => {
                     register_options.text_document_linked_editing_range =
                         arm_buffered(raw_register_options)?;
                 }
-                Method::WorkspaceWillCreateFiles => {
+                Method::WORKSPACE_WILL_CREATE_FILES => {
                     register_options.workspace_will_create_files =
                         arm_buffered(raw_register_options)?;
                 }
-                Method::WorkspaceWillRenameFiles => {
+                Method::WORKSPACE_WILL_RENAME_FILES => {
                     register_options.workspace_will_rename_files =
                         arm_buffered(raw_register_options)?;
                 }
-                Method::WorkspaceWillDeleteFiles => {
+                Method::WORKSPACE_WILL_DELETE_FILES => {
                     register_options.workspace_will_delete_files =
                         arm_buffered(raw_register_options)?;
                 }
-                Method::TextDocumentMoniker => {
+                Method::TEXT_DOCUMENT_MONIKER => {
                     register_options.text_document_moniker = arm_buffered(raw_register_options)?;
                 }
-                Method::TextDocumentPrepareTypeHierarchy => {
+                Method::TEXT_DOCUMENT_PREPARE_TYPE_HIERARCHY => {
                     register_options.text_document_prepare_type_hierarchy =
                         arm_buffered(raw_register_options)?;
                 }
-                Method::TextDocumentInlineValue => {
+                Method::TEXT_DOCUMENT_INLINE_VALUE => {
                     register_options.text_document_inline_value =
                         arm_buffered(raw_register_options)?;
                 }
-                Method::TextDocumentInlayHint => {
+                Method::TEXT_DOCUMENT_INLAY_HINT => {
                     register_options.text_document_inlay_hint = arm_buffered(raw_register_options)?;
                 }
-                Method::TextDocumentDiagnostic => {
+                Method::TEXT_DOCUMENT_DIAGNOSTIC => {
                     register_options.text_document_diagnostic = arm_buffered(raw_register_options)?;
                 }
-                Method::TextDocumentInlineCompletion => {
+                Method::TEXT_DOCUMENT_INLINE_COMPLETION => {
                     register_options.text_document_inline_completion =
                         arm_buffered(raw_register_options)?;
                 }
-                Method::WorkspaceTextDocumentContent => {
+                Method::WORKSPACE_TEXT_DOCUMENT_CONTENT => {
                     register_options.workspace_text_document_content =
                         arm_buffered(raw_register_options)?;
                 }
-                Method::TextDocumentWillSaveWaitUntil => {
+                Method::TEXT_DOCUMENT_WILL_SAVE_WAIT_UNTIL => {
                     register_options.text_document_will_save_wait_until =
                         arm_buffered(raw_register_options)?;
                 }
-                Method::TextDocumentCompletion => {
+                Method::TEXT_DOCUMENT_COMPLETION => {
                     register_options.text_document_completion = arm_buffered(raw_register_options)?;
                 }
-                Method::TextDocumentHover => {
+                Method::TEXT_DOCUMENT_HOVER => {
                     register_options.text_document_hover = arm_buffered(raw_register_options)?;
                 }
-                Method::TextDocumentSignatureHelp => {
+                Method::TEXT_DOCUMENT_SIGNATURE_HELP => {
                     register_options.text_document_signature_help =
                         arm_buffered(raw_register_options)?;
                 }
-                Method::TextDocumentDefinition => {
+                Method::TEXT_DOCUMENT_DEFINITION => {
                     register_options.text_document_definition = arm_buffered(raw_register_options)?;
                 }
-                Method::TextDocumentReferences => {
+                Method::TEXT_DOCUMENT_REFERENCES => {
                     register_options.text_document_references = arm_buffered(raw_register_options)?;
                 }
-                Method::TextDocumentDocumentHighlight => {
+                Method::TEXT_DOCUMENT_DOCUMENT_HIGHLIGHT => {
                     register_options.text_document_document_highlight =
                         arm_buffered(raw_register_options)?;
                 }
-                Method::TextDocumentDocumentSymbol => {
+                Method::TEXT_DOCUMENT_DOCUMENT_SYMBOL => {
                     register_options.text_document_document_symbol =
                         arm_buffered(raw_register_options)?;
                 }
-                Method::TextDocumentCodeAction => {
+                Method::TEXT_DOCUMENT_CODE_ACTION => {
                     register_options.text_document_code_action =
                         arm_buffered(raw_register_options)?;
                 }
-                Method::WorkspaceSymbol => {
+                Method::WORKSPACE_SYMBOL => {
                     register_options.workspace_symbol = arm_buffered(raw_register_options)?;
                 }
-                Method::TextDocumentCodeLens => {
+                Method::TEXT_DOCUMENT_CODE_LENS => {
                     register_options.text_document_code_lens = arm_buffered(raw_register_options)?;
                 }
-                Method::TextDocumentDocumentLink => {
+                Method::TEXT_DOCUMENT_DOCUMENT_LINK => {
                     register_options.text_document_document_link =
                         arm_buffered(raw_register_options)?;
                 }
-                Method::TextDocumentFormatting => {
+                Method::TEXT_DOCUMENT_FORMATTING => {
                     register_options.text_document_formatting = arm_buffered(raw_register_options)?;
                 }
-                Method::TextDocumentRangeFormatting => {
+                Method::TEXT_DOCUMENT_RANGE_FORMATTING => {
                     register_options.text_document_range_formatting =
                         arm_buffered(raw_register_options)?;
                 }
-                Method::TextDocumentRangesFormatting => {
+                Method::TEXT_DOCUMENT_RANGES_FORMATTING => {
                     register_options.text_document_ranges_formatting =
                         arm_buffered(raw_register_options)?;
                 }
-                Method::TextDocumentOnTypeFormatting => {
+                Method::TEXT_DOCUMENT_ON_TYPE_FORMATTING => {
                     register_options.text_document_on_type_formatting =
                         arm_buffered(raw_register_options)?;
                 }
-                Method::TextDocumentRename => {
+                Method::TEXT_DOCUMENT_RENAME => {
                     register_options.text_document_rename = arm_buffered(raw_register_options)?;
                 }
-                Method::WorkspaceExecuteCommand => {
+                Method::WORKSPACE_EXECUTE_COMMAND => {
                     register_options.workspace_execute_command =
                         arm_buffered(raw_register_options)?;
                 }
-                Method::WorkspaceDidCreateFiles => {
+                Method::WORKSPACE_DID_CREATE_FILES => {
                     register_options.workspace_did_create_files =
                         arm_buffered(raw_register_options)?;
                 }
-                Method::WorkspaceDidRenameFiles => {
+                Method::WORKSPACE_DID_RENAME_FILES => {
                     register_options.workspace_did_rename_files =
                         arm_buffered(raw_register_options)?;
                 }
-                Method::WorkspaceDidDeleteFiles => {
+                Method::WORKSPACE_DID_DELETE_FILES => {
                     register_options.workspace_did_delete_files =
                         arm_buffered(raw_register_options)?;
                 }
-                Method::WorkspaceDidChangeConfiguration => {
+                Method::WORKSPACE_DID_CHANGE_CONFIGURATION => {
                     register_options.workspace_did_change_configuration =
                         arm_buffered(raw_register_options)?;
                 }
-                Method::TextDocumentDidOpen => {
+                Method::TEXT_DOCUMENT_DID_OPEN => {
                     register_options.text_document_did_open = arm_buffered(raw_register_options)?;
                 }
-                Method::TextDocumentDidChange => {
+                Method::TEXT_DOCUMENT_DID_CHANGE => {
                     register_options.text_document_did_change = arm_buffered(raw_register_options)?;
                 }
-                Method::TextDocumentDidClose => {
+                Method::TEXT_DOCUMENT_DID_CLOSE => {
                     register_options.text_document_did_close = arm_buffered(raw_register_options)?;
                 }
-                Method::TextDocumentDidSave => {
+                Method::TEXT_DOCUMENT_DID_SAVE => {
                     register_options.text_document_did_save = arm_buffered(raw_register_options)?;
                 }
-                Method::TextDocumentWillSave => {
+                Method::TEXT_DOCUMENT_WILL_SAVE => {
                     register_options.text_document_will_save = arm_buffered(raw_register_options)?;
                 }
-                Method::WorkspaceDidChangeWatchedFiles => {
+                Method::WORKSPACE_DID_CHANGE_WATCHED_FILES => {
                     register_options.workspace_did_change_watched_files =
                         arm_buffered(raw_register_options)?;
                 }
@@ -11722,7 +11723,7 @@ impl Json for Unregistration {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "id" => {
                     seen |= 1 << 0;
                     s.id = field(k, v)?;
@@ -11748,7 +11749,7 @@ pub struct WorkspaceFoldersInitializeParams {
     // configured.
     //
     // Since: 3.6.0
-    pub workspace_folders: Option<WorkspaceFoldersOrNull>,
+    workspace_folders: Option<WorkspaceFoldersOrNull>,
 }
 
 impl Json for WorkspaceFoldersInitializeParams {
@@ -11767,7 +11768,7 @@ impl Json for WorkspaceFoldersInitializeParams {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "workspaceFolders" {
+            if k == "workspaceFolders" {
                 s.workspace_folders = opt(k, v)?;
             }
         }
@@ -11985,7 +11986,7 @@ impl Json for ServerCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "positionEncoding" => {
                     s.position_encoding = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -12136,7 +12137,7 @@ impl Json for ServerInfo {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "name" => {
                     seen |= 1 << 0;
                     s.name = field(k, v)?;
@@ -12179,7 +12180,7 @@ impl Json for VersionedTextDocumentIdentifier {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "uri" => {
                     seen |= 1 << 0;
                     s.uri = field(k, v)?;
@@ -12200,7 +12201,7 @@ impl Json for VersionedTextDocumentIdentifier {
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct SaveOptions {
     // The client is supposed to include the content on save.
-    pub include_text: Option<bool>,
+    include_text: Option<bool>,
 }
 
 impl Json for SaveOptions {
@@ -12219,7 +12220,7 @@ impl Json for SaveOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "includeText" {
+            if k == "includeText" {
                 s.include_text = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -12255,7 +12256,7 @@ impl Json for FileEvent {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "uri" => {
                     seen |= 1 << 0;
                     s.uri = field(k, v)?;
@@ -12303,7 +12304,7 @@ impl Json for FileSystemWatcher {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "globPattern" => {
                     seen |= 1 << 0;
                     s.glob_pattern = field(k, v)?;
@@ -12392,7 +12393,7 @@ impl Json for Diagnostic {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "range" => {
                     seen |= 1 << 0;
                     s.range = field(k, v)?;
@@ -12459,7 +12460,7 @@ impl Json for CompletionContext {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "triggerKind" => {
                     seen |= 1 << 0;
                     s.trigger_kind = field(k, v)?;
@@ -12506,7 +12507,7 @@ impl Json for CompletionItemLabelDetails {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "detail" => {
                     s.detail = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -12554,7 +12555,7 @@ impl Json for InsertReplaceEdit {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "newText" => {
                     seen |= 1 << 0;
                     s.new_text = field(k, v)?;
@@ -12638,7 +12639,7 @@ impl Json for CompletionItemDefaults {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "commitCharacters" => {
                     s.commit_characters = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -12695,7 +12696,7 @@ pub struct CompletionItemApplyKinds {
     // and the completion's own `commitCharacters`.
     //
     // Since: 3.18.0
-    pub commit_characters: Option<ApplyKind>,
+    commit_characters: Option<ApplyKind>,
 
     // Specifies whether the `data` field on a completion will replace or
     // be merged with data from `completionList.itemDefaults.data`.
@@ -12719,7 +12720,7 @@ pub struct CompletionItemApplyKinds {
     //  within that value will occur.
     //
     // Since: 3.18.0
-    pub data: Option<ApplyKind>,
+    data: Option<ApplyKind>,
 }
 
 impl Json for CompletionItemApplyKinds {
@@ -12739,7 +12740,7 @@ impl Json for CompletionItemApplyKinds {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "commitCharacters" => {
                     s.commit_characters = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -12809,7 +12810,7 @@ impl Json for CompletionOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workDoneProgress" => {
                     s.work_done_progress = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -12835,7 +12836,7 @@ impl Json for CompletionOptions {
 // Hover options.
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct HoverOptions {
-    pub work_done_progress: Option<bool>,
+    work_done_progress: Option<bool>,
 }
 
 impl Json for HoverOptions {
@@ -12854,7 +12855,7 @@ impl Json for HoverOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "workDoneProgress" {
+            if k == "workDoneProgress" {
                 s.work_done_progress = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -12885,7 +12886,7 @@ pub struct SignatureHelpContext {
     //
     // The `activeSignatureHelp` has its `SignatureHelp.activeSignature` field updated based on
     // the user navigating through available signatures.
-    pub active_signature_help: Option<SignatureHelp>,
+    active_signature_help: Option<SignatureHelp>,
 }
 
 impl Json for SignatureHelpContext {
@@ -12908,7 +12909,7 @@ impl Json for SignatureHelpContext {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "triggerKind" => {
                     seen |= 1 << 0;
                     s.trigger_kind = field(k, v)?;
@@ -12985,7 +12986,7 @@ impl Json for SignatureInformation {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "label" => {
                     seen |= 1 << 0;
                     s.label = field(k, v)?;
@@ -13045,7 +13046,7 @@ impl Json for SignatureHelpOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workDoneProgress" => {
                     s.work_done_progress = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -13065,7 +13066,7 @@ impl Json for SignatureHelpOptions {
 // Server Capabilities for a DefinitionRequest.
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct DefinitionOptions {
-    pub work_done_progress: Option<bool>,
+    work_done_progress: Option<bool>,
 }
 
 impl Json for DefinitionOptions {
@@ -13084,7 +13085,7 @@ impl Json for DefinitionOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "workDoneProgress" {
+            if k == "workDoneProgress" {
                 s.work_done_progress = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -13117,7 +13118,7 @@ impl Json for ReferenceContext {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "includeDeclaration" {
+            if k == "includeDeclaration" {
                 seen |= 1 << 0;
                 s.include_declaration = field(k, v)?;
             }
@@ -13130,7 +13131,7 @@ impl Json for ReferenceContext {
 // Reference options.
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct ReferenceOptions {
-    pub work_done_progress: Option<bool>,
+    work_done_progress: Option<bool>,
 }
 
 impl Json for ReferenceOptions {
@@ -13149,7 +13150,7 @@ impl Json for ReferenceOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "workDoneProgress" {
+            if k == "workDoneProgress" {
                 s.work_done_progress = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -13160,7 +13161,7 @@ impl Json for ReferenceOptions {
 // Provider options for a DocumentHighlightRequest.
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct DocumentHighlightOptions {
-    pub work_done_progress: Option<bool>,
+    work_done_progress: Option<bool>,
 }
 
 impl Json for DocumentHighlightOptions {
@@ -13179,7 +13180,7 @@ impl Json for DocumentHighlightOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "workDoneProgress" {
+            if k == "workDoneProgress" {
                 s.work_done_progress = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -13191,21 +13192,21 @@ impl Json for DocumentHighlightOptions {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct BaseSymbolInformation {
     // The name of this symbol.
-    pub name: String,
+    name: String,
 
     // The kind of this symbol.
-    pub kind: SymbolKind,
+    kind: SymbolKind,
 
     // Tags for this symbol.
     //
     // Since: 3.16.0
-    pub tags: Option<Vec<SymbolTag>>,
+    tags: Option<Vec<SymbolTag>>,
 
     // The name of the symbol containing this symbol. This information is for
     // user interface purposes (e.g. to render a qualifier in the user interface
     // if necessary). It can't be used to re-infer a hierarchy for the document
     // symbols.
-    pub container_name: Option<String>,
+    container_name: Option<String>,
 }
 
 impl Json for BaseSymbolInformation {
@@ -13228,7 +13229,7 @@ impl Json for BaseSymbolInformation {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "name" => {
                     seen |= 1 << 0;
                     s.name = field(k, v)?;
@@ -13254,13 +13255,13 @@ impl Json for BaseSymbolInformation {
 // Provider options for a DocumentSymbolRequest.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct DocumentSymbolOptions {
-    pub work_done_progress: Option<bool>,
+    work_done_progress: Option<bool>,
 
     // A human-readable string that is shown when multiple outlines trees
     // are shown for the same document.
     //
     // Since: 3.16.0
-    pub label: Option<String>,
+    label: Option<String>,
 }
 
 impl Json for DocumentSymbolOptions {
@@ -13280,7 +13281,7 @@ impl Json for DocumentSymbolOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workDoneProgress" => {
                     s.work_done_progress = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -13314,7 +13315,7 @@ pub struct CodeActionContext {
     // The reason why code actions were requested.
     //
     // Since: 3.17.0
-    pub trigger_kind: Option<CodeActionTriggerKind>,
+    trigger_kind: Option<CodeActionTriggerKind>,
 }
 
 impl Json for CodeActionContext {
@@ -13336,7 +13337,7 @@ impl Json for CodeActionContext {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "diagnostics" => {
                     seen |= 1 << 0;
                     s.diagnostics = field_non_null(k, v, Self::GO_TYPE)?;
@@ -13363,7 +13364,7 @@ pub struct CodeActionDisabled {
     // Human readable description of why the code action is currently disabled.
     //
     // This is displayed in the code actions UI.
-    pub reason: String,
+    reason: String,
 }
 
 impl Json for CodeActionDisabled {
@@ -13383,7 +13384,7 @@ impl Json for CodeActionDisabled {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "reason" {
+            if k == "reason" {
                 seen |= 1 << 0;
                 s.reason = field(k, v)?;
             }
@@ -13446,7 +13447,7 @@ impl Json for CodeActionOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workDoneProgress" => {
                     s.work_done_progress = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -13471,7 +13472,7 @@ impl Json for CodeActionOptions {
 // Since: 3.18.0
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct LocationUriOnly {
-    pub uri: DocumentUri,
+    uri: DocumentUri,
 }
 
 impl Json for LocationUriOnly {
@@ -13491,7 +13492,7 @@ impl Json for LocationUriOnly {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "uri" {
+            if k == "uri" {
                 seen |= 1 << 0;
                 s.uri = field(k, v)?;
             }
@@ -13504,13 +13505,13 @@ impl Json for LocationUriOnly {
 // Server capabilities for a WorkspaceSymbolRequest.
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct WorkspaceSymbolOptions {
-    pub work_done_progress: Option<bool>,
+    work_done_progress: Option<bool>,
 
     // The server provides support to resolve additional
     // information for a workspace symbol.
     //
     // Since: 3.17.0
-    pub resolve_provider: Option<bool>,
+    resolve_provider: Option<bool>,
 }
 
 impl Json for WorkspaceSymbolOptions {
@@ -13530,7 +13531,7 @@ impl Json for WorkspaceSymbolOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workDoneProgress" => {
                     s.work_done_progress = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -13570,7 +13571,7 @@ impl Json for CodeLensOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workDoneProgress" => {
                     s.work_done_progress = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -13587,10 +13588,10 @@ impl Json for CodeLensOptions {
 // Provider options for a DocumentLinkRequest.
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct DocumentLinkOptions {
-    pub work_done_progress: Option<bool>,
+    work_done_progress: Option<bool>,
 
     // Document links have a resolve provider as well.
-    pub resolve_provider: Option<bool>,
+    resolve_provider: Option<bool>,
 }
 
 impl Json for DocumentLinkOptions {
@@ -13610,7 +13611,7 @@ impl Json for DocumentLinkOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workDoneProgress" => {
                     s.work_done_progress = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -13641,12 +13642,12 @@ pub struct FormattingOptions {
     // Insert a newline character at the end of the file if one does not exist.
     //
     // Since: 3.15.0
-    pub insert_final_newline: Option<bool>,
+    insert_final_newline: Option<bool>,
 
     // Trim all newlines after the final newline at the end of the file.
     //
     // Since: 3.15.0
-    pub trim_final_newlines: Option<bool>,
+    trim_final_newlines: Option<bool>,
 }
 
 impl Json for FormattingOptions {
@@ -13670,7 +13671,7 @@ impl Json for FormattingOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "tabSize" => {
                     seen |= 1 << 0;
                     s.tab_size = field(k, v)?;
@@ -13699,7 +13700,7 @@ impl Json for FormattingOptions {
 // Provider options for a DocumentFormattingRequest.
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct DocumentFormattingOptions {
-    pub work_done_progress: Option<bool>,
+    work_done_progress: Option<bool>,
 }
 
 impl Json for DocumentFormattingOptions {
@@ -13718,7 +13719,7 @@ impl Json for DocumentFormattingOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "workDoneProgress" {
+            if k == "workDoneProgress" {
                 s.work_done_progress = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -13729,12 +13730,12 @@ impl Json for DocumentFormattingOptions {
 // Provider options for a DocumentRangeFormattingRequest.
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct DocumentRangeFormattingOptions {
-    pub work_done_progress: Option<bool>,
+    work_done_progress: Option<bool>,
 
     // Whether the server supports formatting multiple ranges at once.
     //
     // Since: 3.18.0
-    pub ranges_support: Option<bool>,
+    ranges_support: Option<bool>,
 }
 
 impl Json for DocumentRangeFormattingOptions {
@@ -13754,7 +13755,7 @@ impl Json for DocumentRangeFormattingOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workDoneProgress" => {
                     s.work_done_progress = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -13796,7 +13797,7 @@ impl Json for DocumentOnTypeFormattingOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "firstTriggerCharacter" => {
                     seen |= 1 << 0;
                     s.first_trigger_character = field(k, v)?;
@@ -13840,7 +13841,7 @@ impl Json for RenameOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workDoneProgress" => {
                     s.work_done_progress = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -13880,7 +13881,7 @@ impl Json for PrepareRenamePlaceholder {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "range" => {
                     seen |= 1 << 0;
                     s.range = field(k, v)?;
@@ -13900,7 +13901,7 @@ impl Json for PrepareRenamePlaceholder {
 // Since: 3.18.0
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct PrepareRenameDefaultBehavior {
-    pub default_behavior: bool,
+    default_behavior: bool,
 }
 
 impl Json for PrepareRenameDefaultBehavior {
@@ -13920,7 +13921,7 @@ impl Json for PrepareRenameDefaultBehavior {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "defaultBehavior" {
+            if k == "defaultBehavior" {
                 seen |= 1 << 0;
                 s.default_behavior = field(k, v)?;
             }
@@ -13933,10 +13934,10 @@ impl Json for PrepareRenameDefaultBehavior {
 // The server capabilities of a ExecuteCommandRequest.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct ExecuteCommandOptions {
-    pub work_done_progress: Option<bool>,
+    work_done_progress: Option<bool>,
 
     // The commands to be executed on the server
-    pub commands: Vec<String>,
+    commands: Vec<String>,
 }
 
 impl Json for ExecuteCommandOptions {
@@ -13957,7 +13958,7 @@ impl Json for ExecuteCommandOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workDoneProgress" => {
                     s.work_done_progress = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -13979,7 +13980,7 @@ impl Json for ExecuteCommandOptions {
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct WorkspaceEditMetadata {
     // Signal to the editor that this edit is a refactoring.
-    pub is_refactoring: Option<bool>,
+    is_refactoring: Option<bool>,
 }
 
 impl Json for WorkspaceEditMetadata {
@@ -13998,7 +13999,7 @@ impl Json for WorkspaceEditMetadata {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "isRefactoring" {
+            if k == "isRefactoring" {
                 s.is_refactoring = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -14027,7 +14028,7 @@ impl Json for WorkDoneProgressOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "workDoneProgress" {
+            if k == "workDoneProgress" {
                 s.work_done_progress = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -14063,7 +14064,7 @@ impl Json for SemanticTokensLegend {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "tokenTypes" => {
                     seen |= 1 << 0;
                     s.token_types = field_non_null(k, v, Self::GO_TYPE)?;
@@ -14086,7 +14087,7 @@ impl Json for SemanticTokensLegend {
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct SemanticTokensFullDelta {
     // The server supports deltas for full documents.
-    pub delta: Option<bool>,
+    delta: Option<bool>,
 }
 
 impl Json for SemanticTokensFullDelta {
@@ -14105,7 +14106,7 @@ impl Json for SemanticTokensFullDelta {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "delta" {
+            if k == "delta" {
                 s.delta = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -14144,7 +14145,7 @@ impl Json for OptionalVersionedTextDocumentIdentifier {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "uri" => {
                     seen |= 1 << 0;
                     s.uri = field(k, v)?;
@@ -14168,14 +14169,14 @@ impl Json for OptionalVersionedTextDocumentIdentifier {
 pub struct AnnotatedTextEdit {
     // The range of the text document to be manipulated. To insert
     // text into a document create a range where start === end.
-    pub range: Range,
+    range: Range,
 
     // The string to be inserted. For delete operations use an
     // empty string.
-    pub new_text: String,
+    new_text: String,
 
     // The actual identifier of the change annotation
-    pub annotation_id: String,
+    annotation_id: String,
 }
 
 impl Json for AnnotatedTextEdit {
@@ -14197,7 +14198,7 @@ impl Json for AnnotatedTextEdit {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "range" => {
                     seen |= 1 << 0;
                     s.range = field(k, v)?;
@@ -14224,13 +14225,13 @@ impl Json for AnnotatedTextEdit {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct SnippetTextEdit {
     // The range of the text document to be manipulated.
-    pub range: Range,
+    range: Range,
 
     // The snippet to be inserted.
-    pub snippet: StringValue,
+    snippet: StringValue,
 
     // The actual identifier of the snippet edit.
-    pub annotation_id: Option<String>,
+    annotation_id: Option<String>,
 }
 
 impl Json for SnippetTextEdit {
@@ -14252,7 +14253,7 @@ impl Json for SnippetTextEdit {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "range" => {
                     seen |= 1 << 0;
                     s.range = field(k, v)?;
@@ -14276,12 +14277,12 @@ impl Json for SnippetTextEdit {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct ResourceOperation {
     // The resource operation kind.
-    pub kind: String,
+    kind: String,
 
     // An optional annotation identifier describing the operation.
     //
     // Since: 3.16.0
-    pub annotation_id: Option<String>,
+    annotation_id: Option<String>,
 }
 
 impl Json for ResourceOperation {
@@ -14302,7 +14303,7 @@ impl Json for ResourceOperation {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "kind" => {
                     seen |= 1 << 0;
                     s.kind = field(k, v)?;
@@ -14322,10 +14323,10 @@ impl Json for ResourceOperation {
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct CreateFileOptions {
     // Overwrite existing file. Overwrite wins over `ignoreIfExists`
-    pub overwrite: Option<bool>,
+    overwrite: Option<bool>,
 
     // Ignore if exists.
-    pub ignore_if_exists: Option<bool>,
+    ignore_if_exists: Option<bool>,
 }
 
 impl Json for CreateFileOptions {
@@ -14345,7 +14346,7 @@ impl Json for CreateFileOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "overwrite" => {
                     s.overwrite = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -14363,10 +14364,10 @@ impl Json for CreateFileOptions {
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct RenameFileOptions {
     // Overwrite target if existing. Overwrite wins over `ignoreIfExists`
-    pub overwrite: Option<bool>,
+    overwrite: Option<bool>,
 
     // Ignores if target exists.
-    pub ignore_if_exists: Option<bool>,
+    ignore_if_exists: Option<bool>,
 }
 
 impl Json for RenameFileOptions {
@@ -14386,7 +14387,7 @@ impl Json for RenameFileOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "overwrite" => {
                     s.overwrite = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -14404,10 +14405,10 @@ impl Json for RenameFileOptions {
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct DeleteFileOptions {
     // Delete the content recursively if a folder is denoted.
-    pub recursive: Option<bool>,
+    recursive: Option<bool>,
 
     // Ignore the operation if the file doesn't exist.
-    pub ignore_if_not_exists: Option<bool>,
+    ignore_if_not_exists: Option<bool>,
 }
 
 impl Json for DeleteFileOptions {
@@ -14427,7 +14428,7 @@ impl Json for DeleteFileOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "recursive" => {
                     s.recursive = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -14484,7 +14485,7 @@ impl Json for FileOperationPattern {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "glob" => {
                     seen |= 1 << 0;
                     s.glob = field(k, v)?;
@@ -14509,15 +14510,15 @@ impl Json for FileOperationPattern {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct FullDocumentDiagnosticReport {
     // A full document diagnostic report.
-    pub kind: StringLiteralFull,
+    kind: StringLiteralFull,
 
     // An optional result id. If provided it will
     // be sent on the next diagnostic request for the
     // same document.
-    pub result_id: Option<String>,
+    result_id: Option<String>,
 
     // The actual items.
-    pub items: Vec<Diagnostic>,
+    items: Vec<Diagnostic>,
 }
 
 impl Json for FullDocumentDiagnosticReport {
@@ -14539,7 +14540,7 @@ impl Json for FullDocumentDiagnosticReport {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "kind" => {
                     seen |= 1 << 0;
                     s.kind = field(k, v)?;
@@ -14569,11 +14570,11 @@ pub struct UnchangedDocumentDiagnosticReport {
     // no changes to the last result. A server can
     // only return `unchanged` if result ids are
     // provided.
-    pub kind: StringLiteralUnchanged,
+    kind: StringLiteralUnchanged,
 
     // A result id which will be sent on the next
     // diagnostic request for the same document.
-    pub result_id: String,
+    result_id: String,
 }
 
 impl Json for UnchangedDocumentDiagnosticReport {
@@ -14594,7 +14595,7 @@ impl Json for UnchangedDocumentDiagnosticReport {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "kind" => {
                     seen |= 1 << 0;
                     s.kind = field(k, v)?;
@@ -14617,22 +14618,22 @@ impl Json for UnchangedDocumentDiagnosticReport {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct WorkspaceFullDocumentDiagnosticReport {
     // A full document diagnostic report.
-    pub kind: StringLiteralFull,
+    kind: StringLiteralFull,
 
     // An optional result id. If provided it will
     // be sent on the next diagnostic request for the
     // same document.
-    pub result_id: Option<String>,
+    result_id: Option<String>,
 
     // The actual items.
-    pub items: Vec<Diagnostic>,
+    items: Vec<Diagnostic>,
 
     // The URI for which diagnostic information is reported.
-    pub uri: DocumentUri,
+    uri: DocumentUri,
 
     // The version number for which the diagnostics are reported.
     // If the document is not marked as open `null` can be provided.
-    pub version: IntegerOrNull,
+    version: IntegerOrNull,
 }
 
 impl Json for WorkspaceFullDocumentDiagnosticReport {
@@ -14656,7 +14657,7 @@ impl Json for WorkspaceFullDocumentDiagnosticReport {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "kind" => {
                     seen |= 1 << 0;
                     s.kind = field(k, v)?;
@@ -14693,18 +14694,18 @@ pub struct WorkspaceUnchangedDocumentDiagnosticReport {
     // no changes to the last result. A server can
     // only return `unchanged` if result ids are
     // provided.
-    pub kind: StringLiteralUnchanged,
+    kind: StringLiteralUnchanged,
 
     // A result id which will be sent on the next
     // diagnostic request for the same document.
-    pub result_id: String,
+    result_id: String,
 
     // The URI for which diagnostic information is reported.
-    pub uri: DocumentUri,
+    uri: DocumentUri,
 
     // The version number for which the diagnostics are reported.
     // If the document is not marked as open `null` can be provided.
-    pub version: IntegerOrNull,
+    version: IntegerOrNull,
 }
 
 impl Json for WorkspaceUnchangedDocumentDiagnosticReport {
@@ -14727,7 +14728,7 @@ impl Json for WorkspaceUnchangedDocumentDiagnosticReport {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "kind" => {
                     seen |= 1 << 0;
                     s.kind = field(k, v)?;
@@ -14758,10 +14759,10 @@ impl Json for WorkspaceUnchangedDocumentDiagnosticReport {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct SelectedCompletionInfo {
     // The range that will be replaced if this completion item is accepted.
-    pub range: Range,
+    range: Range,
 
     // The text the range will be replaced with if this completion is accepted.
-    pub text: String,
+    text: String,
 }
 
 impl Json for SelectedCompletionInfo {
@@ -14782,7 +14783,7 @@ impl Json for SelectedCompletionInfo {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "range" => {
                     seen |= 1 << 0;
                     s.range = field(k, v)?;
@@ -14807,10 +14808,10 @@ impl Json for SelectedCompletionInfo {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct ClientInfo {
     // The name of the client as defined by the client.
-    pub name: String,
+    name: String,
 
     // The client's version as defined by the client.
-    pub version: Option<String>,
+    version: Option<String>,
 }
 
 impl Json for ClientInfo {
@@ -14831,7 +14832,7 @@ impl Json for ClientInfo {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "name" => {
                     seen |= 1 << 0;
                     s.name = field(k, v)?;
@@ -14914,7 +14915,7 @@ impl Json for ClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workspace" => {
                     s.workspace = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -14996,7 +14997,7 @@ impl Json for TextDocumentSyncOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "openClose" => {
                     s.open_close = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -15058,7 +15059,7 @@ impl Json for WorkspaceOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workspaceFolders" => {
                     s.workspace_folders = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -15109,7 +15110,7 @@ impl Json for TextDocumentContentChangePartial {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "range" => {
                     seen |= 1 << 0;
                     s.range = field(k, v)?;
@@ -15153,7 +15154,7 @@ impl Json for TextDocumentContentChangeWholeDocument {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "text" {
+            if k == "text" {
                 seen |= 1 << 0;
                 s.text = field(k, v)?;
             }
@@ -15169,7 +15170,7 @@ impl Json for TextDocumentContentChangeWholeDocument {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct CodeDescription {
     // An URI to open with more information about the diagnostic error.
-    pub href: URI,
+    href: URI,
 }
 
 impl Json for CodeDescription {
@@ -15189,7 +15190,7 @@ impl Json for CodeDescription {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "href" {
+            if k == "href" {
                 seen |= 1 << 0;
                 s.href = field(k, v)?;
             }
@@ -15229,7 +15230,7 @@ impl Json for DiagnosticRelatedInformation {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "location" => {
                     seen |= 1 << 0;
                     s.location = field(k, v)?;
@@ -15274,7 +15275,7 @@ impl Json for EditRangeWithInsertReplace {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "insert" => {
                     seen |= 1 << 0;
                     s.insert = field(k, v)?;
@@ -15318,7 +15319,7 @@ impl Json for ServerCompletionItemOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "labelDetailsSupport" {
+            if k == "labelDetailsSupport" {
                 s.label_details_support = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -15331,9 +15332,9 @@ impl Json for ServerCompletionItemOptions {
 // Deprecated: use MarkupContent instead.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct MarkedStringWithLanguage {
-    pub language: String,
+    language: String,
 
-    pub value: String,
+    value: String,
 }
 
 impl Json for MarkedStringWithLanguage {
@@ -15354,7 +15355,7 @@ impl Json for MarkedStringWithLanguage {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "language" => {
                     seen |= 1 << 0;
                     s.language = field(k, v)?;
@@ -15412,7 +15413,7 @@ impl Json for ParameterInformation {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "label" => {
                     seen |= 1 << 0;
                     s.label = field(k, v)?;
@@ -15438,12 +15439,12 @@ pub struct CodeActionKindDocumentation {
     // If the kind is generic, such as `CodeActionKind.Refactor`, the documentation will be shown whenever any
     // refactorings are returned. If the kind if more specific, such as `CodeActionKind.RefactorExtract`, the
     // documentation will only be shown when extract refactoring code actions are returned.
-    pub kind: CodeActionKind,
+    kind: CodeActionKind,
 
     // Command that is ued to display the documentation to the user.
     //
     // The title of this documentation code action is taken from Command.title
-    pub command: Command,
+    command: Command,
 }
 
 impl Json for CodeActionKindDocumentation {
@@ -15464,7 +15465,7 @@ impl Json for CodeActionKindDocumentation {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "kind" => {
                     seen |= 1 << 0;
                     s.kind = field(k, v)?;
@@ -15487,7 +15488,7 @@ impl Json for CodeActionKindDocumentation {
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct FileOperationPatternOptions {
     // The pattern should be matched ignoring casing.
-    pub ignore_case: Option<bool>,
+    ignore_case: Option<bool>,
 }
 
 impl Json for FileOperationPatternOptions {
@@ -15506,7 +15507,7 @@ impl Json for FileOperationPatternOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "ignoreCase" {
+            if k == "ignoreCase" {
                 s.ignore_case = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -15624,7 +15625,7 @@ impl Json for WorkspaceClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "applyEdit" => {
                     s.apply_edit = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -15684,133 +15685,133 @@ impl Json for WorkspaceClientCapabilities {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct TextDocumentClientCapabilities {
     // Defines which synchronization capabilities the client supports.
-    pub synchronization: Option<TextDocumentSyncClientCapabilities>,
+    synchronization: Option<TextDocumentSyncClientCapabilities>,
 
     // Defines which filters the client supports.
     //
     // Since: 3.18.0
-    pub filters: Option<TextDocumentFilterClientCapabilities>,
+    filters: Option<TextDocumentFilterClientCapabilities>,
 
     // Capabilities specific to the `textDocument/completion` request.
-    pub completion: Option<CompletionClientCapabilities>,
+    completion: Option<CompletionClientCapabilities>,
 
     // Capabilities specific to the `textDocument/hover` request.
-    pub hover: Option<HoverClientCapabilities>,
+    hover: Option<HoverClientCapabilities>,
 
     // Capabilities specific to the `textDocument/signatureHelp` request.
-    pub signature_help: Option<SignatureHelpClientCapabilities>,
+    signature_help: Option<SignatureHelpClientCapabilities>,
 
     // Capabilities specific to the `textDocument/declaration` request.
     //
     // Since: 3.14.0
-    pub declaration: Option<DeclarationClientCapabilities>,
+    declaration: Option<DeclarationClientCapabilities>,
 
     // Capabilities specific to the `textDocument/definition` request.
-    pub definition: Option<DefinitionClientCapabilities>,
+    definition: Option<DefinitionClientCapabilities>,
 
     // Capabilities specific to the `textDocument/typeDefinition` request.
     //
     // Since: 3.6.0
-    pub type_definition: Option<TypeDefinitionClientCapabilities>,
+    type_definition: Option<TypeDefinitionClientCapabilities>,
 
     // Capabilities specific to the `textDocument/implementation` request.
     //
     // Since: 3.6.0
-    pub implementation: Option<ImplementationClientCapabilities>,
+    implementation: Option<ImplementationClientCapabilities>,
 
     // Capabilities specific to the `textDocument/references` request.
-    pub references: Option<ReferenceClientCapabilities>,
+    references: Option<ReferenceClientCapabilities>,
 
     // Capabilities specific to the `textDocument/documentHighlight` request.
-    pub document_highlight: Option<DocumentHighlightClientCapabilities>,
+    document_highlight: Option<DocumentHighlightClientCapabilities>,
 
     // Capabilities specific to the `textDocument/documentSymbol` request.
-    pub document_symbol: Option<DocumentSymbolClientCapabilities>,
+    document_symbol: Option<DocumentSymbolClientCapabilities>,
 
     // Capabilities specific to the `textDocument/codeAction` request.
-    pub code_action: Option<CodeActionClientCapabilities>,
+    code_action: Option<CodeActionClientCapabilities>,
 
     // Capabilities specific to the `textDocument/codeLens` request.
-    pub code_lens: Option<CodeLensClientCapabilities>,
+    code_lens: Option<CodeLensClientCapabilities>,
 
     // Capabilities specific to the `textDocument/documentLink` request.
-    pub document_link: Option<DocumentLinkClientCapabilities>,
+    document_link: Option<DocumentLinkClientCapabilities>,
 
     // Capabilities specific to the `textDocument/documentColor` and the
     // `textDocument/colorPresentation` request.
     //
     // Since: 3.6.0
-    pub color_provider: Option<DocumentColorClientCapabilities>,
+    color_provider: Option<DocumentColorClientCapabilities>,
 
     // Capabilities specific to the `textDocument/formatting` request.
-    pub formatting: Option<DocumentFormattingClientCapabilities>,
+    formatting: Option<DocumentFormattingClientCapabilities>,
 
     // Capabilities specific to the `textDocument/rangeFormatting` request.
-    pub range_formatting: Option<DocumentRangeFormattingClientCapabilities>,
+    range_formatting: Option<DocumentRangeFormattingClientCapabilities>,
 
     // Capabilities specific to the `textDocument/onTypeFormatting` request.
-    pub on_type_formatting: Option<DocumentOnTypeFormattingClientCapabilities>,
+    on_type_formatting: Option<DocumentOnTypeFormattingClientCapabilities>,
 
     // Capabilities specific to the `textDocument/rename` request.
-    pub rename: Option<RenameClientCapabilities>,
+    rename: Option<RenameClientCapabilities>,
 
     // Capabilities specific to the `textDocument/foldingRange` request.
     //
     // Since: 3.10.0
-    pub folding_range: Option<FoldingRangeClientCapabilities>,
+    folding_range: Option<FoldingRangeClientCapabilities>,
 
     // Capabilities specific to the `textDocument/selectionRange` request.
     //
     // Since: 3.15.0
-    pub selection_range: Option<SelectionRangeClientCapabilities>,
+    selection_range: Option<SelectionRangeClientCapabilities>,
 
     // Capabilities specific to the `textDocument/publishDiagnostics` notification.
-    pub publish_diagnostics: Option<PublishDiagnosticsClientCapabilities>,
+    publish_diagnostics: Option<PublishDiagnosticsClientCapabilities>,
 
     // Capabilities specific to the various call hierarchy requests.
     //
     // Since: 3.16.0
-    pub call_hierarchy: Option<CallHierarchyClientCapabilities>,
+    call_hierarchy: Option<CallHierarchyClientCapabilities>,
 
     // Capabilities specific to the various semantic token request.
     //
     // Since: 3.16.0
-    pub semantic_tokens: Option<SemanticTokensClientCapabilities>,
+    semantic_tokens: Option<SemanticTokensClientCapabilities>,
 
     // Capabilities specific to the `textDocument/linkedEditingRange` request.
     //
     // Since: 3.16.0
-    pub linked_editing_range: Option<LinkedEditingRangeClientCapabilities>,
+    linked_editing_range: Option<LinkedEditingRangeClientCapabilities>,
 
     // Client capabilities specific to the `textDocument/moniker` request.
     //
     // Since: 3.16.0
-    pub moniker: Option<MonikerClientCapabilities>,
+    moniker: Option<MonikerClientCapabilities>,
 
     // Capabilities specific to the various type hierarchy requests.
     //
     // Since: 3.17.0
-    pub type_hierarchy: Option<TypeHierarchyClientCapabilities>,
+    type_hierarchy: Option<TypeHierarchyClientCapabilities>,
 
     // Capabilities specific to the `textDocument/inlineValue` request.
     //
     // Since: 3.17.0
-    pub inline_value: Option<InlineValueClientCapabilities>,
+    inline_value: Option<InlineValueClientCapabilities>,
 
     // Capabilities specific to the `textDocument/inlayHint` request.
     //
     // Since: 3.17.0
-    pub inlay_hint: Option<InlayHintClientCapabilities>,
+    inlay_hint: Option<InlayHintClientCapabilities>,
 
     // Capabilities specific to the diagnostic pull model.
     //
     // Since: 3.17.0
-    pub diagnostic: Option<DiagnosticClientCapabilities>,
+    diagnostic: Option<DiagnosticClientCapabilities>,
 
     // Client capabilities specific to inline completions.
     //
     // Since: 3.18.0
-    pub inline_completion: Option<InlineCompletionClientCapabilities>,
+    inline_completion: Option<InlineCompletionClientCapabilities>,
 }
 
 impl Json for TextDocumentClientCapabilities {
@@ -15860,7 +15861,7 @@ impl Json for TextDocumentClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "synchronization" => {
                     s.synchronization = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -16006,7 +16007,7 @@ impl Json for WindowClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "workDoneProgress" => {
                     s.work_done_progress = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -16034,17 +16035,17 @@ pub struct GeneralClientCapabilities {
     // anymore since the information is outdated).
     //
     // Since: 3.17.0
-    pub stale_request_support: Option<StaleRequestSupportOptions>,
+    stale_request_support: Option<StaleRequestSupportOptions>,
 
     // Client capabilities specific to regular expressions.
     //
     // Since: 3.16.0
-    pub regular_expressions: Option<RegularExpressionsClientCapabilities>,
+    regular_expressions: Option<RegularExpressionsClientCapabilities>,
 
     // Client capabilities specific to the client's markdown parser.
     //
     // Since: 3.16.0
-    pub markdown: Option<MarkdownClientCapabilities>,
+    markdown: Option<MarkdownClientCapabilities>,
 
     // The position encodings supported by the client. Client and server
     // have to agree on the same position encoding to ensure that offsets
@@ -16064,7 +16065,7 @@ pub struct GeneralClientCapabilities {
     // side.
     //
     // Since: 3.17.0
-    pub position_encodings: Option<Vec<PositionEncodingKind>>,
+    position_encodings: Option<Vec<PositionEncodingKind>>,
 }
 
 impl Json for GeneralClientCapabilities {
@@ -16086,7 +16087,7 @@ impl Json for GeneralClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "staleRequestSupport" => {
                     s.stale_request_support = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -16109,7 +16110,7 @@ impl Json for GeneralClientCapabilities {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct WorkspaceFoldersServerCapabilities {
     // The server has support for workspace folders
-    pub supported: Option<bool>,
+    supported: Option<bool>,
 
     // Whether the server wants to receive workspace folder
     // change notifications.
@@ -16118,7 +16119,7 @@ pub struct WorkspaceFoldersServerCapabilities {
     // under which the notification is registered on the client
     // side. The ID can be used to unregister for these events
     // using the `client/unregisterCapability` request.
-    pub change_notifications: Option<StringOrBoolean>,
+    change_notifications: Option<StringOrBoolean>,
 }
 
 impl Json for WorkspaceFoldersServerCapabilities {
@@ -16138,7 +16139,7 @@ impl Json for WorkspaceFoldersServerCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "supported" => {
                     s.supported = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -16197,7 +16198,7 @@ impl Json for FileOperationOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "didCreate" => {
                     s.did_create = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -16256,7 +16257,7 @@ impl Json for RelativePattern {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "baseUri" => {
                     seen |= 1 << 0;
                     s.base_uri = field(k, v)?;
@@ -16338,7 +16339,7 @@ impl Json for WorkspaceEditClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "documentChanges" => {
                     s.document_changes = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -16370,7 +16371,7 @@ impl Json for WorkspaceEditClientCapabilities {
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct DidChangeConfigurationClientCapabilities {
     // Did change configuration notification supports dynamic registration.
-    pub dynamic_registration: Option<bool>,
+    dynamic_registration: Option<bool>,
 }
 
 impl Json for DidChangeConfigurationClientCapabilities {
@@ -16389,7 +16390,7 @@ impl Json for DidChangeConfigurationClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "dynamicRegistration" {
+            if k == "dynamicRegistration" {
                 s.dynamic_registration = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -16402,13 +16403,13 @@ pub struct DidChangeWatchedFilesClientCapabilities {
     // Did change watched files notification supports dynamic registration. Please note
     // that the current protocol doesn't support static configuration for file changes
     // from the server side.
-    pub dynamic_registration: Option<bool>,
+    dynamic_registration: Option<bool>,
 
     // Whether the client has support for pattern
     // or not.
     //
     // Since: 3.17.0
-    pub relative_pattern_support: Option<bool>,
+    relative_pattern_support: Option<bool>,
 }
 
 impl Json for DidChangeWatchedFilesClientCapabilities {
@@ -16428,7 +16429,7 @@ impl Json for DidChangeWatchedFilesClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "dynamicRegistration" => {
                     s.dynamic_registration = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -16446,23 +16447,23 @@ impl Json for DidChangeWatchedFilesClientCapabilities {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct WorkspaceSymbolClientCapabilities {
     // Symbol request supports dynamic registration.
-    pub dynamic_registration: Option<bool>,
+    dynamic_registration: Option<bool>,
 
     // Specific capabilities for the `SymbolKind` in the `workspace/symbol` request.
-    pub symbol_kind: Option<ClientSymbolKindOptions>,
+    symbol_kind: Option<ClientSymbolKindOptions>,
 
     // The client supports tags on `SymbolInformation`.
     // Clients supporting tags have to handle unknown tags gracefully.
     //
     // Since: 3.16.0
-    pub tag_support: Option<ClientSymbolTagOptions>,
+    tag_support: Option<ClientSymbolTagOptions>,
 
     // The client support partial workspace symbols. The client will send the
     // request `workspaceSymbol/resolve` to the server to resolve additional
     // properties.
     //
     // Since: 3.17.0
-    pub resolve_support: Option<ClientSymbolResolveOptions>,
+    resolve_support: Option<ClientSymbolResolveOptions>,
 }
 
 impl Json for WorkspaceSymbolClientCapabilities {
@@ -16484,7 +16485,7 @@ impl Json for WorkspaceSymbolClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "dynamicRegistration" => {
                     s.dynamic_registration = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -16508,7 +16509,7 @@ impl Json for WorkspaceSymbolClientCapabilities {
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct ExecuteCommandClientCapabilities {
     // Execute command supports dynamic registration.
-    pub dynamic_registration: Option<bool>,
+    dynamic_registration: Option<bool>,
 }
 
 impl Json for ExecuteCommandClientCapabilities {
@@ -16527,7 +16528,7 @@ impl Json for ExecuteCommandClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "dynamicRegistration" {
+            if k == "dynamicRegistration" {
                 s.dynamic_registration = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -16545,7 +16546,7 @@ pub struct SemanticTokensWorkspaceClientCapabilities {
     // semantic tokens currently shown. It should be used with absolute care
     // and is useful for situation where a server for example detects a project
     // wide change that requires such a calculation.
-    pub refresh_support: Option<bool>,
+    refresh_support: Option<bool>,
 }
 
 impl Json for SemanticTokensWorkspaceClientCapabilities {
@@ -16564,7 +16565,7 @@ impl Json for SemanticTokensWorkspaceClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "refreshSupport" {
+            if k == "refreshSupport" {
                 s.refresh_support = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -16582,7 +16583,7 @@ pub struct CodeLensWorkspaceClientCapabilities {
     // code lenses currently shown. It should be used with absolute care and is
     // useful for situation where a server for example detect a project wide
     // change that requires such a calculation.
-    pub refresh_support: Option<bool>,
+    refresh_support: Option<bool>,
 }
 
 impl Json for CodeLensWorkspaceClientCapabilities {
@@ -16601,7 +16602,7 @@ impl Json for CodeLensWorkspaceClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "refreshSupport" {
+            if k == "refreshSupport" {
                 s.refresh_support = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -16618,25 +16619,25 @@ impl Json for CodeLensWorkspaceClientCapabilities {
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct FileOperationClientCapabilities {
     // Whether the client supports dynamic registration for file requests/notifications.
-    pub dynamic_registration: Option<bool>,
+    dynamic_registration: Option<bool>,
 
     // The client has support for sending didCreateFiles notifications.
-    pub did_create: Option<bool>,
+    did_create: Option<bool>,
 
     // The client has support for sending willCreateFiles requests.
-    pub will_create: Option<bool>,
+    will_create: Option<bool>,
 
     // The client has support for sending didRenameFiles notifications.
-    pub did_rename: Option<bool>,
+    did_rename: Option<bool>,
 
     // The client has support for sending willRenameFiles requests.
-    pub will_rename: Option<bool>,
+    will_rename: Option<bool>,
 
     // The client has support for sending didDeleteFiles notifications.
-    pub did_delete: Option<bool>,
+    did_delete: Option<bool>,
 
     // The client has support for sending willDeleteFiles requests.
-    pub will_delete: Option<bool>,
+    will_delete: Option<bool>,
 }
 
 impl Json for FileOperationClientCapabilities {
@@ -16661,7 +16662,7 @@ impl Json for FileOperationClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "dynamicRegistration" => {
                     s.dynamic_registration = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -16702,7 +16703,7 @@ pub struct InlineValueWorkspaceClientCapabilities {
     // inline values currently shown. It should be used with absolute care and is
     // useful for situation where a server for example detects a project wide
     // change that requires such a calculation.
-    pub refresh_support: Option<bool>,
+    refresh_support: Option<bool>,
 }
 
 impl Json for InlineValueWorkspaceClientCapabilities {
@@ -16721,7 +16722,7 @@ impl Json for InlineValueWorkspaceClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "refreshSupport" {
+            if k == "refreshSupport" {
                 s.refresh_support = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -16741,7 +16742,7 @@ pub struct InlayHintWorkspaceClientCapabilities {
     // inlay hints currently shown. It should be used with absolute care and
     // is useful for situation where a server for example detects a project wide
     // change that requires such a calculation.
-    pub refresh_support: Option<bool>,
+    refresh_support: Option<bool>,
 }
 
 impl Json for InlayHintWorkspaceClientCapabilities {
@@ -16760,7 +16761,7 @@ impl Json for InlayHintWorkspaceClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "refreshSupport" {
+            if k == "refreshSupport" {
                 s.refresh_support = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -16780,7 +16781,7 @@ pub struct DiagnosticWorkspaceClientCapabilities {
     // pulled diagnostics currently shown. It should be used with absolute care and
     // is useful for situation where a server for example detects a project wide
     // change that requires such a calculation.
-    pub refresh_support: Option<bool>,
+    refresh_support: Option<bool>,
 }
 
 impl Json for DiagnosticWorkspaceClientCapabilities {
@@ -16799,7 +16800,7 @@ impl Json for DiagnosticWorkspaceClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "refreshSupport" {
+            if k == "refreshSupport" {
                 s.refresh_support = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -16821,7 +16822,7 @@ pub struct FoldingRangeWorkspaceClientCapabilities {
     // change that requires such a calculation.
     //
     // Since: 3.18.0
-    pub refresh_support: Option<bool>,
+    refresh_support: Option<bool>,
 }
 
 impl Json for FoldingRangeWorkspaceClientCapabilities {
@@ -16840,7 +16841,7 @@ impl Json for FoldingRangeWorkspaceClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "refreshSupport" {
+            if k == "refreshSupport" {
                 s.refresh_support = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -16854,7 +16855,7 @@ impl Json for FoldingRangeWorkspaceClientCapabilities {
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct TextDocumentContentClientCapabilities {
     // Text document content provider supports dynamic registration.
-    pub dynamic_registration: Option<bool>,
+    dynamic_registration: Option<bool>,
 }
 
 impl Json for TextDocumentContentClientCapabilities {
@@ -16873,7 +16874,7 @@ impl Json for TextDocumentContentClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "dynamicRegistration" {
+            if k == "dynamicRegistration" {
                 s.dynamic_registration = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -16884,18 +16885,18 @@ impl Json for TextDocumentContentClientCapabilities {
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct TextDocumentSyncClientCapabilities {
     // Whether text document synchronization supports dynamic registration.
-    pub dynamic_registration: Option<bool>,
+    dynamic_registration: Option<bool>,
 
     // The client supports sending will save notifications.
-    pub will_save: Option<bool>,
+    will_save: Option<bool>,
 
     // The client supports sending a will save request and
     // waits for a response providing text edits which will
     // be applied to the document before it is saved.
-    pub will_save_wait_until: Option<bool>,
+    will_save_wait_until: Option<bool>,
 
     // The client supports did save notifications.
-    pub did_save: Option<bool>,
+    did_save: Option<bool>,
 }
 
 impl Json for TextDocumentSyncClientCapabilities {
@@ -16917,7 +16918,7 @@ impl Json for TextDocumentSyncClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "dynamicRegistration" => {
                     s.dynamic_registration = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -16942,7 +16943,7 @@ pub struct TextDocumentFilterClientCapabilities {
     // The client supports Relative Patterns.
     //
     // Since: 3.18.0
-    pub relative_pattern_support: Option<bool>,
+    relative_pattern_support: Option<bool>,
 }
 
 impl Json for TextDocumentFilterClientCapabilities {
@@ -16961,7 +16962,7 @@ impl Json for TextDocumentFilterClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "relativePatternSupport" {
+            if k == "relativePatternSupport" {
                 s.relative_pattern_support = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -16973,31 +16974,31 @@ impl Json for TextDocumentFilterClientCapabilities {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct CompletionClientCapabilities {
     // Whether completion supports dynamic registration.
-    pub dynamic_registration: Option<bool>,
+    dynamic_registration: Option<bool>,
 
     // The client supports the following `CompletionItem` specific
     // capabilities.
-    pub completion_item: Option<ClientCompletionItemOptions>,
+    completion_item: Option<ClientCompletionItemOptions>,
 
     // The client supports the following completion item kinds.
-    pub completion_item_kind: Option<ClientCompletionItemOptionsKind>,
+    completion_item_kind: Option<ClientCompletionItemOptionsKind>,
 
     // Defines how the client handles whitespace and indentation
     // when accepting a completion item that uses multi line
     // text in either `insertText` or `textEdit`.
     //
     // Since: 3.17.0
-    pub insert_text_mode: Option<InsertTextMode>,
+    insert_text_mode: Option<InsertTextMode>,
 
     // The client supports to send additional context information for a
     // `textDocument/completion` request.
-    pub context_support: Option<bool>,
+    context_support: Option<bool>,
 
     // The client supports the following `CompletionList` specific
     // capabilities.
     //
     // Since: 3.17.0
-    pub completion_list: Option<CompletionListCapabilities>,
+    completion_list: Option<CompletionListCapabilities>,
 }
 
 impl Json for CompletionClientCapabilities {
@@ -17021,7 +17022,7 @@ impl Json for CompletionClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "dynamicRegistration" => {
                     s.dynamic_registration = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -17050,11 +17051,11 @@ impl Json for CompletionClientCapabilities {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct HoverClientCapabilities {
     // Whether hover supports dynamic registration.
-    pub dynamic_registration: Option<bool>,
+    dynamic_registration: Option<bool>,
 
     // Client supports the following content formats for the content
     // property. The order describes the preferred format of the client.
-    pub content_format: Option<Vec<MarkupKind>>,
+    content_format: Option<Vec<MarkupKind>>,
 }
 
 impl Json for HoverClientCapabilities {
@@ -17074,7 +17075,7 @@ impl Json for HoverClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "dynamicRegistration" => {
                     s.dynamic_registration = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -17092,11 +17093,11 @@ impl Json for HoverClientCapabilities {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct SignatureHelpClientCapabilities {
     // Whether signature help supports dynamic registration.
-    pub dynamic_registration: Option<bool>,
+    dynamic_registration: Option<bool>,
 
     // The client supports the following `SignatureInformation`
     // specific properties.
-    pub signature_information: Option<ClientSignatureInformationOptions>,
+    signature_information: Option<ClientSignatureInformationOptions>,
 
     // The client supports to send additional context information for a
     // `textDocument/signatureHelp` request. A client that opts into
@@ -17104,7 +17105,7 @@ pub struct SignatureHelpClientCapabilities {
     // `SignatureHelpOptions`.
     //
     // Since: 3.15.0
-    pub context_support: Option<bool>,
+    context_support: Option<bool>,
 }
 
 impl Json for SignatureHelpClientCapabilities {
@@ -17125,7 +17126,7 @@ impl Json for SignatureHelpClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "dynamicRegistration" => {
                     s.dynamic_registration = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -17148,10 +17149,10 @@ pub struct DeclarationClientCapabilities {
     // Whether declaration supports dynamic registration. If this is set to `true`
     // the client supports the new `DeclarationRegistrationOptions` return value
     // for the corresponding server capability as well.
-    pub dynamic_registration: Option<bool>,
+    dynamic_registration: Option<bool>,
 
     // The client supports additional metadata in the form of declaration links.
-    pub link_support: Option<bool>,
+    link_support: Option<bool>,
 }
 
 impl Json for DeclarationClientCapabilities {
@@ -17171,7 +17172,7 @@ impl Json for DeclarationClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "dynamicRegistration" => {
                     s.dynamic_registration = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -17189,12 +17190,12 @@ impl Json for DeclarationClientCapabilities {
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct DefinitionClientCapabilities {
     // Whether definition supports dynamic registration.
-    pub dynamic_registration: Option<bool>,
+    dynamic_registration: Option<bool>,
 
     // The client supports additional metadata in the form of definition links.
     //
     // Since: 3.14.0
-    pub link_support: Option<bool>,
+    link_support: Option<bool>,
 }
 
 impl Json for DefinitionClientCapabilities {
@@ -17214,7 +17215,7 @@ impl Json for DefinitionClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "dynamicRegistration" => {
                     s.dynamic_registration = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -17234,12 +17235,12 @@ pub struct TypeDefinitionClientCapabilities {
     // Whether implementation supports dynamic registration. If this is set to `true`
     // the client supports the new `TypeDefinitionRegistrationOptions` return value
     // for the corresponding server capability as well.
-    pub dynamic_registration: Option<bool>,
+    dynamic_registration: Option<bool>,
 
     // The client supports additional metadata in the form of definition links.
     //
     // Since 3.14.0
-    pub link_support: Option<bool>,
+    link_support: Option<bool>,
 }
 
 impl Json for TypeDefinitionClientCapabilities {
@@ -17259,7 +17260,7 @@ impl Json for TypeDefinitionClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "dynamicRegistration" => {
                     s.dynamic_registration = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -17279,12 +17280,12 @@ pub struct ImplementationClientCapabilities {
     // Whether implementation supports dynamic registration. If this is set to `true`
     // the client supports the new `ImplementationRegistrationOptions` return value
     // for the corresponding server capability as well.
-    pub dynamic_registration: Option<bool>,
+    dynamic_registration: Option<bool>,
 
     // The client supports additional metadata in the form of definition links.
     //
     // Since: 3.14.0
-    pub link_support: Option<bool>,
+    link_support: Option<bool>,
 }
 
 impl Json for ImplementationClientCapabilities {
@@ -17304,7 +17305,7 @@ impl Json for ImplementationClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "dynamicRegistration" => {
                     s.dynamic_registration = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -17322,7 +17323,7 @@ impl Json for ImplementationClientCapabilities {
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct ReferenceClientCapabilities {
     // Whether references supports dynamic registration.
-    pub dynamic_registration: Option<bool>,
+    dynamic_registration: Option<bool>,
 }
 
 impl Json for ReferenceClientCapabilities {
@@ -17341,7 +17342,7 @@ impl Json for ReferenceClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "dynamicRegistration" {
+            if k == "dynamicRegistration" {
                 s.dynamic_registration = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -17353,7 +17354,7 @@ impl Json for ReferenceClientCapabilities {
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct DocumentHighlightClientCapabilities {
     // Whether document highlight supports dynamic registration.
-    pub dynamic_registration: Option<bool>,
+    dynamic_registration: Option<bool>,
 }
 
 impl Json for DocumentHighlightClientCapabilities {
@@ -17372,7 +17373,7 @@ impl Json for DocumentHighlightClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "dynamicRegistration" {
+            if k == "dynamicRegistration" {
                 s.dynamic_registration = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -17384,27 +17385,27 @@ impl Json for DocumentHighlightClientCapabilities {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct DocumentSymbolClientCapabilities {
     // Whether document symbol supports dynamic registration.
-    pub dynamic_registration: Option<bool>,
+    dynamic_registration: Option<bool>,
 
     // Specific capabilities for the `SymbolKind` in the
     // `textDocument/documentSymbol` request.
-    pub symbol_kind: Option<ClientSymbolKindOptions>,
+    symbol_kind: Option<ClientSymbolKindOptions>,
 
     // The client supports hierarchical document symbols.
-    pub hierarchical_document_symbol_support: Option<bool>,
+    hierarchical_document_symbol_support: Option<bool>,
 
     // The client supports tags on `SymbolInformation`. Tags are supported on
     // `DocumentSymbol` if `hierarchicalDocumentSymbolSupport` is set to true.
     // Clients supporting tags have to handle unknown tags gracefully.
     //
     // Since: 3.16.0
-    pub tag_support: Option<ClientSymbolTagOptions>,
+    tag_support: Option<ClientSymbolTagOptions>,
 
     // The client supports an additional label presented in the UI when
     // registering a document symbol provider.
     //
     // Since: 3.16.0
-    pub label_support: Option<bool>,
+    label_support: Option<bool>,
 }
 
 impl Json for DocumentSymbolClientCapabilities {
@@ -17430,7 +17431,7 @@ impl Json for DocumentSymbolClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "dynamicRegistration" => {
                     s.dynamic_registration = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -17457,37 +17458,37 @@ impl Json for DocumentSymbolClientCapabilities {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct CodeActionClientCapabilities {
     // Whether code action supports dynamic registration.
-    pub dynamic_registration: Option<bool>,
+    dynamic_registration: Option<bool>,
 
     // The client support code action literals of type `CodeAction` as a valid
     // response of the `textDocument/codeAction` request. If the property is not
     // set the request can only return `Command` literals.
     //
     // Since: 3.8.0
-    pub code_action_literal_support: Option<ClientCodeActionLiteralOptions>,
+    code_action_literal_support: Option<ClientCodeActionLiteralOptions>,
 
     // Whether code action supports the `isPreferred` property.
     //
     // Since: 3.15.0
-    pub is_preferred_support: Option<bool>,
+    is_preferred_support: Option<bool>,
 
     // Whether code action supports the `disabled` property.
     //
     // Since: 3.16.0
-    pub disabled_support: Option<bool>,
+    disabled_support: Option<bool>,
 
     // Whether code action supports the `data` property which is
     // preserved between a `textDocument/codeAction` and a
     // `codeAction/resolve` request.
     //
     // Since: 3.16.0
-    pub data_support: Option<bool>,
+    data_support: Option<bool>,
 
     // Whether the client supports resolving additional code action
     // properties via a separate `codeAction/resolve` request.
     //
     // Since: 3.16.0
-    pub resolve_support: Option<ClientCodeActionResolveOptions>,
+    resolve_support: Option<ClientCodeActionResolveOptions>,
 
     // Whether the client honors the change annotations in
     // text edits and resource operations returned via the
@@ -17496,19 +17497,19 @@ pub struct CodeActionClientCapabilities {
     // for confirmation.
     //
     // Since: 3.16.0
-    pub honors_change_annotations: Option<bool>,
+    honors_change_annotations: Option<bool>,
 
     // Whether the client supports documentation for a class of
     // code actions.
     //
     // Since: 3.18.0
-    pub documentation_support: Option<bool>,
+    documentation_support: Option<bool>,
 
     // Client supports the tag property on a code action. Clients
     // supporting tags have to handle unknown tags gracefully.
     //
     // Since: 3.18.0
-    pub tag_support: Option<CodeActionTagOptions>,
+    tag_support: Option<CodeActionTagOptions>,
 }
 
 impl Json for CodeActionClientCapabilities {
@@ -17535,7 +17536,7 @@ impl Json for CodeActionClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "dynamicRegistration" => {
                     s.dynamic_registration = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -17574,13 +17575,13 @@ impl Json for CodeActionClientCapabilities {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct CodeLensClientCapabilities {
     // Whether code lens supports dynamic registration.
-    pub dynamic_registration: Option<bool>,
+    dynamic_registration: Option<bool>,
 
     // Whether the client supports resolving additional code lens
     // properties via a separate `codeLens/resolve` request.
     //
     // Since: 3.18.0
-    pub resolve_support: Option<ClientCodeLensResolveOptions>,
+    resolve_support: Option<ClientCodeLensResolveOptions>,
 }
 
 impl Json for CodeLensClientCapabilities {
@@ -17600,7 +17601,7 @@ impl Json for CodeLensClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "dynamicRegistration" => {
                     s.dynamic_registration = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -17618,12 +17619,12 @@ impl Json for CodeLensClientCapabilities {
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct DocumentLinkClientCapabilities {
     // Whether document link supports dynamic registration.
-    pub dynamic_registration: Option<bool>,
+    dynamic_registration: Option<bool>,
 
     // Whether the client supports the `tooltip` property on `DocumentLink`.
     //
     // Since: 3.15.0
-    pub tooltip_support: Option<bool>,
+    tooltip_support: Option<bool>,
 }
 
 impl Json for DocumentLinkClientCapabilities {
@@ -17643,7 +17644,7 @@ impl Json for DocumentLinkClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "dynamicRegistration" => {
                     s.dynamic_registration = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -17662,7 +17663,7 @@ pub struct DocumentColorClientCapabilities {
     // Whether implementation supports dynamic registration. If this is set to `true`
     // the client supports the new `DocumentColorRegistrationOptions` return value
     // for the corresponding server capability as well.
-    pub dynamic_registration: Option<bool>,
+    dynamic_registration: Option<bool>,
 }
 
 impl Json for DocumentColorClientCapabilities {
@@ -17681,7 +17682,7 @@ impl Json for DocumentColorClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "dynamicRegistration" {
+            if k == "dynamicRegistration" {
                 s.dynamic_registration = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -17693,7 +17694,7 @@ impl Json for DocumentColorClientCapabilities {
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct DocumentFormattingClientCapabilities {
     // Whether formatting supports dynamic registration.
-    pub dynamic_registration: Option<bool>,
+    dynamic_registration: Option<bool>,
 }
 
 impl Json for DocumentFormattingClientCapabilities {
@@ -17712,7 +17713,7 @@ impl Json for DocumentFormattingClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "dynamicRegistration" {
+            if k == "dynamicRegistration" {
                 s.dynamic_registration = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -17724,12 +17725,12 @@ impl Json for DocumentFormattingClientCapabilities {
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct DocumentRangeFormattingClientCapabilities {
     // Whether range formatting supports dynamic registration.
-    pub dynamic_registration: Option<bool>,
+    dynamic_registration: Option<bool>,
 
     // Whether the client supports formatting multiple ranges at once.
     //
     // Since: 3.18.0
-    pub ranges_support: Option<bool>,
+    ranges_support: Option<bool>,
 }
 
 impl Json for DocumentRangeFormattingClientCapabilities {
@@ -17749,7 +17750,7 @@ impl Json for DocumentRangeFormattingClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "dynamicRegistration" => {
                     s.dynamic_registration = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -17767,7 +17768,7 @@ impl Json for DocumentRangeFormattingClientCapabilities {
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct DocumentOnTypeFormattingClientCapabilities {
     // Whether on type formatting supports dynamic registration.
-    pub dynamic_registration: Option<bool>,
+    dynamic_registration: Option<bool>,
 }
 
 impl Json for DocumentOnTypeFormattingClientCapabilities {
@@ -17786,7 +17787,7 @@ impl Json for DocumentOnTypeFormattingClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "dynamicRegistration" {
+            if k == "dynamicRegistration" {
                 s.dynamic_registration = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -17797,13 +17798,13 @@ impl Json for DocumentOnTypeFormattingClientCapabilities {
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct RenameClientCapabilities {
     // Whether rename supports dynamic registration.
-    pub dynamic_registration: Option<bool>,
+    dynamic_registration: Option<bool>,
 
     // Client supports testing for validity of rename operations
     // before execution.
     //
     // Since: 3.12.0
-    pub prepare_support: Option<bool>,
+    prepare_support: Option<bool>,
 
     // Client supports the default behavior result.
     //
@@ -17811,7 +17812,7 @@ pub struct RenameClientCapabilities {
     // client.
     //
     // Since: 3.16.0
-    pub prepare_support_default_behavior: Option<PrepareSupportDefaultBehavior>,
+    prepare_support_default_behavior: Option<PrepareSupportDefaultBehavior>,
 
     // Whether the client honors the change annotations in
     // text edits and resource operations returned via the
@@ -17820,7 +17821,7 @@ pub struct RenameClientCapabilities {
     // for confirmation.
     //
     // Since: 3.16.0
-    pub honors_change_annotations: Option<bool>,
+    honors_change_annotations: Option<bool>,
 }
 
 impl Json for RenameClientCapabilities {
@@ -17842,7 +17843,7 @@ impl Json for RenameClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "dynamicRegistration" => {
                     s.dynamic_registration = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -17868,27 +17869,27 @@ pub struct FoldingRangeClientCapabilities {
     // providers. If this is set to `true` the client supports the new
     // `FoldingRangeRegistrationOptions` return value for the corresponding
     // server capability as well.
-    pub dynamic_registration: Option<bool>,
+    dynamic_registration: Option<bool>,
 
     // The maximum number of folding ranges that the client prefers to receive
     // per document. The value serves as a hint, servers are free to follow the
     // limit.
-    pub range_limit: Option<u32>,
+    range_limit: Option<u32>,
 
     // If set, the client signals that it only supports folding complete lines.
     // If set, client will ignore specified `startCharacter` and `endCharacter`
     // properties in a FoldingRange.
-    pub line_folding_only: Option<bool>,
+    line_folding_only: Option<bool>,
 
     // Specific options for the folding range kind.
     //
     // Since: 3.17.0
-    pub folding_range_kind: Option<ClientFoldingRangeKindOptions>,
+    folding_range_kind: Option<ClientFoldingRangeKindOptions>,
 
     // Specific options for the folding range.
     //
     // Since: 3.17.0
-    pub folding_range: Option<ClientFoldingRangeOptions>,
+    folding_range: Option<ClientFoldingRangeOptions>,
 }
 
 impl Json for FoldingRangeClientCapabilities {
@@ -17911,7 +17912,7 @@ impl Json for FoldingRangeClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "dynamicRegistration" => {
                     s.dynamic_registration = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -17939,7 +17940,7 @@ pub struct SelectionRangeClientCapabilities {
     // Whether implementation supports dynamic registration for selection range providers. If this is set to `true`
     // the client supports the new `SelectionRangeRegistrationOptions` return value for the corresponding server
     // capability as well.
-    pub dynamic_registration: Option<bool>,
+    dynamic_registration: Option<bool>,
 }
 
 impl Json for SelectionRangeClientCapabilities {
@@ -17958,7 +17959,7 @@ impl Json for SelectionRangeClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "dynamicRegistration" {
+            if k == "dynamicRegistration" {
                 s.dynamic_registration = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -17970,31 +17971,31 @@ impl Json for SelectionRangeClientCapabilities {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct PublishDiagnosticsClientCapabilities {
     // Whether the clients accepts diagnostics with related information.
-    pub related_information: Option<bool>,
+    related_information: Option<bool>,
 
     // Client supports the tag property to provide meta data about a diagnostic.
     // Clients supporting tags have to handle unknown tags gracefully.
     //
     // Since: 3.15.0
-    pub tag_support: Option<ClientDiagnosticsTagOptions>,
+    tag_support: Option<ClientDiagnosticsTagOptions>,
 
     // Client supports a codeDescription property
     //
     // Since: 3.16.0
-    pub code_description_support: Option<bool>,
+    code_description_support: Option<bool>,
 
     // Whether code action supports the `data` property which is
     // preserved between a `textDocument/publishDiagnostics` and
     // `textDocument/codeAction` request.
     //
     // Since: 3.16.0
-    pub data_support: Option<bool>,
+    data_support: Option<bool>,
 
     // Whether the client interprets the version property of the
     // `textDocument/publishDiagnostics` notification's parameter.
     //
     // Since: 3.15.0
-    pub version_support: Option<bool>,
+    version_support: Option<bool>,
 }
 
 impl Json for PublishDiagnosticsClientCapabilities {
@@ -18017,7 +18018,7 @@ impl Json for PublishDiagnosticsClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "relatedInformation" => {
                     s.related_information = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -18046,7 +18047,7 @@ pub struct CallHierarchyClientCapabilities {
     // Whether implementation supports dynamic registration. If this is set to `true`
     // the client supports the new `(TextDocumentRegistrationOptions & StaticRegistrationOptions)`
     // return value for the corresponding server capability as well.
-    pub dynamic_registration: Option<bool>,
+    dynamic_registration: Option<bool>,
 }
 
 impl Json for CallHierarchyClientCapabilities {
@@ -18065,7 +18066,7 @@ impl Json for CallHierarchyClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "dynamicRegistration" {
+            if k == "dynamicRegistration" {
                 s.dynamic_registration = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -18079,7 +18080,7 @@ pub struct SemanticTokensClientCapabilities {
     // Whether implementation supports dynamic registration. If this is set to `true`
     // the client supports the new `(TextDocumentRegistrationOptions & StaticRegistrationOptions)`
     // return value for the corresponding server capability as well.
-    pub dynamic_registration: Option<bool>,
+    dynamic_registration: Option<bool>,
 
     // Which requests the client supports and might send to the server
     // depending on the server's capability. Please note that clients might not
@@ -18089,22 +18090,22 @@ pub struct SemanticTokensClientCapabilities {
     // `request.range` are both set to true but the server only provides a
     // range provider the client might not render a minimap correctly or might
     // even decide to not show any semantic tokens at all.
-    pub requests: ClientSemanticTokensRequestOptions,
+    requests: ClientSemanticTokensRequestOptions,
 
     // The token types that the client supports.
-    pub token_types: Vec<String>,
+    token_types: Vec<String>,
 
     // The token modifiers that the client supports.
-    pub token_modifiers: Vec<String>,
+    token_modifiers: Vec<String>,
 
     // The token formats the clients supports.
-    pub formats: Vec<TokenFormat>,
+    formats: Vec<TokenFormat>,
 
     // Whether the client supports tokens that can overlap each other.
-    pub overlapping_token_support: Option<bool>,
+    overlapping_token_support: Option<bool>,
 
     // Whether the client supports tokens that can span multiple lines.
-    pub multiline_token_support: Option<bool>,
+    multiline_token_support: Option<bool>,
 
     // Whether the client allows the server to actively cancel a
     // semantic token request, e.g. supports returning
@@ -18112,7 +18113,7 @@ pub struct SemanticTokensClientCapabilities {
     // needs to retrigger the request.
     //
     // Since: 3.17.0
-    pub server_cancel_support: Option<bool>,
+    server_cancel_support: Option<bool>,
 
     // Whether the client uses semantic tokens to augment existing
     // syntax tokens. If set to `true` client side created syntax
@@ -18124,7 +18125,7 @@ pub struct SemanticTokensClientCapabilities {
     // specified.
     //
     // Since: 3.17.0
-    pub augments_syntax_tokens: Option<bool>,
+    augments_syntax_tokens: Option<bool>,
 }
 
 impl Json for SemanticTokensClientCapabilities {
@@ -18152,7 +18153,7 @@ impl Json for SemanticTokensClientCapabilities {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "dynamicRegistration" => {
                     s.dynamic_registration = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -18204,7 +18205,7 @@ pub struct LinkedEditingRangeClientCapabilities {
     // Whether implementation supports dynamic registration. If this is set to `true`
     // the client supports the new `(TextDocumentRegistrationOptions & StaticRegistrationOptions)`
     // return value for the corresponding server capability as well.
-    pub dynamic_registration: Option<bool>,
+    dynamic_registration: Option<bool>,
 }
 
 impl Json for LinkedEditingRangeClientCapabilities {
@@ -18223,7 +18224,7 @@ impl Json for LinkedEditingRangeClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "dynamicRegistration" {
+            if k == "dynamicRegistration" {
                 s.dynamic_registration = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -18239,7 +18240,7 @@ pub struct MonikerClientCapabilities {
     // Whether moniker supports dynamic registration. If this is set to `true`
     // the client supports the new `MonikerRegistrationOptions` return value
     // for the corresponding server capability as well.
-    pub dynamic_registration: Option<bool>,
+    dynamic_registration: Option<bool>,
 }
 
 impl Json for MonikerClientCapabilities {
@@ -18258,7 +18259,7 @@ impl Json for MonikerClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "dynamicRegistration" {
+            if k == "dynamicRegistration" {
                 s.dynamic_registration = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -18272,7 +18273,7 @@ pub struct TypeHierarchyClientCapabilities {
     // Whether implementation supports dynamic registration. If this is set to `true`
     // the client supports the new `(TextDocumentRegistrationOptions & StaticRegistrationOptions)`
     // return value for the corresponding server capability as well.
-    pub dynamic_registration: Option<bool>,
+    dynamic_registration: Option<bool>,
 }
 
 impl Json for TypeHierarchyClientCapabilities {
@@ -18291,7 +18292,7 @@ impl Json for TypeHierarchyClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "dynamicRegistration" {
+            if k == "dynamicRegistration" {
                 s.dynamic_registration = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -18305,7 +18306,7 @@ impl Json for TypeHierarchyClientCapabilities {
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct InlineValueClientCapabilities {
     // Whether implementation supports dynamic registration for inline value providers.
-    pub dynamic_registration: Option<bool>,
+    dynamic_registration: Option<bool>,
 }
 
 impl Json for InlineValueClientCapabilities {
@@ -18324,7 +18325,7 @@ impl Json for InlineValueClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "dynamicRegistration" {
+            if k == "dynamicRegistration" {
                 s.dynamic_registration = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -18338,11 +18339,11 @@ impl Json for InlineValueClientCapabilities {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct InlayHintClientCapabilities {
     // Whether inlay hints support dynamic registration.
-    pub dynamic_registration: Option<bool>,
+    dynamic_registration: Option<bool>,
 
     // Indicates which properties a client can resolve lazily on an inlay
     // hint.
-    pub resolve_support: Option<ClientInlayHintResolveOptions>,
+    resolve_support: Option<ClientInlayHintResolveOptions>,
 }
 
 impl Json for InlayHintClientCapabilities {
@@ -18362,7 +18363,7 @@ impl Json for InlayHintClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "dynamicRegistration" => {
                     s.dynamic_registration = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -18382,38 +18383,38 @@ impl Json for InlayHintClientCapabilities {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct DiagnosticClientCapabilities {
     // Whether the clients accepts diagnostics with related information.
-    pub related_information: Option<bool>,
+    related_information: Option<bool>,
 
     // Client supports the tag property to provide meta data about a diagnostic.
     // Clients supporting tags have to handle unknown tags gracefully.
     //
     // Since: 3.15.0
-    pub tag_support: Option<ClientDiagnosticsTagOptions>,
+    tag_support: Option<ClientDiagnosticsTagOptions>,
 
     // Client supports a codeDescription property
     //
     // Since: 3.16.0
-    pub code_description_support: Option<bool>,
+    code_description_support: Option<bool>,
 
     // Whether code action supports the `data` property which is
     // preserved between a `textDocument/publishDiagnostics` and
     // `textDocument/codeAction` request.
     //
     // Since: 3.16.0
-    pub data_support: Option<bool>,
+    data_support: Option<bool>,
 
     // Whether implementation supports dynamic registration. If this is set to `true`
     // the client supports the new `(TextDocumentRegistrationOptions & StaticRegistrationOptions)`
     // return value for the corresponding server capability as well.
-    pub dynamic_registration: Option<bool>,
+    dynamic_registration: Option<bool>,
 
     // Whether the clients supports related documents for document diagnostic pulls.
-    pub related_document_support: Option<bool>,
+    related_document_support: Option<bool>,
 
     // Whether the client supports `MarkupContent` in diagnostic messages.
     //
     // Since: 3.18.0
-    pub markup_message_support: Option<bool>,
+    markup_message_support: Option<bool>,
 }
 
 impl Json for DiagnosticClientCapabilities {
@@ -18438,7 +18439,7 @@ impl Json for DiagnosticClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "relatedInformation" => {
                     s.related_information = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -18473,7 +18474,7 @@ impl Json for DiagnosticClientCapabilities {
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct InlineCompletionClientCapabilities {
     // Whether implementation supports dynamic registration for inline completion providers.
-    pub dynamic_registration: Option<bool>,
+    dynamic_registration: Option<bool>,
 }
 
 impl Json for InlineCompletionClientCapabilities {
@@ -18492,7 +18493,7 @@ impl Json for InlineCompletionClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "dynamicRegistration" {
+            if k == "dynamicRegistration" {
                 s.dynamic_registration = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -18504,7 +18505,7 @@ impl Json for InlineCompletionClientCapabilities {
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct ShowMessageRequestClientCapabilities {
     // Capabilities specific to the `MessageActionItem` type.
-    pub message_action_item: Option<ClientShowMessageActionItemOptions>,
+    message_action_item: Option<ClientShowMessageActionItemOptions>,
 }
 
 impl Json for ShowMessageRequestClientCapabilities {
@@ -18523,7 +18524,7 @@ impl Json for ShowMessageRequestClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "messageActionItem" {
+            if k == "messageActionItem" {
                 s.message_action_item = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -18538,7 +18539,7 @@ impl Json for ShowMessageRequestClientCapabilities {
 pub struct ShowDocumentClientCapabilities {
     // The client has support for the showDocument
     // request.
-    pub support: bool,
+    support: bool,
 }
 
 impl Json for ShowDocumentClientCapabilities {
@@ -18558,7 +18559,7 @@ impl Json for ShowDocumentClientCapabilities {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "support" {
+            if k == "support" {
                 seen |= 1 << 0;
                 s.support = field(k, v)?;
             }
@@ -18572,12 +18573,12 @@ impl Json for ShowDocumentClientCapabilities {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct StaleRequestSupportOptions {
     // The client will actively cancel the request.
-    pub cancel: bool,
+    cancel: bool,
 
     // The list of requests for which the client
     // will retry the request if it receives a
     // response with error code `ContentModified`
-    pub retry_on_content_modified: Vec<String>,
+    retry_on_content_modified: Vec<String>,
 }
 
 impl Json for StaleRequestSupportOptions {
@@ -18598,7 +18599,7 @@ impl Json for StaleRequestSupportOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "cancel" => {
                     seen |= 1 << 0;
                     s.cancel = field(k, v)?;
@@ -18621,10 +18622,10 @@ impl Json for StaleRequestSupportOptions {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct RegularExpressionsClientCapabilities {
     // The engine's name.
-    pub engine: String,
+    engine: String,
 
     // The engine's version.
-    pub version: Option<String>,
+    version: Option<String>,
 }
 
 impl Json for RegularExpressionsClientCapabilities {
@@ -18645,7 +18646,7 @@ impl Json for RegularExpressionsClientCapabilities {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "engine" => {
                     seen |= 1 << 0;
                     s.engine = field(k, v)?;
@@ -18667,16 +18668,16 @@ impl Json for RegularExpressionsClientCapabilities {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct MarkdownClientCapabilities {
     // The name of the parser.
-    pub parser: String,
+    parser: String,
 
     // The version of the parser.
-    pub version: Option<String>,
+    version: Option<String>,
 
     // A list of HTML tags that the client allows / supports in
     // Markdown.
     //
     // Since: 3.17.0
-    pub allowed_tags: Option<Vec<String>>,
+    allowed_tags: Option<Vec<String>>,
 }
 
 impl Json for MarkdownClientCapabilities {
@@ -18698,7 +18699,7 @@ impl Json for MarkdownClientCapabilities {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "parser" => {
                     seen |= 1 << 0;
                     s.parser = field(k, v)?;
@@ -18723,17 +18724,17 @@ impl Json for MarkdownClientCapabilities {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct TextDocumentFilterLanguage {
     // A language id, like `typescript`.
-    pub language: String,
+    language: String,
 
     // A Uri scheme, like `file` or `untitled`.
-    pub scheme: Option<String>,
+    scheme: Option<String>,
 
     // A glob pattern, like **​ .{ts,js}. See TextDocumentFilter for examples.
     //
     // Since: 3.18.0 - support for relative patterns. Whether clients support
     // relative patterns depends on the client capability
     // `textDocuments.filters.relativePatternSupport`.
-    pub pattern: Option<PatternOrRelativePattern>,
+    pattern: Option<PatternOrRelativePattern>,
 }
 
 impl Json for TextDocumentFilterLanguage {
@@ -18755,7 +18756,7 @@ impl Json for TextDocumentFilterLanguage {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "language" => {
                     seen |= 1 << 0;
                     s.language = field(k, v)?;
@@ -18780,17 +18781,17 @@ impl Json for TextDocumentFilterLanguage {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct TextDocumentFilterScheme {
     // A language id, like `typescript`.
-    pub language: Option<String>,
+    language: Option<String>,
 
     // A Uri scheme, like `file` or `untitled`.
-    pub scheme: String,
+    scheme: String,
 
     // A glob pattern, like **​ .{ts,js}. See TextDocumentFilter for examples.
     //
     // Since: 3.18.0 - support for relative patterns. Whether clients support
     // relative patterns depends on the client capability
     // `textDocuments.filters.relativePatternSupport`.
-    pub pattern: Option<PatternOrRelativePattern>,
+    pattern: Option<PatternOrRelativePattern>,
 }
 
 impl Json for TextDocumentFilterScheme {
@@ -18812,7 +18813,7 @@ impl Json for TextDocumentFilterScheme {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "language" => {
                     s.language = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -18869,7 +18870,7 @@ impl Json for TextDocumentFilterPattern {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "language" => {
                     s.language = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -18894,7 +18895,7 @@ pub struct ChangeAnnotationsSupportOptions {
     // Whether the client groups edits with equal labels into tree nodes,
     // for instance all edits labelled with "Changes in Strings" would
     // be a tree node.
-    pub groups_on_label: Option<bool>,
+    groups_on_label: Option<bool>,
 }
 
 impl Json for ChangeAnnotationsSupportOptions {
@@ -18913,7 +18914,7 @@ impl Json for ChangeAnnotationsSupportOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "groupsOnLabel" {
+            if k == "groupsOnLabel" {
                 s.groups_on_label = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -18932,7 +18933,7 @@ pub struct ClientSymbolKindOptions {
     // If this property is not present the client only supports
     // the symbol kinds from `File` to `Array` as defined in
     // the initial version of the protocol.
-    pub value_set: Option<Vec<SymbolKind>>,
+    value_set: Option<Vec<SymbolKind>>,
 }
 
 impl Json for ClientSymbolKindOptions {
@@ -18951,7 +18952,7 @@ impl Json for ClientSymbolKindOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "valueSet" {
+            if k == "valueSet" {
                 s.value_set = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -18963,7 +18964,7 @@ impl Json for ClientSymbolKindOptions {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct ClientSymbolTagOptions {
     // The tags supported by the client.
-    pub value_set: Vec<SymbolTag>,
+    value_set: Vec<SymbolTag>,
 }
 
 impl Json for ClientSymbolTagOptions {
@@ -18983,7 +18984,7 @@ impl Json for ClientSymbolTagOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "valueSet" {
+            if k == "valueSet" {
                 seen |= 1 << 0;
                 s.value_set = field_non_null(k, v, Self::GO_TYPE)?;
             }
@@ -18998,7 +18999,7 @@ impl Json for ClientSymbolTagOptions {
 pub struct ClientSymbolResolveOptions {
     // The properties that a client can resolve lazily. Usually
     // `location.range`
-    pub properties: Vec<String>,
+    properties: Vec<String>,
 }
 
 impl Json for ClientSymbolResolveOptions {
@@ -19018,7 +19019,7 @@ impl Json for ClientSymbolResolveOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "properties" {
+            if k == "properties" {
                 seen |= 1 << 0;
                 s.properties = field_non_null(k, v, Self::GO_TYPE)?;
             }
@@ -19037,20 +19038,20 @@ pub struct ClientCompletionItemOptions {
     // and `${3:foo}`. `$0` defines the final tab stop, it defaults to
     // the end of the snippet. Placeholders with equal identifiers are linked,
     // that is typing in one will update others too.
-    pub snippet_support: Option<bool>,
+    snippet_support: Option<bool>,
 
     // Client supports commit characters on a completion item.
-    pub commit_characters_support: Option<bool>,
+    commit_characters_support: Option<bool>,
 
     // Client supports the following content formats for the documentation
     // property. The order describes the preferred format of the client.
-    pub documentation_format: Option<Vec<MarkupKind>>,
+    documentation_format: Option<Vec<MarkupKind>>,
 
     // Client supports the deprecated property on a completion item.
-    pub deprecated_support: Option<bool>,
+    deprecated_support: Option<bool>,
 
     // Client supports the preselect property on a completion item.
-    pub preselect_support: Option<bool>,
+    preselect_support: Option<bool>,
 
     // Client supports the tag property on a completion item. Clients supporting
     // tags have to handle unknown tags gracefully. Clients especially need to
@@ -19058,33 +19059,33 @@ pub struct ClientCompletionItemOptions {
     // a resolve call.
     //
     // Since: 3.15.0
-    pub tag_support: Option<CompletionItemTagOptions>,
+    tag_support: Option<CompletionItemTagOptions>,
 
     // Client support insert replace edit to control different behavior if a
     // completion item is inserted in the text or should replace text.
     //
     // Since: 3.16.0
-    pub insert_replace_support: Option<bool>,
+    insert_replace_support: Option<bool>,
 
     // Indicates which properties a client can resolve lazily on a completion
     // item. Before version 3.16.0 only the predefined properties `documentation`
     // and `details` could be resolved lazily.
     //
     // Since: 3.16.0
-    pub resolve_support: Option<ClientCompletionItemResolveOptions>,
+    resolve_support: Option<ClientCompletionItemResolveOptions>,
 
     // The client supports the `insertTextMode` property on
     // a completion item to override the whitespace handling mode
     // as defined by the client (see `insertTextMode`).
     //
     // Since: 3.16.0
-    pub insert_text_mode_support: Option<ClientCompletionItemInsertTextModeOptions>,
+    insert_text_mode_support: Option<ClientCompletionItemInsertTextModeOptions>,
 
     // The client has support for completion item label
     // details (see also `CompletionItemLabelDetails`).
     //
     // Since: 3.17.0
-    pub label_details_support: Option<bool>,
+    label_details_support: Option<bool>,
 }
 
 impl Json for ClientCompletionItemOptions {
@@ -19112,7 +19113,7 @@ impl Json for ClientCompletionItemOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "snippetSupport" => {
                     s.snippet_support = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -19161,7 +19162,7 @@ pub struct ClientCompletionItemOptionsKind {
     // If this property is not present the client only supports
     // the completion items kinds from `Text` to `Reference` as defined in
     // the initial version of the protocol.
-    pub value_set: Option<Vec<CompletionItemKind>>,
+    value_set: Option<Vec<CompletionItemKind>>,
 }
 
 impl Json for ClientCompletionItemOptionsKind {
@@ -19180,7 +19181,7 @@ impl Json for ClientCompletionItemOptionsKind {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "valueSet" {
+            if k == "valueSet" {
                 s.value_set = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -19202,7 +19203,7 @@ pub struct CompletionListCapabilities {
     // no properties are supported.
     //
     // Since: 3.17.0
-    pub item_defaults: Option<Vec<String>>,
+    item_defaults: Option<Vec<String>>,
 
     // Specifies whether the client supports `CompletionList.applyKind` to
     // indicate how supported values from `completionList.itemDefaults`
@@ -19215,7 +19216,7 @@ pub struct CompletionListCapabilities {
     // defined in `CompletionList.applyKind`.
     //
     // Since: 3.18.0
-    pub apply_kind_support: Option<bool>,
+    apply_kind_support: Option<bool>,
 }
 
 impl Json for CompletionListCapabilities {
@@ -19235,7 +19236,7 @@ impl Json for CompletionListCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "itemDefaults" => {
                     s.item_defaults = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -19254,23 +19255,23 @@ impl Json for CompletionListCapabilities {
 pub struct ClientSignatureInformationOptions {
     // Client supports the following content formats for the documentation
     // property. The order describes the preferred format of the client.
-    pub documentation_format: Option<Vec<MarkupKind>>,
+    documentation_format: Option<Vec<MarkupKind>>,
 
     // Client capabilities specific to parameter information.
-    pub parameter_information: Option<ClientSignatureParameterInformationOptions>,
+    parameter_information: Option<ClientSignatureParameterInformationOptions>,
 
     // The client supports the `activeParameter` property on `SignatureInformation`
     // literal.
     //
     // Since: 3.16.0
-    pub active_parameter_support: Option<bool>,
+    active_parameter_support: Option<bool>,
 
     // The client supports the `activeParameter` property on
     // `SignatureHelp`/`SignatureInformation` being set to `null` to
     // indicate that no parameter should be active.
     //
     // Since: 3.18.0
-    pub no_active_parameter_support: Option<bool>,
+    no_active_parameter_support: Option<bool>,
 }
 
 impl Json for ClientSignatureInformationOptions {
@@ -19292,7 +19293,7 @@ impl Json for ClientSignatureInformationOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "documentationFormat" => {
                     s.documentation_format = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -19317,7 +19318,7 @@ impl Json for ClientSignatureInformationOptions {
 pub struct ClientCodeActionLiteralOptions {
     // The code action kind is support with the following value
     // set.
-    pub code_action_kind: ClientCodeActionKindOptions,
+    code_action_kind: ClientCodeActionKindOptions,
 }
 
 impl Json for ClientCodeActionLiteralOptions {
@@ -19337,7 +19338,7 @@ impl Json for ClientCodeActionLiteralOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "codeActionKind" {
+            if k == "codeActionKind" {
                 seen |= 1 << 0;
                 s.code_action_kind = field_non_null(k, v, Self::GO_TYPE)?;
             }
@@ -19351,7 +19352,7 @@ impl Json for ClientCodeActionLiteralOptions {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct ClientCodeActionResolveOptions {
     // The properties that a client can resolve lazily.
-    pub properties: Vec<String>,
+    properties: Vec<String>,
 }
 
 impl Json for ClientCodeActionResolveOptions {
@@ -19371,7 +19372,7 @@ impl Json for ClientCodeActionResolveOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "properties" {
+            if k == "properties" {
                 seen |= 1 << 0;
                 s.properties = field_non_null(k, v, Self::GO_TYPE)?;
             }
@@ -19385,7 +19386,7 @@ impl Json for ClientCodeActionResolveOptions {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct CodeActionTagOptions {
     // The tags supported by the client.
-    pub value_set: Vec<CodeActionTag>,
+    value_set: Vec<CodeActionTag>,
 }
 
 impl Json for CodeActionTagOptions {
@@ -19405,7 +19406,7 @@ impl Json for CodeActionTagOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "valueSet" {
+            if k == "valueSet" {
                 seen |= 1 << 0;
                 s.value_set = field_non_null(k, v, Self::GO_TYPE)?;
             }
@@ -19419,7 +19420,7 @@ impl Json for CodeActionTagOptions {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct ClientCodeLensResolveOptions {
     // The properties that a client can resolve lazily.
-    pub properties: Vec<String>,
+    properties: Vec<String>,
 }
 
 impl Json for ClientCodeLensResolveOptions {
@@ -19439,7 +19440,7 @@ impl Json for ClientCodeLensResolveOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "properties" {
+            if k == "properties" {
                 seen |= 1 << 0;
                 s.properties = field_non_null(k, v, Self::GO_TYPE)?;
             }
@@ -19456,7 +19457,7 @@ pub struct ClientFoldingRangeKindOptions {
     // property exists the client also guarantees that it will
     // handle values outside its set gracefully and falls back
     // to a default value when unknown.
-    pub value_set: Option<Vec<FoldingRangeKind>>,
+    value_set: Option<Vec<FoldingRangeKind>>,
 }
 
 impl Json for ClientFoldingRangeKindOptions {
@@ -19475,7 +19476,7 @@ impl Json for ClientFoldingRangeKindOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "valueSet" {
+            if k == "valueSet" {
                 s.value_set = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -19490,7 +19491,7 @@ pub struct ClientFoldingRangeOptions {
     // folding ranges to display custom labels instead of the default text.
     //
     // Since: 3.17.0
-    pub collapsed_text: Option<bool>,
+    collapsed_text: Option<bool>,
 }
 
 impl Json for ClientFoldingRangeOptions {
@@ -19509,7 +19510,7 @@ impl Json for ClientFoldingRangeOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "collapsedText" {
+            if k == "collapsedText" {
                 s.collapsed_text = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -19521,25 +19522,25 @@ impl Json for ClientFoldingRangeOptions {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct DiagnosticsCapabilities {
     // Whether the clients accepts diagnostics with related information.
-    pub related_information: Option<bool>,
+    related_information: Option<bool>,
 
     // Client supports the tag property to provide meta data about a diagnostic.
     // Clients supporting tags have to handle unknown tags gracefully.
     //
     // Since: 3.15.0
-    pub tag_support: Option<ClientDiagnosticsTagOptions>,
+    tag_support: Option<ClientDiagnosticsTagOptions>,
 
     // Client supports a codeDescription property
     //
     // Since: 3.16.0
-    pub code_description_support: Option<bool>,
+    code_description_support: Option<bool>,
 
     // Whether code action supports the `data` property which is
     // preserved between a `textDocument/publishDiagnostics` and
     // `textDocument/codeAction` request.
     //
     // Since: 3.16.0
-    pub data_support: Option<bool>,
+    data_support: Option<bool>,
 }
 
 impl Json for DiagnosticsCapabilities {
@@ -19561,7 +19562,7 @@ impl Json for DiagnosticsCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "relatedInformation" => {
                     s.related_information = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -19586,11 +19587,11 @@ impl Json for DiagnosticsCapabilities {
 pub struct ClientSemanticTokensRequestOptions {
     // The client will send the `textDocument/semanticTokens/range` request if
     // the server provides a corresponding handler.
-    pub range: Option<BooleanOrEmptyObject>,
+    range: Option<BooleanOrEmptyObject>,
 
     // The client will send the `textDocument/semanticTokens/full` request if
     // the server provides a corresponding handler.
-    pub full: Option<BooleanOrClientSemanticTokensRequestFullDelta>,
+    full: Option<BooleanOrClientSemanticTokensRequestFullDelta>,
 }
 
 impl Json for ClientSemanticTokensRequestOptions {
@@ -19610,7 +19611,7 @@ impl Json for ClientSemanticTokensRequestOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "range" => {
                     s.range = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -19628,7 +19629,7 @@ impl Json for ClientSemanticTokensRequestOptions {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct ClientInlayHintResolveOptions {
     // The properties that a client can resolve lazily.
-    pub properties: Vec<String>,
+    properties: Vec<String>,
 }
 
 impl Json for ClientInlayHintResolveOptions {
@@ -19648,7 +19649,7 @@ impl Json for ClientInlayHintResolveOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "properties" {
+            if k == "properties" {
                 seen |= 1 << 0;
                 s.properties = field_non_null(k, v, Self::GO_TYPE)?;
             }
@@ -19664,7 +19665,7 @@ pub struct ClientShowMessageActionItemOptions {
     // Whether the client supports additional attributes which
     // are preserved and send back to the server in the
     // request's response.
-    pub additional_properties_support: Option<bool>,
+    additional_properties_support: Option<bool>,
 }
 
 impl Json for ClientShowMessageActionItemOptions {
@@ -19683,7 +19684,7 @@ impl Json for ClientShowMessageActionItemOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "additionalPropertiesSupport" {
+            if k == "additionalPropertiesSupport" {
                 s.additional_properties_support = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -19695,7 +19696,7 @@ impl Json for ClientShowMessageActionItemOptions {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct CompletionItemTagOptions {
     // The tags supported by the client.
-    pub value_set: Vec<CompletionItemTag>,
+    value_set: Vec<CompletionItemTag>,
 }
 
 impl Json for CompletionItemTagOptions {
@@ -19715,7 +19716,7 @@ impl Json for CompletionItemTagOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "valueSet" {
+            if k == "valueSet" {
                 seen |= 1 << 0;
                 s.value_set = field_non_null(k, v, Self::GO_TYPE)?;
             }
@@ -19729,7 +19730,7 @@ impl Json for CompletionItemTagOptions {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct ClientCompletionItemResolveOptions {
     // The properties that a client can resolve lazily.
-    pub properties: Vec<String>,
+    properties: Vec<String>,
 }
 
 impl Json for ClientCompletionItemResolveOptions {
@@ -19749,7 +19750,7 @@ impl Json for ClientCompletionItemResolveOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "properties" {
+            if k == "properties" {
                 seen |= 1 << 0;
                 s.properties = field_non_null(k, v, Self::GO_TYPE)?;
             }
@@ -19762,7 +19763,7 @@ impl Json for ClientCompletionItemResolveOptions {
 // Since: 3.18.0
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct ClientCompletionItemInsertTextModeOptions {
-    pub value_set: Vec<InsertTextMode>,
+    value_set: Vec<InsertTextMode>,
 }
 
 impl Json for ClientCompletionItemInsertTextModeOptions {
@@ -19782,7 +19783,7 @@ impl Json for ClientCompletionItemInsertTextModeOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "valueSet" {
+            if k == "valueSet" {
                 seen |= 1 << 0;
                 s.value_set = field_non_null(k, v, Self::GO_TYPE)?;
             }
@@ -19799,7 +19800,7 @@ pub struct ClientSignatureParameterInformationOptions {
     // simple label string.
     //
     // Since: 3.14.0
-    pub label_offset_support: Option<bool>,
+    label_offset_support: Option<bool>,
 }
 
 impl Json for ClientSignatureParameterInformationOptions {
@@ -19818,7 +19819,7 @@ impl Json for ClientSignatureParameterInformationOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "labelOffsetSupport" {
+            if k == "labelOffsetSupport" {
                 s.label_offset_support = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -19833,7 +19834,7 @@ pub struct ClientCodeActionKindOptions {
     // property exists the client also guarantees that it will
     // handle values outside its set gracefully and falls back
     // to a default value when unknown.
-    pub value_set: Vec<CodeActionKind>,
+    value_set: Vec<CodeActionKind>,
 }
 
 impl Json for ClientCodeActionKindOptions {
@@ -19853,7 +19854,7 @@ impl Json for ClientCodeActionKindOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "valueSet" {
+            if k == "valueSet" {
                 seen |= 1 << 0;
                 s.value_set = field_non_null(k, v, Self::GO_TYPE)?;
             }
@@ -19867,7 +19868,7 @@ impl Json for ClientCodeActionKindOptions {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct ClientDiagnosticsTagOptions {
     // The tags supported by the client.
-    pub value_set: Vec<DiagnosticTag>,
+    value_set: Vec<DiagnosticTag>,
 }
 
 impl Json for ClientDiagnosticsTagOptions {
@@ -19887,7 +19888,7 @@ impl Json for ClientDiagnosticsTagOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "valueSet" {
+            if k == "valueSet" {
                 seen |= 1 << 0;
                 s.value_set = field_non_null(k, v, Self::GO_TYPE)?;
             }
@@ -19902,7 +19903,7 @@ impl Json for ClientDiagnosticsTagOptions {
 pub struct ClientSemanticTokensRequestFullDelta {
     // The client will send the `textDocument/semanticTokens/full/delta` request if
     // the server provides a corresponding handler.
-    pub delta: Option<bool>,
+    delta: Option<bool>,
 }
 
 impl Json for ClientSemanticTokensRequestFullDelta {
@@ -19921,7 +19922,7 @@ impl Json for ClientSemanticTokensRequestFullDelta {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "delta" {
+            if k == "delta" {
                 s.delta = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -19979,7 +19980,7 @@ impl Json for InitializationOptions {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "disablePushDiagnostics" => {
                     s.disable_push_diagnostics = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -20057,7 +20058,7 @@ impl Json for AutoImportFix {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "kind" => {
                     s.kind = field(k, v)?;
                 }
@@ -20142,7 +20143,7 @@ impl Json for CompletionItemData {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "fileName" => {
                     s.file_name = field(k, v)?;
                 }
@@ -20206,7 +20207,7 @@ impl Json for CodeLensData {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "kind" => {
                     seen |= 1 << 0;
                     s.kind = field(k, v)?;
@@ -20260,7 +20261,7 @@ impl Json for ExperimentalServerCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "customSourceDefinitionProvider" => {
                     s.custom_source_definition_provider = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -20278,7 +20279,7 @@ impl Json for ExperimentalServerCapabilities {
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct ExperimentalClientCapabilities {
     // The client supports hover verbosityLevel requests and canIncreaseVerbosity responses.
-    pub hover_verbosity_level: Option<bool>,
+    hover_verbosity_level: Option<bool>,
 }
 
 impl Json for ExperimentalClientCapabilities {
@@ -20297,7 +20298,7 @@ impl Json for ExperimentalClientCapabilities {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "hoverVerbosityLevel" {
+            if k == "hoverVerbosityLevel" {
                 s.hover_verbosity_level = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -20329,7 +20330,7 @@ impl Json for VSOnAutoInsertOptions {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "_vs_triggerCharacters" {
+            if k == "_vs_triggerCharacters" {
                 seen |= 1 << 0;
                 s.vs_trigger_characters = field_non_null(k, v, Self::GO_TYPE)?;
             }
@@ -20387,7 +20388,7 @@ impl Json for VSReferenceItem {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "_vs_id" => {
                     seen |= 1 << 0;
                     s.vs_id = field(k, v)?;
@@ -20463,7 +20464,7 @@ impl Json for VSOnAutoInsertParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "_vs_textDocument" => {
                     seen |= 1 << 0;
                     s.vs_text_document = field(k, v)?;
@@ -20512,7 +20513,7 @@ impl Json for VSOnAutoInsertResponseItem {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "_vs_textEditFormat" => {
                     seen |= 1 << 0;
                     s.vs_text_edit_format = field(k, v)?;
@@ -20561,7 +20562,7 @@ impl Json for RequestFailureTelemetryEvent {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "eventName" => {
                     seen |= 1 << 0;
                     s.event_name = field(k, v)?;
@@ -20614,7 +20615,7 @@ impl Json for RequestFailureTelemetryProperties {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "errorCode" => {
                     seen |= 1 << 0;
                     s.error_code = field(k, v)?;
@@ -20639,7 +20640,7 @@ impl Json for RequestFailureTelemetryProperties {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct ProfileParams {
     // The directory path where the profile should be saved.
-    pub dir: String,
+    dir: String,
 }
 
 impl Json for ProfileParams {
@@ -20659,7 +20660,7 @@ impl Json for ProfileParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "dir" {
+            if k == "dir" {
                 seen |= 1 << 0;
                 s.dir = field(k, v)?;
             }
@@ -20673,7 +20674,7 @@ impl Json for ProfileParams {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct ProfileResult {
     // The file path where the profile was saved.
-    pub file: String,
+    file: String,
 }
 
 impl Json for ProfileResult {
@@ -20693,7 +20694,7 @@ impl Json for ProfileResult {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "file" {
+            if k == "file" {
                 seen |= 1 << 0;
                 s.file = field(k, v)?;
             }
@@ -20706,7 +20707,7 @@ impl Json for ProfileResult {
 // Parameters for the initializeAPISession request.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct InitializeAPISessionParams {
-    // Optional path to use for the named pipe or Unix domain socket. If not provided, a unique path will be generated.
+    // Optional named pipe path on Windows. On Unix, the path must not exist and will be created as a private directory containing a socket named 'socket'. If not provided, a unique path will be generated.
     pub pipe: Option<String>,
 }
 
@@ -20726,7 +20727,7 @@ impl Json for InitializeAPISessionParams {
             return Ok(s);
         };
         for (k, v) in members {
-            if k.as_str() == "pipe" {
+            if k == "pipe" {
                 s.pipe = opt_non_null(k, v, Self::GO_TYPE)?;
             }
         }
@@ -20762,7 +20763,7 @@ impl Json for InitializeAPISessionResult {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "sessionId" => {
                     seen |= 1 << 0;
                     s.session_id = field(k, v)?;
@@ -20809,7 +20810,7 @@ impl Json for ProjectInfoParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "textDocument" {
+            if k == "textDocument" {
                 seen |= 1 << 0;
                 s.text_document = field(k, v)?;
             }
@@ -20843,7 +20844,7 @@ impl Json for ProjectInfoResult {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "configFilePath" {
+            if k == "configFilePath" {
                 seen |= 1 << 0;
                 s.config_file_path = field(k, v)?;
             }
@@ -20854,7 +20855,7 @@ impl Json for ProjectInfoResult {
 }
 
 // Inline content mapper manifest supplied by a contributing extension.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ContentMapperManifest {
     // Human-readable mapper name.
     pub name: String,
@@ -20873,6 +20874,9 @@ pub struct ContentMapperManifest {
 
     // Whether the mapper uses project-scoped dynamic configuration.
     pub dynamic_config: Option<bool>,
+
+    // Default source-to-runtime output extension mappings.
+    pub output_extensions: Option<OrderedMap<String, String>>,
 }
 
 impl Json for ContentMapperManifest {
@@ -20880,13 +20884,14 @@ impl Json for ContentMapperManifest {
     const GO_POINTER: bool = true;
 
     fn to_json(&self) -> Value {
-        let mut w = ObjectWriter::new(6);
+        let mut w = ObjectWriter::new(7);
         w.field("name", &self.name);
         w.opt("version", self.version.as_ref());
         w.field("exec", &self.exec);
         w.opt("cwd", self.cwd.as_ref());
         w.opt("compilerOptions", self.compiler_options.as_ref());
         w.opt("dynamicConfig", self.dynamic_config.as_ref());
+        w.opt("outputExtensions", self.output_extensions.as_ref());
         w.finish()
     }
 
@@ -20897,7 +20902,7 @@ impl Json for ContentMapperManifest {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "name" => {
                     seen |= 1 << 0;
                     s.name = field(k, v)?;
@@ -20917,6 +20922,9 @@ impl Json for ContentMapperManifest {
                 }
                 "dynamicConfig" => {
                     s.dynamic_config = opt_non_null(k, v, Self::GO_TYPE)?;
+                }
+                "outputExtensions" => {
+                    s.output_extensions = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
                 _ => {}
             }
@@ -20954,7 +20962,7 @@ impl Json for InferredProjectContentMapperContribution {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "options" => {
                     s.options = opt_non_null(k, v, Self::GO_TYPE)?;
                 }
@@ -21002,7 +21010,7 @@ impl Json for ContentMapperContribution {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "contributorId" => {
                     seen |= 1 << 0;
                     s.contributor_id = field(k, v)?;
@@ -21026,7 +21034,7 @@ impl Json for ContentMapperContribution {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetContentMapperContributionsParams {
     // Complete replacement set of active extension contributions.
-    pub contributions: Vec<ContentMapperContribution>,
+    pub contributions: Vec<Option<ContentMapperContribution>>,
 
     // Currently open documents matching contributed extensions.
     pub open_documents: Vec<TextDocumentIdentifier>,
@@ -21050,7 +21058,7 @@ impl Json for SetContentMapperContributionsParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "contributions" => {
                     seen |= 1 << 0;
                     s.contributions = field_non_null(k, v, Self::GO_TYPE)?;
@@ -21091,7 +21099,7 @@ impl Json for SetLogVerbosityParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            if k.as_str() == "verbosity" {
+            if k == "verbosity" {
                 seen |= 1 << 0;
                 s.verbosity = field(k, v)?;
             }
@@ -21105,13 +21113,13 @@ impl Json for SetLogVerbosityParams {
 #[derive(Clone, Debug, Default, PartialEq, Copy)]
 pub struct PerformanceStatsTelemetryEvent {
     // The name of the telemetry event.
-    pub event_name: StringLiteralLanguageServerPerformanceStats,
+    event_name: StringLiteralLanguageServerPerformanceStats,
 
     // Indicates this is a usage telemetry event.
-    pub telemetry_purpose: StringLiteralUsage,
+    telemetry_purpose: StringLiteralUsage,
 
     // Numeric measurements for this telemetry event.
-    pub measurements: PerformanceStatsTelemetryMeasurements,
+    measurements: PerformanceStatsTelemetryMeasurements,
 }
 
 impl Json for PerformanceStatsTelemetryEvent {
@@ -21133,7 +21141,7 @@ impl Json for PerformanceStatsTelemetryEvent {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "eventName" => {
                     seen |= 1 << 0;
                     s.event_name = field(k, v)?;
@@ -21158,94 +21166,94 @@ impl Json for PerformanceStatsTelemetryEvent {
 #[derive(Clone, Debug, Default, PartialEq, Copy)]
 pub struct PerformanceStatsTelemetryMeasurements {
     // Number of files currently open in the editor.
-    pub open_file_count: f64,
+    open_file_count: f64,
 
     // Seconds since the session was initialized.
-    pub uptime_seconds: f64,
+    uptime_seconds: f64,
 
     // Number of loaded projects.
-    pub project_count: f64,
+    project_count: f64,
 
     // Number of loaded config files.
-    pub config_count: f64,
+    config_count: f64,
 
     // Number of files cached from disk.
-    pub cached_disk_file_count: f64,
+    cached_disk_file_count: f64,
 
     // Total memory mapped by the Go runtime in bytes.
-    pub memory_used_bytes: f64,
+    memory_used_bytes: f64,
 
     // GOMEMLIMIT value in bytes, or 0 if not set.
-    pub go_mem_limit: f64,
+    go_mem_limit: f64,
 
     // GOGC percentage value configured for the GC.
-    pub go_gc_percent: f64,
+    go_gc_percent: f64,
 
     // Heap size target the GC is working toward in bytes.
-    pub heap_goal_bytes: f64,
+    heap_goal_bytes: f64,
 
     // Bytes of live (reachable) heap objects.
-    pub heap_live_bytes: f64,
+    heap_live_bytes: f64,
 
     // Number of live or unswept objects occupying heap memory.
-    pub heap_object_count: f64,
+    heap_object_count: f64,
 
     // Heap memory reserved for goroutine stacks.
-    pub heap_stack_bytes: f64,
+    heap_stack_bytes: f64,
 
     // Heap memory returned to the OS.
-    pub heap_released_bytes: f64,
+    heap_released_bytes: f64,
 
     // Heap memory that is free and eligible to be returned to the OS.
-    pub heap_free_bytes: f64,
+    heap_free_bytes: f64,
 
     // Total scannable heap bytes — how much the GC must traverse.
-    pub gc_scan_heap_bytes: f64,
+    gc_scan_heap_bytes: f64,
 
     // The current GOMAXPROCS value.
-    pub go_max_procs: f64,
+    go_max_procs: f64,
 
     // Current number of goroutines.
-    pub goroutine_count: f64,
+    goroutine_count: f64,
 
     // Total completed GC cycles.
-    pub gc_cycles_total: f64,
+    gc_cycles_total: f64,
 
     // Cumulative CPU time spent in GC in seconds.
-    pub gc_cpu_seconds: f64,
+    gc_cpu_seconds: f64,
 
     // Cumulative CPU time spent in user Go code in seconds.
-    pub user_cpu_seconds: f64,
+    user_cpu_seconds: f64,
 
     // Total physical memory on the system in bytes.
-    pub system_mem_total: f64,
+    system_mem_total: f64,
 
     // Used physical memory on the system in bytes.
-    pub system_mem_used: f64,
+    system_mem_used: f64,
 
     // Number of auto-import project buckets.
-    pub auto_import_project_bucket_count: f64,
+    auto_import_project_bucket_count: f64,
 
     // Number of auto-import node_modules buckets.
-    pub auto_import_node_modules_bucket_count: f64,
+    auto_import_node_modules_bucket_count: f64,
 
     // Unique packages across all node_modules buckets.
-    pub auto_import_unique_package_count: f64,
+    auto_import_unique_package_count: f64,
 
     // Total indexed exports from project files.
-    pub auto_import_project_export_count: f64,
+    auto_import_project_export_count: f64,
 
     // Total indexed exports from node_modules.
-    pub auto_import_node_modules_export_count: f64,
+    auto_import_node_modules_export_count: f64,
 
     // Total files tracked across project buckets.
-    pub auto_import_project_file_count: f64,
+    auto_import_project_file_count: f64,
 
     // Total files tracked across node_modules buckets.
-    pub auto_import_node_modules_file_count: f64,
+    auto_import_node_modules_file_count: f64,
 
     // Number of node_modules buckets with no package.json filter.
-    pub auto_import_node_modules_unfiltered_bucket_count: f64,
+    auto_import_node_modules_unfiltered_bucket_count: f64,
 }
 
 impl Json for PerformanceStatsTelemetryMeasurements {
@@ -21296,7 +21304,7 @@ impl Json for PerformanceStatsTelemetryMeasurements {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "openFileCount" => {
                     s.open_file_count = field(k, v)?;
                 }
@@ -21398,16 +21406,16 @@ impl Json for PerformanceStatsTelemetryMeasurements {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ProjectInfoTelemetryEvent {
     // The name of the telemetry event.
-    pub event_name: StringLiteralLanguageServerProjectInfo,
+    event_name: StringLiteralLanguageServerProjectInfo,
 
     // Indicates this is a usage telemetry event.
-    pub telemetry_purpose: StringLiteralUsage,
+    telemetry_purpose: StringLiteralUsage,
 
     // String properties for this telemetry event. Complex values (compilerOptions, fileStats) are JSON-stringified.
-    pub properties: OrderedMap<String, String>,
+    properties: OrderedMap<String, String>,
 
     // Numeric measurements for this telemetry event.
-    pub measurements: ProjectInfoTelemetryMeasurements,
+    measurements: ProjectInfoTelemetryMeasurements,
 }
 
 impl Json for ProjectInfoTelemetryEvent {
@@ -21430,7 +21438,7 @@ impl Json for ProjectInfoTelemetryEvent {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "eventName" => {
                     seen |= 1 << 0;
                     s.event_name = field(k, v)?;
@@ -21462,25 +21470,25 @@ impl Json for ProjectInfoTelemetryEvent {
 // Numeric measurements for ProjectInfoTelemetryEvent.
 #[derive(Clone, Debug, Default, PartialEq, Copy)]
 pub struct ProjectInfoTelemetryMeasurements {
-    pub js_file_count: f64,
+    js_file_count: f64,
 
-    pub js_file_size: f64,
+    js_file_size: f64,
 
-    pub jsx_file_count: f64,
+    jsx_file_count: f64,
 
-    pub jsx_file_size: f64,
+    jsx_file_size: f64,
 
-    pub ts_file_count: f64,
+    ts_file_count: f64,
 
-    pub ts_file_size: f64,
+    ts_file_size: f64,
 
-    pub tsx_file_count: f64,
+    tsx_file_count: f64,
 
-    pub tsx_file_size: f64,
+    tsx_file_size: f64,
 
-    pub dts_file_count: f64,
+    dts_file_count: f64,
 
-    pub dts_file_size: f64,
+    dts_file_size: f64,
 }
 
 impl Json for ProjectInfoTelemetryMeasurements {
@@ -21508,7 +21516,7 @@ impl Json for ProjectInfoTelemetryMeasurements {
             return Ok(s);
         };
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "jsFileCount" => {
                     s.js_file_count = field(k, v)?;
                 }
@@ -21574,7 +21582,7 @@ impl Json for MultiDocumentHighlight {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "uri" => {
                     seen |= 1 << 0;
                     s.uri = field(k, v)?;
@@ -21635,7 +21643,7 @@ impl Json for MultiDocumentHighlightParams {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "textDocument" => {
                     seen |= 1 << 0;
                     s.text_document = field(k, v)?;
@@ -21696,7 +21704,7 @@ impl Json for VSClassifiedTextRun {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "ClassificationTypeName" => {
                     seen |= 1 << 0;
                     s.classification_type_name = field(k, v)?;
@@ -21751,7 +21759,7 @@ impl Json for VSClassifiedTextElement {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "Runs" => {
                     seen |= 1 << 0;
                     s.runs = field_non_null(k, v, Self::GO_TYPE)?;
@@ -21800,7 +21808,7 @@ impl Json for VSImageId {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "Guid" => {
                     seen |= 1 << 0;
                     s.guid = field(k, v)?;
@@ -21849,7 +21857,7 @@ impl Json for VSImageElement {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "ImageId" => {
                     seen |= 1 << 0;
                     s.image_id = field_non_null(k, v, Self::GO_TYPE)?;
@@ -21898,7 +21906,7 @@ impl Json for VSContainerElement {
         };
         let mut seen = 0u64;
         for (k, v) in members {
-            match k.as_str() {
+            match k {
                 "Style" => {
                     seen |= 1 << 0;
                     s.style = field(k, v)?;
@@ -22082,34 +22090,34 @@ impl Json for CompletionItemDefaultsData {
 pub struct SemanticTokenType(pub &'static str);
 
 impl SemanticTokenType {
-    pub const Namespace: SemanticTokenType = SemanticTokenType("namespace");
+    pub const NAMESPACE: SemanticTokenType = SemanticTokenType("namespace");
     // Represents a generic type. Acts as a fallback for types which can't be mapped to
     // a specific type like class or enum.
-    pub const Type: SemanticTokenType = SemanticTokenType("type");
-    pub const Class: SemanticTokenType = SemanticTokenType("class");
-    pub const Enum: SemanticTokenType = SemanticTokenType("enum");
-    pub const Interface: SemanticTokenType = SemanticTokenType("interface");
-    pub const Struct: SemanticTokenType = SemanticTokenType("struct");
-    pub const TypeParameter: SemanticTokenType = SemanticTokenType("typeParameter");
-    pub const Parameter: SemanticTokenType = SemanticTokenType("parameter");
-    pub const Variable: SemanticTokenType = SemanticTokenType("variable");
-    pub const Property: SemanticTokenType = SemanticTokenType("property");
-    pub const EnumMember: SemanticTokenType = SemanticTokenType("enumMember");
-    pub const Event: SemanticTokenType = SemanticTokenType("event");
-    pub const Function: SemanticTokenType = SemanticTokenType("function");
-    pub const Method: SemanticTokenType = SemanticTokenType("method");
-    pub const Macro: SemanticTokenType = SemanticTokenType("macro");
-    pub const Keyword: SemanticTokenType = SemanticTokenType("keyword");
-    pub const Modifier: SemanticTokenType = SemanticTokenType("modifier");
-    pub const Comment: SemanticTokenType = SemanticTokenType("comment");
-    pub const String: SemanticTokenType = SemanticTokenType("string");
-    pub const Number: SemanticTokenType = SemanticTokenType("number");
-    pub const Regexp: SemanticTokenType = SemanticTokenType("regexp");
-    pub const Operator: SemanticTokenType = SemanticTokenType("operator");
+    pub const TYPE: SemanticTokenType = SemanticTokenType("type");
+    pub const CLASS: SemanticTokenType = SemanticTokenType("class");
+    pub const ENUM: SemanticTokenType = SemanticTokenType("enum");
+    pub const INTERFACE: SemanticTokenType = SemanticTokenType("interface");
+    pub const STRUCT: SemanticTokenType = SemanticTokenType("struct");
+    pub const TYPE_PARAMETER: SemanticTokenType = SemanticTokenType("typeParameter");
+    pub const PARAMETER: SemanticTokenType = SemanticTokenType("parameter");
+    pub const VARIABLE: SemanticTokenType = SemanticTokenType("variable");
+    pub const PROPERTY: SemanticTokenType = SemanticTokenType("property");
+    pub const ENUM_MEMBER: SemanticTokenType = SemanticTokenType("enumMember");
+    pub const EVENT: SemanticTokenType = SemanticTokenType("event");
+    pub const FUNCTION: SemanticTokenType = SemanticTokenType("function");
+    pub const METHOD: SemanticTokenType = SemanticTokenType("method");
+    pub const MACRO: SemanticTokenType = SemanticTokenType("macro");
+    pub const KEYWORD: SemanticTokenType = SemanticTokenType("keyword");
+    pub const MODIFIER: SemanticTokenType = SemanticTokenType("modifier");
+    pub const COMMENT: SemanticTokenType = SemanticTokenType("comment");
+    pub const STRING: SemanticTokenType = SemanticTokenType("string");
+    pub const NUMBER: SemanticTokenType = SemanticTokenType("number");
+    pub const REGEXP: SemanticTokenType = SemanticTokenType("regexp");
+    pub const OPERATOR: SemanticTokenType = SemanticTokenType("operator");
     // Since: 3.17.0
-    pub const Decorator: SemanticTokenType = SemanticTokenType("decorator");
+    pub const DECORATOR: SemanticTokenType = SemanticTokenType("decorator");
     // Since: 3.18.0
-    pub const Label: SemanticTokenType = SemanticTokenType("label");
+    pub const LABEL: SemanticTokenType = SemanticTokenType("label");
 }
 
 impl Json for SemanticTokenType {
@@ -22139,16 +22147,16 @@ impl IsZero for SemanticTokenType {
 pub struct SemanticTokenModifier(pub &'static str);
 
 impl SemanticTokenModifier {
-    pub const Declaration: SemanticTokenModifier = SemanticTokenModifier("declaration");
-    pub const Definition: SemanticTokenModifier = SemanticTokenModifier("definition");
-    pub const Readonly: SemanticTokenModifier = SemanticTokenModifier("readonly");
-    pub const Static: SemanticTokenModifier = SemanticTokenModifier("static");
-    pub const Deprecated: SemanticTokenModifier = SemanticTokenModifier("deprecated");
-    pub const Abstract: SemanticTokenModifier = SemanticTokenModifier("abstract");
-    pub const Async: SemanticTokenModifier = SemanticTokenModifier("async");
-    pub const Modification: SemanticTokenModifier = SemanticTokenModifier("modification");
-    pub const Documentation: SemanticTokenModifier = SemanticTokenModifier("documentation");
-    pub const DefaultLibrary: SemanticTokenModifier = SemanticTokenModifier("defaultLibrary");
+    pub const DECLARATION: SemanticTokenModifier = SemanticTokenModifier("declaration");
+    pub const DEFINITION: SemanticTokenModifier = SemanticTokenModifier("definition");
+    pub const READONLY: SemanticTokenModifier = SemanticTokenModifier("readonly");
+    pub const STATIC: SemanticTokenModifier = SemanticTokenModifier("static");
+    pub const DEPRECATED: SemanticTokenModifier = SemanticTokenModifier("deprecated");
+    pub const ABSTRACT: SemanticTokenModifier = SemanticTokenModifier("abstract");
+    pub const ASYNC: SemanticTokenModifier = SemanticTokenModifier("async");
+    pub const MODIFICATION: SemanticTokenModifier = SemanticTokenModifier("modification");
+    pub const DOCUMENTATION: SemanticTokenModifier = SemanticTokenModifier("documentation");
+    pub const DEFAULT_LIBRARY: SemanticTokenModifier = SemanticTokenModifier("defaultLibrary");
 }
 
 impl Json for SemanticTokenModifier {
@@ -22173,15 +22181,15 @@ impl IsZero for SemanticTokenModifier {
 //
 // Since: 3.17.0
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct DocumentDiagnosticReportKind(pub &'static str);
+pub struct DocumentDiagnosticReportKind(&'static str);
 
 impl DocumentDiagnosticReportKind {
     // A diagnostic report with a full
     // set of problems.
-    pub const Full: DocumentDiagnosticReportKind = DocumentDiagnosticReportKind("full");
+    pub const FULL: DocumentDiagnosticReportKind = DocumentDiagnosticReportKind("full");
     // A report indicating that the last
     // returned report is still accurate.
-    pub const Unchanged: DocumentDiagnosticReportKind = DocumentDiagnosticReportKind("unchanged");
+    pub const UNCHANGED: DocumentDiagnosticReportKind = DocumentDiagnosticReportKind("unchanged");
 }
 
 impl Json for DocumentDiagnosticReportKind {
@@ -22208,28 +22216,28 @@ impl IsZero for DocumentDiagnosticReportKind {
 pub struct ErrorCode(pub i32);
 
 impl ErrorCode {
-    pub const ParseError: ErrorCode = ErrorCode(-32700);
-    pub const InvalidRequest: ErrorCode = ErrorCode(-32600);
-    pub const MethodNotFound: ErrorCode = ErrorCode(-32601);
-    pub const InvalidParams: ErrorCode = ErrorCode(-32602);
-    pub const InternalError: ErrorCode = ErrorCode(-32603);
+    pub const PARSE_ERROR: ErrorCode = ErrorCode(-32700);
+    pub const INVALID_REQUEST: ErrorCode = ErrorCode(-32600);
+    pub const METHOD_NOT_FOUND: ErrorCode = ErrorCode(-32601);
+    pub const INVALID_PARAMS: ErrorCode = ErrorCode(-32602);
+    pub const INTERNAL_ERROR: ErrorCode = ErrorCode(-32603);
     // Error code indicating that a server received a notification or
     // request before the server has received the `initialize` request.
-    pub const ServerNotInitialized: ErrorCode = ErrorCode(-32002);
-    pub const UnknownErrorCode: ErrorCode = ErrorCode(-32001);
+    pub const SERVER_NOT_INITIALIZED: ErrorCode = ErrorCode(-32002);
+    pub const UNKNOWN_ERROR_CODE: ErrorCode = ErrorCode(-32001);
     // A request failed but it was syntactically correct, e.g the
     // method name was known and the parameters were valid. The error
     // message should contain human readable information about why
     // the request failed.
     //
     // Since: 3.17.0
-    pub const RequestFailed: ErrorCode = ErrorCode(-32803);
+    pub const REQUEST_FAILED: ErrorCode = ErrorCode(-32803);
     // The server cancelled the request. This error code should
     // only be used for requests that explicitly support being
     // server cancellable.
     //
     // Since: 3.17.0
-    pub const ServerCancelled: ErrorCode = ErrorCode(-32802);
+    pub const SERVER_CANCELLED: ErrorCode = ErrorCode(-32802);
     // The server detected that the content of a document got
     // modified outside normal conditions. A server should
     // NOT send this error code if it detects a content change
@@ -22238,10 +22246,10 @@ impl ErrorCode {
     //
     // If a client decides that a result is not of any use anymore
     // the client should cancel the request.
-    pub const ContentModified: ErrorCode = ErrorCode(-32801);
+    pub const CONTENT_MODIFIED: ErrorCode = ErrorCode(-32801);
     // The client has canceled a request and a server has detected
     // the cancel.
-    pub const RequestCancelled: ErrorCode = ErrorCode(-32800);
+    pub const REQUEST_CANCELLED: ErrorCode = ErrorCode(-32800);
 }
 
 impl ErrorCode {
@@ -22295,11 +22303,11 @@ pub struct FoldingRangeKind(pub &'static str);
 
 impl FoldingRangeKind {
     // Folding range for a comment
-    pub const Comment: FoldingRangeKind = FoldingRangeKind("comment");
+    pub const COMMENT: FoldingRangeKind = FoldingRangeKind("comment");
     // Folding range for an import or include
-    pub const Imports: FoldingRangeKind = FoldingRangeKind("imports");
+    pub const IMPORTS: FoldingRangeKind = FoldingRangeKind("imports");
     // Folding range for a region (e.g. `#region`)
-    pub const Region: FoldingRangeKind = FoldingRangeKind("region");
+    pub const REGION: FoldingRangeKind = FoldingRangeKind("region");
 }
 
 impl Json for FoldingRangeKind {
@@ -22322,35 +22330,35 @@ impl IsZero for FoldingRangeKind {
 
 // A symbol kind.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct SymbolKind(pub u32);
+pub struct SymbolKind(u32);
 
 impl SymbolKind {
-    pub const File: SymbolKind = SymbolKind(1);
-    pub const Module: SymbolKind = SymbolKind(2);
-    pub const Namespace: SymbolKind = SymbolKind(3);
-    pub const Package: SymbolKind = SymbolKind(4);
-    pub const Class: SymbolKind = SymbolKind(5);
-    pub const Method: SymbolKind = SymbolKind(6);
-    pub const Property: SymbolKind = SymbolKind(7);
-    pub const Field: SymbolKind = SymbolKind(8);
-    pub const Constructor: SymbolKind = SymbolKind(9);
-    pub const Enum: SymbolKind = SymbolKind(10);
-    pub const Interface: SymbolKind = SymbolKind(11);
-    pub const Function: SymbolKind = SymbolKind(12);
-    pub const Variable: SymbolKind = SymbolKind(13);
-    pub const Constant: SymbolKind = SymbolKind(14);
-    pub const String: SymbolKind = SymbolKind(15);
-    pub const Number: SymbolKind = SymbolKind(16);
-    pub const Boolean: SymbolKind = SymbolKind(17);
-    pub const Array: SymbolKind = SymbolKind(18);
-    pub const Object: SymbolKind = SymbolKind(19);
-    pub const Key: SymbolKind = SymbolKind(20);
-    pub const Null: SymbolKind = SymbolKind(21);
-    pub const EnumMember: SymbolKind = SymbolKind(22);
-    pub const Struct: SymbolKind = SymbolKind(23);
-    pub const Event: SymbolKind = SymbolKind(24);
-    pub const Operator: SymbolKind = SymbolKind(25);
-    pub const TypeParameter: SymbolKind = SymbolKind(26);
+    pub const FILE: SymbolKind = SymbolKind(1);
+    pub const MODULE: SymbolKind = SymbolKind(2);
+    pub const NAMESPACE: SymbolKind = SymbolKind(3);
+    pub const PACKAGE: SymbolKind = SymbolKind(4);
+    pub const CLASS: SymbolKind = SymbolKind(5);
+    pub const METHOD: SymbolKind = SymbolKind(6);
+    pub const PROPERTY: SymbolKind = SymbolKind(7);
+    pub const FIELD: SymbolKind = SymbolKind(8);
+    pub const CONSTRUCTOR: SymbolKind = SymbolKind(9);
+    pub const ENUM: SymbolKind = SymbolKind(10);
+    pub const INTERFACE: SymbolKind = SymbolKind(11);
+    pub const FUNCTION: SymbolKind = SymbolKind(12);
+    pub const VARIABLE: SymbolKind = SymbolKind(13);
+    pub const CONSTANT: SymbolKind = SymbolKind(14);
+    pub const STRING: SymbolKind = SymbolKind(15);
+    pub const NUMBER: SymbolKind = SymbolKind(16);
+    pub const BOOLEAN: SymbolKind = SymbolKind(17);
+    pub const ARRAY: SymbolKind = SymbolKind(18);
+    pub const OBJECT: SymbolKind = SymbolKind(19);
+    pub const KEY: SymbolKind = SymbolKind(20);
+    pub const NULL: SymbolKind = SymbolKind(21);
+    pub const ENUM_MEMBER: SymbolKind = SymbolKind(22);
+    pub const STRUCT: SymbolKind = SymbolKind(23);
+    pub const EVENT: SymbolKind = SymbolKind(24);
+    pub const OPERATOR: SymbolKind = SymbolKind(25);
+    pub const TYPE_PARAMETER: SymbolKind = SymbolKind(26);
 }
 
 impl SymbolKind {
@@ -22415,15 +22423,15 @@ impl IsZero for SymbolKind {
 //
 // Since: 3.16
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct SymbolTag(pub u32);
+pub struct SymbolTag(u32);
 
 impl SymbolTag {
     // Render a symbol as obsolete, usually using a strike-out.
-    pub const Deprecated: SymbolTag = SymbolTag(1);
+    pub const DEPRECATED: SymbolTag = SymbolTag(1);
 }
 
 impl SymbolTag {
-    pub fn string(self) -> String {
+    fn string(self) -> String {
         match self.0 {
             1 => "Deprecated".to_string(),
             _ => format!("SymbolTag({})", self.0),
@@ -22459,19 +22467,19 @@ impl IsZero for SymbolTag {
 //
 // Since: 3.16.0
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct UniquenessLevel(pub &'static str);
+pub struct UniquenessLevel(&'static str);
 
 impl UniquenessLevel {
     // The moniker is only unique inside a document
-    pub const Document: UniquenessLevel = UniquenessLevel("document");
+    pub const DOCUMENT: UniquenessLevel = UniquenessLevel("document");
     // The moniker is unique inside a project for which a dump got created
-    pub const Project: UniquenessLevel = UniquenessLevel("project");
+    pub const PROJECT: UniquenessLevel = UniquenessLevel("project");
     // The moniker is unique inside the group to which a project belongs
-    pub const Group: UniquenessLevel = UniquenessLevel("group");
+    pub const GROUP: UniquenessLevel = UniquenessLevel("group");
     // The moniker is unique inside the moniker scheme.
-    pub const Scheme: UniquenessLevel = UniquenessLevel("scheme");
+    pub const SCHEME: UniquenessLevel = UniquenessLevel("scheme");
     // The moniker is globally unique
-    pub const Global: UniquenessLevel = UniquenessLevel("global");
+    pub const GLOBAL: UniquenessLevel = UniquenessLevel("global");
 }
 
 impl Json for UniquenessLevel {
@@ -22496,16 +22504,16 @@ impl IsZero for UniquenessLevel {
 //
 // Since: 3.16.0
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct MonikerKind(pub &'static str);
+pub struct MonikerKind(&'static str);
 
 impl MonikerKind {
     // The moniker represent a symbol that is imported into a project
-    pub const Import: MonikerKind = MonikerKind("import");
+    pub const IMPORT: MonikerKind = MonikerKind("import");
     // The moniker represents a symbol that is exported from a project
-    pub const Export: MonikerKind = MonikerKind("export");
+    pub const EXPORT: MonikerKind = MonikerKind("export");
     // The moniker represents a symbol that is local to a project (e.g. a local
     // variable of a function, a class not visible outside the project, ...)
-    pub const Local: MonikerKind = MonikerKind("local");
+    pub const LOCAL: MonikerKind = MonikerKind("local");
 }
 
 impl Json for MonikerKind {
@@ -22534,9 +22542,9 @@ pub struct InlayHintKind(pub u32);
 
 impl InlayHintKind {
     // An inlay hint that for a type annotation.
-    pub const Type: InlayHintKind = InlayHintKind(1);
+    pub const TYPE: InlayHintKind = InlayHintKind(1);
     // An inlay hint that is for a parameter.
-    pub const Parameter: InlayHintKind = InlayHintKind(2);
+    pub const PARAMETER: InlayHintKind = InlayHintKind(2);
 }
 
 impl InlayHintKind {
@@ -22579,21 +22587,21 @@ pub struct MessageType(pub u32);
 
 impl MessageType {
     // An error message.
-    pub const Error: MessageType = MessageType(1);
+    pub const ERROR: MessageType = MessageType(1);
     // A warning message.
-    pub const Warning: MessageType = MessageType(2);
+    pub const WARNING: MessageType = MessageType(2);
     // An information message.
-    pub const Info: MessageType = MessageType(3);
+    pub const INFO: MessageType = MessageType(3);
     // A log message.
-    pub const Log: MessageType = MessageType(4);
+    pub const LOG: MessageType = MessageType(4);
     // A debug message.
     //
     // Since: 3.18.0
-    pub const Debug: MessageType = MessageType(5);
+    pub const DEBUG: MessageType = MessageType(5);
 }
 
 impl MessageType {
-    pub fn string(self) -> String {
+    fn string(self) -> String {
         match self.0 {
             1 => "Error".to_string(),
             2 => "Warning".to_string(),
@@ -22632,22 +22640,22 @@ impl IsZero for MessageType {
 // Defines how the host (editor) should sync
 // document changes to the language server.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct TextDocumentSyncKind(pub u32);
+pub struct TextDocumentSyncKind(u32);
 
 impl TextDocumentSyncKind {
     // Documents should not be synced at all.
-    pub const None: TextDocumentSyncKind = TextDocumentSyncKind(0);
+    pub const NONE: TextDocumentSyncKind = TextDocumentSyncKind(0);
     // Documents are synced by always sending the full content
     // of the document.
-    pub const Full: TextDocumentSyncKind = TextDocumentSyncKind(1);
+    pub const FULL: TextDocumentSyncKind = TextDocumentSyncKind(1);
     // Documents are synced by sending the full content on open.
     // After that only incremental updates to the document are
     // send.
-    pub const Incremental: TextDocumentSyncKind = TextDocumentSyncKind(2);
+    pub const INCREMENTAL: TextDocumentSyncKind = TextDocumentSyncKind(2);
 }
 
 impl TextDocumentSyncKind {
-    pub fn string(self) -> String {
+    fn string(self) -> String {
         match self.0 {
             0 => "None".to_string(),
             1 => "Full".to_string(),
@@ -22683,20 +22691,20 @@ impl IsZero for TextDocumentSyncKind {
 
 // Represents reasons why a text document is saved.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct TextDocumentSaveReason(pub u32);
+pub struct TextDocumentSaveReason(u32);
 
 impl TextDocumentSaveReason {
     // Manually triggered, e.g. by the user pressing save, by starting debugging,
     // or by an API call.
-    pub const Manual: TextDocumentSaveReason = TextDocumentSaveReason(1);
+    pub const MANUAL: TextDocumentSaveReason = TextDocumentSaveReason(1);
     // Automatic after a delay.
-    pub const AfterDelay: TextDocumentSaveReason = TextDocumentSaveReason(2);
+    pub const AFTER_DELAY: TextDocumentSaveReason = TextDocumentSaveReason(2);
     // When the editor lost focus.
-    pub const FocusOut: TextDocumentSaveReason = TextDocumentSaveReason(3);
+    pub const FOCUS_OUT: TextDocumentSaveReason = TextDocumentSaveReason(3);
 }
 
 impl TextDocumentSaveReason {
-    pub fn string(self) -> String {
+    fn string(self) -> String {
         match self.0 {
             1 => "Manual".to_string(),
             2 => "AfterDelay".to_string(),
@@ -22735,35 +22743,35 @@ impl IsZero for TextDocumentSaveReason {
 pub struct CompletionItemKind(pub u32);
 
 impl CompletionItemKind {
-    pub const Text: CompletionItemKind = CompletionItemKind(1);
-    pub const Method: CompletionItemKind = CompletionItemKind(2);
-    pub const Function: CompletionItemKind = CompletionItemKind(3);
-    pub const Constructor: CompletionItemKind = CompletionItemKind(4);
-    pub const Field: CompletionItemKind = CompletionItemKind(5);
-    pub const Variable: CompletionItemKind = CompletionItemKind(6);
-    pub const Class: CompletionItemKind = CompletionItemKind(7);
-    pub const Interface: CompletionItemKind = CompletionItemKind(8);
-    pub const Module: CompletionItemKind = CompletionItemKind(9);
-    pub const Property: CompletionItemKind = CompletionItemKind(10);
-    pub const Unit: CompletionItemKind = CompletionItemKind(11);
-    pub const Value: CompletionItemKind = CompletionItemKind(12);
-    pub const Enum: CompletionItemKind = CompletionItemKind(13);
-    pub const Keyword: CompletionItemKind = CompletionItemKind(14);
-    pub const Snippet: CompletionItemKind = CompletionItemKind(15);
-    pub const Color: CompletionItemKind = CompletionItemKind(16);
-    pub const File: CompletionItemKind = CompletionItemKind(17);
-    pub const Reference: CompletionItemKind = CompletionItemKind(18);
-    pub const Folder: CompletionItemKind = CompletionItemKind(19);
-    pub const EnumMember: CompletionItemKind = CompletionItemKind(20);
-    pub const Constant: CompletionItemKind = CompletionItemKind(21);
-    pub const Struct: CompletionItemKind = CompletionItemKind(22);
-    pub const Event: CompletionItemKind = CompletionItemKind(23);
-    pub const Operator: CompletionItemKind = CompletionItemKind(24);
-    pub const TypeParameter: CompletionItemKind = CompletionItemKind(25);
+    pub const TEXT: CompletionItemKind = CompletionItemKind(1);
+    pub const METHOD: CompletionItemKind = CompletionItemKind(2);
+    pub const FUNCTION: CompletionItemKind = CompletionItemKind(3);
+    pub const CONSTRUCTOR: CompletionItemKind = CompletionItemKind(4);
+    pub const FIELD: CompletionItemKind = CompletionItemKind(5);
+    pub const VARIABLE: CompletionItemKind = CompletionItemKind(6);
+    pub const CLASS: CompletionItemKind = CompletionItemKind(7);
+    pub const INTERFACE: CompletionItemKind = CompletionItemKind(8);
+    pub const MODULE: CompletionItemKind = CompletionItemKind(9);
+    pub const PROPERTY: CompletionItemKind = CompletionItemKind(10);
+    pub const UNIT: CompletionItemKind = CompletionItemKind(11);
+    pub const VALUE: CompletionItemKind = CompletionItemKind(12);
+    pub const ENUM: CompletionItemKind = CompletionItemKind(13);
+    pub const KEYWORD: CompletionItemKind = CompletionItemKind(14);
+    pub const SNIPPET: CompletionItemKind = CompletionItemKind(15);
+    pub const COLOR: CompletionItemKind = CompletionItemKind(16);
+    pub const FILE: CompletionItemKind = CompletionItemKind(17);
+    pub const REFERENCE: CompletionItemKind = CompletionItemKind(18);
+    pub const FOLDER: CompletionItemKind = CompletionItemKind(19);
+    pub const ENUM_MEMBER: CompletionItemKind = CompletionItemKind(20);
+    pub const CONSTANT: CompletionItemKind = CompletionItemKind(21);
+    pub const STRUCT: CompletionItemKind = CompletionItemKind(22);
+    pub const EVENT: CompletionItemKind = CompletionItemKind(23);
+    pub const OPERATOR: CompletionItemKind = CompletionItemKind(24);
+    pub const TYPE_PARAMETER: CompletionItemKind = CompletionItemKind(25);
 }
 
 impl CompletionItemKind {
-    pub fn string(self) -> String {
+    fn string(self) -> String {
         match self.0 {
             1 => "Text".to_string(),
             2 => "Method".to_string(),
@@ -22824,15 +22832,15 @@ impl IsZero for CompletionItemKind {
 //
 // Since: 3.15.0
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct CompletionItemTag(pub u32);
+pub struct CompletionItemTag(u32);
 
 impl CompletionItemTag {
     // Render a completion as obsolete, usually using a strike-out.
-    pub const Deprecated: CompletionItemTag = CompletionItemTag(1);
+    pub const DEPRECATED: CompletionItemTag = CompletionItemTag(1);
 }
 
 impl CompletionItemTag {
-    pub fn string(self) -> String {
+    fn string(self) -> String {
         match self.0 {
             1 => "Deprecated".to_string(),
             _ => format!("CompletionItemTag({})", self.0),
@@ -22867,11 +22875,11 @@ impl IsZero for CompletionItemTag {
 // Defines whether the insert text in a completion item should be interpreted as
 // plain text or a snippet.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct InsertTextFormat(pub u32);
+pub struct InsertTextFormat(u32);
 
 impl InsertTextFormat {
     // The primary text to be inserted is treated as a plain string.
-    pub const PlainText: InsertTextFormat = InsertTextFormat(1);
+    pub const PLAIN_TEXT: InsertTextFormat = InsertTextFormat(1);
     // The primary text to be inserted is treated as a snippet.
     //
     // A snippet can define tab stops and placeholders with `$1`, `$2`
@@ -22880,11 +22888,11 @@ impl InsertTextFormat {
     // that is typing in one will update others too.
     //
     // See also: https://microsoft.github.io/language-server-protocol/specifications/specification-current/#snippet_syntax
-    pub const Snippet: InsertTextFormat = InsertTextFormat(2);
+    pub const SNIPPET: InsertTextFormat = InsertTextFormat(2);
 }
 
 impl InsertTextFormat {
-    pub fn string(self) -> String {
+    fn string(self) -> String {
         match self.0 {
             1 => "PlainText".to_string(),
             2 => "Snippet".to_string(),
@@ -22922,7 +22930,7 @@ impl IsZero for InsertTextFormat {
 //
 // Since: 3.16.0
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct InsertTextMode(pub u32);
+pub struct InsertTextMode(u32);
 
 impl InsertTextMode {
     // The insertion or replace strings is taken as it is. If the
@@ -22930,7 +22938,7 @@ impl InsertTextMode {
     // inserted using the indentation defined in the string value.
     // The client will not apply any kind of adjustments to the
     // string.
-    pub const AsIs: InsertTextMode = InsertTextMode(1);
+    pub const AS_IS: InsertTextMode = InsertTextMode(1);
     // The editor adjusts leading whitespace of new lines so that
     // they match the indentation up to the cursor of the line for
     // which the item is accepted.
@@ -22938,11 +22946,11 @@ impl InsertTextMode {
     // Consider a line like this: <2tabs><cursor><3tabs>foo. Accepting a
     // multi line completion item is indented using 2 tabs and all
     // following lines inserted will be indented using 2 tabs as well.
-    pub const AdjustIndentation: InsertTextMode = InsertTextMode(2);
+    pub const ADJUST_INDENTATION: InsertTextMode = InsertTextMode(2);
 }
 
 impl InsertTextMode {
-    pub fn string(self) -> String {
+    fn string(self) -> String {
         match self.0 {
             1 => "asIs".to_string(),
             2 => "adjustIndentation".to_string(),
@@ -22977,19 +22985,19 @@ impl IsZero for InsertTextMode {
 
 // A document highlight kind.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct DocumentHighlightKind(pub u32);
+pub struct DocumentHighlightKind(u32);
 
 impl DocumentHighlightKind {
     // A textual occurrence.
-    pub const Text: DocumentHighlightKind = DocumentHighlightKind(1);
+    pub const TEXT: DocumentHighlightKind = DocumentHighlightKind(1);
     // Read-access of a symbol, like reading a variable.
-    pub const Read: DocumentHighlightKind = DocumentHighlightKind(2);
+    pub const READ: DocumentHighlightKind = DocumentHighlightKind(2);
     // Write-access of a symbol, like writing to a variable.
-    pub const Write: DocumentHighlightKind = DocumentHighlightKind(3);
+    pub const WRITE: DocumentHighlightKind = DocumentHighlightKind(3);
 }
 
 impl DocumentHighlightKind {
-    pub fn string(self) -> String {
+    fn string(self) -> String {
         match self.0 {
             1 => "Text".to_string(),
             2 => "Read".to_string(),
@@ -23029,11 +23037,11 @@ pub struct CodeActionKind(pub &'static str);
 
 impl CodeActionKind {
     // Empty kind.
-    pub const Empty: CodeActionKind = CodeActionKind("");
+    pub(crate) const EMPTY: CodeActionKind = CodeActionKind("");
     // Base kind for quickfix actions: 'quickfix'
-    pub const QuickFix: CodeActionKind = CodeActionKind("quickfix");
+    pub const QUICK_FIX: CodeActionKind = CodeActionKind("quickfix");
     // Base kind for refactoring actions: 'refactor'
-    pub const Refactor: CodeActionKind = CodeActionKind("refactor");
+    pub const REFACTOR: CodeActionKind = CodeActionKind("refactor");
     // Base kind for refactoring extraction actions: 'refactor.extract'
     //
     // Example extract actions:
@@ -23043,7 +23051,7 @@ impl CodeActionKind {
     // - Extract variable
     // - Extract interface from class
     // - ...
-    pub const RefactorExtract: CodeActionKind = CodeActionKind("refactor.extract");
+    pub const REFACTOR_EXTRACT: CodeActionKind = CodeActionKind("refactor.extract");
     // Base kind for refactoring inline actions: 'refactor.inline'
     //
     // Example inline actions:
@@ -23052,7 +23060,7 @@ impl CodeActionKind {
     // - Inline variable
     // - Inline constant
     // - ...
-    pub const RefactorInline: CodeActionKind = CodeActionKind("refactor.inline");
+    pub const REFACTOR_INLINE: CodeActionKind = CodeActionKind("refactor.inline");
     // Base kind for refactoring move actions: `refactor.move`
     //
     // Example move actions:
@@ -23063,7 +23071,7 @@ impl CodeActionKind {
     // - ...
     //
     // Since: 3.18.0
-    pub const RefactorMove: CodeActionKind = CodeActionKind("refactor.move");
+    pub const REFACTOR_MOVE: CodeActionKind = CodeActionKind("refactor.move");
     // Base kind for refactoring rewrite actions: 'refactor.rewrite'
     //
     // Example rewrite actions:
@@ -23074,20 +23082,20 @@ impl CodeActionKind {
     // - Make method static
     // - Move method to base class
     // - ...
-    pub const RefactorRewrite: CodeActionKind = CodeActionKind("refactor.rewrite");
+    pub const REFACTOR_REWRITE: CodeActionKind = CodeActionKind("refactor.rewrite");
     // Base kind for source actions: `source`
     //
     // Source code actions apply to the entire file.
-    pub const Source: CodeActionKind = CodeActionKind("source");
+    pub const SOURCE: CodeActionKind = CodeActionKind("source");
     // Base kind for an organize imports source action: `source.organizeImports`
-    pub const SourceOrganizeImports: CodeActionKind = CodeActionKind("source.organizeImports");
+    pub const SOURCE_ORGANIZE_IMPORTS: CodeActionKind = CodeActionKind("source.organizeImports");
     // Base kind for auto-fix source actions: `source.fixAll`.
     //
     // Fix all actions automatically fix errors that have a clear fix that do not require user input.
     // They should not suppress errors or perform unsafe fixes such as generating new types or classes.
     //
     // Since: 3.15.0
-    pub const SourceFixAll: CodeActionKind = CodeActionKind("source.fixAll");
+    pub const SOURCE_FIX_ALL: CodeActionKind = CodeActionKind("source.fixAll");
 }
 
 impl Json for CodeActionKind {
@@ -23112,15 +23120,15 @@ impl IsZero for CodeActionKind {
 //
 // Since: 3.18.0
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct CodeActionTag(pub u32);
+pub struct CodeActionTag(u32);
 
 impl CodeActionTag {
     // Marks the code action as LLM-generated.
-    pub const LLMGenerated: CodeActionTag = CodeActionTag(1);
+    pub const LLM_GENERATED: CodeActionTag = CodeActionTag(1);
 }
 
 impl CodeActionTag {
-    pub fn string(self) -> String {
+    fn string(self) -> String {
         match self.0 {
             1 => "LLMGenerated".to_string(),
             _ => format!("CodeActionTag({})", self.0),
@@ -23153,15 +23161,15 @@ impl IsZero for CodeActionTag {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct TraceValue(pub &'static str);
+pub struct TraceValue(&'static str);
 
 impl TraceValue {
     // Turn tracing off.
-    pub const Off: TraceValue = TraceValue("off");
+    pub const OFF: TraceValue = TraceValue("off");
     // Trace messages only.
-    pub const Messages: TraceValue = TraceValue("messages");
+    pub const MESSAGES: TraceValue = TraceValue("messages");
     // Verbose message tracing.
-    pub const Verbose: TraceValue = TraceValue("verbose");
+    pub const VERBOSE: TraceValue = TraceValue("verbose");
 }
 
 impl Json for TraceValue {
@@ -23192,9 +23200,9 @@ pub struct MarkupKind(pub &'static str);
 
 impl MarkupKind {
     // Plain text is supported as a content format
-    pub const PlainText: MarkupKind = MarkupKind("plaintext");
+    pub const PLAIN_TEXT: MarkupKind = MarkupKind("plaintext");
     // Markdown is supported as a content format
-    pub const Markdown: MarkupKind = MarkupKind("markdown");
+    pub const MARKDOWN: MarkupKind = MarkupKind("markdown");
 }
 
 impl Json for MarkupKind {
@@ -23223,67 +23231,67 @@ pub struct LanguageKind(pub &'static str);
 
 impl LanguageKind {
     pub const ABAP: LanguageKind = LanguageKind("abap");
-    pub const WindowsBat: LanguageKind = LanguageKind("bat");
-    pub const BibTeX: LanguageKind = LanguageKind("bibtex");
-    pub const Clojure: LanguageKind = LanguageKind("clojure");
-    pub const Coffeescript: LanguageKind = LanguageKind("coffeescript");
+    pub const WINDOWS_BAT: LanguageKind = LanguageKind("bat");
+    pub const BIB_TE_X: LanguageKind = LanguageKind("bibtex");
+    pub const CLOJURE: LanguageKind = LanguageKind("clojure");
+    pub const COFFEESCRIPT: LanguageKind = LanguageKind("coffeescript");
     pub const C: LanguageKind = LanguageKind("c");
     pub const CPP: LanguageKind = LanguageKind("cpp");
-    pub const CSharp: LanguageKind = LanguageKind("csharp");
+    pub const C_SHARP: LanguageKind = LanguageKind("csharp");
     pub const CSS: LanguageKind = LanguageKind("css");
     // Since: 3.18.0
     pub const D: LanguageKind = LanguageKind("d");
     // Since: 3.18.0
-    pub const Delphi: LanguageKind = LanguageKind("pascal");
-    pub const Diff: LanguageKind = LanguageKind("diff");
-    pub const Dart: LanguageKind = LanguageKind("dart");
-    pub const Dockerfile: LanguageKind = LanguageKind("dockerfile");
-    pub const Elixir: LanguageKind = LanguageKind("elixir");
-    pub const Erlang: LanguageKind = LanguageKind("erlang");
-    pub const FSharp: LanguageKind = LanguageKind("fsharp");
-    pub const GitCommit: LanguageKind = LanguageKind("git-commit");
-    pub const GitRebase: LanguageKind = LanguageKind("git-rebase");
-    pub const Go: LanguageKind = LanguageKind("go");
-    pub const Groovy: LanguageKind = LanguageKind("groovy");
-    pub const Handlebars: LanguageKind = LanguageKind("handlebars");
-    pub const Haskell: LanguageKind = LanguageKind("haskell");
+    pub const DELPHI: LanguageKind = LanguageKind("pascal");
+    pub const DIFF: LanguageKind = LanguageKind("diff");
+    pub const DART: LanguageKind = LanguageKind("dart");
+    pub const DOCKERFILE: LanguageKind = LanguageKind("dockerfile");
+    pub const ELIXIR: LanguageKind = LanguageKind("elixir");
+    pub const ERLANG: LanguageKind = LanguageKind("erlang");
+    pub const F_SHARP: LanguageKind = LanguageKind("fsharp");
+    pub const GIT_COMMIT: LanguageKind = LanguageKind("git-commit");
+    pub const GIT_REBASE: LanguageKind = LanguageKind("git-rebase");
+    pub const GO: LanguageKind = LanguageKind("go");
+    pub const GROOVY: LanguageKind = LanguageKind("groovy");
+    pub const HANDLEBARS: LanguageKind = LanguageKind("handlebars");
+    pub const HASKELL: LanguageKind = LanguageKind("haskell");
     pub const HTML: LanguageKind = LanguageKind("html");
-    pub const Ini: LanguageKind = LanguageKind("ini");
-    pub const Java: LanguageKind = LanguageKind("java");
-    pub const JavaScript: LanguageKind = LanguageKind("javascript");
-    pub const JavaScriptReact: LanguageKind = LanguageKind("javascriptreact");
+    pub const INI: LanguageKind = LanguageKind("ini");
+    pub const JAVA: LanguageKind = LanguageKind("java");
+    pub const JAVA_SCRIPT: LanguageKind = LanguageKind("javascript");
+    pub const JAVA_SCRIPT_REACT: LanguageKind = LanguageKind("javascriptreact");
     pub const JSON: LanguageKind = LanguageKind("json");
-    pub const LaTeX: LanguageKind = LanguageKind("latex");
-    pub const Less: LanguageKind = LanguageKind("less");
-    pub const Lua: LanguageKind = LanguageKind("lua");
-    pub const Makefile: LanguageKind = LanguageKind("makefile");
-    pub const Markdown: LanguageKind = LanguageKind("markdown");
-    pub const ObjectiveC: LanguageKind = LanguageKind("objective-c");
-    pub const ObjectiveCPP: LanguageKind = LanguageKind("objective-cpp");
+    pub const LA_TE_X: LanguageKind = LanguageKind("latex");
+    pub const LESS: LanguageKind = LanguageKind("less");
+    pub const LUA: LanguageKind = LanguageKind("lua");
+    pub const MAKEFILE: LanguageKind = LanguageKind("makefile");
+    pub const MARKDOWN: LanguageKind = LanguageKind("markdown");
+    pub const OBJECTIVE_C: LanguageKind = LanguageKind("objective-c");
+    pub const OBJECTIVE_CPP: LanguageKind = LanguageKind("objective-cpp");
     // Since: 3.18.0
-    pub const Pascal: LanguageKind = LanguageKind("pascal");
-    pub const Perl: LanguageKind = LanguageKind("perl");
-    pub const Perl6: LanguageKind = LanguageKind("perl6");
+    pub const PASCAL: LanguageKind = LanguageKind("pascal");
+    pub const PERL: LanguageKind = LanguageKind("perl");
+    pub const PERL6: LanguageKind = LanguageKind("perl6");
     pub const PHP: LanguageKind = LanguageKind("php");
-    pub const Plaintext: LanguageKind = LanguageKind("plaintext");
-    pub const Powershell: LanguageKind = LanguageKind("powershell");
-    pub const Pug: LanguageKind = LanguageKind("jade");
-    pub const Python: LanguageKind = LanguageKind("python");
+    pub const PLAINTEXT: LanguageKind = LanguageKind("plaintext");
+    pub const POWERSHELL: LanguageKind = LanguageKind("powershell");
+    pub const PUG: LanguageKind = LanguageKind("jade");
+    pub const PYTHON: LanguageKind = LanguageKind("python");
     pub const R: LanguageKind = LanguageKind("r");
-    pub const Razor: LanguageKind = LanguageKind("razor");
-    pub const Ruby: LanguageKind = LanguageKind("ruby");
-    pub const Rust: LanguageKind = LanguageKind("rust");
+    pub const RAZOR: LanguageKind = LanguageKind("razor");
+    pub const RUBY: LanguageKind = LanguageKind("ruby");
+    pub const RUST: LanguageKind = LanguageKind("rust");
     pub const SCSS: LanguageKind = LanguageKind("scss");
     pub const SASS: LanguageKind = LanguageKind("sass");
-    pub const Scala: LanguageKind = LanguageKind("scala");
-    pub const ShaderLab: LanguageKind = LanguageKind("shaderlab");
-    pub const ShellScript: LanguageKind = LanguageKind("shellscript");
+    pub const SCALA: LanguageKind = LanguageKind("scala");
+    pub const SHADER_LAB: LanguageKind = LanguageKind("shaderlab");
+    pub const SHELL_SCRIPT: LanguageKind = LanguageKind("shellscript");
     pub const SQL: LanguageKind = LanguageKind("sql");
-    pub const Swift: LanguageKind = LanguageKind("swift");
-    pub const TypeScript: LanguageKind = LanguageKind("typescript");
-    pub const TypeScriptReact: LanguageKind = LanguageKind("typescriptreact");
-    pub const TeX: LanguageKind = LanguageKind("tex");
-    pub const VisualBasic: LanguageKind = LanguageKind("vb");
+    pub const SWIFT: LanguageKind = LanguageKind("swift");
+    pub const TYPE_SCRIPT: LanguageKind = LanguageKind("typescript");
+    pub const TYPE_SCRIPT_REACT: LanguageKind = LanguageKind("typescriptreact");
+    pub const TE_X: LanguageKind = LanguageKind("tex");
+    pub const VISUAL_BASIC: LanguageKind = LanguageKind("vb");
     pub const XML: LanguageKind = LanguageKind("xml");
     pub const XSL: LanguageKind = LanguageKind("xsl");
     pub const YAML: LanguageKind = LanguageKind("yaml");
@@ -23311,17 +23319,17 @@ impl IsZero for LanguageKind {
 //
 // Since: 3.18.0
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct InlineCompletionTriggerKind(pub u32);
+pub struct InlineCompletionTriggerKind(u32);
 
 impl InlineCompletionTriggerKind {
     // Completion was triggered explicitly by a user gesture.
-    pub const Invoked: InlineCompletionTriggerKind = InlineCompletionTriggerKind(1);
+    pub const INVOKED: InlineCompletionTriggerKind = InlineCompletionTriggerKind(1);
     // Completion was triggered automatically while editing.
-    pub const Automatic: InlineCompletionTriggerKind = InlineCompletionTriggerKind(2);
+    pub const AUTOMATIC: InlineCompletionTriggerKind = InlineCompletionTriggerKind(2);
 }
 
 impl InlineCompletionTriggerKind {
-    pub fn string(self) -> String {
+    fn string(self) -> String {
         match self.0 {
             1 => "Invoked".to_string(),
             2 => "Automatic".to_string(),
@@ -23359,7 +23367,7 @@ impl IsZero for InlineCompletionTriggerKind {
 //
 // Since: 3.17.0
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct PositionEncodingKind(pub &'static str);
+pub struct PositionEncodingKind(&'static str);
 
 impl PositionEncodingKind {
     // Character offsets count UTF-8 code units (e.g. bytes).
@@ -23401,15 +23409,15 @@ pub struct FileChangeType(pub u32);
 
 impl FileChangeType {
     // The file got created.
-    pub const Created: FileChangeType = FileChangeType(1);
+    pub const CREATED: FileChangeType = FileChangeType(1);
     // The file got changed.
-    pub const Changed: FileChangeType = FileChangeType(2);
+    pub const CHANGED: FileChangeType = FileChangeType(2);
     // The file got deleted.
-    pub const Deleted: FileChangeType = FileChangeType(3);
+    pub const DELETED: FileChangeType = FileChangeType(3);
 }
 
 impl FileChangeType {
-    pub fn string(self) -> String {
+    fn string(self) -> String {
         match self.0 {
             1 => "Created".to_string(),
             2 => "Changed".to_string(),
@@ -23448,15 +23456,15 @@ pub struct WatchKind(pub u32);
 
 impl WatchKind {
     // Interested in create events.
-    pub const Create: WatchKind = WatchKind(1);
+    pub const CREATE: WatchKind = WatchKind(1);
     // Interested in change events
-    pub const Change: WatchKind = WatchKind(2);
+    pub const CHANGE: WatchKind = WatchKind(2);
     // Interested in delete events
-    pub const Delete: WatchKind = WatchKind(4);
+    pub const DELETE: WatchKind = WatchKind(4);
 }
 
 impl WatchKind {
-    pub fn string(self) -> String {
+    fn string(self) -> String {
         if self.0 == 0 {
             return "0".to_string();
         }
@@ -23503,21 +23511,21 @@ impl IsZero for WatchKind {
 
 // The diagnostic's severity.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct DiagnosticSeverity(pub u32);
+pub struct DiagnosticSeverity(u32);
 
 impl DiagnosticSeverity {
     // Reports an error.
-    pub const Error: DiagnosticSeverity = DiagnosticSeverity(1);
+    pub const ERROR: DiagnosticSeverity = DiagnosticSeverity(1);
     // Reports a warning.
-    pub const Warning: DiagnosticSeverity = DiagnosticSeverity(2);
+    pub const WARNING: DiagnosticSeverity = DiagnosticSeverity(2);
     // Reports an information.
-    pub const Information: DiagnosticSeverity = DiagnosticSeverity(3);
+    pub const INFORMATION: DiagnosticSeverity = DiagnosticSeverity(3);
     // Reports a hint.
-    pub const Hint: DiagnosticSeverity = DiagnosticSeverity(4);
+    pub const HINT: DiagnosticSeverity = DiagnosticSeverity(4);
 }
 
 impl DiagnosticSeverity {
-    pub fn string(self) -> String {
+    fn string(self) -> String {
         match self.0 {
             1 => "Error".to_string(),
             2 => "Warning".to_string(),
@@ -23556,22 +23564,22 @@ impl IsZero for DiagnosticSeverity {
 //
 // Since: 3.15.0
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct DiagnosticTag(pub u32);
+pub struct DiagnosticTag(u32);
 
 impl DiagnosticTag {
     // Unused or unnecessary code.
     //
     // Clients are allowed to render diagnostics with this tag faded out instead of having
     // an error squiggle.
-    pub const Unnecessary: DiagnosticTag = DiagnosticTag(1);
+    pub const UNNECESSARY: DiagnosticTag = DiagnosticTag(1);
     // Deprecated or obsolete code.
     //
     // Clients are allowed to rendered diagnostics with this tag strike through.
-    pub const Deprecated: DiagnosticTag = DiagnosticTag(2);
+    pub const DEPRECATED: DiagnosticTag = DiagnosticTag(2);
 }
 
 impl DiagnosticTag {
-    pub fn string(self) -> String {
+    fn string(self) -> String {
         match self.0 {
             1 => "Unnecessary".to_string(),
             2 => "Deprecated".to_string(),
@@ -23606,21 +23614,21 @@ impl IsZero for DiagnosticTag {
 
 // How a completion was triggered
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct CompletionTriggerKind(pub u32);
+pub struct CompletionTriggerKind(u32);
 
 impl CompletionTriggerKind {
     // Completion was triggered by typing an identifier (24x7 code
     // complete), manual invocation (e.g Ctrl+Space) or via API.
-    pub const Invoked: CompletionTriggerKind = CompletionTriggerKind(1);
+    pub const INVOKED: CompletionTriggerKind = CompletionTriggerKind(1);
     // Completion was triggered by a trigger character specified by
     // the `triggerCharacters` properties of the `CompletionRegistrationOptions`.
-    pub const TriggerCharacter: CompletionTriggerKind = CompletionTriggerKind(2);
+    pub const TRIGGER_CHARACTER: CompletionTriggerKind = CompletionTriggerKind(2);
     // Completion was re-triggered as current completion list is incomplete
-    pub const TriggerForIncompleteCompletions: CompletionTriggerKind = CompletionTriggerKind(3);
+    pub const TRIGGER_FOR_INCOMPLETE_COMPLETIONS: CompletionTriggerKind = CompletionTriggerKind(3);
 }
 
 impl CompletionTriggerKind {
-    pub fn string(self) -> String {
+    fn string(self) -> String {
         match self.0 {
             1 => "Invoked".to_string(),
             2 => "TriggerCharacter".to_string(),
@@ -23659,21 +23667,21 @@ impl IsZero for CompletionTriggerKind {
 //
 // Since: 3.18.0
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct ApplyKind(pub u32);
+pub struct ApplyKind(u32);
 
 impl ApplyKind {
     // The value from the individual item (if provided and not `null`) will be
     // used instead of the default.
-    pub const Replace: ApplyKind = ApplyKind(1);
+    pub const REPLACE: ApplyKind = ApplyKind(1);
     // The value from the item will be merged with the default.
     //
     // The specific rules for mergeing values are defined against each field
     // that supports merging.
-    pub const Merge: ApplyKind = ApplyKind(2);
+    pub const MERGE: ApplyKind = ApplyKind(2);
 }
 
 impl ApplyKind {
-    pub fn string(self) -> String {
+    fn string(self) -> String {
         match self.0 {
             1 => "Replace".to_string(),
             2 => "Merge".to_string(),
@@ -23710,19 +23718,19 @@ impl IsZero for ApplyKind {
 //
 // Since: 3.15.0
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct SignatureHelpTriggerKind(pub u32);
+pub struct SignatureHelpTriggerKind(u32);
 
 impl SignatureHelpTriggerKind {
     // Signature help was invoked manually by the user or by a command.
-    pub const Invoked: SignatureHelpTriggerKind = SignatureHelpTriggerKind(1);
+    pub const INVOKED: SignatureHelpTriggerKind = SignatureHelpTriggerKind(1);
     // Signature help was triggered by a trigger character.
-    pub const TriggerCharacter: SignatureHelpTriggerKind = SignatureHelpTriggerKind(2);
+    pub const TRIGGER_CHARACTER: SignatureHelpTriggerKind = SignatureHelpTriggerKind(2);
     // Signature help was triggered by the cursor moving or by the document content changing.
-    pub const ContentChange: SignatureHelpTriggerKind = SignatureHelpTriggerKind(3);
+    pub const CONTENT_CHANGE: SignatureHelpTriggerKind = SignatureHelpTriggerKind(3);
 }
 
 impl SignatureHelpTriggerKind {
-    pub fn string(self) -> String {
+    fn string(self) -> String {
         match self.0 {
             1 => "Invoked".to_string(),
             2 => "TriggerCharacter".to_string(),
@@ -23760,20 +23768,20 @@ impl IsZero for SignatureHelpTriggerKind {
 //
 // Since: 3.17.0
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct CodeActionTriggerKind(pub u32);
+pub struct CodeActionTriggerKind(u32);
 
 impl CodeActionTriggerKind {
     // Code actions were explicitly requested by the user or by an extension.
-    pub const Invoked: CodeActionTriggerKind = CodeActionTriggerKind(1);
+    pub const INVOKED: CodeActionTriggerKind = CodeActionTriggerKind(1);
     // Code actions were requested automatically.
     //
     // This typically happens when current selection in a file changes, but can
     // also be triggered when file content changes.
-    pub const Automatic: CodeActionTriggerKind = CodeActionTriggerKind(2);
+    pub const AUTOMATIC: CodeActionTriggerKind = CodeActionTriggerKind(2);
 }
 
 impl CodeActionTriggerKind {
-    pub fn string(self) -> String {
+    fn string(self) -> String {
         match self.0 {
             1 => "Invoked".to_string(),
             2 => "Automatic".to_string(),
@@ -23811,13 +23819,13 @@ impl IsZero for CodeActionTriggerKind {
 //
 // Since: 3.16.0
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct FileOperationPatternKind(pub &'static str);
+pub struct FileOperationPatternKind(&'static str);
 
 impl FileOperationPatternKind {
     // The pattern matches a file only.
-    pub const File: FileOperationPatternKind = FileOperationPatternKind("file");
+    pub const FILE: FileOperationPatternKind = FileOperationPatternKind("file");
     // The pattern matches a folder only.
-    pub const Folder: FileOperationPatternKind = FileOperationPatternKind("folder");
+    pub const FOLDER: FileOperationPatternKind = FileOperationPatternKind("folder");
 }
 
 impl Json for FileOperationPatternKind {
@@ -23839,15 +23847,15 @@ impl IsZero for FileOperationPatternKind {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct ResourceOperationKind(pub &'static str);
+pub struct ResourceOperationKind(&'static str);
 
 impl ResourceOperationKind {
     // Supports creating new files and folders.
-    pub const Create: ResourceOperationKind = ResourceOperationKind("create");
+    pub const CREATE: ResourceOperationKind = ResourceOperationKind("create");
     // Supports renaming existing files and folders.
-    pub const Rename: ResourceOperationKind = ResourceOperationKind("rename");
+    pub const RENAME: ResourceOperationKind = ResourceOperationKind("rename");
     // Supports deleting existing files and folders.
-    pub const Delete: ResourceOperationKind = ResourceOperationKind("delete");
+    pub const DELETE: ResourceOperationKind = ResourceOperationKind("delete");
 }
 
 impl Json for ResourceOperationKind {
@@ -23869,23 +23877,23 @@ impl IsZero for ResourceOperationKind {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct FailureHandlingKind(pub &'static str);
+pub struct FailureHandlingKind(&'static str);
 
 impl FailureHandlingKind {
     // Applying the workspace change is simply aborted if one of the changes provided
     // fails. All operations executed before the failing operation stay executed.
-    pub const Abort: FailureHandlingKind = FailureHandlingKind("abort");
+    pub const ABORT: FailureHandlingKind = FailureHandlingKind("abort");
     // All operations are executed transactional. That means they either all
     // succeed or no changes at all are applied to the workspace.
-    pub const Transactional: FailureHandlingKind = FailureHandlingKind("transactional");
+    pub const TRANSACTIONAL: FailureHandlingKind = FailureHandlingKind("transactional");
     // If the workspace edit contains only textual file changes they are executed transactional.
     // If resource changes (create, rename or delete file) are part of the change the failure
     // handling strategy is abort.
-    pub const TextOnlyTransactional: FailureHandlingKind =
+    pub const TEXT_ONLY_TRANSACTIONAL: FailureHandlingKind =
         FailureHandlingKind("textOnlyTransactional");
     // The client tries to undo the operations already executed. But there is no
     // guarantee that this is succeeding.
-    pub const Undo: FailureHandlingKind = FailureHandlingKind("undo");
+    pub const UNDO: FailureHandlingKind = FailureHandlingKind("undo");
 }
 
 impl Json for FailureHandlingKind {
@@ -23907,16 +23915,16 @@ impl IsZero for FailureHandlingKind {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct PrepareSupportDefaultBehavior(pub u32);
+pub struct PrepareSupportDefaultBehavior(u32);
 
 impl PrepareSupportDefaultBehavior {
     // The client's default behavior is to select the identifier
     // according the to language's syntax rule.
-    pub const Identifier: PrepareSupportDefaultBehavior = PrepareSupportDefaultBehavior(1);
+    pub const IDENTIFIER: PrepareSupportDefaultBehavior = PrepareSupportDefaultBehavior(1);
 }
 
 impl PrepareSupportDefaultBehavior {
-    pub fn string(self) -> String {
+    fn string(self) -> String {
         match self.0 {
             1 => "Identifier".to_string(),
             _ => format!("PrepareSupportDefaultBehavior({})", self.0),
@@ -23950,10 +23958,10 @@ impl IsZero for PrepareSupportDefaultBehavior {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct TokenFormat(pub &'static str);
+pub struct TokenFormat(&'static str);
 
 impl TokenFormat {
-    pub const Relative: TokenFormat = TokenFormat("relative");
+    pub const RELATIVE: TokenFormat = TokenFormat("relative");
 }
 
 impl Json for TokenFormat {
@@ -23976,17 +23984,17 @@ impl IsZero for TokenFormat {
 
 // Layout style for a VSContainerElement's children, mirroring VS's Microsoft.VisualStudio.Text.Adornments.ContainerElementStyle.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct VSContainerElementStyle(pub i32);
+pub struct VSContainerElementStyle(i32);
 
 impl VSContainerElementStyle {
     // Child elements are laid out inline, wrapping as needed (e.g. an icon next to a signature line).
-    pub const Wrapped: VSContainerElementStyle = VSContainerElementStyle(0);
+    pub const WRAPPED: VSContainerElementStyle = VSContainerElementStyle(0);
     // Child elements are stacked vertically, each on its own line (e.g. a signature line followed by documentation).
-    pub const Stacked: VSContainerElementStyle = VSContainerElementStyle(1);
+    pub const STACKED: VSContainerElementStyle = VSContainerElementStyle(1);
 }
 
 impl VSContainerElementStyle {
-    pub fn string(self) -> String {
+    fn string(self) -> String {
         match self.0 {
             0 => "Wrapped".to_string(),
             1 => "Stacked".to_string(),
@@ -24025,21 +24033,21 @@ pub struct LogVerbosity(pub i32);
 
 impl LogVerbosity {
     // All logging disabled.
-    pub const Off: LogVerbosity = LogVerbosity(0);
+    pub const OFF: LogVerbosity = LogVerbosity(0);
     // Most verbose; includes LSP request/response traces.
-    pub const Trace: LogVerbosity = LogVerbosity(1);
+    pub const TRACE: LogVerbosity = LogVerbosity(1);
     // Verbose server logs.
-    pub const Debug: LogVerbosity = LogVerbosity(2);
+    pub const DEBUG: LogVerbosity = LogVerbosity(2);
     // Normal server logs.
-    pub const Info: LogVerbosity = LogVerbosity(3);
+    pub const INFO: LogVerbosity = LogVerbosity(3);
     // Warnings only.
-    pub const Warning: LogVerbosity = LogVerbosity(4);
+    pub const WARNING: LogVerbosity = LogVerbosity(4);
     // Errors only.
-    pub const Error: LogVerbosity = LogVerbosity(5);
+    pub const ERROR: LogVerbosity = LogVerbosity(5);
 }
 
 impl LogVerbosity {
-    pub fn string(self) -> String {
+    fn string(self) -> String {
         match self.0 {
             0 => "Off".to_string(),
             1 => "Trace".to_string(),
@@ -24078,19 +24086,19 @@ impl IsZero for LogVerbosity {
 
 // Behavior for tracking and logging flaky diagnostics.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct DiagnosticFlakeLogLevel(pub i32);
+pub struct DiagnosticFlakeLogLevel(i32);
 
 impl DiagnosticFlakeLogLevel {
     // All flake logging disabled.
-    pub const Off: DiagnosticFlakeLogLevel = DiagnosticFlakeLogLevel(0);
+    pub const OFF: DiagnosticFlakeLogLevel = DiagnosticFlakeLogLevel(0);
     // Log flaky diagnostics to the error log.
-    pub const Log: DiagnosticFlakeLogLevel = DiagnosticFlakeLogLevel(1);
+    pub const LOG: DiagnosticFlakeLogLevel = DiagnosticFlakeLogLevel(1);
     // Panic on flaky diagnostics.
-    pub const Panic: DiagnosticFlakeLogLevel = DiagnosticFlakeLogLevel(2);
+    pub const PANIC: DiagnosticFlakeLogLevel = DiagnosticFlakeLogLevel(2);
 }
 
 impl DiagnosticFlakeLogLevel {
-    pub fn string(self) -> String {
+    fn string(self) -> String {
         match self.0 {
             0 => "Off".to_string(),
             1 => "Log".to_string(),
@@ -24125,31 +24133,31 @@ impl IsZero for DiagnosticFlakeLogLevel {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct VSReferenceKind(pub i32);
+pub struct VSReferenceKind(i32);
 
 impl VSReferenceKind {
-    pub const Inactive: VSReferenceKind = VSReferenceKind(0);
-    pub const Comment: VSReferenceKind = VSReferenceKind(1);
-    pub const String: VSReferenceKind = VSReferenceKind(2);
-    pub const Read: VSReferenceKind = VSReferenceKind(3);
-    pub const Write: VSReferenceKind = VSReferenceKind(4);
-    pub const Reference: VSReferenceKind = VSReferenceKind(5);
-    pub const Name: VSReferenceKind = VSReferenceKind(6);
-    pub const Qualified: VSReferenceKind = VSReferenceKind(7);
-    pub const TypeArgument: VSReferenceKind = VSReferenceKind(8);
-    pub const TypeConstraint: VSReferenceKind = VSReferenceKind(9);
-    pub const BaseType: VSReferenceKind = VSReferenceKind(10);
-    pub const Constructor: VSReferenceKind = VSReferenceKind(11);
-    pub const Destructor: VSReferenceKind = VSReferenceKind(12);
-    pub const Import: VSReferenceKind = VSReferenceKind(13);
-    pub const Declaration: VSReferenceKind = VSReferenceKind(14);
-    pub const AddressOf: VSReferenceKind = VSReferenceKind(15);
-    pub const NotReference: VSReferenceKind = VSReferenceKind(16);
-    pub const Unknown: VSReferenceKind = VSReferenceKind(17);
+    pub const INACTIVE: VSReferenceKind = VSReferenceKind(0);
+    pub const COMMENT: VSReferenceKind = VSReferenceKind(1);
+    pub const STRING: VSReferenceKind = VSReferenceKind(2);
+    pub const READ: VSReferenceKind = VSReferenceKind(3);
+    pub const WRITE: VSReferenceKind = VSReferenceKind(4);
+    pub const REFERENCE: VSReferenceKind = VSReferenceKind(5);
+    pub const NAME: VSReferenceKind = VSReferenceKind(6);
+    pub const QUALIFIED: VSReferenceKind = VSReferenceKind(7);
+    pub const TYPE_ARGUMENT: VSReferenceKind = VSReferenceKind(8);
+    pub const TYPE_CONSTRAINT: VSReferenceKind = VSReferenceKind(9);
+    pub const BASE_TYPE: VSReferenceKind = VSReferenceKind(10);
+    pub const CONSTRUCTOR: VSReferenceKind = VSReferenceKind(11);
+    pub const DESTRUCTOR: VSReferenceKind = VSReferenceKind(12);
+    pub const IMPORT: VSReferenceKind = VSReferenceKind(13);
+    pub const DECLARATION: VSReferenceKind = VSReferenceKind(14);
+    pub const ADDRESS_OF: VSReferenceKind = VSReferenceKind(15);
+    pub const NOT_REFERENCE: VSReferenceKind = VSReferenceKind(16);
+    pub const UNKNOWN: VSReferenceKind = VSReferenceKind(17);
 }
 
 impl VSReferenceKind {
-    pub fn string(self) -> String {
+    fn string(self) -> String {
         match self.0 {
             0 => "Inactive".to_string(),
             1 => "Comment".to_string(),
@@ -24199,11 +24207,11 @@ impl IsZero for VSReferenceKind {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct CodeLensKind(pub &'static str);
+pub struct CodeLensKind(&'static str);
 
 impl CodeLensKind {
-    pub const References: CodeLensKind = CodeLensKind("references");
-    pub const Implementations: CodeLensKind = CodeLensKind("implementations");
+    pub const REFERENCES: CodeLensKind = CodeLensKind("references");
+    pub const IMPLEMENTATIONS: CodeLensKind = CodeLensKind("implementations");
 }
 
 impl Json for CodeLensKind {
@@ -24229,19 +24237,19 @@ pub struct AutoImportFixKind(pub i32);
 
 impl AutoImportFixKind {
     // Augment an existing namespace import.
-    pub const UseNamespace: AutoImportFixKind = AutoImportFixKind(0);
+    pub const USE_NAMESPACE: AutoImportFixKind = AutoImportFixKind(0);
     // Add a JSDoc-only type import.
-    pub const JsdocTypeImport: AutoImportFixKind = AutoImportFixKind(1);
+    pub const JSDOC_TYPE_IMPORT: AutoImportFixKind = AutoImportFixKind(1);
     // Insert into an existing import declaration.
-    pub const AddToExisting: AutoImportFixKind = AutoImportFixKind(2);
+    pub const ADD_TO_EXISTING: AutoImportFixKind = AutoImportFixKind(2);
     // Create a fresh import statement.
-    pub const AddNew: AutoImportFixKind = AutoImportFixKind(3);
+    pub const ADD_NEW: AutoImportFixKind = AutoImportFixKind(3);
     // Promote a type-only import when necessary.
-    pub const PromoteTypeOnly: AutoImportFixKind = AutoImportFixKind(4);
+    pub const PROMOTE_TYPE_ONLY: AutoImportFixKind = AutoImportFixKind(4);
 }
 
 impl AutoImportFixKind {
-    pub fn string(self) -> String {
+    fn string(self) -> String {
         match self.0 {
             0 => "UseNamespace".to_string(),
             1 => "JsdocTypeImport".to_string(),
@@ -24282,13 +24290,13 @@ pub struct ImportKind(pub i32);
 
 impl ImportKind {
     // Adds a named import.
-    pub const Named: ImportKind = ImportKind(0);
+    pub const NAMED: ImportKind = ImportKind(0);
     // Adds a default import.
-    pub const Default: ImportKind = ImportKind(1);
+    pub const DEFAULT: ImportKind = ImportKind(1);
     // Adds a namespace import.
-    pub const Namespace: ImportKind = ImportKind(2);
+    pub const NAMESPACE: ImportKind = ImportKind(2);
     // Adds a CommonJS import assignment.
-    pub const CommonJS: ImportKind = ImportKind(3);
+    pub const COMMON_JS: ImportKind = ImportKind(3);
 }
 
 impl ImportKind {
@@ -24332,15 +24340,15 @@ pub struct AddAsTypeOnly(pub i32);
 
 impl AddAsTypeOnly {
     // Import may be marked type-only if needed.
-    pub const Allowed: AddAsTypeOnly = AddAsTypeOnly(1);
+    pub const ALLOWED: AddAsTypeOnly = AddAsTypeOnly(1);
     // Import must be marked type-only.
-    pub const Required: AddAsTypeOnly = AddAsTypeOnly(2);
+    pub const REQUIRED: AddAsTypeOnly = AddAsTypeOnly(2);
     // Import cannot be marked type-only.
-    pub const NotAllowed: AddAsTypeOnly = AddAsTypeOnly(4);
+    pub const NOT_ALLOWED: AddAsTypeOnly = AddAsTypeOnly(4);
 }
 
 impl AddAsTypeOnly {
-    pub fn string(self) -> String {
+    fn string(self) -> String {
         match self.0 {
             1 => "Allowed".to_string(),
             2 => "Required".to_string(),
@@ -24380,44 +24388,44 @@ pub struct ClassificationTypeName(pub &'static str);
 
 impl ClassificationTypeName {
     // Language keyword (e.g., function, const, class).
-    pub const Keyword: ClassificationTypeName = ClassificationTypeName("keyword");
+    pub const KEYWORD: ClassificationTypeName = ClassificationTypeName("keyword");
     // Punctuation characters (e.g., parentheses, commas, semicolons).
-    pub const Punctuation: ClassificationTypeName = ClassificationTypeName("punctuation");
+    pub const PUNCTUATION: ClassificationTypeName = ClassificationTypeName("punctuation");
     // Operators (e.g., =, +, ?).
-    pub const Operator: ClassificationTypeName = ClassificationTypeName("operator");
+    pub const OPERATOR: ClassificationTypeName = ClassificationTypeName("operator");
     // Whitespace including spaces and line breaks.
-    pub const WhiteSpace: ClassificationTypeName = ClassificationTypeName("whitespace");
+    pub const WHITE_SPACE: ClassificationTypeName = ClassificationTypeName("whitespace");
     // Plain text with no special classification.
-    pub const Text: ClassificationTypeName = ClassificationTypeName("text");
+    pub const TEXT: ClassificationTypeName = ClassificationTypeName("text");
     // String and literal values.
-    pub const String: ClassificationTypeName = ClassificationTypeName("string");
+    pub const STRING: ClassificationTypeName = ClassificationTypeName("string");
     // Numeric literal values.
-    pub const Number: ClassificationTypeName = ClassificationTypeName("number");
+    pub const NUMBER: ClassificationTypeName = ClassificationTypeName("number");
     // Comment text.
-    pub const Comment: ClassificationTypeName = ClassificationTypeName("comment");
+    pub const COMMENT: ClassificationTypeName = ClassificationTypeName("comment");
     // Class names.
-    pub const ClassName: ClassificationTypeName = ClassificationTypeName("class name");
+    pub const CLASS_NAME: ClassificationTypeName = ClassificationTypeName("class name");
     // Interface names.
-    pub const InterfaceName: ClassificationTypeName = ClassificationTypeName("interface name");
+    pub const INTERFACE_NAME: ClassificationTypeName = ClassificationTypeName("interface name");
     // Enum names.
-    pub const EnumName: ClassificationTypeName = ClassificationTypeName("enum name");
+    pub const ENUM_NAME: ClassificationTypeName = ClassificationTypeName("enum name");
     // Module/namespace names.
-    pub const ModuleName: ClassificationTypeName = ClassificationTypeName("module name");
+    pub const MODULE_NAME: ClassificationTypeName = ClassificationTypeName("module name");
     // Method and function names.
-    pub const MethodName: ClassificationTypeName = ClassificationTypeName("method name");
+    pub const METHOD_NAME: ClassificationTypeName = ClassificationTypeName("method name");
     // Parameter names.
-    pub const ParameterName: ClassificationTypeName = ClassificationTypeName("parameter name");
+    pub const PARAMETER_NAME: ClassificationTypeName = ClassificationTypeName("parameter name");
     // Property and accessor names.
-    pub const PropertyName: ClassificationTypeName = ClassificationTypeName("property name");
+    pub const PROPERTY_NAME: ClassificationTypeName = ClassificationTypeName("property name");
     // Field names (e.g., enum members).
-    pub const FieldName: ClassificationTypeName = ClassificationTypeName("field name");
+    pub const FIELD_NAME: ClassificationTypeName = ClassificationTypeName("field name");
     // Local variable names.
-    pub const LocalName: ClassificationTypeName = ClassificationTypeName("local name");
+    pub const LOCAL_NAME: ClassificationTypeName = ClassificationTypeName("local name");
     // Type parameter names.
-    pub const TypeParameterName: ClassificationTypeName =
+    pub const TYPE_PARAMETER_NAME: ClassificationTypeName =
         ClassificationTypeName("type parameter name");
     // General identifiers (e.g., type aliases, imports).
-    pub const Identifier: ClassificationTypeName = ClassificationTypeName("identifier");
+    pub const IDENTIFIER: ClassificationTypeName = ClassificationTypeName("identifier");
 }
 
 impl Json for ClassificationTypeName {
@@ -24443,13 +24451,13 @@ impl Method {
     // A request to resolve the implementation locations of a symbol at a given text
     // document position. The request's parameter is of type TextDocumentPositionParams
     // the response is of type Definition or a Thenable that resolves to such.
-    pub const TextDocumentImplementation: Method = Method("textDocument/implementation");
+    pub const TEXT_DOCUMENT_IMPLEMENTATION: Method = Method("textDocument/implementation");
     // A request to resolve the type definition locations of a symbol at a given text
     // document position. The request's parameter is of type TextDocumentPositionParams
     // the response is of type Definition or a Thenable that resolves to such.
-    pub const TextDocumentTypeDefinition: Method = Method("textDocument/typeDefinition");
+    pub const TEXT_DOCUMENT_TYPE_DEFINITION: Method = Method("textDocument/typeDefinition");
     // The `workspace/workspaceFolders` is sent from the server to the client to fetch the open workspace folders.
-    pub const WorkspaceWorkspaceFolders: Method = Method("workspace/workspaceFolders");
+    const WORKSPACE_WORKSPACE_FOLDERS: Method = Method("workspace/workspaceFolders");
     // The 'workspace/configuration' request is sent from the server to the client to fetch a certain
     // configuration setting.
     //
@@ -24457,73 +24465,74 @@ impl Method {
     // event. If the server still needs to react to configuration changes (since the server caches the
     // result of `workspace/configuration` requests) the server should register for an empty configuration
     // change event and empty the cache if such an event is received.
-    pub const WorkspaceConfiguration: Method = Method("workspace/configuration");
+    const WORKSPACE_CONFIGURATION: Method = Method("workspace/configuration");
     // A request to list all color symbols found in a given text document. The request's
     // parameter is of type DocumentColorParams the
     // response is of type ColorInformation[] or a Thenable
     // that resolves to such.
-    pub const TextDocumentDocumentColor: Method = Method("textDocument/documentColor");
+    const TEXT_DOCUMENT_DOCUMENT_COLOR: Method = Method("textDocument/documentColor");
     // A request to list all presentation for a color. The request's
     // parameter is of type ColorPresentationParams the
     // response is of type ColorPresentation[] or a Thenable
     // that resolves to such.
-    pub const TextDocumentColorPresentation: Method = Method("textDocument/colorPresentation");
+    const TEXT_DOCUMENT_COLOR_PRESENTATION: Method = Method("textDocument/colorPresentation");
     // A request to provide folding ranges in a document. The request's
     // parameter is of type FoldingRangeParams, the
     // response is of type FoldingRangeList or a Thenable
     // that resolves to such.
-    pub const TextDocumentFoldingRange: Method = Method("textDocument/foldingRange");
+    pub const TEXT_DOCUMENT_FOLDING_RANGE: Method = Method("textDocument/foldingRange");
     // A request to refresh the folding ranges in a document.
     //
     // Since: 3.18.0
-    pub const WorkspaceFoldingRangeRefresh: Method = Method("workspace/foldingRange/refresh");
+    const WORKSPACE_FOLDING_RANGE_REFRESH: Method = Method("workspace/foldingRange/refresh");
     // A request to resolve the type definition locations of a symbol at a given text
     // document position. The request's parameter is of type TextDocumentPositionParams
     // the response is of type Declaration or a typed array of DeclarationLink
     // or a Thenable that resolves to such.
-    pub const TextDocumentDeclaration: Method = Method("textDocument/declaration");
+    const TEXT_DOCUMENT_DECLARATION: Method = Method("textDocument/declaration");
     // A request to provide selection ranges in a document. The request's
     // parameter is of type SelectionRangeParams, the
     // response is of type SelectionRange[] or a Thenable
     // that resolves to such.
-    pub const TextDocumentSelectionRange: Method = Method("textDocument/selectionRange");
+    pub const TEXT_DOCUMENT_SELECTION_RANGE: Method = Method("textDocument/selectionRange");
     // The `window/workDoneProgress/create` request is sent from the server to the client to initiate progress
     // reporting from the server.
-    pub const WindowWorkDoneProgressCreate: Method = Method("window/workDoneProgress/create");
+    pub const WINDOW_WORK_DONE_PROGRESS_CREATE: Method = Method("window/workDoneProgress/create");
     // A request to result a `CallHierarchyItem` in a document at a given position.
     // Can be used as an input to an incoming or outgoing call hierarchy.
     //
     // Since: 3.16.0
-    pub const TextDocumentPrepareCallHierarchy: Method =
+    pub const TEXT_DOCUMENT_PREPARE_CALL_HIERARCHY: Method =
         Method("textDocument/prepareCallHierarchy");
     // A request to resolve the incoming calls for a given `CallHierarchyItem`.
     //
     // Since: 3.16.0
-    pub const CallHierarchyIncomingCalls: Method = Method("callHierarchy/incomingCalls");
+    const CALL_HIERARCHY_INCOMING_CALLS: Method = Method("callHierarchy/incomingCalls");
     // A request to resolve the outgoing calls for a given `CallHierarchyItem`.
     //
     // Since: 3.16.0
-    pub const CallHierarchyOutgoingCalls: Method = Method("callHierarchy/outgoingCalls");
+    const CALL_HIERARCHY_OUTGOING_CALLS: Method = Method("callHierarchy/outgoingCalls");
     // Since: 3.16.0
-    pub const TextDocumentSemanticTokensFull: Method = Method("textDocument/semanticTokens/full");
+    const TEXT_DOCUMENT_SEMANTIC_TOKENS_FULL: Method = Method("textDocument/semanticTokens/full");
     // Since: 3.16.0
-    pub const TextDocumentSemanticTokensFullDelta: Method =
+    const TEXT_DOCUMENT_SEMANTIC_TOKENS_FULL_DELTA: Method =
         Method("textDocument/semanticTokens/full/delta");
     // Since: 3.16.0
-    pub const TextDocumentSemanticTokensRange: Method = Method("textDocument/semanticTokens/range");
+    const TEXT_DOCUMENT_SEMANTIC_TOKENS_RANGE: Method = Method("textDocument/semanticTokens/range");
     // Since: 3.16.0
-    pub const WorkspaceSemanticTokensRefresh: Method = Method("workspace/semanticTokens/refresh");
+    const WORKSPACE_SEMANTIC_TOKENS_REFRESH: Method = Method("workspace/semanticTokens/refresh");
     // A request to show a document. This request might open an
     // external program depending on the value of the URI to open.
     // For example a request to open `https://code.visualstudio.com/`
     // will very likely open the URI in a WEB browser.
     //
     // Since: 3.16.0
-    pub const WindowShowDocument: Method = Method("window/showDocument");
+    const WINDOW_SHOW_DOCUMENT: Method = Method("window/showDocument");
     // A request to provide ranges that can be edited together.
     //
     // Since: 3.16.0
-    pub const TextDocumentLinkedEditingRange: Method = Method("textDocument/linkedEditingRange");
+    pub const TEXT_DOCUMENT_LINKED_EDITING_RANGE: Method =
+        Method("textDocument/linkedEditingRange");
     // The will create files request is sent from the client to the server before files are actually
     // created as long as the creation is triggered from within the client.
     //
@@ -24532,113 +24541,113 @@ impl Method {
     // to be created.
     //
     // Since: 3.16.0
-    pub const WorkspaceWillCreateFiles: Method = Method("workspace/willCreateFiles");
+    const WORKSPACE_WILL_CREATE_FILES: Method = Method("workspace/willCreateFiles");
     // The will rename files request is sent from the client to the server before files are actually
     // renamed as long as the rename is triggered from within the client.
     //
     // Since: 3.16.0
-    pub const WorkspaceWillRenameFiles: Method = Method("workspace/willRenameFiles");
+    pub const WORKSPACE_WILL_RENAME_FILES: Method = Method("workspace/willRenameFiles");
     // The did delete files notification is sent from the client to the server when
     // files were deleted from within the client.
     //
     // Since: 3.16.0
-    pub const WorkspaceWillDeleteFiles: Method = Method("workspace/willDeleteFiles");
+    const WORKSPACE_WILL_DELETE_FILES: Method = Method("workspace/willDeleteFiles");
     // A request to get the moniker of a symbol at a given text document position.
     // The request parameter is of type TextDocumentPositionParams.
     // The response is of type Moniker[] or `null`.
-    pub const TextDocumentMoniker: Method = Method("textDocument/moniker");
+    const TEXT_DOCUMENT_MONIKER: Method = Method("textDocument/moniker");
     // A request to result a `TypeHierarchyItem` in a document at a given position.
     // Can be used as an input to a subtypes or supertypes type hierarchy.
     //
     // Since: 3.17.0
-    pub const TextDocumentPrepareTypeHierarchy: Method =
+    const TEXT_DOCUMENT_PREPARE_TYPE_HIERARCHY: Method =
         Method("textDocument/prepareTypeHierarchy");
     // A request to resolve the supertypes for a given `TypeHierarchyItem`.
     //
     // Since: 3.17.0
-    pub const TypeHierarchySupertypes: Method = Method("typeHierarchy/supertypes");
+    const TYPE_HIERARCHY_SUPERTYPES: Method = Method("typeHierarchy/supertypes");
     // A request to resolve the subtypes for a given `TypeHierarchyItem`.
     //
     // Since: 3.17.0
-    pub const TypeHierarchySubtypes: Method = Method("typeHierarchy/subtypes");
+    const TYPE_HIERARCHY_SUBTYPES: Method = Method("typeHierarchy/subtypes");
     // A request to provide inline values in a document. The request's parameter is of
     // type InlineValueParams, the response is of type
     // InlineValue[] or a Thenable that resolves to such.
     //
     // Since: 3.17.0
-    pub const TextDocumentInlineValue: Method = Method("textDocument/inlineValue");
+    const TEXT_DOCUMENT_INLINE_VALUE: Method = Method("textDocument/inlineValue");
     // Since: 3.17.0
-    pub const WorkspaceInlineValueRefresh: Method = Method("workspace/inlineValue/refresh");
+    const WORKSPACE_INLINE_VALUE_REFRESH: Method = Method("workspace/inlineValue/refresh");
     // A request to provide inlay hints in a document. The request's parameter is of
     // type InlayHintsParams, the response is of type
     // InlayHint[] or a Thenable that resolves to such.
     //
     // Since: 3.17.0
-    pub const TextDocumentInlayHint: Method = Method("textDocument/inlayHint");
+    pub const TEXT_DOCUMENT_INLAY_HINT: Method = Method("textDocument/inlayHint");
     // A request to resolve additional properties for an inlay hint.
     // The request's parameter is of type InlayHint, the response is
     // of type InlayHint or a Thenable that resolves to such.
     //
     // Since: 3.17.0
-    pub const InlayHintResolve: Method = Method("inlayHint/resolve");
+    const INLAY_HINT_RESOLVE: Method = Method("inlayHint/resolve");
     // Since: 3.17.0
-    pub const WorkspaceInlayHintRefresh: Method = Method("workspace/inlayHint/refresh");
+    const WORKSPACE_INLAY_HINT_REFRESH: Method = Method("workspace/inlayHint/refresh");
     // The document diagnostic request definition.
     //
     // Since: 3.17.0
-    pub const TextDocumentDiagnostic: Method = Method("textDocument/diagnostic");
+    pub const TEXT_DOCUMENT_DIAGNOSTIC: Method = Method("textDocument/diagnostic");
     // The workspace diagnostic request definition.
     //
     // Since: 3.17.0
-    pub const WorkspaceDiagnostic: Method = Method("workspace/diagnostic");
+    const WORKSPACE_DIAGNOSTIC: Method = Method("workspace/diagnostic");
     // The diagnostic refresh request definition.
     //
     // Since: 3.17.0
-    pub const WorkspaceDiagnosticRefresh: Method = Method("workspace/diagnostic/refresh");
+    const WORKSPACE_DIAGNOSTIC_REFRESH: Method = Method("workspace/diagnostic/refresh");
     // A request to provide inline completions in a document. The request's parameter is of
     // type InlineCompletionParams, the response is of type
     // InlineCompletion[] or a Thenable that resolves to such.
     //
     // Since: 3.18.0
-    pub const TextDocumentInlineCompletion: Method = Method("textDocument/inlineCompletion");
+    const TEXT_DOCUMENT_INLINE_COMPLETION: Method = Method("textDocument/inlineCompletion");
     // The `workspace/textDocumentContent` request is sent from the client to the
     // server to request the content of a text document.
     //
     // Since: 3.18.0
-    pub const WorkspaceTextDocumentContent: Method = Method("workspace/textDocumentContent");
+    const WORKSPACE_TEXT_DOCUMENT_CONTENT: Method = Method("workspace/textDocumentContent");
     // The `workspace/textDocumentContent` request is sent from the server to the client to refresh
     // the content of a specific text document.
     //
     // Since: 3.18.0
-    pub const WorkspaceTextDocumentContentRefresh: Method =
+    const WORKSPACE_TEXT_DOCUMENT_CONTENT_REFRESH: Method =
         Method("workspace/textDocumentContent/refresh");
     // The `client/registerCapability` request is sent from the server to the client to register a new capability
     // handler on the client side.
-    pub const ClientRegisterCapability: Method = Method("client/registerCapability");
+    pub const CLIENT_REGISTER_CAPABILITY: Method = Method("client/registerCapability");
     // The `client/unregisterCapability` request is sent from the server to the client to unregister a previously registered capability
     // handler on the client side.
-    pub const ClientUnregisterCapability: Method = Method("client/unregisterCapability");
+    pub const CLIENT_UNREGISTER_CAPABILITY: Method = Method("client/unregisterCapability");
     // The initialize request is sent from the client to the server.
     // It is sent once as the request after starting up the server.
     // The requests parameter is of type InitializeParams
     // the response if of type InitializeResult of a Thenable that
     // resolves to such.
-    pub const Initialize: Method = Method("initialize");
+    pub const INITIALIZE: Method = Method("initialize");
     // A shutdown request is sent from the client to the server.
     // It is sent once when the client decides to shutdown the
     // server. The only notification that is sent after a shutdown request
     // is the exit event.
-    pub const Shutdown: Method = Method("shutdown");
+    const SHUTDOWN: Method = Method("shutdown");
     // The show message request is sent from the server to the client to show a message
     // and a set of options actions to the user.
-    pub const WindowShowMessageRequest: Method = Method("window/showMessageRequest");
+    const WINDOW_SHOW_MESSAGE_REQUEST: Method = Method("window/showMessageRequest");
     // A document will save request is sent from the client to the server before
     // the document is actually saved. The request can return an array of TextEdits
     // which will be applied to the text document before it is saved. Please note that
     // clients might drop results if computing the text edits took too long or if a
     // server constantly fails on this request. This is done to keep the save fast and
     // reliable.
-    pub const TextDocumentWillSaveWaitUntil: Method = Method("textDocument/willSaveWaitUntil");
+    const TEXT_DOCUMENT_WILL_SAVE_WAIT_UNTIL: Method = Method("textDocument/willSaveWaitUntil");
     // Request to request completion at a given text document position. The request's
     // parameter is of type TextDocumentPosition the response
     // is of type CompletionItem[] or CompletionList
@@ -24648,42 +24657,42 @@ impl Method {
     // and `documentation` properties to the `completionItem/resolve`
     // request. However, properties that are needed for the initial sorting and filtering, like `sortText`,
     // `filterText`, `insertText`, and `textEdit`, must not be changed during resolve.
-    pub const TextDocumentCompletion: Method = Method("textDocument/completion");
+    pub const TEXT_DOCUMENT_COMPLETION: Method = Method("textDocument/completion");
     // Request to resolve additional information for a given completion item.The request's
     // parameter is of type CompletionItem the response
     // is of type CompletionItem or a Thenable that resolves to such.
-    pub const CompletionItemResolve: Method = Method("completionItem/resolve");
+    const COMPLETION_ITEM_RESOLVE: Method = Method("completionItem/resolve");
     // Request to request hover information at a given text document position. The request's
     // parameter is of type TextDocumentPosition the response is of
     // type Hover or a Thenable that resolves to such.
-    pub const TextDocumentHover: Method = Method("textDocument/hover");
-    pub const TextDocumentSignatureHelp: Method = Method("textDocument/signatureHelp");
+    pub const TEXT_DOCUMENT_HOVER: Method = Method("textDocument/hover");
+    pub const TEXT_DOCUMENT_SIGNATURE_HELP: Method = Method("textDocument/signatureHelp");
     // A request to resolve the definition location of a symbol at a given text
     // document position. The request's parameter is of type TextDocumentPosition
     // the response is of either type Definition or a typed array of
     // DefinitionLink or a Thenable that resolves to such.
-    pub const TextDocumentDefinition: Method = Method("textDocument/definition");
+    pub const TEXT_DOCUMENT_DEFINITION: Method = Method("textDocument/definition");
     // A request to resolve project-wide references for the symbol denoted
     // by the given text document position. The request's parameter is of
     // type ReferenceParams the response is of type
     // Location[] or a Thenable that resolves to such.
-    pub const TextDocumentReferences: Method = Method("textDocument/references");
+    pub const TEXT_DOCUMENT_REFERENCES: Method = Method("textDocument/references");
     // Request to resolve a DocumentHighlight for a given
     // text document position. The request's parameter is of type TextDocumentPosition
     // the request response is an array of type DocumentHighlight
     // or a Thenable that resolves to such.
-    pub const TextDocumentDocumentHighlight: Method = Method("textDocument/documentHighlight");
+    pub const TEXT_DOCUMENT_DOCUMENT_HIGHLIGHT: Method = Method("textDocument/documentHighlight");
     // A request to list all symbols found in a given text document. The request's
     // parameter is of type TextDocumentIdentifier the
     // response is of type SymbolInformation[] or a Thenable
     // that resolves to such.
-    pub const TextDocumentDocumentSymbol: Method = Method("textDocument/documentSymbol");
+    pub const TEXT_DOCUMENT_DOCUMENT_SYMBOL: Method = Method("textDocument/documentSymbol");
     // A request to provide commands for the given text document and range.
-    pub const TextDocumentCodeAction: Method = Method("textDocument/codeAction");
+    pub const TEXT_DOCUMENT_CODE_ACTION: Method = Method("textDocument/codeAction");
     // Request to resolve additional information for a given code action.The request's
     // parameter is of type CodeAction the response
     // is of type CodeAction or a Thenable that resolves to such.
-    pub const CodeActionResolve: Method = Method("codeAction/resolve");
+    const CODE_ACTION_RESOLVE: Method = Method("codeAction/resolve");
     // A request to list project-wide symbols matching the query string given
     // by the WorkspaceSymbolParams. The response is
     // of type SymbolInformation[] or a Thenable that
@@ -24692,116 +24701,116 @@ impl Method {
     // Since: 3.17.0 - support for WorkspaceSymbol in the returned data. Clients
     //  need to advertise support for WorkspaceSymbols via the client capability
     //  `workspace.symbol.resolveSupport`.
-    pub const WorkspaceSymbol: Method = Method("workspace/symbol");
+    const WORKSPACE_SYMBOL: Method = Method("workspace/symbol");
     // A request to resolve the range inside the workspace
     // symbol's location.
     //
     // Since: 3.17.0
-    pub const WorkspaceSymbolResolve: Method = Method("workspaceSymbol/resolve");
+    const WORKSPACE_SYMBOL_RESOLVE: Method = Method("workspaceSymbol/resolve");
     // A request to provide code lens for the given text document.
-    pub const TextDocumentCodeLens: Method = Method("textDocument/codeLens");
+    pub const TEXT_DOCUMENT_CODE_LENS: Method = Method("textDocument/codeLens");
     // A request to resolve a command for a given code lens.
-    pub const CodeLensResolve: Method = Method("codeLens/resolve");
+    const CODE_LENS_RESOLVE: Method = Method("codeLens/resolve");
     // A request to refresh all code actions
     //
     // Since: 3.16.0
-    pub const WorkspaceCodeLensRefresh: Method = Method("workspace/codeLens/refresh");
+    const WORKSPACE_CODE_LENS_REFRESH: Method = Method("workspace/codeLens/refresh");
     // A request to provide document links
-    pub const TextDocumentDocumentLink: Method = Method("textDocument/documentLink");
+    const TEXT_DOCUMENT_DOCUMENT_LINK: Method = Method("textDocument/documentLink");
     // Request to resolve additional information for a given document link. The request's
     // parameter is of type DocumentLink the response
     // is of type DocumentLink or a Thenable that resolves to such.
-    pub const DocumentLinkResolve: Method = Method("documentLink/resolve");
+    const DOCUMENT_LINK_RESOLVE: Method = Method("documentLink/resolve");
     // A request to format a whole document.
-    pub const TextDocumentFormatting: Method = Method("textDocument/formatting");
+    pub const TEXT_DOCUMENT_FORMATTING: Method = Method("textDocument/formatting");
     // A request to format a range in a document.
-    pub const TextDocumentRangeFormatting: Method = Method("textDocument/rangeFormatting");
+    pub const TEXT_DOCUMENT_RANGE_FORMATTING: Method = Method("textDocument/rangeFormatting");
     // A request to format ranges in a document.
     //
     // Since: 3.18.0
-    pub const TextDocumentRangesFormatting: Method = Method("textDocument/rangesFormatting");
+    const TEXT_DOCUMENT_RANGES_FORMATTING: Method = Method("textDocument/rangesFormatting");
     // A request to format a document on type.
-    pub const TextDocumentOnTypeFormatting: Method = Method("textDocument/onTypeFormatting");
+    pub const TEXT_DOCUMENT_ON_TYPE_FORMATTING: Method = Method("textDocument/onTypeFormatting");
     // A request to rename a symbol.
-    pub const TextDocumentRename: Method = Method("textDocument/rename");
+    pub const TEXT_DOCUMENT_RENAME: Method = Method("textDocument/rename");
     // A request to test and perform the setup necessary for a rename.
     //
     // Since: 3.16 - support for default behavior
-    pub const TextDocumentPrepareRename: Method = Method("textDocument/prepareRename");
+    const TEXT_DOCUMENT_PREPARE_RENAME: Method = Method("textDocument/prepareRename");
     // A request send from the client to the server to execute a command. The request might return
     // a workspace edit which the client will apply to the workspace.
-    pub const WorkspaceExecuteCommand: Method = Method("workspace/executeCommand");
+    const WORKSPACE_EXECUTE_COMMAND: Method = Method("workspace/executeCommand");
     // A request sent from the server to the client to modified certain resources.
-    pub const WorkspaceApplyEdit: Method = Method("workspace/applyEdit");
+    const WORKSPACE_APPLY_EDIT: Method = Method("workspace/applyEdit");
     // Triggers garbage collection in the language server.
-    pub const CustomRunGC: Method = Method("custom/runGC");
+    pub const CUSTOM_RUN_GC: Method = Method("custom/runGC");
     // Saves a heap profile to the specified directory.
-    pub const CustomSaveHeapProfile: Method = Method("custom/saveHeapProfile");
+    pub const CUSTOM_SAVE_HEAP_PROFILE: Method = Method("custom/saveHeapProfile");
     // Saves an allocation profile to the specified directory.
-    pub const CustomSaveAllocProfile: Method = Method("custom/saveAllocProfile");
+    pub const CUSTOM_SAVE_ALLOC_PROFILE: Method = Method("custom/saveAllocProfile");
     // Starts CPU profiling, writing to the specified directory when stopped.
-    pub const CustomStartCPUProfile: Method = Method("custom/startCPUProfile");
+    pub const CUSTOM_START_CPU_PROFILE: Method = Method("custom/startCPUProfile");
     // Stops CPU profiling and saves the profile.
-    pub const CustomStopCPUProfile: Method = Method("custom/stopCPUProfile");
+    pub const CUSTOM_STOP_CPU_PROFILE: Method = Method("custom/stopCPUProfile");
     // Custom request to initialize an API session.
-    pub const CustomInitializeAPISession: Method = Method("custom/initializeAPISession");
+    const CUSTOM_INITIALIZE_API_SESSION: Method = Method("custom/initializeAPISession");
     // Returns project information (e.g. the tsconfig.json path) for a given text document.
-    pub const CustomProjectInfo: Method = Method("custom/projectInfo");
+    const CUSTOM_PROJECT_INFO: Method = Method("custom/projectInfo");
     // Replaces extension content mapper contributions and discovers configured mappers for matching open documents.
-    pub const CustomSetContentMapperContributions: Method =
+    const CUSTOM_SET_CONTENT_MAPPER_CONTRIBUTIONS: Method =
         Method("custom/setContentMapperContributions");
     // Request to get source definitions for a position.
-    pub const CustomTextDocumentSourceDefinition: Method =
+    const CUSTOM_TEXT_DOCUMENT_SOURCE_DEFINITION: Method =
         Method("custom/textDocument/sourceDefinition");
     // Request to get document highlights across multiple files.
-    pub const CustomTextDocumentMultiDocumentHighlight: Method =
+    const CUSTOM_TEXT_DOCUMENT_MULTI_DOCUMENT_HIGHLIGHT: Method =
         Method("custom/textDocument/multiDocumentHighlight");
     // Request for auto-insert when a trigger character is typed (VS-specific).
-    pub const TextDocumentVSOnAutoInsert: Method = Method("textDocument/_vs_onAutoInsert");
+    const TEXT_DOCUMENT_VS_ON_AUTO_INSERT: Method = Method("textDocument/_vs_onAutoInsert");
     // VS-specific request for Find All References with grouped reference items.
-    pub const TextDocumentVSReferences: Method = Method("textDocument/_vs_references");
+    const TEXT_DOCUMENT_VS_REFERENCES: Method = Method("textDocument/_vs_references");
     // The `workspace/didChangeWorkspaceFolders` notification is sent from the client to the server when the workspace
     // folder configuration changes.
-    pub const WorkspaceDidChangeWorkspaceFolders: Method =
+    const WORKSPACE_DID_CHANGE_WORKSPACE_FOLDERS: Method =
         Method("workspace/didChangeWorkspaceFolders");
     // The `window/workDoneProgress/cancel` notification is sent from the client to the server to cancel a progress
     // initiated on the server side.
-    pub const WindowWorkDoneProgressCancel: Method = Method("window/workDoneProgress/cancel");
+    const WINDOW_WORK_DONE_PROGRESS_CANCEL: Method = Method("window/workDoneProgress/cancel");
     // The did create files notification is sent from the client to the server when
     // files were created from within the client.
     //
     // Since: 3.16.0
-    pub const WorkspaceDidCreateFiles: Method = Method("workspace/didCreateFiles");
+    const WORKSPACE_DID_CREATE_FILES: Method = Method("workspace/didCreateFiles");
     // The did rename files notification is sent from the client to the server when
     // files were renamed from within the client.
     //
     // Since: 3.16.0
-    pub const WorkspaceDidRenameFiles: Method = Method("workspace/didRenameFiles");
+    const WORKSPACE_DID_RENAME_FILES: Method = Method("workspace/didRenameFiles");
     // The will delete files request is sent from the client to the server before files are actually
     // deleted as long as the deletion is triggered from within the client.
     //
     // Since: 3.16.0
-    pub const WorkspaceDidDeleteFiles: Method = Method("workspace/didDeleteFiles");
+    const WORKSPACE_DID_DELETE_FILES: Method = Method("workspace/didDeleteFiles");
     // The initialized notification is sent from the client to the
     // server after the client is fully initialized and the server
     // is allowed to send requests from the server to the client.
-    pub const Initialized: Method = Method("initialized");
+    pub const INITIALIZED: Method = Method("initialized");
     // The exit event is sent from the client to the server to
     // ask the server to exit its process.
-    pub const Exit: Method = Method("exit");
+    const EXIT: Method = Method("exit");
     // The configuration change notification is sent from the client to the server
     // when the client's configuration has changed. The notification contains
     // the changed configuration as defined by the language client.
-    pub const WorkspaceDidChangeConfiguration: Method = Method("workspace/didChangeConfiguration");
+    const WORKSPACE_DID_CHANGE_CONFIGURATION: Method = Method("workspace/didChangeConfiguration");
     // The show message notification is sent from a server to a client to ask
     // the client to display a particular message in the user interface.
-    pub const WindowShowMessage: Method = Method("window/showMessage");
+    const WINDOW_SHOW_MESSAGE: Method = Method("window/showMessage");
     // The log message notification is sent from the server to the client to ask
     // the client to log a particular message.
-    pub const WindowLogMessage: Method = Method("window/logMessage");
+    const WINDOW_LOG_MESSAGE: Method = Method("window/logMessage");
     // The telemetry event notification is sent from the server to the client to ask
     // the client to log telemetry data.
-    pub const TelemetryEvent: Method = Method("telemetry/event");
+    const TELEMETRY_EVENT: Method = Method("telemetry/event");
     // The document open notification is sent from the client to the server to signal
     // newly opened text documents. The document's truth is now managed by the client
     // and the server must not try to read the document's truth using the document's
@@ -24810,10 +24819,10 @@ impl Method {
     // be sent more than once without a corresponding close notification send before.
     // This means open and close notification must be balanced and the max open count
     // is one.
-    pub const TextDocumentDidOpen: Method = Method("textDocument/didOpen");
+    pub const TEXT_DOCUMENT_DID_OPEN: Method = Method("textDocument/didOpen");
     // The document change notification is sent from the client to the server to signal
     // changes to a text document.
-    pub const TextDocumentDidChange: Method = Method("textDocument/didChange");
+    pub const TEXT_DOCUMENT_DID_CHANGE: Method = Method("textDocument/didChange");
     // The document close notification is sent from the client to the server when
     // the document got closed in the client. The document's truth now exists where
     // the document's uri points to (e.g. if the document's uri is a file uri the
@@ -24821,143 +24830,148 @@ impl Method {
     // is about managing the document's content. Receiving a close notification
     // doesn't mean that the document was open in an editor before. A close
     // notification requires a previous open notification to be sent.
-    pub const TextDocumentDidClose: Method = Method("textDocument/didClose");
+    pub const TEXT_DOCUMENT_DID_CLOSE: Method = Method("textDocument/didClose");
     // The document save notification is sent from the client to the server when
     // the document got saved in the client.
-    pub const TextDocumentDidSave: Method = Method("textDocument/didSave");
+    const TEXT_DOCUMENT_DID_SAVE: Method = Method("textDocument/didSave");
     // A document will save notification is sent from the client to the server before
     // the document is actually saved.
-    pub const TextDocumentWillSave: Method = Method("textDocument/willSave");
+    const TEXT_DOCUMENT_WILL_SAVE: Method = Method("textDocument/willSave");
     // The watched files notification is sent from the client to the server when
     // the client detects changes to file watched by the language client.
-    pub const WorkspaceDidChangeWatchedFiles: Method = Method("workspace/didChangeWatchedFiles");
+    pub const WORKSPACE_DID_CHANGE_WATCHED_FILES: Method =
+        Method("workspace/didChangeWatchedFiles");
     // Diagnostics notification are sent from the server to the client to signal
     // results of validation runs.
-    pub const TextDocumentPublishDiagnostics: Method = Method("textDocument/publishDiagnostics");
-    pub const SetTrace: Method = Method("$/setTrace");
-    pub const LogTrace: Method = Method("$/logTrace");
-    pub const CancelRequest: Method = Method("$/cancelRequest");
-    pub const Progress: Method = Method("$/progress");
+    const TEXT_DOCUMENT_PUBLISH_DIAGNOSTICS: Method = Method("textDocument/publishDiagnostics");
+    const SET_TRACE: Method = Method("$/setTrace");
+    const LOG_TRACE: Method = Method("$/logTrace");
+    pub const CANCEL_REQUEST: Method = Method("$/cancelRequest");
+    pub const PROGRESS: Method = Method("$/progress");
     // Notification to set the server's log verbosity level based on the output channel's log level.
-    pub const CustomSetLogVerbosity: Method = Method("custom/setLogVerbosity");
+    const CUSTOM_SET_LOG_VERBOSITY: Method = Method("custom/setLogVerbosity");
     // Registration-only method for textDocument/semanticTokens.
-    pub const TextDocumentSemanticTokens: Method = Method("textDocument/semanticTokens");
+    pub const TEXT_DOCUMENT_SEMANTIC_TOKENS: Method = Method("textDocument/semanticTokens");
 }
 
 impl Method {
-    #[expect(
-        clippy::should_implement_trait,
-        reason = "this conversion is infallible, unlike FromStr"
-    )]
-    pub fn from_str(s: &str) -> Method {
+    pub(crate) fn from_str(s: &str) -> Method {
         match s {
-            "textDocument/implementation" => Method::TextDocumentImplementation,
-            "textDocument/typeDefinition" => Method::TextDocumentTypeDefinition,
-            "workspace/workspaceFolders" => Method::WorkspaceWorkspaceFolders,
-            "workspace/configuration" => Method::WorkspaceConfiguration,
-            "textDocument/documentColor" => Method::TextDocumentDocumentColor,
-            "textDocument/colorPresentation" => Method::TextDocumentColorPresentation,
-            "textDocument/foldingRange" => Method::TextDocumentFoldingRange,
-            "workspace/foldingRange/refresh" => Method::WorkspaceFoldingRangeRefresh,
-            "textDocument/declaration" => Method::TextDocumentDeclaration,
-            "textDocument/selectionRange" => Method::TextDocumentSelectionRange,
-            "window/workDoneProgress/create" => Method::WindowWorkDoneProgressCreate,
-            "textDocument/prepareCallHierarchy" => Method::TextDocumentPrepareCallHierarchy,
-            "callHierarchy/incomingCalls" => Method::CallHierarchyIncomingCalls,
-            "callHierarchy/outgoingCalls" => Method::CallHierarchyOutgoingCalls,
-            "textDocument/semanticTokens/full" => Method::TextDocumentSemanticTokensFull,
-            "textDocument/semanticTokens/full/delta" => Method::TextDocumentSemanticTokensFullDelta,
-            "textDocument/semanticTokens/range" => Method::TextDocumentSemanticTokensRange,
-            "workspace/semanticTokens/refresh" => Method::WorkspaceSemanticTokensRefresh,
-            "window/showDocument" => Method::WindowShowDocument,
-            "textDocument/linkedEditingRange" => Method::TextDocumentLinkedEditingRange,
-            "workspace/willCreateFiles" => Method::WorkspaceWillCreateFiles,
-            "workspace/willRenameFiles" => Method::WorkspaceWillRenameFiles,
-            "workspace/willDeleteFiles" => Method::WorkspaceWillDeleteFiles,
-            "textDocument/moniker" => Method::TextDocumentMoniker,
-            "textDocument/prepareTypeHierarchy" => Method::TextDocumentPrepareTypeHierarchy,
-            "typeHierarchy/supertypes" => Method::TypeHierarchySupertypes,
-            "typeHierarchy/subtypes" => Method::TypeHierarchySubtypes,
-            "textDocument/inlineValue" => Method::TextDocumentInlineValue,
-            "workspace/inlineValue/refresh" => Method::WorkspaceInlineValueRefresh,
-            "textDocument/inlayHint" => Method::TextDocumentInlayHint,
-            "inlayHint/resolve" => Method::InlayHintResolve,
-            "workspace/inlayHint/refresh" => Method::WorkspaceInlayHintRefresh,
-            "textDocument/diagnostic" => Method::TextDocumentDiagnostic,
-            "workspace/diagnostic" => Method::WorkspaceDiagnostic,
-            "workspace/diagnostic/refresh" => Method::WorkspaceDiagnosticRefresh,
-            "textDocument/inlineCompletion" => Method::TextDocumentInlineCompletion,
-            "workspace/textDocumentContent" => Method::WorkspaceTextDocumentContent,
-            "workspace/textDocumentContent/refresh" => Method::WorkspaceTextDocumentContentRefresh,
-            "client/registerCapability" => Method::ClientRegisterCapability,
-            "client/unregisterCapability" => Method::ClientUnregisterCapability,
-            "initialize" => Method::Initialize,
-            "shutdown" => Method::Shutdown,
-            "window/showMessageRequest" => Method::WindowShowMessageRequest,
-            "textDocument/willSaveWaitUntil" => Method::TextDocumentWillSaveWaitUntil,
-            "textDocument/completion" => Method::TextDocumentCompletion,
-            "completionItem/resolve" => Method::CompletionItemResolve,
-            "textDocument/hover" => Method::TextDocumentHover,
-            "textDocument/signatureHelp" => Method::TextDocumentSignatureHelp,
-            "textDocument/definition" => Method::TextDocumentDefinition,
-            "textDocument/references" => Method::TextDocumentReferences,
-            "textDocument/documentHighlight" => Method::TextDocumentDocumentHighlight,
-            "textDocument/documentSymbol" => Method::TextDocumentDocumentSymbol,
-            "textDocument/codeAction" => Method::TextDocumentCodeAction,
-            "codeAction/resolve" => Method::CodeActionResolve,
-            "workspace/symbol" => Method::WorkspaceSymbol,
-            "workspaceSymbol/resolve" => Method::WorkspaceSymbolResolve,
-            "textDocument/codeLens" => Method::TextDocumentCodeLens,
-            "codeLens/resolve" => Method::CodeLensResolve,
-            "workspace/codeLens/refresh" => Method::WorkspaceCodeLensRefresh,
-            "textDocument/documentLink" => Method::TextDocumentDocumentLink,
-            "documentLink/resolve" => Method::DocumentLinkResolve,
-            "textDocument/formatting" => Method::TextDocumentFormatting,
-            "textDocument/rangeFormatting" => Method::TextDocumentRangeFormatting,
-            "textDocument/rangesFormatting" => Method::TextDocumentRangesFormatting,
-            "textDocument/onTypeFormatting" => Method::TextDocumentOnTypeFormatting,
-            "textDocument/rename" => Method::TextDocumentRename,
-            "textDocument/prepareRename" => Method::TextDocumentPrepareRename,
-            "workspace/executeCommand" => Method::WorkspaceExecuteCommand,
-            "workspace/applyEdit" => Method::WorkspaceApplyEdit,
-            "custom/runGC" => Method::CustomRunGC,
-            "custom/saveHeapProfile" => Method::CustomSaveHeapProfile,
-            "custom/saveAllocProfile" => Method::CustomSaveAllocProfile,
-            "custom/startCPUProfile" => Method::CustomStartCPUProfile,
-            "custom/stopCPUProfile" => Method::CustomStopCPUProfile,
-            "custom/initializeAPISession" => Method::CustomInitializeAPISession,
-            "custom/projectInfo" => Method::CustomProjectInfo,
-            "custom/setContentMapperContributions" => Method::CustomSetContentMapperContributions,
-            "custom/textDocument/sourceDefinition" => Method::CustomTextDocumentSourceDefinition,
-            "custom/textDocument/multiDocumentHighlight" => {
-                Method::CustomTextDocumentMultiDocumentHighlight
+            "textDocument/implementation" => Method::TEXT_DOCUMENT_IMPLEMENTATION,
+            "textDocument/typeDefinition" => Method::TEXT_DOCUMENT_TYPE_DEFINITION,
+            "workspace/workspaceFolders" => Method::WORKSPACE_WORKSPACE_FOLDERS,
+            "workspace/configuration" => Method::WORKSPACE_CONFIGURATION,
+            "textDocument/documentColor" => Method::TEXT_DOCUMENT_DOCUMENT_COLOR,
+            "textDocument/colorPresentation" => Method::TEXT_DOCUMENT_COLOR_PRESENTATION,
+            "textDocument/foldingRange" => Method::TEXT_DOCUMENT_FOLDING_RANGE,
+            "workspace/foldingRange/refresh" => Method::WORKSPACE_FOLDING_RANGE_REFRESH,
+            "textDocument/declaration" => Method::TEXT_DOCUMENT_DECLARATION,
+            "textDocument/selectionRange" => Method::TEXT_DOCUMENT_SELECTION_RANGE,
+            "window/workDoneProgress/create" => Method::WINDOW_WORK_DONE_PROGRESS_CREATE,
+            "textDocument/prepareCallHierarchy" => Method::TEXT_DOCUMENT_PREPARE_CALL_HIERARCHY,
+            "callHierarchy/incomingCalls" => Method::CALL_HIERARCHY_INCOMING_CALLS,
+            "callHierarchy/outgoingCalls" => Method::CALL_HIERARCHY_OUTGOING_CALLS,
+            "textDocument/semanticTokens/full" => Method::TEXT_DOCUMENT_SEMANTIC_TOKENS_FULL,
+            "textDocument/semanticTokens/full/delta" => {
+                Method::TEXT_DOCUMENT_SEMANTIC_TOKENS_FULL_DELTA
             }
-            "textDocument/_vs_onAutoInsert" => Method::TextDocumentVSOnAutoInsert,
-            "textDocument/_vs_references" => Method::TextDocumentVSReferences,
-            "workspace/didChangeWorkspaceFolders" => Method::WorkspaceDidChangeWorkspaceFolders,
-            "window/workDoneProgress/cancel" => Method::WindowWorkDoneProgressCancel,
-            "workspace/didCreateFiles" => Method::WorkspaceDidCreateFiles,
-            "workspace/didRenameFiles" => Method::WorkspaceDidRenameFiles,
-            "workspace/didDeleteFiles" => Method::WorkspaceDidDeleteFiles,
-            "initialized" => Method::Initialized,
-            "exit" => Method::Exit,
-            "workspace/didChangeConfiguration" => Method::WorkspaceDidChangeConfiguration,
-            "window/showMessage" => Method::WindowShowMessage,
-            "window/logMessage" => Method::WindowLogMessage,
-            "telemetry/event" => Method::TelemetryEvent,
-            "textDocument/didOpen" => Method::TextDocumentDidOpen,
-            "textDocument/didChange" => Method::TextDocumentDidChange,
-            "textDocument/didClose" => Method::TextDocumentDidClose,
-            "textDocument/didSave" => Method::TextDocumentDidSave,
-            "textDocument/willSave" => Method::TextDocumentWillSave,
-            "workspace/didChangeWatchedFiles" => Method::WorkspaceDidChangeWatchedFiles,
-            "textDocument/publishDiagnostics" => Method::TextDocumentPublishDiagnostics,
-            "$/setTrace" => Method::SetTrace,
-            "$/logTrace" => Method::LogTrace,
-            "$/cancelRequest" => Method::CancelRequest,
-            "$/progress" => Method::Progress,
-            "custom/setLogVerbosity" => Method::CustomSetLogVerbosity,
-            "textDocument/semanticTokens" => Method::TextDocumentSemanticTokens,
+            "textDocument/semanticTokens/range" => Method::TEXT_DOCUMENT_SEMANTIC_TOKENS_RANGE,
+            "workspace/semanticTokens/refresh" => Method::WORKSPACE_SEMANTIC_TOKENS_REFRESH,
+            "window/showDocument" => Method::WINDOW_SHOW_DOCUMENT,
+            "textDocument/linkedEditingRange" => Method::TEXT_DOCUMENT_LINKED_EDITING_RANGE,
+            "workspace/willCreateFiles" => Method::WORKSPACE_WILL_CREATE_FILES,
+            "workspace/willRenameFiles" => Method::WORKSPACE_WILL_RENAME_FILES,
+            "workspace/willDeleteFiles" => Method::WORKSPACE_WILL_DELETE_FILES,
+            "textDocument/moniker" => Method::TEXT_DOCUMENT_MONIKER,
+            "textDocument/prepareTypeHierarchy" => Method::TEXT_DOCUMENT_PREPARE_TYPE_HIERARCHY,
+            "typeHierarchy/supertypes" => Method::TYPE_HIERARCHY_SUPERTYPES,
+            "typeHierarchy/subtypes" => Method::TYPE_HIERARCHY_SUBTYPES,
+            "textDocument/inlineValue" => Method::TEXT_DOCUMENT_INLINE_VALUE,
+            "workspace/inlineValue/refresh" => Method::WORKSPACE_INLINE_VALUE_REFRESH,
+            "textDocument/inlayHint" => Method::TEXT_DOCUMENT_INLAY_HINT,
+            "inlayHint/resolve" => Method::INLAY_HINT_RESOLVE,
+            "workspace/inlayHint/refresh" => Method::WORKSPACE_INLAY_HINT_REFRESH,
+            "textDocument/diagnostic" => Method::TEXT_DOCUMENT_DIAGNOSTIC,
+            "workspace/diagnostic" => Method::WORKSPACE_DIAGNOSTIC,
+            "workspace/diagnostic/refresh" => Method::WORKSPACE_DIAGNOSTIC_REFRESH,
+            "textDocument/inlineCompletion" => Method::TEXT_DOCUMENT_INLINE_COMPLETION,
+            "workspace/textDocumentContent" => Method::WORKSPACE_TEXT_DOCUMENT_CONTENT,
+            "workspace/textDocumentContent/refresh" => {
+                Method::WORKSPACE_TEXT_DOCUMENT_CONTENT_REFRESH
+            }
+            "client/registerCapability" => Method::CLIENT_REGISTER_CAPABILITY,
+            "client/unregisterCapability" => Method::CLIENT_UNREGISTER_CAPABILITY,
+            "initialize" => Method::INITIALIZE,
+            "shutdown" => Method::SHUTDOWN,
+            "window/showMessageRequest" => Method::WINDOW_SHOW_MESSAGE_REQUEST,
+            "textDocument/willSaveWaitUntil" => Method::TEXT_DOCUMENT_WILL_SAVE_WAIT_UNTIL,
+            "textDocument/completion" => Method::TEXT_DOCUMENT_COMPLETION,
+            "completionItem/resolve" => Method::COMPLETION_ITEM_RESOLVE,
+            "textDocument/hover" => Method::TEXT_DOCUMENT_HOVER,
+            "textDocument/signatureHelp" => Method::TEXT_DOCUMENT_SIGNATURE_HELP,
+            "textDocument/definition" => Method::TEXT_DOCUMENT_DEFINITION,
+            "textDocument/references" => Method::TEXT_DOCUMENT_REFERENCES,
+            "textDocument/documentHighlight" => Method::TEXT_DOCUMENT_DOCUMENT_HIGHLIGHT,
+            "textDocument/documentSymbol" => Method::TEXT_DOCUMENT_DOCUMENT_SYMBOL,
+            "textDocument/codeAction" => Method::TEXT_DOCUMENT_CODE_ACTION,
+            "codeAction/resolve" => Method::CODE_ACTION_RESOLVE,
+            "workspace/symbol" => Method::WORKSPACE_SYMBOL,
+            "workspaceSymbol/resolve" => Method::WORKSPACE_SYMBOL_RESOLVE,
+            "textDocument/codeLens" => Method::TEXT_DOCUMENT_CODE_LENS,
+            "codeLens/resolve" => Method::CODE_LENS_RESOLVE,
+            "workspace/codeLens/refresh" => Method::WORKSPACE_CODE_LENS_REFRESH,
+            "textDocument/documentLink" => Method::TEXT_DOCUMENT_DOCUMENT_LINK,
+            "documentLink/resolve" => Method::DOCUMENT_LINK_RESOLVE,
+            "textDocument/formatting" => Method::TEXT_DOCUMENT_FORMATTING,
+            "textDocument/rangeFormatting" => Method::TEXT_DOCUMENT_RANGE_FORMATTING,
+            "textDocument/rangesFormatting" => Method::TEXT_DOCUMENT_RANGES_FORMATTING,
+            "textDocument/onTypeFormatting" => Method::TEXT_DOCUMENT_ON_TYPE_FORMATTING,
+            "textDocument/rename" => Method::TEXT_DOCUMENT_RENAME,
+            "textDocument/prepareRename" => Method::TEXT_DOCUMENT_PREPARE_RENAME,
+            "workspace/executeCommand" => Method::WORKSPACE_EXECUTE_COMMAND,
+            "workspace/applyEdit" => Method::WORKSPACE_APPLY_EDIT,
+            "custom/runGC" => Method::CUSTOM_RUN_GC,
+            "custom/saveHeapProfile" => Method::CUSTOM_SAVE_HEAP_PROFILE,
+            "custom/saveAllocProfile" => Method::CUSTOM_SAVE_ALLOC_PROFILE,
+            "custom/startCPUProfile" => Method::CUSTOM_START_CPU_PROFILE,
+            "custom/stopCPUProfile" => Method::CUSTOM_STOP_CPU_PROFILE,
+            "custom/initializeAPISession" => Method::CUSTOM_INITIALIZE_API_SESSION,
+            "custom/projectInfo" => Method::CUSTOM_PROJECT_INFO,
+            "custom/setContentMapperContributions" => {
+                Method::CUSTOM_SET_CONTENT_MAPPER_CONTRIBUTIONS
+            }
+            "custom/textDocument/sourceDefinition" => {
+                Method::CUSTOM_TEXT_DOCUMENT_SOURCE_DEFINITION
+            }
+            "custom/textDocument/multiDocumentHighlight" => {
+                Method::CUSTOM_TEXT_DOCUMENT_MULTI_DOCUMENT_HIGHLIGHT
+            }
+            "textDocument/_vs_onAutoInsert" => Method::TEXT_DOCUMENT_VS_ON_AUTO_INSERT,
+            "textDocument/_vs_references" => Method::TEXT_DOCUMENT_VS_REFERENCES,
+            "workspace/didChangeWorkspaceFolders" => Method::WORKSPACE_DID_CHANGE_WORKSPACE_FOLDERS,
+            "window/workDoneProgress/cancel" => Method::WINDOW_WORK_DONE_PROGRESS_CANCEL,
+            "workspace/didCreateFiles" => Method::WORKSPACE_DID_CREATE_FILES,
+            "workspace/didRenameFiles" => Method::WORKSPACE_DID_RENAME_FILES,
+            "workspace/didDeleteFiles" => Method::WORKSPACE_DID_DELETE_FILES,
+            "initialized" => Method::INITIALIZED,
+            "exit" => Method::EXIT,
+            "workspace/didChangeConfiguration" => Method::WORKSPACE_DID_CHANGE_CONFIGURATION,
+            "window/showMessage" => Method::WINDOW_SHOW_MESSAGE,
+            "window/logMessage" => Method::WINDOW_LOG_MESSAGE,
+            "telemetry/event" => Method::TELEMETRY_EVENT,
+            "textDocument/didOpen" => Method::TEXT_DOCUMENT_DID_OPEN,
+            "textDocument/didChange" => Method::TEXT_DOCUMENT_DID_CHANGE,
+            "textDocument/didClose" => Method::TEXT_DOCUMENT_DID_CLOSE,
+            "textDocument/didSave" => Method::TEXT_DOCUMENT_DID_SAVE,
+            "textDocument/willSave" => Method::TEXT_DOCUMENT_WILL_SAVE,
+            "workspace/didChangeWatchedFiles" => Method::WORKSPACE_DID_CHANGE_WATCHED_FILES,
+            "textDocument/publishDiagnostics" => Method::TEXT_DOCUMENT_PUBLISH_DIAGNOSTICS,
+            "$/setTrace" => Method::SET_TRACE,
+            "$/logTrace" => Method::LOG_TRACE,
+            "$/cancelRequest" => Method::CANCEL_REQUEST,
+            "$/progress" => Method::PROGRESS,
+            "custom/setLogVerbosity" => Method::CUSTOM_SET_LOG_VERBOSITY,
+            "textDocument/semanticTokens" => Method::TEXT_DOCUMENT_SEMANTIC_TOKENS,
             _ => Method(intern(s)),
         }
     }
@@ -24972,7 +24986,7 @@ pub type ImplementationResponse = LocationOrLocationsOrDefinitionLinksOrNull;
 pub const TEXT_DOCUMENT_IMPLEMENTATION_INFO: RequestInfo<
     ImplementationParams,
     ImplementationResponse,
-> = RequestInfo::new(Method::TextDocumentImplementation);
+> = RequestInfo::new(Method::TEXT_DOCUMENT_IMPLEMENTATION);
 
 // Response type for `textDocument/typeDefinition`
 pub type TypeDefinitionResponse = LocationOrLocationsOrDefinitionLinksOrNull;
@@ -24981,21 +24995,21 @@ pub type TypeDefinitionResponse = LocationOrLocationsOrDefinitionLinksOrNull;
 pub const TEXT_DOCUMENT_TYPE_DEFINITION_INFO: RequestInfo<
     TypeDefinitionParams,
     TypeDefinitionResponse,
-> = RequestInfo::new(Method::TextDocumentTypeDefinition);
+> = RequestInfo::new(Method::TEXT_DOCUMENT_TYPE_DEFINITION);
 
 // Response type for `workspace/workspaceFolders`
 pub type WorkspaceFoldersResponse = WorkspaceFoldersOrNull;
 
 // Type mapping info for `workspace/workspaceFolders`
 pub const WORKSPACE_WORKSPACE_FOLDERS_INFO: RequestInfo<NoParams, WorkspaceFoldersResponse> =
-    RequestInfo::new(Method::WorkspaceWorkspaceFolders);
+    RequestInfo::new(Method::WORKSPACE_WORKSPACE_FOLDERS);
 
 // Response type for `workspace/configuration`
 pub type ConfigurationResponse = Vec<Value>;
 
 // Type mapping info for `workspace/configuration`
 pub const WORKSPACE_CONFIGURATION_INFO: RequestInfo<ConfigurationParams, ConfigurationResponse> =
-    RequestInfo::new(Method::WorkspaceConfiguration);
+    RequestInfo::new(Method::WORKSPACE_CONFIGURATION);
 
 // Response type for `textDocument/documentColor`
 pub type DocumentColorResponse = Vec<ColorInformation>;
@@ -25004,7 +25018,7 @@ pub type DocumentColorResponse = Vec<ColorInformation>;
 pub const TEXT_DOCUMENT_DOCUMENT_COLOR_INFO: RequestInfo<
     DocumentColorParams,
     DocumentColorResponse,
-> = RequestInfo::new(Method::TextDocumentDocumentColor);
+> = RequestInfo::new(Method::TEXT_DOCUMENT_DOCUMENT_COLOR);
 
 // Response type for `textDocument/colorPresentation`
 pub type ColorPresentationResponse = Vec<ColorPresentation>;
@@ -25013,28 +25027,28 @@ pub type ColorPresentationResponse = Vec<ColorPresentation>;
 pub const TEXT_DOCUMENT_COLOR_PRESENTATION_INFO: RequestInfo<
     ColorPresentationParams,
     ColorPresentationResponse,
-> = RequestInfo::new(Method::TextDocumentColorPresentation);
+> = RequestInfo::new(Method::TEXT_DOCUMENT_COLOR_PRESENTATION);
 
 // Response type for `textDocument/foldingRange`
 pub type FoldingRangeResponse = FoldingRangesOrNull;
 
 // Type mapping info for `textDocument/foldingRange`
 pub const TEXT_DOCUMENT_FOLDING_RANGE_INFO: RequestInfo<FoldingRangeParams, FoldingRangeResponse> =
-    RequestInfo::new(Method::TextDocumentFoldingRange);
+    RequestInfo::new(Method::TEXT_DOCUMENT_FOLDING_RANGE);
 
 // Response type for `workspace/foldingRange/refresh`
 pub type FoldingRangeRefreshResponse = Null;
 
 // Type mapping info for `workspace/foldingRange/refresh`
 pub const WORKSPACE_FOLDING_RANGE_REFRESH_INFO: RequestInfo<NoParams, FoldingRangeRefreshResponse> =
-    RequestInfo::new(Method::WorkspaceFoldingRangeRefresh);
+    RequestInfo::new(Method::WORKSPACE_FOLDING_RANGE_REFRESH);
 
 // Response type for `textDocument/declaration`
 pub type DeclarationResponse = LocationOrLocationsOrDeclarationLinksOrNull;
 
 // Type mapping info for `textDocument/declaration`
 pub const TEXT_DOCUMENT_DECLARATION_INFO: RequestInfo<DeclarationParams, DeclarationResponse> =
-    RequestInfo::new(Method::TextDocumentDeclaration);
+    RequestInfo::new(Method::TEXT_DOCUMENT_DECLARATION);
 
 // Response type for `textDocument/selectionRange`
 pub type SelectionRangeResponse = SelectionRangesOrNull;
@@ -25043,7 +25057,7 @@ pub type SelectionRangeResponse = SelectionRangesOrNull;
 pub const TEXT_DOCUMENT_SELECTION_RANGE_INFO: RequestInfo<
     SelectionRangeParams,
     SelectionRangeResponse,
-> = RequestInfo::new(Method::TextDocumentSelectionRange);
+> = RequestInfo::new(Method::TEXT_DOCUMENT_SELECTION_RANGE);
 
 // Response type for `window/workDoneProgress/create`
 pub type WorkDoneProgressCreateResponse = Null;
@@ -25052,7 +25066,7 @@ pub type WorkDoneProgressCreateResponse = Null;
 pub const WINDOW_WORK_DONE_PROGRESS_CREATE_INFO: RequestInfo<
     WorkDoneProgressCreateParams,
     WorkDoneProgressCreateResponse,
-> = RequestInfo::new(Method::WindowWorkDoneProgressCreate);
+> = RequestInfo::new(Method::WINDOW_WORK_DONE_PROGRESS_CREATE);
 
 // Response type for `textDocument/prepareCallHierarchy`
 pub type CallHierarchyPrepareResponse = CallHierarchyItemsOrNull;
@@ -25061,7 +25075,7 @@ pub type CallHierarchyPrepareResponse = CallHierarchyItemsOrNull;
 pub const TEXT_DOCUMENT_PREPARE_CALL_HIERARCHY_INFO: RequestInfo<
     CallHierarchyPrepareParams,
     CallHierarchyPrepareResponse,
-> = RequestInfo::new(Method::TextDocumentPrepareCallHierarchy);
+> = RequestInfo::new(Method::TEXT_DOCUMENT_PREPARE_CALL_HIERARCHY);
 
 // Response type for `callHierarchy/incomingCalls`
 pub type CallHierarchyIncomingCallsResponse = CallHierarchyIncomingCallsOrNull;
@@ -25070,7 +25084,7 @@ pub type CallHierarchyIncomingCallsResponse = CallHierarchyIncomingCallsOrNull;
 pub const CALL_HIERARCHY_INCOMING_CALLS_INFO: RequestInfo<
     CallHierarchyIncomingCallsParams,
     CallHierarchyIncomingCallsResponse,
-> = RequestInfo::new(Method::CallHierarchyIncomingCalls);
+> = RequestInfo::new(Method::CALL_HIERARCHY_INCOMING_CALLS);
 
 // Response type for `callHierarchy/outgoingCalls`
 pub type CallHierarchyOutgoingCallsResponse = CallHierarchyOutgoingCallsOrNull;
@@ -25079,7 +25093,7 @@ pub type CallHierarchyOutgoingCallsResponse = CallHierarchyOutgoingCallsOrNull;
 pub const CALL_HIERARCHY_OUTGOING_CALLS_INFO: RequestInfo<
     CallHierarchyOutgoingCallsParams,
     CallHierarchyOutgoingCallsResponse,
-> = RequestInfo::new(Method::CallHierarchyOutgoingCalls);
+> = RequestInfo::new(Method::CALL_HIERARCHY_OUTGOING_CALLS);
 
 // Response type for `textDocument/semanticTokens/full`
 pub type SemanticTokensResponse = SemanticTokensOrNull;
@@ -25088,7 +25102,7 @@ pub type SemanticTokensResponse = SemanticTokensOrNull;
 pub const TEXT_DOCUMENT_SEMANTIC_TOKENS_FULL_INFO: RequestInfo<
     SemanticTokensParams,
     SemanticTokensResponse,
-> = RequestInfo::new(Method::TextDocumentSemanticTokensFull);
+> = RequestInfo::new(Method::TEXT_DOCUMENT_SEMANTIC_TOKENS_FULL);
 
 // Response type for `textDocument/semanticTokens/full/delta`
 pub type SemanticTokensDeltaResponse = SemanticTokensOrSemanticTokensDeltaOrNull;
@@ -25097,7 +25111,7 @@ pub type SemanticTokensDeltaResponse = SemanticTokensOrSemanticTokensDeltaOrNull
 pub const TEXT_DOCUMENT_SEMANTIC_TOKENS_FULL_DELTA_INFO: RequestInfo<
     SemanticTokensDeltaParams,
     SemanticTokensDeltaResponse,
-> = RequestInfo::new(Method::TextDocumentSemanticTokensFullDelta);
+> = RequestInfo::new(Method::TEXT_DOCUMENT_SEMANTIC_TOKENS_FULL_DELTA);
 
 // Response type for `textDocument/semanticTokens/range`
 pub type SemanticTokensRangeResponse = SemanticTokensOrNull;
@@ -25106,7 +25120,7 @@ pub type SemanticTokensRangeResponse = SemanticTokensOrNull;
 pub const TEXT_DOCUMENT_SEMANTIC_TOKENS_RANGE_INFO: RequestInfo<
     SemanticTokensRangeParams,
     SemanticTokensRangeResponse,
-> = RequestInfo::new(Method::TextDocumentSemanticTokensRange);
+> = RequestInfo::new(Method::TEXT_DOCUMENT_SEMANTIC_TOKENS_RANGE);
 
 // Response type for `workspace/semanticTokens/refresh`
 pub type SemanticTokensRefreshResponse = Null;
@@ -25115,14 +25129,14 @@ pub type SemanticTokensRefreshResponse = Null;
 pub const WORKSPACE_SEMANTIC_TOKENS_REFRESH_INFO: RequestInfo<
     NoParams,
     SemanticTokensRefreshResponse,
-> = RequestInfo::new(Method::WorkspaceSemanticTokensRefresh);
+> = RequestInfo::new(Method::WORKSPACE_SEMANTIC_TOKENS_REFRESH);
 
 // Response type for `window/showDocument`
 pub type ShowDocumentResponse = ShowDocumentResult;
 
 // Type mapping info for `window/showDocument`
 pub const WINDOW_SHOW_DOCUMENT_INFO: RequestInfo<ShowDocumentParams, ShowDocumentResponse> =
-    RequestInfo::new(Method::WindowShowDocument);
+    RequestInfo::new(Method::WINDOW_SHOW_DOCUMENT);
 
 // Response type for `textDocument/linkedEditingRange`
 pub type LinkedEditingRangeResponse = LinkedEditingRangesOrNull;
@@ -25131,7 +25145,7 @@ pub type LinkedEditingRangeResponse = LinkedEditingRangesOrNull;
 pub const TEXT_DOCUMENT_LINKED_EDITING_RANGE_INFO: RequestInfo<
     LinkedEditingRangeParams,
     LinkedEditingRangeResponse,
-> = RequestInfo::new(Method::TextDocumentLinkedEditingRange);
+> = RequestInfo::new(Method::TEXT_DOCUMENT_LINKED_EDITING_RANGE);
 
 // Response type for `workspace/willCreateFiles`
 pub type WillCreateFilesResponse = WorkspaceEditOrNull;
@@ -25140,7 +25154,7 @@ pub type WillCreateFilesResponse = WorkspaceEditOrNull;
 pub const WORKSPACE_WILL_CREATE_FILES_INFO: RequestInfo<
     CreateFilesParams,
     WillCreateFilesResponse,
-> = RequestInfo::new(Method::WorkspaceWillCreateFiles);
+> = RequestInfo::new(Method::WORKSPACE_WILL_CREATE_FILES);
 
 // Response type for `workspace/willRenameFiles`
 pub type WillRenameFilesResponse = WorkspaceEditOrNull;
@@ -25149,7 +25163,7 @@ pub type WillRenameFilesResponse = WorkspaceEditOrNull;
 pub const WORKSPACE_WILL_RENAME_FILES_INFO: RequestInfo<
     RenameFilesParams,
     WillRenameFilesResponse,
-> = RequestInfo::new(Method::WorkspaceWillRenameFiles);
+> = RequestInfo::new(Method::WORKSPACE_WILL_RENAME_FILES);
 
 // Response type for `workspace/willDeleteFiles`
 pub type WillDeleteFilesResponse = WorkspaceEditOrNull;
@@ -25158,14 +25172,14 @@ pub type WillDeleteFilesResponse = WorkspaceEditOrNull;
 pub const WORKSPACE_WILL_DELETE_FILES_INFO: RequestInfo<
     DeleteFilesParams,
     WillDeleteFilesResponse,
-> = RequestInfo::new(Method::WorkspaceWillDeleteFiles);
+> = RequestInfo::new(Method::WORKSPACE_WILL_DELETE_FILES);
 
 // Response type for `textDocument/moniker`
 pub type MonikerResponse = MonikersOrNull;
 
 // Type mapping info for `textDocument/moniker`
 pub const TEXT_DOCUMENT_MONIKER_INFO: RequestInfo<MonikerParams, MonikerResponse> =
-    RequestInfo::new(Method::TextDocumentMoniker);
+    RequestInfo::new(Method::TEXT_DOCUMENT_MONIKER);
 
 // Response type for `textDocument/prepareTypeHierarchy`
 pub type TypeHierarchyPrepareResponse = TypeHierarchyItemsOrNull;
@@ -25174,7 +25188,7 @@ pub type TypeHierarchyPrepareResponse = TypeHierarchyItemsOrNull;
 pub const TEXT_DOCUMENT_PREPARE_TYPE_HIERARCHY_INFO: RequestInfo<
     TypeHierarchyPrepareParams,
     TypeHierarchyPrepareResponse,
-> = RequestInfo::new(Method::TextDocumentPrepareTypeHierarchy);
+> = RequestInfo::new(Method::TEXT_DOCUMENT_PREPARE_TYPE_HIERARCHY);
 
 // Response type for `typeHierarchy/supertypes`
 pub type TypeHierarchySupertypesResponse = TypeHierarchyItemsOrNull;
@@ -25183,7 +25197,7 @@ pub type TypeHierarchySupertypesResponse = TypeHierarchyItemsOrNull;
 pub const TYPE_HIERARCHY_SUPERTYPES_INFO: RequestInfo<
     TypeHierarchySupertypesParams,
     TypeHierarchySupertypesResponse,
-> = RequestInfo::new(Method::TypeHierarchySupertypes);
+> = RequestInfo::new(Method::TYPE_HIERARCHY_SUPERTYPES);
 
 // Response type for `typeHierarchy/subtypes`
 pub type TypeHierarchySubtypesResponse = TypeHierarchyItemsOrNull;
@@ -25192,42 +25206,42 @@ pub type TypeHierarchySubtypesResponse = TypeHierarchyItemsOrNull;
 pub const TYPE_HIERARCHY_SUBTYPES_INFO: RequestInfo<
     TypeHierarchySubtypesParams,
     TypeHierarchySubtypesResponse,
-> = RequestInfo::new(Method::TypeHierarchySubtypes);
+> = RequestInfo::new(Method::TYPE_HIERARCHY_SUBTYPES);
 
 // Response type for `textDocument/inlineValue`
 pub type InlineValueResponse = InlineValuesOrNull;
 
 // Type mapping info for `textDocument/inlineValue`
 pub const TEXT_DOCUMENT_INLINE_VALUE_INFO: RequestInfo<InlineValueParams, InlineValueResponse> =
-    RequestInfo::new(Method::TextDocumentInlineValue);
+    RequestInfo::new(Method::TEXT_DOCUMENT_INLINE_VALUE);
 
 // Response type for `workspace/inlineValue/refresh`
 pub type InlineValueRefreshResponse = Null;
 
 // Type mapping info for `workspace/inlineValue/refresh`
 pub const WORKSPACE_INLINE_VALUE_REFRESH_INFO: RequestInfo<NoParams, InlineValueRefreshResponse> =
-    RequestInfo::new(Method::WorkspaceInlineValueRefresh);
+    RequestInfo::new(Method::WORKSPACE_INLINE_VALUE_REFRESH);
 
 // Response type for `textDocument/inlayHint`
 pub type InlayHintResponse = InlayHintsOrNull;
 
 // Type mapping info for `textDocument/inlayHint`
 pub const TEXT_DOCUMENT_INLAY_HINT_INFO: RequestInfo<InlayHintParams, InlayHintResponse> =
-    RequestInfo::new(Method::TextDocumentInlayHint);
+    RequestInfo::new(Method::TEXT_DOCUMENT_INLAY_HINT);
 
 // Response type for `inlayHint/resolve`
 pub type InlayHintResolveResponse = InlayHint;
 
 // Type mapping info for `inlayHint/resolve`
 pub const INLAY_HINT_RESOLVE_INFO: RequestInfo<InlayHint, InlayHintResolveResponse> =
-    RequestInfo::new(Method::InlayHintResolve);
+    RequestInfo::new(Method::INLAY_HINT_RESOLVE);
 
 // Response type for `workspace/inlayHint/refresh`
 pub type InlayHintRefreshResponse = Null;
 
 // Type mapping info for `workspace/inlayHint/refresh`
 pub const WORKSPACE_INLAY_HINT_REFRESH_INFO: RequestInfo<NoParams, InlayHintRefreshResponse> =
-    RequestInfo::new(Method::WorkspaceInlayHintRefresh);
+    RequestInfo::new(Method::WORKSPACE_INLAY_HINT_REFRESH);
 
 // Response type for `textDocument/diagnostic`
 pub type DocumentDiagnosticResponse =
@@ -25237,7 +25251,7 @@ pub type DocumentDiagnosticResponse =
 pub const TEXT_DOCUMENT_DIAGNOSTIC_INFO: RequestInfo<
     DocumentDiagnosticParams,
     DocumentDiagnosticResponse,
-> = RequestInfo::new(Method::TextDocumentDiagnostic);
+> = RequestInfo::new(Method::TEXT_DOCUMENT_DIAGNOSTIC);
 
 // Response type for `workspace/diagnostic`
 pub type WorkspaceDiagnosticResponse = WorkspaceDiagnosticReport;
@@ -25246,14 +25260,14 @@ pub type WorkspaceDiagnosticResponse = WorkspaceDiagnosticReport;
 pub const WORKSPACE_DIAGNOSTIC_INFO: RequestInfo<
     WorkspaceDiagnosticParams,
     WorkspaceDiagnosticResponse,
-> = RequestInfo::new(Method::WorkspaceDiagnostic);
+> = RequestInfo::new(Method::WORKSPACE_DIAGNOSTIC);
 
 // Response type for `workspace/diagnostic/refresh`
 pub type DiagnosticRefreshResponse = Null;
 
 // Type mapping info for `workspace/diagnostic/refresh`
 pub const WORKSPACE_DIAGNOSTIC_REFRESH_INFO: RequestInfo<NoParams, DiagnosticRefreshResponse> =
-    RequestInfo::new(Method::WorkspaceDiagnosticRefresh);
+    RequestInfo::new(Method::WORKSPACE_DIAGNOSTIC_REFRESH);
 
 // Response type for `textDocument/inlineCompletion`
 pub type InlineCompletionResponse = InlineCompletionListOrItemsOrNull;
@@ -25262,7 +25276,7 @@ pub type InlineCompletionResponse = InlineCompletionListOrItemsOrNull;
 pub const TEXT_DOCUMENT_INLINE_COMPLETION_INFO: RequestInfo<
     InlineCompletionParams,
     InlineCompletionResponse,
-> = RequestInfo::new(Method::TextDocumentInlineCompletion);
+> = RequestInfo::new(Method::TEXT_DOCUMENT_INLINE_COMPLETION);
 
 // Response type for `workspace/textDocumentContent`
 pub type TextDocumentContentResponse = TextDocumentContentResult;
@@ -25271,7 +25285,7 @@ pub type TextDocumentContentResponse = TextDocumentContentResult;
 pub const WORKSPACE_TEXT_DOCUMENT_CONTENT_INFO: RequestInfo<
     TextDocumentContentParams,
     TextDocumentContentResponse,
-> = RequestInfo::new(Method::WorkspaceTextDocumentContent);
+> = RequestInfo::new(Method::WORKSPACE_TEXT_DOCUMENT_CONTENT);
 
 // Response type for `workspace/textDocumentContent/refresh`
 pub type TextDocumentContentRefreshResponse = Null;
@@ -25280,14 +25294,14 @@ pub type TextDocumentContentRefreshResponse = Null;
 pub const WORKSPACE_TEXT_DOCUMENT_CONTENT_REFRESH_INFO: RequestInfo<
     TextDocumentContentRefreshParams,
     TextDocumentContentRefreshResponse,
-> = RequestInfo::new(Method::WorkspaceTextDocumentContentRefresh);
+> = RequestInfo::new(Method::WORKSPACE_TEXT_DOCUMENT_CONTENT_REFRESH);
 
 // Response type for `client/registerCapability`
 pub type RegistrationResponse = Null;
 
 // Type mapping info for `client/registerCapability`
 pub const CLIENT_REGISTER_CAPABILITY_INFO: RequestInfo<RegistrationParams, RegistrationResponse> =
-    RequestInfo::new(Method::ClientRegisterCapability);
+    RequestInfo::new(Method::CLIENT_REGISTER_CAPABILITY);
 
 // Response type for `client/unregisterCapability`
 pub type UnregistrationResponse = Null;
@@ -25296,21 +25310,21 @@ pub type UnregistrationResponse = Null;
 pub const CLIENT_UNREGISTER_CAPABILITY_INFO: RequestInfo<
     UnregistrationParams,
     UnregistrationResponse,
-> = RequestInfo::new(Method::ClientUnregisterCapability);
+> = RequestInfo::new(Method::CLIENT_UNREGISTER_CAPABILITY);
 
 // Response type for `initialize`
 pub type InitializeResponse = InitializeResult;
 
 // Type mapping info for `initialize`
 pub const INITIALIZE_INFO: RequestInfo<InitializeParams, InitializeResponse> =
-    RequestInfo::new(Method::Initialize);
+    RequestInfo::new(Method::INITIALIZE);
 
 // Response type for `shutdown`
 pub type ShutdownResponse = Null;
 
 // Type mapping info for `shutdown`
 pub const SHUTDOWN_INFO: RequestInfo<NoParams, ShutdownResponse> =
-    RequestInfo::new(Method::Shutdown);
+    RequestInfo::new(Method::SHUTDOWN);
 
 // Response type for `window/showMessageRequest`
 pub type ShowMessageResponse = MessageActionItemOrNull;
@@ -25319,7 +25333,7 @@ pub type ShowMessageResponse = MessageActionItemOrNull;
 pub const WINDOW_SHOW_MESSAGE_REQUEST_INFO: RequestInfo<
     ShowMessageRequestParams,
     ShowMessageResponse,
-> = RequestInfo::new(Method::WindowShowMessageRequest);
+> = RequestInfo::new(Method::WINDOW_SHOW_MESSAGE_REQUEST);
 
 // Response type for `textDocument/willSaveWaitUntil`
 pub type WillSaveTextDocumentWaitUntilResponse = TextEditsOrNull;
@@ -25328,28 +25342,28 @@ pub type WillSaveTextDocumentWaitUntilResponse = TextEditsOrNull;
 pub const TEXT_DOCUMENT_WILL_SAVE_WAIT_UNTIL_INFO: RequestInfo<
     WillSaveTextDocumentParams,
     WillSaveTextDocumentWaitUntilResponse,
-> = RequestInfo::new(Method::TextDocumentWillSaveWaitUntil);
+> = RequestInfo::new(Method::TEXT_DOCUMENT_WILL_SAVE_WAIT_UNTIL);
 
 // Response type for `textDocument/completion`
 pub type CompletionResponse = CompletionItemsOrListOrNull;
 
 // Type mapping info for `textDocument/completion`
 pub const TEXT_DOCUMENT_COMPLETION_INFO: RequestInfo<CompletionParams, CompletionResponse> =
-    RequestInfo::new(Method::TextDocumentCompletion);
+    RequestInfo::new(Method::TEXT_DOCUMENT_COMPLETION);
 
 // Response type for `completionItem/resolve`
 pub type CompletionResolveResponse = CompletionItem;
 
 // Type mapping info for `completionItem/resolve`
 pub const COMPLETION_ITEM_RESOLVE_INFO: RequestInfo<CompletionItem, CompletionResolveResponse> =
-    RequestInfo::new(Method::CompletionItemResolve);
+    RequestInfo::new(Method::COMPLETION_ITEM_RESOLVE);
 
 // Response type for `textDocument/hover`
 pub type HoverResponse = HoverOrNull;
 
 // Type mapping info for `textDocument/hover`
 pub const TEXT_DOCUMENT_HOVER_INFO: RequestInfo<HoverParams, HoverResponse> =
-    RequestInfo::new(Method::TextDocumentHover);
+    RequestInfo::new(Method::TEXT_DOCUMENT_HOVER);
 
 // Response type for `textDocument/signatureHelp`
 pub type SignatureHelpResponse = SignatureHelpOrNull;
@@ -25358,21 +25372,21 @@ pub type SignatureHelpResponse = SignatureHelpOrNull;
 pub const TEXT_DOCUMENT_SIGNATURE_HELP_INFO: RequestInfo<
     SignatureHelpParams,
     SignatureHelpResponse,
-> = RequestInfo::new(Method::TextDocumentSignatureHelp);
+> = RequestInfo::new(Method::TEXT_DOCUMENT_SIGNATURE_HELP);
 
 // Response type for `textDocument/definition`
 pub type DefinitionResponse = LocationOrLocationsOrDefinitionLinksOrNull;
 
 // Type mapping info for `textDocument/definition`
 pub const TEXT_DOCUMENT_DEFINITION_INFO: RequestInfo<DefinitionParams, DefinitionResponse> =
-    RequestInfo::new(Method::TextDocumentDefinition);
+    RequestInfo::new(Method::TEXT_DOCUMENT_DEFINITION);
 
 // Response type for `textDocument/references`
 pub type ReferencesResponse = LocationsOrNull;
 
 // Type mapping info for `textDocument/references`
 pub const TEXT_DOCUMENT_REFERENCES_INFO: RequestInfo<ReferenceParams, ReferencesResponse> =
-    RequestInfo::new(Method::TextDocumentReferences);
+    RequestInfo::new(Method::TEXT_DOCUMENT_REFERENCES);
 
 // Response type for `textDocument/documentHighlight`
 pub type DocumentHighlightResponse = DocumentHighlightsOrNull;
@@ -25381,7 +25395,7 @@ pub type DocumentHighlightResponse = DocumentHighlightsOrNull;
 pub const TEXT_DOCUMENT_DOCUMENT_HIGHLIGHT_INFO: RequestInfo<
     DocumentHighlightParams,
     DocumentHighlightResponse,
-> = RequestInfo::new(Method::TextDocumentDocumentHighlight);
+> = RequestInfo::new(Method::TEXT_DOCUMENT_DOCUMENT_HIGHLIGHT);
 
 // Response type for `textDocument/documentSymbol`
 pub type DocumentSymbolResponse = SymbolInformationsOrDocumentSymbolsOrNull;
@@ -25390,28 +25404,28 @@ pub type DocumentSymbolResponse = SymbolInformationsOrDocumentSymbolsOrNull;
 pub const TEXT_DOCUMENT_DOCUMENT_SYMBOL_INFO: RequestInfo<
     DocumentSymbolParams,
     DocumentSymbolResponse,
-> = RequestInfo::new(Method::TextDocumentDocumentSymbol);
+> = RequestInfo::new(Method::TEXT_DOCUMENT_DOCUMENT_SYMBOL);
 
 // Response type for `textDocument/codeAction`
 pub type CodeActionResponse = CommandOrCodeActionArrayOrNull;
 
 // Type mapping info for `textDocument/codeAction`
 pub const TEXT_DOCUMENT_CODE_ACTION_INFO: RequestInfo<CodeActionParams, CodeActionResponse> =
-    RequestInfo::new(Method::TextDocumentCodeAction);
+    RequestInfo::new(Method::TEXT_DOCUMENT_CODE_ACTION);
 
 // Response type for `codeAction/resolve`
 pub type CodeActionResolveResponse = CodeAction;
 
 // Type mapping info for `codeAction/resolve`
 pub const CODE_ACTION_RESOLVE_INFO: RequestInfo<CodeAction, CodeActionResolveResponse> =
-    RequestInfo::new(Method::CodeActionResolve);
+    RequestInfo::new(Method::CODE_ACTION_RESOLVE);
 
 // Response type for `workspace/symbol`
 pub type WorkspaceSymbolResponse = SymbolInformationsOrWorkspaceSymbolsOrNull;
 
 // Type mapping info for `workspace/symbol`
 pub const WORKSPACE_SYMBOL_INFO: RequestInfo<WorkspaceSymbolParams, WorkspaceSymbolResponse> =
-    RequestInfo::new(Method::WorkspaceSymbol);
+    RequestInfo::new(Method::WORKSPACE_SYMBOL);
 
 // Response type for `workspaceSymbol/resolve`
 pub type WorkspaceSymbolResolveResponse = WorkspaceSymbol;
@@ -25420,42 +25434,42 @@ pub type WorkspaceSymbolResolveResponse = WorkspaceSymbol;
 pub const WORKSPACE_SYMBOL_RESOLVE_INFO: RequestInfo<
     WorkspaceSymbol,
     WorkspaceSymbolResolveResponse,
-> = RequestInfo::new(Method::WorkspaceSymbolResolve);
+> = RequestInfo::new(Method::WORKSPACE_SYMBOL_RESOLVE);
 
 // Response type for `textDocument/codeLens`
 pub type CodeLensResponse = CodeLensesOrNull;
 
 // Type mapping info for `textDocument/codeLens`
 pub const TEXT_DOCUMENT_CODE_LENS_INFO: RequestInfo<CodeLensParams, CodeLensResponse> =
-    RequestInfo::new(Method::TextDocumentCodeLens);
+    RequestInfo::new(Method::TEXT_DOCUMENT_CODE_LENS);
 
 // Response type for `codeLens/resolve`
 pub type CodeLensResolveResponse = CodeLens;
 
 // Type mapping info for `codeLens/resolve`
 pub const CODE_LENS_RESOLVE_INFO: RequestInfo<CodeLens, CodeLensResolveResponse> =
-    RequestInfo::new(Method::CodeLensResolve);
+    RequestInfo::new(Method::CODE_LENS_RESOLVE);
 
 // Response type for `workspace/codeLens/refresh`
 pub type CodeLensRefreshResponse = Null;
 
 // Type mapping info for `workspace/codeLens/refresh`
 pub const WORKSPACE_CODE_LENS_REFRESH_INFO: RequestInfo<NoParams, CodeLensRefreshResponse> =
-    RequestInfo::new(Method::WorkspaceCodeLensRefresh);
+    RequestInfo::new(Method::WORKSPACE_CODE_LENS_REFRESH);
 
 // Response type for `textDocument/documentLink`
 pub type DocumentLinkResponse = DocumentLinksOrNull;
 
 // Type mapping info for `textDocument/documentLink`
 pub const TEXT_DOCUMENT_DOCUMENT_LINK_INFO: RequestInfo<DocumentLinkParams, DocumentLinkResponse> =
-    RequestInfo::new(Method::TextDocumentDocumentLink);
+    RequestInfo::new(Method::TEXT_DOCUMENT_DOCUMENT_LINK);
 
 // Response type for `documentLink/resolve`
 pub type DocumentLinkResolveResponse = DocumentLink;
 
 // Type mapping info for `documentLink/resolve`
 pub const DOCUMENT_LINK_RESOLVE_INFO: RequestInfo<DocumentLink, DocumentLinkResolveResponse> =
-    RequestInfo::new(Method::DocumentLinkResolve);
+    RequestInfo::new(Method::DOCUMENT_LINK_RESOLVE);
 
 // Response type for `textDocument/formatting`
 pub type DocumentFormattingResponse = TextEditsOrNull;
@@ -25464,7 +25478,7 @@ pub type DocumentFormattingResponse = TextEditsOrNull;
 pub const TEXT_DOCUMENT_FORMATTING_INFO: RequestInfo<
     DocumentFormattingParams,
     DocumentFormattingResponse,
-> = RequestInfo::new(Method::TextDocumentFormatting);
+> = RequestInfo::new(Method::TEXT_DOCUMENT_FORMATTING);
 
 // Response type for `textDocument/rangeFormatting`
 pub type DocumentRangeFormattingResponse = TextEditsOrNull;
@@ -25473,7 +25487,7 @@ pub type DocumentRangeFormattingResponse = TextEditsOrNull;
 pub const TEXT_DOCUMENT_RANGE_FORMATTING_INFO: RequestInfo<
     DocumentRangeFormattingParams,
     DocumentRangeFormattingResponse,
-> = RequestInfo::new(Method::TextDocumentRangeFormatting);
+> = RequestInfo::new(Method::TEXT_DOCUMENT_RANGE_FORMATTING);
 
 // Response type for `textDocument/rangesFormatting`
 pub type DocumentRangesFormattingResponse = TextEditsOrNull;
@@ -25482,7 +25496,7 @@ pub type DocumentRangesFormattingResponse = TextEditsOrNull;
 pub const TEXT_DOCUMENT_RANGES_FORMATTING_INFO: RequestInfo<
     DocumentRangesFormattingParams,
     DocumentRangesFormattingResponse,
-> = RequestInfo::new(Method::TextDocumentRangesFormatting);
+> = RequestInfo::new(Method::TEXT_DOCUMENT_RANGES_FORMATTING);
 
 // Response type for `textDocument/onTypeFormatting`
 pub type DocumentOnTypeFormattingResponse = TextEditsOrNull;
@@ -25491,14 +25505,14 @@ pub type DocumentOnTypeFormattingResponse = TextEditsOrNull;
 pub const TEXT_DOCUMENT_ON_TYPE_FORMATTING_INFO: RequestInfo<
     DocumentOnTypeFormattingParams,
     DocumentOnTypeFormattingResponse,
-> = RequestInfo::new(Method::TextDocumentOnTypeFormatting);
+> = RequestInfo::new(Method::TEXT_DOCUMENT_ON_TYPE_FORMATTING);
 
 // Response type for `textDocument/rename`
 pub type RenameResponse = WorkspaceEditOrNull;
 
 // Type mapping info for `textDocument/rename`
 pub const TEXT_DOCUMENT_RENAME_INFO: RequestInfo<RenameParams, RenameResponse> =
-    RequestInfo::new(Method::TextDocumentRename);
+    RequestInfo::new(Method::TEXT_DOCUMENT_RENAME);
 
 // Response type for `textDocument/prepareRename`
 pub type PrepareRenameResponse =
@@ -25508,7 +25522,7 @@ pub type PrepareRenameResponse =
 pub const TEXT_DOCUMENT_PREPARE_RENAME_INFO: RequestInfo<
     PrepareRenameParams,
     PrepareRenameResponse,
-> = RequestInfo::new(Method::TextDocumentPrepareRename);
+> = RequestInfo::new(Method::TEXT_DOCUMENT_PREPARE_RENAME);
 
 // Response type for `workspace/executeCommand`
 pub type ExecuteCommandResponse = LSPAnyOrNull;
@@ -25517,7 +25531,7 @@ pub type ExecuteCommandResponse = LSPAnyOrNull;
 pub const WORKSPACE_EXECUTE_COMMAND_INFO: RequestInfo<
     ExecuteCommandParams,
     ExecuteCommandResponse,
-> = RequestInfo::new(Method::WorkspaceExecuteCommand);
+> = RequestInfo::new(Method::WORKSPACE_EXECUTE_COMMAND);
 
 // Response type for `workspace/applyEdit`
 pub type ApplyWorkspaceEditResponse = ApplyWorkspaceEditResult;
@@ -25526,42 +25540,42 @@ pub type ApplyWorkspaceEditResponse = ApplyWorkspaceEditResult;
 pub const WORKSPACE_APPLY_EDIT_INFO: RequestInfo<
     ApplyWorkspaceEditParams,
     ApplyWorkspaceEditResponse,
-> = RequestInfo::new(Method::WorkspaceApplyEdit);
+> = RequestInfo::new(Method::WORKSPACE_APPLY_EDIT);
 
 // Response type for `custom/runGC`
 pub type RunGCResponse = Null;
 
 // Type mapping info for `custom/runGC`
 pub const CUSTOM_RUN_GC_INFO: RequestInfo<NoParams, RunGCResponse> =
-    RequestInfo::new(Method::CustomRunGC);
+    RequestInfo::new(Method::CUSTOM_RUN_GC);
 
 // Response type for `custom/saveHeapProfile`
 pub type SaveHeapProfileResponse = ProfileResult;
 
 // Type mapping info for `custom/saveHeapProfile`
 pub const CUSTOM_SAVE_HEAP_PROFILE_INFO: RequestInfo<ProfileParams, SaveHeapProfileResponse> =
-    RequestInfo::new(Method::CustomSaveHeapProfile);
+    RequestInfo::new(Method::CUSTOM_SAVE_HEAP_PROFILE);
 
 // Response type for `custom/saveAllocProfile`
 pub type SaveAllocProfileResponse = ProfileResult;
 
 // Type mapping info for `custom/saveAllocProfile`
 pub const CUSTOM_SAVE_ALLOC_PROFILE_INFO: RequestInfo<ProfileParams, SaveAllocProfileResponse> =
-    RequestInfo::new(Method::CustomSaveAllocProfile);
+    RequestInfo::new(Method::CUSTOM_SAVE_ALLOC_PROFILE);
 
 // Response type for `custom/startCPUProfile`
 pub type StartCPUProfileResponse = Null;
 
 // Type mapping info for `custom/startCPUProfile`
 pub const CUSTOM_START_CPU_PROFILE_INFO: RequestInfo<ProfileParams, StartCPUProfileResponse> =
-    RequestInfo::new(Method::CustomStartCPUProfile);
+    RequestInfo::new(Method::CUSTOM_START_CPU_PROFILE);
 
 // Response type for `custom/stopCPUProfile`
 pub type StopCPUProfileResponse = ProfileResult;
 
 // Type mapping info for `custom/stopCPUProfile`
 pub const CUSTOM_STOP_CPU_PROFILE_INFO: RequestInfo<NoParams, StopCPUProfileResponse> =
-    RequestInfo::new(Method::CustomStopCPUProfile);
+    RequestInfo::new(Method::CUSTOM_STOP_CPU_PROFILE);
 
 // Response type for `custom/initializeAPISession`
 pub type CustomInitializeAPISessionResponse = InitializeAPISessionResult;
@@ -25570,14 +25584,14 @@ pub type CustomInitializeAPISessionResponse = InitializeAPISessionResult;
 pub const CUSTOM_INITIALIZE_API_SESSION_INFO: RequestInfo<
     InitializeAPISessionParams,
     CustomInitializeAPISessionResponse,
-> = RequestInfo::new(Method::CustomInitializeAPISession);
+> = RequestInfo::new(Method::CUSTOM_INITIALIZE_API_SESSION);
 
 // Response type for `custom/projectInfo`
 pub type CustomProjectInfoResponse = ProjectInfoResult;
 
 // Type mapping info for `custom/projectInfo`
 pub const CUSTOM_PROJECT_INFO_INFO: RequestInfo<ProjectInfoParams, CustomProjectInfoResponse> =
-    RequestInfo::new(Method::CustomProjectInfo);
+    RequestInfo::new(Method::CUSTOM_PROJECT_INFO);
 
 // Response type for `custom/setContentMapperContributions`
 pub type CustomSetContentMapperContributionsResponse = Null;
@@ -25586,7 +25600,7 @@ pub type CustomSetContentMapperContributionsResponse = Null;
 pub const CUSTOM_SET_CONTENT_MAPPER_CONTRIBUTIONS_INFO: RequestInfo<
     SetContentMapperContributionsParams,
     CustomSetContentMapperContributionsResponse,
-> = RequestInfo::new(Method::CustomSetContentMapperContributions);
+> = RequestInfo::new(Method::CUSTOM_SET_CONTENT_MAPPER_CONTRIBUTIONS);
 
 // Response type for `custom/textDocument/sourceDefinition`
 pub type CustomTextDocumentSourceDefinitionResponse = LocationOrLocationsOrDefinitionLinksOrNull;
@@ -25595,7 +25609,7 @@ pub type CustomTextDocumentSourceDefinitionResponse = LocationOrLocationsOrDefin
 pub const CUSTOM_TEXT_DOCUMENT_SOURCE_DEFINITION_INFO: RequestInfo<
     TextDocumentPositionParams,
     CustomTextDocumentSourceDefinitionResponse,
-> = RequestInfo::new(Method::CustomTextDocumentSourceDefinition);
+> = RequestInfo::new(Method::CUSTOM_TEXT_DOCUMENT_SOURCE_DEFINITION);
 
 // Response type for `custom/textDocument/multiDocumentHighlight`
 pub type CustomMultiDocumentHighlightResponse = MultiDocumentHighlightsOrNull;
@@ -25604,7 +25618,7 @@ pub type CustomMultiDocumentHighlightResponse = MultiDocumentHighlightsOrNull;
 pub const CUSTOM_TEXT_DOCUMENT_MULTI_DOCUMENT_HIGHLIGHT_INFO: RequestInfo<
     MultiDocumentHighlightParams,
     CustomMultiDocumentHighlightResponse,
-> = RequestInfo::new(Method::CustomTextDocumentMultiDocumentHighlight);
+> = RequestInfo::new(Method::CUSTOM_TEXT_DOCUMENT_MULTI_DOCUMENT_HIGHLIGHT);
 
 // Response type for `textDocument/_vs_onAutoInsert`
 pub type VSOnAutoInsertResponse = VSOnAutoInsertResponseItemOrNull;
@@ -25613,105 +25627,105 @@ pub type VSOnAutoInsertResponse = VSOnAutoInsertResponseItemOrNull;
 pub const TEXT_DOCUMENT_VS_ON_AUTO_INSERT_INFO: RequestInfo<
     VSOnAutoInsertParams,
     VSOnAutoInsertResponse,
-> = RequestInfo::new(Method::TextDocumentVSOnAutoInsert);
+> = RequestInfo::new(Method::TEXT_DOCUMENT_VS_ON_AUTO_INSERT);
 
 // Response type for `textDocument/_vs_references`
 pub type VSReferencesResponse = VSReferenceItemsOrNull;
 
 // Type mapping info for `textDocument/_vs_references`
 pub const TEXT_DOCUMENT_VS_REFERENCES_INFO: RequestInfo<ReferenceParams, VSReferencesResponse> =
-    RequestInfo::new(Method::TextDocumentVSReferences);
+    RequestInfo::new(Method::TEXT_DOCUMENT_VS_REFERENCES);
 
 // Type mapping info for `workspace/didChangeWorkspaceFolders`
 pub const WORKSPACE_DID_CHANGE_WORKSPACE_FOLDERS_INFO: NotificationInfo<
     DidChangeWorkspaceFoldersParams,
-> = NotificationInfo::new(Method::WorkspaceDidChangeWorkspaceFolders);
+> = NotificationInfo::new(Method::WORKSPACE_DID_CHANGE_WORKSPACE_FOLDERS);
 
 // Type mapping info for `window/workDoneProgress/cancel`
 pub const WINDOW_WORK_DONE_PROGRESS_CANCEL_INFO: NotificationInfo<WorkDoneProgressCancelParams> =
-    NotificationInfo::new(Method::WindowWorkDoneProgressCancel);
+    NotificationInfo::new(Method::WINDOW_WORK_DONE_PROGRESS_CANCEL);
 
 // Type mapping info for `workspace/didCreateFiles`
 pub const WORKSPACE_DID_CREATE_FILES_INFO: NotificationInfo<CreateFilesParams> =
-    NotificationInfo::new(Method::WorkspaceDidCreateFiles);
+    NotificationInfo::new(Method::WORKSPACE_DID_CREATE_FILES);
 
 // Type mapping info for `workspace/didRenameFiles`
 pub const WORKSPACE_DID_RENAME_FILES_INFO: NotificationInfo<RenameFilesParams> =
-    NotificationInfo::new(Method::WorkspaceDidRenameFiles);
+    NotificationInfo::new(Method::WORKSPACE_DID_RENAME_FILES);
 
 // Type mapping info for `workspace/didDeleteFiles`
 pub const WORKSPACE_DID_DELETE_FILES_INFO: NotificationInfo<DeleteFilesParams> =
-    NotificationInfo::new(Method::WorkspaceDidDeleteFiles);
+    NotificationInfo::new(Method::WORKSPACE_DID_DELETE_FILES);
 
 // Type mapping info for `initialized`
 pub const INITIALIZED_INFO: NotificationInfo<InitializedParams> =
-    NotificationInfo::new(Method::Initialized);
+    NotificationInfo::new(Method::INITIALIZED);
 
 // Type mapping info for `exit`
-pub const EXIT_INFO: NotificationInfo<NoParams> = NotificationInfo::new(Method::Exit);
+pub const EXIT_INFO: NotificationInfo<NoParams> = NotificationInfo::new(Method::EXIT);
 
 // Type mapping info for `workspace/didChangeConfiguration`
 pub const WORKSPACE_DID_CHANGE_CONFIGURATION_INFO: NotificationInfo<DidChangeConfigurationParams> =
-    NotificationInfo::new(Method::WorkspaceDidChangeConfiguration);
+    NotificationInfo::new(Method::WORKSPACE_DID_CHANGE_CONFIGURATION);
 
 // Type mapping info for `window/showMessage`
 pub const WINDOW_SHOW_MESSAGE_INFO: NotificationInfo<ShowMessageParams> =
-    NotificationInfo::new(Method::WindowShowMessage);
+    NotificationInfo::new(Method::WINDOW_SHOW_MESSAGE);
 
 // Type mapping info for `window/logMessage`
 pub const WINDOW_LOG_MESSAGE_INFO: NotificationInfo<LogMessageParams> =
-    NotificationInfo::new(Method::WindowLogMessage);
+    NotificationInfo::new(Method::WINDOW_LOG_MESSAGE);
 
 // Type mapping info for `telemetry/event`
 pub const TELEMETRY_EVENT_INFO: NotificationInfo<TelemetryEvent> =
-    NotificationInfo::new(Method::TelemetryEvent);
+    NotificationInfo::new(Method::TELEMETRY_EVENT);
 
 // Type mapping info for `textDocument/didOpen`
 pub const TEXT_DOCUMENT_DID_OPEN_INFO: NotificationInfo<DidOpenTextDocumentParams> =
-    NotificationInfo::new(Method::TextDocumentDidOpen);
+    NotificationInfo::new(Method::TEXT_DOCUMENT_DID_OPEN);
 
 // Type mapping info for `textDocument/didChange`
 pub const TEXT_DOCUMENT_DID_CHANGE_INFO: NotificationInfo<DidChangeTextDocumentParams> =
-    NotificationInfo::new(Method::TextDocumentDidChange);
+    NotificationInfo::new(Method::TEXT_DOCUMENT_DID_CHANGE);
 
 // Type mapping info for `textDocument/didClose`
 pub const TEXT_DOCUMENT_DID_CLOSE_INFO: NotificationInfo<DidCloseTextDocumentParams> =
-    NotificationInfo::new(Method::TextDocumentDidClose);
+    NotificationInfo::new(Method::TEXT_DOCUMENT_DID_CLOSE);
 
 // Type mapping info for `textDocument/didSave`
 pub const TEXT_DOCUMENT_DID_SAVE_INFO: NotificationInfo<DidSaveTextDocumentParams> =
-    NotificationInfo::new(Method::TextDocumentDidSave);
+    NotificationInfo::new(Method::TEXT_DOCUMENT_DID_SAVE);
 
 // Type mapping info for `textDocument/willSave`
 pub const TEXT_DOCUMENT_WILL_SAVE_INFO: NotificationInfo<WillSaveTextDocumentParams> =
-    NotificationInfo::new(Method::TextDocumentWillSave);
+    NotificationInfo::new(Method::TEXT_DOCUMENT_WILL_SAVE);
 
 // Type mapping info for `workspace/didChangeWatchedFiles`
 pub const WORKSPACE_DID_CHANGE_WATCHED_FILES_INFO: NotificationInfo<DidChangeWatchedFilesParams> =
-    NotificationInfo::new(Method::WorkspaceDidChangeWatchedFiles);
+    NotificationInfo::new(Method::WORKSPACE_DID_CHANGE_WATCHED_FILES);
 
 // Type mapping info for `textDocument/publishDiagnostics`
 pub const TEXT_DOCUMENT_PUBLISH_DIAGNOSTICS_INFO: NotificationInfo<PublishDiagnosticsParams> =
-    NotificationInfo::new(Method::TextDocumentPublishDiagnostics);
+    NotificationInfo::new(Method::TEXT_DOCUMENT_PUBLISH_DIAGNOSTICS);
 
 // Type mapping info for `$/setTrace`
 pub const SET_TRACE_INFO: NotificationInfo<SetTraceParams> =
-    NotificationInfo::new(Method::SetTrace);
+    NotificationInfo::new(Method::SET_TRACE);
 
 // Type mapping info for `$/logTrace`
 pub const LOG_TRACE_INFO: NotificationInfo<LogTraceParams> =
-    NotificationInfo::new(Method::LogTrace);
+    NotificationInfo::new(Method::LOG_TRACE);
 
 // Type mapping info for `$/cancelRequest`
 pub const CANCEL_REQUEST_INFO: NotificationInfo<CancelParams> =
-    NotificationInfo::new(Method::CancelRequest);
+    NotificationInfo::new(Method::CANCEL_REQUEST);
 
 // Type mapping info for `$/progress`
-pub const PROGRESS_INFO: NotificationInfo<ProgressParams> = NotificationInfo::new(Method::Progress);
+pub const PROGRESS_INFO: NotificationInfo<ProgressParams> = NotificationInfo::new(Method::PROGRESS);
 
 // Type mapping info for `custom/setLogVerbosity`
 pub const CUSTOM_SET_LOG_VERBOSITY_INFO: NotificationInfo<SetLogVerbosityParams> =
-    NotificationInfo::new(Method::CustomSetLogVerbosity);
+    NotificationInfo::new(Method::CUSTOM_SET_LOG_VERBOSITY);
 
 // Type aliases
 
@@ -26021,8 +26035,8 @@ impl Json for StringOrMarkupContent {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct WorkspaceFullDocumentDiagnosticReportOrUnchangedDocumentDiagnosticReport {
-    pub full_document_diagnostic_report: Option<WorkspaceFullDocumentDiagnosticReport>,
-    pub unchanged_document_diagnostic_report: Option<WorkspaceUnchangedDocumentDiagnosticReport>,
+    full_document_diagnostic_report: Option<WorkspaceFullDocumentDiagnosticReport>,
+    unchanged_document_diagnostic_report: Option<WorkspaceUnchangedDocumentDiagnosticReport>,
 }
 
 impl Json for WorkspaceFullDocumentDiagnosticReportOrUnchangedDocumentDiagnosticReport {
@@ -26071,8 +26085,8 @@ impl Json for WorkspaceFullDocumentDiagnosticReportOrUnchangedDocumentDiagnostic
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct StringOrStringValue {
-    pub string: Option<String>,
-    pub string_value: Option<StringValue>,
+    string: Option<String>,
+    string_value: Option<StringValue>,
 }
 
 impl Json for StringOrStringValue {
@@ -26495,8 +26509,8 @@ impl Json for UintegerOrNull {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct LocationOrLocationUriOnly {
-    pub location: Option<Location>,
-    pub location_uri_only: Option<LocationUriOnly>,
+    location: Option<Location>,
+    location_uri_only: Option<LocationUriOnly>,
 }
 
 impl Json for LocationOrLocationUriOnly {
@@ -26635,8 +26649,8 @@ impl Json for TextEditOrAnnotatedTextEditOrSnippetTextEdit {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct FullDocumentDiagnosticReportOrUnchangedDocumentDiagnosticReport {
-    pub full_document_diagnostic_report: Option<FullDocumentDiagnosticReport>,
-    pub unchanged_document_diagnostic_report: Option<UnchangedDocumentDiagnosticReport>,
+    full_document_diagnostic_report: Option<FullDocumentDiagnosticReport>,
+    unchanged_document_diagnostic_report: Option<UnchangedDocumentDiagnosticReport>,
 }
 
 impl Json for FullDocumentDiagnosticReportOrUnchangedDocumentDiagnosticReport {
@@ -26769,9 +26783,9 @@ impl Json for BooleanOrHoverOptions {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct BooleanOrDeclarationOptionsOrDeclarationRegistrationOptions {
-    pub boolean: Option<bool>,
-    pub declaration_options: Option<DeclarationOptions>,
-    pub declaration_registration_options: Option<DeclarationRegistrationOptions>,
+    boolean: Option<bool>,
+    declaration_options: Option<DeclarationOptions>,
+    declaration_registration_options: Option<DeclarationRegistrationOptions>,
 }
 
 impl Json for BooleanOrDeclarationOptionsOrDeclarationRegistrationOptions {
@@ -27156,9 +27170,9 @@ impl Json for BooleanOrCodeActionOptions {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct BooleanOrDocumentColorOptionsOrDocumentColorRegistrationOptions {
-    pub boolean: Option<bool>,
-    pub document_color_options: Option<DocumentColorOptions>,
-    pub document_color_registration_options: Option<DocumentColorRegistrationOptions>,
+    boolean: Option<bool>,
+    document_color_options: Option<DocumentColorOptions>,
+    document_color_registration_options: Option<DocumentColorRegistrationOptions>,
 }
 
 impl Json for BooleanOrDocumentColorOptionsOrDocumentColorRegistrationOptions {
@@ -27662,9 +27676,9 @@ impl Json for SemanticTokensOptionsOrRegistrationOptions {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct BooleanOrMonikerOptionsOrMonikerRegistrationOptions {
-    pub boolean: Option<bool>,
-    pub moniker_options: Option<MonikerOptions>,
-    pub moniker_registration_options: Option<MonikerRegistrationOptions>,
+    boolean: Option<bool>,
+    moniker_options: Option<MonikerOptions>,
+    moniker_registration_options: Option<MonikerRegistrationOptions>,
 }
 
 impl Json for BooleanOrMonikerOptionsOrMonikerRegistrationOptions {
@@ -27717,9 +27731,9 @@ impl Json for BooleanOrMonikerOptionsOrMonikerRegistrationOptions {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct BooleanOrTypeHierarchyOptionsOrTypeHierarchyRegistrationOptions {
-    pub boolean: Option<bool>,
-    pub type_hierarchy_options: Option<TypeHierarchyOptions>,
-    pub type_hierarchy_registration_options: Option<TypeHierarchyRegistrationOptions>,
+    boolean: Option<bool>,
+    type_hierarchy_options: Option<TypeHierarchyOptions>,
+    type_hierarchy_registration_options: Option<TypeHierarchyRegistrationOptions>,
 }
 
 impl Json for BooleanOrTypeHierarchyOptionsOrTypeHierarchyRegistrationOptions {
@@ -27776,9 +27790,9 @@ impl Json for BooleanOrTypeHierarchyOptionsOrTypeHierarchyRegistrationOptions {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct BooleanOrInlineValueOptionsOrInlineValueRegistrationOptions {
-    pub boolean: Option<bool>,
-    pub inline_value_options: Option<InlineValueOptions>,
-    pub inline_value_registration_options: Option<InlineValueRegistrationOptions>,
+    boolean: Option<bool>,
+    inline_value_options: Option<InlineValueOptions>,
+    inline_value_registration_options: Option<InlineValueRegistrationOptions>,
 }
 
 impl Json for BooleanOrInlineValueOptionsOrInlineValueRegistrationOptions {
@@ -27923,8 +27937,8 @@ impl Json for DiagnosticOptionsOrRegistrationOptions {
 
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct BooleanOrInlineCompletionOptions {
-    pub boolean: Option<bool>,
-    pub inline_completion_options: Option<InlineCompletionOptions>,
+    boolean: Option<bool>,
+    inline_completion_options: Option<InlineCompletionOptions>,
 }
 
 impl Json for BooleanOrInlineCompletionOptions {
@@ -28094,8 +28108,8 @@ impl Json for BooleanOrSaveOptions {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct TextDocumentContentOptionsOrRegistrationOptions {
-    pub options: Option<TextDocumentContentOptions>,
-    pub registration_options: Option<TextDocumentContentRegistrationOptions>,
+    options: Option<TextDocumentContentOptions>,
+    registration_options: Option<TextDocumentContentRegistrationOptions>,
 }
 
 impl Json for TextDocumentContentOptionsOrRegistrationOptions {
@@ -28173,8 +28187,8 @@ impl Json for StringOrTuple {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct StringOrBoolean {
-    pub string: Option<String>,
-    pub boolean: Option<bool>,
+    string: Option<String>,
+    boolean: Option<bool>,
 }
 
 impl Json for StringOrBoolean {
@@ -28249,8 +28263,8 @@ impl Json for WorkspaceFolderOrURI {
 
 #[derive(Clone, Debug, Default, PartialEq, Copy, Eq, Hash)]
 pub struct BooleanOrClientSemanticTokensRequestFullDelta {
-    pub boolean: Option<bool>,
-    pub client_semantic_tokens_request_full_delta: Option<ClientSemanticTokensRequestFullDelta>,
+    boolean: Option<bool>,
+    client_semantic_tokens_request_full_delta: Option<ClientSemanticTokensRequestFullDelta>,
 }
 
 impl Json for BooleanOrClientSemanticTokensRequestFullDelta {
@@ -28450,9 +28464,9 @@ impl Json for FoldingRangesOrNull {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct LocationOrLocationsOrDeclarationLinksOrNull {
-    pub location: Option<Location>,
-    pub locations: Option<Vec<Location>>,
-    pub declaration_links: Option<Vec<LocationLink>>,
+    location: Option<Location>,
+    locations: Option<Vec<Location>>,
+    declaration_links: Option<Vec<LocationLink>>,
 }
 
 impl Json for LocationOrLocationsOrDeclarationLinksOrNull {
@@ -28689,8 +28703,8 @@ impl Json for SemanticTokensOrNull {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct SemanticTokensOrSemanticTokensDeltaOrNull {
-    pub semantic_tokens: Option<SemanticTokens>,
-    pub semantic_tokens_delta: Option<SemanticTokensDelta>,
+    semantic_tokens: Option<SemanticTokens>,
+    semantic_tokens_delta: Option<SemanticTokensDelta>,
 }
 
 impl Json for SemanticTokensOrSemanticTokensDeltaOrNull {
@@ -28811,7 +28825,7 @@ impl Json for WorkspaceEditOrNull {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct MonikersOrNull {
-    pub monikers: Option<Vec<Moniker>>,
+    monikers: Option<Vec<Moniker>>,
 }
 
 impl Json for MonikersOrNull {
@@ -28842,7 +28856,7 @@ impl Json for MonikersOrNull {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct TypeHierarchyItemsOrNull {
-    pub type_hierarchy_items: Option<Vec<TypeHierarchyItem>>,
+    type_hierarchy_items: Option<Vec<TypeHierarchyItem>>,
 }
 
 impl Json for TypeHierarchyItemsOrNull {
@@ -28876,7 +28890,7 @@ impl Json for TypeHierarchyItemsOrNull {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct InlineValuesOrNull {
-    pub inline_values: Option<Vec<InlineValueTextOrVariableLookupOrEvaluatableExpression>>,
+    inline_values: Option<Vec<InlineValueTextOrVariableLookupOrEvaluatableExpression>>,
 }
 
 impl Json for InlineValuesOrNull {
@@ -28988,8 +29002,8 @@ impl Json for RelatedFullDocumentDiagnosticReportOrUnchangedDocumentDiagnosticRe
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct InlineCompletionListOrItemsOrNull {
-    pub list: Option<InlineCompletionList>,
-    pub items: Option<Vec<InlineCompletionItem>>,
+    list: Option<InlineCompletionList>,
+    items: Option<Vec<InlineCompletionItem>>,
 }
 
 impl Json for InlineCompletionListOrItemsOrNull {
@@ -29033,7 +29047,7 @@ impl Json for InlineCompletionListOrItemsOrNull {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct MessageActionItemOrNull {
-    pub message_action_item: Option<MessageActionItem>,
+    message_action_item: Option<MessageActionItem>,
 }
 
 impl Json for MessageActionItemOrNull {
@@ -29477,7 +29491,7 @@ impl Json for CodeLensesOrNull {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct DocumentLinksOrNull {
-    pub document_links: Option<Vec<DocumentLink>>,
+    document_links: Option<Vec<DocumentLink>>,
 }
 
 impl Json for DocumentLinksOrNull {
@@ -29582,7 +29596,7 @@ impl Json for RangeOrPrepareRenamePlaceholderOrPrepareRenameDefaultBehaviorOrNul
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct LSPAnyOrNull {
-    pub lsp_any: Option<Value>,
+    lsp_any: Option<Value>,
 }
 
 impl Json for LSPAnyOrNull {
@@ -29821,8 +29835,8 @@ impl Json for TextDocumentFilterLanguageOrSchemeOrPattern {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct StringOrMarkedStringWithLanguage {
-    pub string: Option<String>,
-    pub marked_string_with_language: Option<MarkedStringWithLanguage>,
+    string: Option<String>,
+    marked_string_with_language: Option<MarkedStringWithLanguage>,
 }
 
 impl Json for StringOrMarkedStringWithLanguage {
@@ -29866,9 +29880,9 @@ impl Json for StringOrMarkedStringWithLanguage {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct InlineValueTextOrVariableLookupOrEvaluatableExpression {
-    pub text: Option<InlineValueText>,
-    pub variable_lookup: Option<InlineValueVariableLookup>,
-    pub evaluatable_expression: Option<InlineValueEvaluatableExpression>,
+    text: Option<InlineValueText>,
+    variable_lookup: Option<InlineValueVariableLookup>,
+    evaluatable_expression: Option<InlineValueEvaluatableExpression>,
 }
 
 impl Json for InlineValueTextOrVariableLookupOrEvaluatableExpression {
@@ -30360,11 +30374,11 @@ pub struct ResolvedChangeAnnotationsSupportOptions {
     // Whether the client groups edits with equal labels into tree nodes,
     // for instance all edits labelled with "Changes in Strings" would
     // be a tree node.
-    pub groups_on_label: bool,
+    groups_on_label: bool,
 }
 
 impl ChangeAnnotationsSupportOptions {
-    pub(crate) fn resolve(self) -> ResolvedChangeAnnotationsSupportOptions {
+    fn resolve(self) -> ResolvedChangeAnnotationsSupportOptions {
         ResolvedChangeAnnotationsSupportOptions {
             groups_on_label: self.groups_on_label.unwrap_or_default(),
         }
@@ -30386,7 +30400,7 @@ pub struct ResolvedWorkspaceEditClientCapabilities {
     // fails.
     //
     // Since: 3.13.0
-    pub failure_handling: FailureHandlingKind,
+    failure_handling: FailureHandlingKind,
     // Whether the client normalizes line endings to the client specific
     // setting.
     // If set to `true` the client will normalize line ending characters
@@ -30394,24 +30408,24 @@ pub struct ResolvedWorkspaceEditClientCapabilities {
     // character.
     //
     // Since: 3.16.0
-    pub normalizes_line_endings: bool,
+    normalizes_line_endings: bool,
     // Whether the client in general supports change annotations on text edits,
     // create file, rename file and delete file changes.
     //
     // Since: 3.16.0
-    pub change_annotation_support: ResolvedChangeAnnotationsSupportOptions,
+    change_annotation_support: ResolvedChangeAnnotationsSupportOptions,
     // Whether the client supports `WorkspaceEditMetadata` in `WorkspaceEdit`s.
     //
     // Since: 3.18.0
-    pub metadata_support: bool,
+    metadata_support: bool,
     // Whether the client supports snippets as text edits.
     //
     // Since: 3.18.0
-    pub snippet_edit_support: bool,
+    snippet_edit_support: bool,
 }
 
 impl WorkspaceEditClientCapabilities {
-    pub(crate) fn resolve(&self) -> ResolvedWorkspaceEditClientCapabilities {
+    fn resolve(&self) -> ResolvedWorkspaceEditClientCapabilities {
         ResolvedWorkspaceEditClientCapabilities {
             document_changes: self.document_changes.unwrap_or_default(),
             resource_operations: self.resource_operations.clone().unwrap_or_default(),
@@ -30420,8 +30434,7 @@ impl WorkspaceEditClientCapabilities {
             change_annotation_support: self
                 .change_annotation_support
                 .as_ref()
-                .map(|v| v.resolve())
-                .unwrap_or_default(),
+                .map_or_default(|v| v.resolve()),
             metadata_support: self.metadata_support.unwrap_or_default(),
             snippet_edit_support: self.snippet_edit_support.unwrap_or_default(),
         }
@@ -30433,11 +30446,11 @@ impl WorkspaceEditClientCapabilities {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ResolvedDidChangeConfigurationClientCapabilities {
     // Did change configuration notification supports dynamic registration.
-    pub dynamic_registration: bool,
+    dynamic_registration: bool,
 }
 
 impl DidChangeConfigurationClientCapabilities {
-    pub(crate) fn resolve(self) -> ResolvedDidChangeConfigurationClientCapabilities {
+    fn resolve(self) -> ResolvedDidChangeConfigurationClientCapabilities {
         ResolvedDidChangeConfigurationClientCapabilities {
             dynamic_registration: self.dynamic_registration.unwrap_or_default(),
         }
@@ -30460,7 +30473,7 @@ pub struct ResolvedDidChangeWatchedFilesClientCapabilities {
 }
 
 impl DidChangeWatchedFilesClientCapabilities {
-    pub(crate) fn resolve(self) -> ResolvedDidChangeWatchedFilesClientCapabilities {
+    fn resolve(self) -> ResolvedDidChangeWatchedFilesClientCapabilities {
         ResolvedDidChangeWatchedFilesClientCapabilities {
             dynamic_registration: self.dynamic_registration.unwrap_or_default(),
             relative_pattern_support: self.relative_pattern_support.unwrap_or_default(),
@@ -30482,11 +30495,11 @@ pub struct ResolvedClientSymbolKindOptions {
     // If this property is not present the client only supports
     // the symbol kinds from `File` to `Array` as defined in
     // the initial version of the protocol.
-    pub value_set: Vec<SymbolKind>,
+    value_set: Vec<SymbolKind>,
 }
 
 impl ClientSymbolKindOptions {
-    pub(crate) fn resolve(&self) -> ResolvedClientSymbolKindOptions {
+    fn resolve(&self) -> ResolvedClientSymbolKindOptions {
         ResolvedClientSymbolKindOptions { value_set: self.value_set.clone().unwrap_or_default() }
     }
 }
@@ -30498,11 +30511,11 @@ impl ClientSymbolKindOptions {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ResolvedClientSymbolTagOptions {
     // The tags supported by the client.
-    pub value_set: Vec<SymbolTag>,
+    value_set: Vec<SymbolTag>,
 }
 
 impl ClientSymbolTagOptions {
-    pub(crate) fn resolve(&self) -> ResolvedClientSymbolTagOptions {
+    fn resolve(&self) -> ResolvedClientSymbolTagOptions {
         ResolvedClientSymbolTagOptions { value_set: self.value_set.clone() }
     }
 }
@@ -30515,11 +30528,11 @@ impl ClientSymbolTagOptions {
 pub struct ResolvedClientSymbolResolveOptions {
     // The properties that a client can resolve lazily. Usually
     // `location.range`
-    pub properties: Vec<String>,
+    properties: Vec<String>,
 }
 
 impl ClientSymbolResolveOptions {
-    pub(crate) fn resolve(&self) -> ResolvedClientSymbolResolveOptions {
+    fn resolve(&self) -> ResolvedClientSymbolResolveOptions {
         ResolvedClientSymbolResolveOptions { properties: self.properties.clone() }
     }
 }
@@ -30531,41 +30544,32 @@ impl ClientSymbolResolveOptions {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ResolvedWorkspaceSymbolClientCapabilities {
     // Symbol request supports dynamic registration.
-    pub dynamic_registration: bool,
+    dynamic_registration: bool,
     // Specific capabilities for the `SymbolKind` in the `workspace/symbol` request.
-    pub symbol_kind: ResolvedClientSymbolKindOptions,
+    symbol_kind: ResolvedClientSymbolKindOptions,
     // The client supports tags on `SymbolInformation`.
     // Clients supporting tags have to handle unknown tags gracefully.
     //
     // Since: 3.16.0
-    pub tag_support: ResolvedClientSymbolTagOptions,
+    tag_support: ResolvedClientSymbolTagOptions,
     // The client support partial workspace symbols. The client will send the
     // request `workspaceSymbol/resolve` to the server to resolve additional
     // properties.
     //
     // Since: 3.17.0
-    pub resolve_support: ResolvedClientSymbolResolveOptions,
+    resolve_support: ResolvedClientSymbolResolveOptions,
 }
 
 impl WorkspaceSymbolClientCapabilities {
-    pub(crate) fn resolve(&self) -> ResolvedWorkspaceSymbolClientCapabilities {
+    fn resolve(&self) -> ResolvedWorkspaceSymbolClientCapabilities {
         ResolvedWorkspaceSymbolClientCapabilities {
             dynamic_registration: self.dynamic_registration.unwrap_or_default(),
-            symbol_kind: self
-                .symbol_kind
-                .as_ref()
-                .map(ClientSymbolKindOptions::resolve)
-                .unwrap_or_default(),
-            tag_support: self
-                .tag_support
-                .as_ref()
-                .map(ClientSymbolTagOptions::resolve)
-                .unwrap_or_default(),
+            symbol_kind: self.symbol_kind.as_ref().map_or_default(ClientSymbolKindOptions::resolve),
+            tag_support: self.tag_support.as_ref().map_or_default(ClientSymbolTagOptions::resolve),
             resolve_support: self
                 .resolve_support
                 .as_ref()
-                .map(ClientSymbolResolveOptions::resolve)
-                .unwrap_or_default(),
+                .map_or_default(ClientSymbolResolveOptions::resolve),
         }
     }
 }
@@ -30577,11 +30581,11 @@ impl WorkspaceSymbolClientCapabilities {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ResolvedExecuteCommandClientCapabilities {
     // Execute command supports dynamic registration.
-    pub dynamic_registration: bool,
+    dynamic_registration: bool,
 }
 
 impl ExecuteCommandClientCapabilities {
-    pub(crate) fn resolve(self) -> ResolvedExecuteCommandClientCapabilities {
+    fn resolve(self) -> ResolvedExecuteCommandClientCapabilities {
         ResolvedExecuteCommandClientCapabilities {
             dynamic_registration: self.dynamic_registration.unwrap_or_default(),
         }
@@ -30601,11 +30605,11 @@ pub struct ResolvedSemanticTokensWorkspaceClientCapabilities {
     // semantic tokens currently shown. It should be used with absolute care
     // and is useful for situation where a server for example detects a project
     // wide change that requires such a calculation.
-    pub refresh_support: bool,
+    refresh_support: bool,
 }
 
 impl SemanticTokensWorkspaceClientCapabilities {
-    pub(crate) fn resolve(self) -> ResolvedSemanticTokensWorkspaceClientCapabilities {
+    fn resolve(self) -> ResolvedSemanticTokensWorkspaceClientCapabilities {
         ResolvedSemanticTokensWorkspaceClientCapabilities {
             refresh_support: self.refresh_support.unwrap_or_default(),
         }
@@ -30629,7 +30633,7 @@ pub struct ResolvedCodeLensWorkspaceClientCapabilities {
 }
 
 impl CodeLensWorkspaceClientCapabilities {
-    pub(crate) fn resolve(self) -> ResolvedCodeLensWorkspaceClientCapabilities {
+    fn resolve(self) -> ResolvedCodeLensWorkspaceClientCapabilities {
         ResolvedCodeLensWorkspaceClientCapabilities {
             refresh_support: self.refresh_support.unwrap_or_default(),
         }
@@ -30650,21 +30654,21 @@ pub struct ResolvedFileOperationClientCapabilities {
     // Whether the client supports dynamic registration for file requests/notifications.
     pub dynamic_registration: bool,
     // The client has support for sending didCreateFiles notifications.
-    pub did_create: bool,
+    did_create: bool,
     // The client has support for sending willCreateFiles requests.
-    pub will_create: bool,
+    will_create: bool,
     // The client has support for sending didRenameFiles notifications.
-    pub did_rename: bool,
+    did_rename: bool,
     // The client has support for sending willRenameFiles requests.
     pub will_rename: bool,
     // The client has support for sending didDeleteFiles notifications.
-    pub did_delete: bool,
+    did_delete: bool,
     // The client has support for sending willDeleteFiles requests.
-    pub will_delete: bool,
+    will_delete: bool,
 }
 
 impl FileOperationClientCapabilities {
-    pub(crate) fn resolve(self) -> ResolvedFileOperationClientCapabilities {
+    fn resolve(self) -> ResolvedFileOperationClientCapabilities {
         ResolvedFileOperationClientCapabilities {
             dynamic_registration: self.dynamic_registration.unwrap_or_default(),
             did_create: self.did_create.unwrap_or_default(),
@@ -30692,11 +30696,11 @@ pub struct ResolvedInlineValueWorkspaceClientCapabilities {
     // inline values currently shown. It should be used with absolute care and is
     // useful for situation where a server for example detects a project wide
     // change that requires such a calculation.
-    pub refresh_support: bool,
+    refresh_support: bool,
 }
 
 impl InlineValueWorkspaceClientCapabilities {
-    pub(crate) fn resolve(self) -> ResolvedInlineValueWorkspaceClientCapabilities {
+    fn resolve(self) -> ResolvedInlineValueWorkspaceClientCapabilities {
         ResolvedInlineValueWorkspaceClientCapabilities {
             refresh_support: self.refresh_support.unwrap_or_default(),
         }
@@ -30722,7 +30726,7 @@ pub struct ResolvedInlayHintWorkspaceClientCapabilities {
 }
 
 impl InlayHintWorkspaceClientCapabilities {
-    pub(crate) fn resolve(self) -> ResolvedInlayHintWorkspaceClientCapabilities {
+    fn resolve(self) -> ResolvedInlayHintWorkspaceClientCapabilities {
         ResolvedInlayHintWorkspaceClientCapabilities {
             refresh_support: self.refresh_support.unwrap_or_default(),
         }
@@ -30748,7 +30752,7 @@ pub struct ResolvedDiagnosticWorkspaceClientCapabilities {
 }
 
 impl DiagnosticWorkspaceClientCapabilities {
-    pub(crate) fn resolve(self) -> ResolvedDiagnosticWorkspaceClientCapabilities {
+    fn resolve(self) -> ResolvedDiagnosticWorkspaceClientCapabilities {
         ResolvedDiagnosticWorkspaceClientCapabilities {
             refresh_support: self.refresh_support.unwrap_or_default(),
         }
@@ -30772,11 +30776,11 @@ pub struct ResolvedFoldingRangeWorkspaceClientCapabilities {
     // change that requires such a calculation.
     //
     // Since: 3.18.0
-    pub refresh_support: bool,
+    refresh_support: bool,
 }
 
 impl FoldingRangeWorkspaceClientCapabilities {
-    pub(crate) fn resolve(self) -> ResolvedFoldingRangeWorkspaceClientCapabilities {
+    fn resolve(self) -> ResolvedFoldingRangeWorkspaceClientCapabilities {
         ResolvedFoldingRangeWorkspaceClientCapabilities {
             refresh_support: self.refresh_support.unwrap_or_default(),
         }
@@ -30792,11 +30796,11 @@ impl FoldingRangeWorkspaceClientCapabilities {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ResolvedTextDocumentContentClientCapabilities {
     // Text document content provider supports dynamic registration.
-    pub dynamic_registration: bool,
+    dynamic_registration: bool,
 }
 
 impl TextDocumentContentClientCapabilities {
-    pub(crate) fn resolve(self) -> ResolvedTextDocumentContentClientCapabilities {
+    fn resolve(self) -> ResolvedTextDocumentContentClientCapabilities {
         ResolvedTextDocumentContentClientCapabilities {
             dynamic_registration: self.dynamic_registration.unwrap_or_default(),
         }
@@ -30812,17 +30816,17 @@ pub struct ResolvedWorkspaceClientCapabilities {
     // The client supports applying batch edits
     // to the workspace by supporting the request
     // 'workspace/applyEdit'
-    pub apply_edit: bool,
+    apply_edit: bool,
     // Capabilities specific to `WorkspaceEdit`s.
     pub workspace_edit: ResolvedWorkspaceEditClientCapabilities,
     // Capabilities specific to the `workspace/didChangeConfiguration` notification.
-    pub did_change_configuration: ResolvedDidChangeConfigurationClientCapabilities,
+    did_change_configuration: ResolvedDidChangeConfigurationClientCapabilities,
     // Capabilities specific to the `workspace/didChangeWatchedFiles` notification.
     pub did_change_watched_files: ResolvedDidChangeWatchedFilesClientCapabilities,
     // Capabilities specific to the `workspace/symbol` request.
-    pub symbol: ResolvedWorkspaceSymbolClientCapabilities,
+    symbol: ResolvedWorkspaceSymbolClientCapabilities,
     // Capabilities specific to the `workspace/executeCommand` request.
-    pub execute_command: ResolvedExecuteCommandClientCapabilities,
+    execute_command: ResolvedExecuteCommandClientCapabilities,
     // The client has support for workspace folders.
     //
     // Since: 3.6.0
@@ -30835,7 +30839,7 @@ pub struct ResolvedWorkspaceClientCapabilities {
     // workspace.
     //
     // Since: 3.16.0.
-    pub semantic_tokens: ResolvedSemanticTokensWorkspaceClientCapabilities,
+    semantic_tokens: ResolvedSemanticTokensWorkspaceClientCapabilities,
     // Capabilities specific to the code lens requests scoped to the
     // workspace.
     //
@@ -30849,7 +30853,7 @@ pub struct ResolvedWorkspaceClientCapabilities {
     // workspace.
     //
     // Since: 3.17.0.
-    pub inline_value: ResolvedInlineValueWorkspaceClientCapabilities,
+    inline_value: ResolvedInlineValueWorkspaceClientCapabilities,
     // Capabilities specific to the inlay hint requests scoped to the
     // workspace.
     //
@@ -30863,52 +30867,44 @@ pub struct ResolvedWorkspaceClientCapabilities {
     // Capabilities specific to the folding range requests scoped to the workspace.
     //
     // Since: 3.18.0
-    pub folding_range: ResolvedFoldingRangeWorkspaceClientCapabilities,
+    folding_range: ResolvedFoldingRangeWorkspaceClientCapabilities,
     // Capabilities specific to the `workspace/textDocumentContent` request.
     //
     // Since: 3.18.0
-    pub text_document_content: ResolvedTextDocumentContentClientCapabilities,
+    text_document_content: ResolvedTextDocumentContentClientCapabilities,
 }
 
 impl WorkspaceClientCapabilities {
-    pub(crate) fn resolve(&self) -> ResolvedWorkspaceClientCapabilities {
+    fn resolve(&self) -> ResolvedWorkspaceClientCapabilities {
         ResolvedWorkspaceClientCapabilities {
             apply_edit: self.apply_edit.unwrap_or_default(),
             workspace_edit: self
                 .workspace_edit
                 .as_ref()
-                .map(WorkspaceEditClientCapabilities::resolve)
-                .unwrap_or_default(),
+                .map_or_default(WorkspaceEditClientCapabilities::resolve),
             did_change_configuration: self
                 .did_change_configuration
                 .as_ref()
-                .map(|v| v.resolve())
-                .unwrap_or_default(),
+                .map_or_default(|v| v.resolve()),
             did_change_watched_files: self
                 .did_change_watched_files
                 .as_ref()
-                .map(|v| v.resolve())
-                .unwrap_or_default(),
-            symbol: self
-                .symbol
-                .as_ref()
-                .map(WorkspaceSymbolClientCapabilities::resolve)
-                .unwrap_or_default(),
-            execute_command: self.execute_command.as_ref().map(|v| v.resolve()).unwrap_or_default(),
+                .map_or_default(|v| v.resolve()),
+            symbol: self.symbol.as_ref().map_or_default(WorkspaceSymbolClientCapabilities::resolve),
+            execute_command: self.execute_command.as_ref().map_or_default(|v| v.resolve()),
             workspace_folders: self.workspace_folders.unwrap_or_default(),
             configuration: self.configuration.unwrap_or_default(),
-            semantic_tokens: self.semantic_tokens.as_ref().map(|v| v.resolve()).unwrap_or_default(),
-            code_lens: self.code_lens.as_ref().map(|v| v.resolve()).unwrap_or_default(),
-            file_operations: self.file_operations.as_ref().map(|v| v.resolve()).unwrap_or_default(),
-            inline_value: self.inline_value.as_ref().map(|v| v.resolve()).unwrap_or_default(),
-            inlay_hint: self.inlay_hint.as_ref().map(|v| v.resolve()).unwrap_or_default(),
-            diagnostics: self.diagnostics.as_ref().map(|v| v.resolve()).unwrap_or_default(),
-            folding_range: self.folding_range.as_ref().map(|v| v.resolve()).unwrap_or_default(),
+            semantic_tokens: self.semantic_tokens.as_ref().map_or_default(|v| v.resolve()),
+            code_lens: self.code_lens.as_ref().map_or_default(|v| v.resolve()),
+            file_operations: self.file_operations.as_ref().map_or_default(|v| v.resolve()),
+            inline_value: self.inline_value.as_ref().map_or_default(|v| v.resolve()),
+            inlay_hint: self.inlay_hint.as_ref().map_or_default(|v| v.resolve()),
+            diagnostics: self.diagnostics.as_ref().map_or_default(|v| v.resolve()),
+            folding_range: self.folding_range.as_ref().map_or_default(|v| v.resolve()),
             text_document_content: self
                 .text_document_content
                 .as_ref()
-                .map(|v| v.resolve())
-                .unwrap_or_default(),
+                .map_or_default(|v| v.resolve()),
         }
     }
 }
@@ -30920,17 +30916,17 @@ pub struct ResolvedTextDocumentSyncClientCapabilities {
     // Whether text document synchronization supports dynamic registration.
     pub dynamic_registration: bool,
     // The client supports sending will save notifications.
-    pub will_save: bool,
+    will_save: bool,
     // The client supports sending a will save request and
     // waits for a response providing text edits which will
     // be applied to the document before it is saved.
-    pub will_save_wait_until: bool,
+    will_save_wait_until: bool,
     // The client supports did save notifications.
-    pub did_save: bool,
+    did_save: bool,
 }
 
 impl TextDocumentSyncClientCapabilities {
-    pub(crate) fn resolve(self) -> ResolvedTextDocumentSyncClientCapabilities {
+    fn resolve(self) -> ResolvedTextDocumentSyncClientCapabilities {
         ResolvedTextDocumentSyncClientCapabilities {
             dynamic_registration: self.dynamic_registration.unwrap_or_default(),
             will_save: self.will_save.unwrap_or_default(),
@@ -30947,11 +30943,11 @@ pub struct ResolvedTextDocumentFilterClientCapabilities {
     // The client supports Relative Patterns.
     //
     // Since: 3.18.0
-    pub relative_pattern_support: bool,
+    relative_pattern_support: bool,
 }
 
 impl TextDocumentFilterClientCapabilities {
-    pub(crate) fn resolve(self) -> ResolvedTextDocumentFilterClientCapabilities {
+    fn resolve(self) -> ResolvedTextDocumentFilterClientCapabilities {
         ResolvedTextDocumentFilterClientCapabilities {
             relative_pattern_support: self.relative_pattern_support.unwrap_or_default(),
         }
@@ -30965,11 +30961,11 @@ impl TextDocumentFilterClientCapabilities {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ResolvedCompletionItemTagOptions {
     // The tags supported by the client.
-    pub value_set: Vec<CompletionItemTag>,
+    value_set: Vec<CompletionItemTag>,
 }
 
 impl CompletionItemTagOptions {
-    pub(crate) fn resolve(&self) -> ResolvedCompletionItemTagOptions {
+    fn resolve(&self) -> ResolvedCompletionItemTagOptions {
         ResolvedCompletionItemTagOptions { value_set: self.value_set.clone() }
     }
 }
@@ -30981,11 +30977,11 @@ impl CompletionItemTagOptions {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ResolvedClientCompletionItemResolveOptions {
     // The properties that a client can resolve lazily.
-    pub properties: Vec<String>,
+    properties: Vec<String>,
 }
 
 impl ClientCompletionItemResolveOptions {
-    pub(crate) fn resolve(&self) -> ResolvedClientCompletionItemResolveOptions {
+    fn resolve(&self) -> ResolvedClientCompletionItemResolveOptions {
         ResolvedClientCompletionItemResolveOptions { properties: self.properties.clone() }
     }
 }
@@ -30996,11 +30992,11 @@ impl ClientCompletionItemResolveOptions {
 // Since: 3.18.0
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ResolvedClientCompletionItemInsertTextModeOptions {
-    pub value_set: Vec<InsertTextMode>,
+    value_set: Vec<InsertTextMode>,
 }
 
 impl ClientCompletionItemInsertTextModeOptions {
-    pub(crate) fn resolve(&self) -> ResolvedClientCompletionItemInsertTextModeOptions {
+    fn resolve(&self) -> ResolvedClientCompletionItemInsertTextModeOptions {
         ResolvedClientCompletionItemInsertTextModeOptions { value_set: self.value_set.clone() }
     }
 }
@@ -31024,16 +31020,16 @@ pub struct ResolvedClientCompletionItemOptions {
     // property. The order describes the preferred format of the client.
     pub documentation_format: Vec<MarkupKind>,
     // Client supports the deprecated property on a completion item.
-    pub deprecated_support: bool,
+    deprecated_support: bool,
     // Client supports the preselect property on a completion item.
-    pub preselect_support: bool,
+    preselect_support: bool,
     // Client supports the tag property on a completion item. Clients supporting
     // tags have to handle unknown tags gracefully. Clients especially need to
     // preserve unknown tags when sending a completion item back to the server in
     // a resolve call.
     //
     // Since: 3.15.0
-    pub tag_support: ResolvedCompletionItemTagOptions,
+    tag_support: ResolvedCompletionItemTagOptions,
     // Client support insert replace edit to control different behavior if a
     // completion item is inserted in the text or should replace text.
     //
@@ -31044,13 +31040,13 @@ pub struct ResolvedClientCompletionItemOptions {
     // and `details` could be resolved lazily.
     //
     // Since: 3.16.0
-    pub resolve_support: ResolvedClientCompletionItemResolveOptions,
+    resolve_support: ResolvedClientCompletionItemResolveOptions,
     // The client supports the `insertTextMode` property on
     // a completion item to override the whitespace handling mode
     // as defined by the client (see `insertTextMode`).
     //
     // Since: 3.16.0
-    pub insert_text_mode_support: ResolvedClientCompletionItemInsertTextModeOptions,
+    insert_text_mode_support: ResolvedClientCompletionItemInsertTextModeOptions,
     // The client has support for completion item label
     // details (see also `CompletionItemLabelDetails`).
     //
@@ -31059,7 +31055,7 @@ pub struct ResolvedClientCompletionItemOptions {
 }
 
 impl ClientCompletionItemOptions {
-    pub(crate) fn resolve(&self) -> ResolvedClientCompletionItemOptions {
+    fn resolve(&self) -> ResolvedClientCompletionItemOptions {
         ResolvedClientCompletionItemOptions {
             snippet_support: self.snippet_support.unwrap_or_default(),
             commit_characters_support: self.commit_characters_support.unwrap_or_default(),
@@ -31069,19 +31065,16 @@ impl ClientCompletionItemOptions {
             tag_support: self
                 .tag_support
                 .as_ref()
-                .map(CompletionItemTagOptions::resolve)
-                .unwrap_or_default(),
+                .map_or_default(CompletionItemTagOptions::resolve),
             insert_replace_support: self.insert_replace_support.unwrap_or_default(),
             resolve_support: self
                 .resolve_support
                 .as_ref()
-                .map(ClientCompletionItemResolveOptions::resolve)
-                .unwrap_or_default(),
+                .map_or_default(ClientCompletionItemResolveOptions::resolve),
             insert_text_mode_support: self
                 .insert_text_mode_support
                 .as_ref()
-                .map(ClientCompletionItemInsertTextModeOptions::resolve)
-                .unwrap_or_default(),
+                .map_or_default(ClientCompletionItemInsertTextModeOptions::resolve),
             label_details_support: self.label_details_support.unwrap_or_default(),
         }
     }
@@ -31101,11 +31094,11 @@ pub struct ResolvedClientCompletionItemOptionsKind {
     // If this property is not present the client only supports
     // the completion items kinds from `Text` to `Reference` as defined in
     // the initial version of the protocol.
-    pub value_set: Vec<CompletionItemKind>,
+    value_set: Vec<CompletionItemKind>,
 }
 
 impl ClientCompletionItemOptionsKind {
-    pub(crate) fn resolve(&self) -> ResolvedClientCompletionItemOptionsKind {
+    fn resolve(&self) -> ResolvedClientCompletionItemOptionsKind {
         ResolvedClientCompletionItemOptionsKind {
             value_set: self.value_set.clone().unwrap_or_default(),
         }
@@ -31141,11 +31134,11 @@ pub struct ResolvedCompletionListCapabilities {
     // defined in `CompletionList.applyKind`.
     //
     // Since: 3.18.0
-    pub apply_kind_support: bool,
+    apply_kind_support: bool,
 }
 
 impl CompletionListCapabilities {
-    pub(crate) fn resolve(&self) -> ResolvedCompletionListCapabilities {
+    fn resolve(&self) -> ResolvedCompletionListCapabilities {
         ResolvedCompletionListCapabilities {
             item_defaults: self.item_defaults.clone().unwrap_or_default(),
             apply_kind_support: self.apply_kind_support.unwrap_or_default(),
@@ -31165,16 +31158,16 @@ pub struct ResolvedCompletionClientCapabilities {
     // capabilities.
     pub completion_item: ResolvedClientCompletionItemOptions,
     // The client supports the following completion item kinds.
-    pub completion_item_kind: ResolvedClientCompletionItemOptionsKind,
+    completion_item_kind: ResolvedClientCompletionItemOptionsKind,
     // Defines how the client handles whitespace and indentation
     // when accepting a completion item that uses multi line
     // text in either `insertText` or `textEdit`.
     //
     // Since: 3.17.0
-    pub insert_text_mode: InsertTextMode,
+    insert_text_mode: InsertTextMode,
     // The client supports to send additional context information for a
     // `textDocument/completion` request.
-    pub context_support: bool,
+    context_support: bool,
     // The client supports the following `CompletionList` specific
     // capabilities.
     //
@@ -31183,26 +31176,23 @@ pub struct ResolvedCompletionClientCapabilities {
 }
 
 impl CompletionClientCapabilities {
-    pub(crate) fn resolve(&self) -> ResolvedCompletionClientCapabilities {
+    fn resolve(&self) -> ResolvedCompletionClientCapabilities {
         ResolvedCompletionClientCapabilities {
             dynamic_registration: self.dynamic_registration.unwrap_or_default(),
             completion_item: self
                 .completion_item
                 .as_ref()
-                .map(ClientCompletionItemOptions::resolve)
-                .unwrap_or_default(),
+                .map_or_default(ClientCompletionItemOptions::resolve),
             completion_item_kind: self
                 .completion_item_kind
                 .as_ref()
-                .map(ClientCompletionItemOptionsKind::resolve)
-                .unwrap_or_default(),
+                .map_or_default(ClientCompletionItemOptionsKind::resolve),
             insert_text_mode: self.insert_text_mode.unwrap_or_default(),
             context_support: self.context_support.unwrap_or_default(),
             completion_list: self
                 .completion_list
                 .as_ref()
-                .map(CompletionListCapabilities::resolve)
-                .unwrap_or_default(),
+                .map_or_default(CompletionListCapabilities::resolve),
         }
     }
 }
@@ -31219,7 +31209,7 @@ pub struct ResolvedHoverClientCapabilities {
 }
 
 impl HoverClientCapabilities {
-    pub(crate) fn resolve(&self) -> ResolvedHoverClientCapabilities {
+    fn resolve(&self) -> ResolvedHoverClientCapabilities {
         ResolvedHoverClientCapabilities {
             dynamic_registration: self.dynamic_registration.unwrap_or_default(),
             content_format: self.content_format.clone().unwrap_or_default(),
@@ -31237,11 +31227,11 @@ pub struct ResolvedClientSignatureParameterInformationOptions {
     // simple label string.
     //
     // Since: 3.14.0
-    pub label_offset_support: bool,
+    label_offset_support: bool,
 }
 
 impl ClientSignatureParameterInformationOptions {
-    pub(crate) fn resolve(self) -> ResolvedClientSignatureParameterInformationOptions {
+    fn resolve(self) -> ResolvedClientSignatureParameterInformationOptions {
         ResolvedClientSignatureParameterInformationOptions {
             label_offset_support: self.label_offset_support.unwrap_or_default(),
         }
@@ -31258,7 +31248,7 @@ pub struct ResolvedClientSignatureInformationOptions {
     // property. The order describes the preferred format of the client.
     pub documentation_format: Vec<MarkupKind>,
     // Client capabilities specific to parameter information.
-    pub parameter_information: ResolvedClientSignatureParameterInformationOptions,
+    parameter_information: ResolvedClientSignatureParameterInformationOptions,
     // The client supports the `activeParameter` property on `SignatureInformation`
     // literal.
     //
@@ -31273,14 +31263,13 @@ pub struct ResolvedClientSignatureInformationOptions {
 }
 
 impl ClientSignatureInformationOptions {
-    pub(crate) fn resolve(&self) -> ResolvedClientSignatureInformationOptions {
+    fn resolve(&self) -> ResolvedClientSignatureInformationOptions {
         ResolvedClientSignatureInformationOptions {
             documentation_format: self.documentation_format.clone().unwrap_or_default(),
             parameter_information: self
                 .parameter_information
                 .as_ref()
-                .map(|v| v.resolve())
-                .unwrap_or_default(),
+                .map_or_default(|v| v.resolve()),
             active_parameter_support: self.active_parameter_support.unwrap_or_default(),
             no_active_parameter_support: self.no_active_parameter_support.unwrap_or_default(),
         }
@@ -31304,18 +31293,17 @@ pub struct ResolvedSignatureHelpClientCapabilities {
     // `SignatureHelpOptions`.
     //
     // Since: 3.15.0
-    pub context_support: bool,
+    context_support: bool,
 }
 
 impl SignatureHelpClientCapabilities {
-    pub(crate) fn resolve(&self) -> ResolvedSignatureHelpClientCapabilities {
+    fn resolve(&self) -> ResolvedSignatureHelpClientCapabilities {
         ResolvedSignatureHelpClientCapabilities {
             dynamic_registration: self.dynamic_registration.unwrap_or_default(),
             signature_information: self
                 .signature_information
                 .as_ref()
-                .map(ClientSignatureInformationOptions::resolve)
-                .unwrap_or_default(),
+                .map_or_default(ClientSignatureInformationOptions::resolve),
             context_support: self.context_support.unwrap_or_default(),
         }
     }
@@ -31330,13 +31318,13 @@ pub struct ResolvedDeclarationClientCapabilities {
     // Whether declaration supports dynamic registration. If this is set to `true`
     // the client supports the new `DeclarationRegistrationOptions` return value
     // for the corresponding server capability as well.
-    pub dynamic_registration: bool,
+    dynamic_registration: bool,
     // The client supports additional metadata in the form of declaration links.
-    pub link_support: bool,
+    link_support: bool,
 }
 
 impl DeclarationClientCapabilities {
-    pub(crate) fn resolve(self) -> ResolvedDeclarationClientCapabilities {
+    fn resolve(self) -> ResolvedDeclarationClientCapabilities {
         ResolvedDeclarationClientCapabilities {
             dynamic_registration: self.dynamic_registration.unwrap_or_default(),
             link_support: self.link_support.unwrap_or_default(),
@@ -31359,7 +31347,7 @@ pub struct ResolvedDefinitionClientCapabilities {
 }
 
 impl DefinitionClientCapabilities {
-    pub(crate) fn resolve(self) -> ResolvedDefinitionClientCapabilities {
+    fn resolve(self) -> ResolvedDefinitionClientCapabilities {
         ResolvedDefinitionClientCapabilities {
             dynamic_registration: self.dynamic_registration.unwrap_or_default(),
             link_support: self.link_support.unwrap_or_default(),
@@ -31384,7 +31372,7 @@ pub struct ResolvedTypeDefinitionClientCapabilities {
 }
 
 impl TypeDefinitionClientCapabilities {
-    pub(crate) fn resolve(self) -> ResolvedTypeDefinitionClientCapabilities {
+    fn resolve(self) -> ResolvedTypeDefinitionClientCapabilities {
         ResolvedTypeDefinitionClientCapabilities {
             dynamic_registration: self.dynamic_registration.unwrap_or_default(),
             link_support: self.link_support.unwrap_or_default(),
@@ -31409,7 +31397,7 @@ pub struct ResolvedImplementationClientCapabilities {
 }
 
 impl ImplementationClientCapabilities {
-    pub(crate) fn resolve(self) -> ResolvedImplementationClientCapabilities {
+    fn resolve(self) -> ResolvedImplementationClientCapabilities {
         ResolvedImplementationClientCapabilities {
             dynamic_registration: self.dynamic_registration.unwrap_or_default(),
             link_support: self.link_support.unwrap_or_default(),
@@ -31428,7 +31416,7 @@ pub struct ResolvedReferenceClientCapabilities {
 }
 
 impl ReferenceClientCapabilities {
-    pub(crate) fn resolve(self) -> ResolvedReferenceClientCapabilities {
+    fn resolve(self) -> ResolvedReferenceClientCapabilities {
         ResolvedReferenceClientCapabilities {
             dynamic_registration: self.dynamic_registration.unwrap_or_default(),
         }
@@ -31446,7 +31434,7 @@ pub struct ResolvedDocumentHighlightClientCapabilities {
 }
 
 impl DocumentHighlightClientCapabilities {
-    pub(crate) fn resolve(self) -> ResolvedDocumentHighlightClientCapabilities {
+    fn resolve(self) -> ResolvedDocumentHighlightClientCapabilities {
         ResolvedDocumentHighlightClientCapabilities {
             dynamic_registration: self.dynamic_registration.unwrap_or_default(),
         }
@@ -31463,7 +31451,7 @@ pub struct ResolvedDocumentSymbolClientCapabilities {
     pub dynamic_registration: bool,
     // Specific capabilities for the `SymbolKind` in the
     // `textDocument/documentSymbol` request.
-    pub symbol_kind: ResolvedClientSymbolKindOptions,
+    symbol_kind: ResolvedClientSymbolKindOptions,
     // The client supports hierarchical document symbols.
     pub hierarchical_document_symbol_support: bool,
     // The client supports tags on `SymbolInformation`. Tags are supported on
@@ -31471,31 +31459,23 @@ pub struct ResolvedDocumentSymbolClientCapabilities {
     // Clients supporting tags have to handle unknown tags gracefully.
     //
     // Since: 3.16.0
-    pub tag_support: ResolvedClientSymbolTagOptions,
+    tag_support: ResolvedClientSymbolTagOptions,
     // The client supports an additional label presented in the UI when
     // registering a document symbol provider.
     //
     // Since: 3.16.0
-    pub label_support: bool,
+    label_support: bool,
 }
 
 impl DocumentSymbolClientCapabilities {
-    pub(crate) fn resolve(&self) -> ResolvedDocumentSymbolClientCapabilities {
+    fn resolve(&self) -> ResolvedDocumentSymbolClientCapabilities {
         ResolvedDocumentSymbolClientCapabilities {
             dynamic_registration: self.dynamic_registration.unwrap_or_default(),
-            symbol_kind: self
-                .symbol_kind
-                .as_ref()
-                .map(ClientSymbolKindOptions::resolve)
-                .unwrap_or_default(),
+            symbol_kind: self.symbol_kind.as_ref().map_or_default(ClientSymbolKindOptions::resolve),
             hierarchical_document_symbol_support: self
                 .hierarchical_document_symbol_support
                 .unwrap_or_default(),
-            tag_support: self
-                .tag_support
-                .as_ref()
-                .map(ClientSymbolTagOptions::resolve)
-                .unwrap_or_default(),
+            tag_support: self.tag_support.as_ref().map_or_default(ClientSymbolTagOptions::resolve),
             label_support: self.label_support.unwrap_or_default(),
         }
     }
@@ -31511,11 +31491,11 @@ pub struct ResolvedClientCodeActionKindOptions {
     // property exists the client also guarantees that it will
     // handle values outside its set gracefully and falls back
     // to a default value when unknown.
-    pub value_set: Vec<CodeActionKind>,
+    value_set: Vec<CodeActionKind>,
 }
 
 impl ClientCodeActionKindOptions {
-    pub(crate) fn resolve(&self) -> ResolvedClientCodeActionKindOptions {
+    fn resolve(&self) -> ResolvedClientCodeActionKindOptions {
         ResolvedClientCodeActionKindOptions { value_set: self.value_set.clone() }
     }
 }
@@ -31528,11 +31508,11 @@ impl ClientCodeActionKindOptions {
 pub struct ResolvedClientCodeActionLiteralOptions {
     // The code action kind is support with the following value
     // set.
-    pub code_action_kind: ResolvedClientCodeActionKindOptions,
+    code_action_kind: ResolvedClientCodeActionKindOptions,
 }
 
 impl ClientCodeActionLiteralOptions {
-    pub(crate) fn resolve(&self) -> ResolvedClientCodeActionLiteralOptions {
+    fn resolve(&self) -> ResolvedClientCodeActionLiteralOptions {
         ResolvedClientCodeActionLiteralOptions { code_action_kind: self.code_action_kind.resolve() }
     }
 }
@@ -31544,11 +31524,11 @@ impl ClientCodeActionLiteralOptions {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ResolvedClientCodeActionResolveOptions {
     // The properties that a client can resolve lazily.
-    pub properties: Vec<String>,
+    properties: Vec<String>,
 }
 
 impl ClientCodeActionResolveOptions {
-    pub(crate) fn resolve(&self) -> ResolvedClientCodeActionResolveOptions {
+    fn resolve(&self) -> ResolvedClientCodeActionResolveOptions {
         ResolvedClientCodeActionResolveOptions { properties: self.properties.clone() }
     }
 }
@@ -31560,11 +31540,11 @@ impl ClientCodeActionResolveOptions {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ResolvedCodeActionTagOptions {
     // The tags supported by the client.
-    pub value_set: Vec<CodeActionTag>,
+    value_set: Vec<CodeActionTag>,
 }
 
 impl CodeActionTagOptions {
-    pub(crate) fn resolve(&self) -> ResolvedCodeActionTagOptions {
+    fn resolve(&self) -> ResolvedCodeActionTagOptions {
         ResolvedCodeActionTagOptions { value_set: self.value_set.clone() }
     }
 }
@@ -31582,26 +31562,26 @@ pub struct ResolvedCodeActionClientCapabilities {
     // set the request can only return `Command` literals.
     //
     // Since: 3.8.0
-    pub code_action_literal_support: ResolvedClientCodeActionLiteralOptions,
+    code_action_literal_support: ResolvedClientCodeActionLiteralOptions,
     // Whether code action supports the `isPreferred` property.
     //
     // Since: 3.15.0
-    pub is_preferred_support: bool,
+    is_preferred_support: bool,
     // Whether code action supports the `disabled` property.
     //
     // Since: 3.16.0
-    pub disabled_support: bool,
+    disabled_support: bool,
     // Whether code action supports the `data` property which is
     // preserved between a `textDocument/codeAction` and a
     // `codeAction/resolve` request.
     //
     // Since: 3.16.0
-    pub data_support: bool,
+    data_support: bool,
     // Whether the client supports resolving additional code action
     // properties via a separate `codeAction/resolve` request.
     //
     // Since: 3.16.0
-    pub resolve_support: ResolvedClientCodeActionResolveOptions,
+    resolve_support: ResolvedClientCodeActionResolveOptions,
     // Whether the client honors the change annotations in
     // text edits and resource operations returned via the
     // `CodeAction#edit` property by for example presenting
@@ -31609,43 +31589,37 @@ pub struct ResolvedCodeActionClientCapabilities {
     // for confirmation.
     //
     // Since: 3.16.0
-    pub honors_change_annotations: bool,
+    honors_change_annotations: bool,
     // Whether the client supports documentation for a class of
     // code actions.
     //
     // Since: 3.18.0
-    pub documentation_support: bool,
+    documentation_support: bool,
     // Client supports the tag property on a code action. Clients
     // supporting tags have to handle unknown tags gracefully.
     //
     // Since: 3.18.0
-    pub tag_support: ResolvedCodeActionTagOptions,
+    tag_support: ResolvedCodeActionTagOptions,
 }
 
 impl CodeActionClientCapabilities {
-    pub(crate) fn resolve(&self) -> ResolvedCodeActionClientCapabilities {
+    fn resolve(&self) -> ResolvedCodeActionClientCapabilities {
         ResolvedCodeActionClientCapabilities {
             dynamic_registration: self.dynamic_registration.unwrap_or_default(),
             code_action_literal_support: self
                 .code_action_literal_support
                 .as_ref()
-                .map(ClientCodeActionLiteralOptions::resolve)
-                .unwrap_or_default(),
+                .map_or_default(ClientCodeActionLiteralOptions::resolve),
             is_preferred_support: self.is_preferred_support.unwrap_or_default(),
             disabled_support: self.disabled_support.unwrap_or_default(),
             data_support: self.data_support.unwrap_or_default(),
             resolve_support: self
                 .resolve_support
                 .as_ref()
-                .map(ClientCodeActionResolveOptions::resolve)
-                .unwrap_or_default(),
+                .map_or_default(ClientCodeActionResolveOptions::resolve),
             honors_change_annotations: self.honors_change_annotations.unwrap_or_default(),
             documentation_support: self.documentation_support.unwrap_or_default(),
-            tag_support: self
-                .tag_support
-                .as_ref()
-                .map(CodeActionTagOptions::resolve)
-                .unwrap_or_default(),
+            tag_support: self.tag_support.as_ref().map_or_default(CodeActionTagOptions::resolve),
         }
     }
 }
@@ -31657,11 +31631,11 @@ impl CodeActionClientCapabilities {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ResolvedClientCodeLensResolveOptions {
     // The properties that a client can resolve lazily.
-    pub properties: Vec<String>,
+    properties: Vec<String>,
 }
 
 impl ClientCodeLensResolveOptions {
-    pub(crate) fn resolve(&self) -> ResolvedClientCodeLensResolveOptions {
+    fn resolve(&self) -> ResolvedClientCodeLensResolveOptions {
         ResolvedClientCodeLensResolveOptions { properties: self.properties.clone() }
     }
 }
@@ -31678,18 +31652,17 @@ pub struct ResolvedCodeLensClientCapabilities {
     // properties via a separate `codeLens/resolve` request.
     //
     // Since: 3.18.0
-    pub resolve_support: ResolvedClientCodeLensResolveOptions,
+    resolve_support: ResolvedClientCodeLensResolveOptions,
 }
 
 impl CodeLensClientCapabilities {
-    pub(crate) fn resolve(&self) -> ResolvedCodeLensClientCapabilities {
+    fn resolve(&self) -> ResolvedCodeLensClientCapabilities {
         ResolvedCodeLensClientCapabilities {
             dynamic_registration: self.dynamic_registration.unwrap_or_default(),
             resolve_support: self
                 .resolve_support
                 .as_ref()
-                .map(ClientCodeLensResolveOptions::resolve)
-                .unwrap_or_default(),
+                .map_or_default(ClientCodeLensResolveOptions::resolve),
         }
     }
 }
@@ -31701,15 +31674,15 @@ impl CodeLensClientCapabilities {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ResolvedDocumentLinkClientCapabilities {
     // Whether document link supports dynamic registration.
-    pub dynamic_registration: bool,
+    dynamic_registration: bool,
     // Whether the client supports the `tooltip` property on `DocumentLink`.
     //
     // Since: 3.15.0
-    pub tooltip_support: bool,
+    tooltip_support: bool,
 }
 
 impl DocumentLinkClientCapabilities {
-    pub(crate) fn resolve(self) -> ResolvedDocumentLinkClientCapabilities {
+    fn resolve(self) -> ResolvedDocumentLinkClientCapabilities {
         ResolvedDocumentLinkClientCapabilities {
             dynamic_registration: self.dynamic_registration.unwrap_or_default(),
             tooltip_support: self.tooltip_support.unwrap_or_default(),
@@ -31724,11 +31697,11 @@ pub struct ResolvedDocumentColorClientCapabilities {
     // Whether implementation supports dynamic registration. If this is set to `true`
     // the client supports the new `DocumentColorRegistrationOptions` return value
     // for the corresponding server capability as well.
-    pub dynamic_registration: bool,
+    dynamic_registration: bool,
 }
 
 impl DocumentColorClientCapabilities {
-    pub(crate) fn resolve(self) -> ResolvedDocumentColorClientCapabilities {
+    fn resolve(self) -> ResolvedDocumentColorClientCapabilities {
         ResolvedDocumentColorClientCapabilities {
             dynamic_registration: self.dynamic_registration.unwrap_or_default(),
         }
@@ -31746,7 +31719,7 @@ pub struct ResolvedDocumentFormattingClientCapabilities {
 }
 
 impl DocumentFormattingClientCapabilities {
-    pub(crate) fn resolve(self) -> ResolvedDocumentFormattingClientCapabilities {
+    fn resolve(self) -> ResolvedDocumentFormattingClientCapabilities {
         ResolvedDocumentFormattingClientCapabilities {
             dynamic_registration: self.dynamic_registration.unwrap_or_default(),
         }
@@ -31764,11 +31737,11 @@ pub struct ResolvedDocumentRangeFormattingClientCapabilities {
     // Whether the client supports formatting multiple ranges at once.
     //
     // Since: 3.18.0
-    pub ranges_support: bool,
+    ranges_support: bool,
 }
 
 impl DocumentRangeFormattingClientCapabilities {
-    pub(crate) fn resolve(self) -> ResolvedDocumentRangeFormattingClientCapabilities {
+    fn resolve(self) -> ResolvedDocumentRangeFormattingClientCapabilities {
         ResolvedDocumentRangeFormattingClientCapabilities {
             dynamic_registration: self.dynamic_registration.unwrap_or_default(),
             ranges_support: self.ranges_support.unwrap_or_default(),
@@ -31787,7 +31760,7 @@ pub struct ResolvedDocumentOnTypeFormattingClientCapabilities {
 }
 
 impl DocumentOnTypeFormattingClientCapabilities {
-    pub(crate) fn resolve(self) -> ResolvedDocumentOnTypeFormattingClientCapabilities {
+    fn resolve(self) -> ResolvedDocumentOnTypeFormattingClientCapabilities {
         ResolvedDocumentOnTypeFormattingClientCapabilities {
             dynamic_registration: self.dynamic_registration.unwrap_or_default(),
         }
@@ -31804,14 +31777,14 @@ pub struct ResolvedRenameClientCapabilities {
     // before execution.
     //
     // Since: 3.12.0
-    pub prepare_support: bool,
+    prepare_support: bool,
     // Client supports the default behavior result.
     //
     // The value indicates the default behavior used by the
     // client.
     //
     // Since: 3.16.0
-    pub prepare_support_default_behavior: PrepareSupportDefaultBehavior,
+    prepare_support_default_behavior: PrepareSupportDefaultBehavior,
     // Whether the client honors the change annotations in
     // text edits and resource operations returned via the
     // rename request's workspace edit by for example presenting
@@ -31819,11 +31792,11 @@ pub struct ResolvedRenameClientCapabilities {
     // for confirmation.
     //
     // Since: 3.16.0
-    pub honors_change_annotations: bool,
+    honors_change_annotations: bool,
 }
 
 impl RenameClientCapabilities {
-    pub(crate) fn resolve(self) -> ResolvedRenameClientCapabilities {
+    fn resolve(self) -> ResolvedRenameClientCapabilities {
         ResolvedRenameClientCapabilities {
             dynamic_registration: self.dynamic_registration.unwrap_or_default(),
             prepare_support: self.prepare_support.unwrap_or_default(),
@@ -31845,11 +31818,11 @@ pub struct ResolvedClientFoldingRangeKindOptions {
     // property exists the client also guarantees that it will
     // handle values outside its set gracefully and falls back
     // to a default value when unknown.
-    pub value_set: Vec<FoldingRangeKind>,
+    value_set: Vec<FoldingRangeKind>,
 }
 
 impl ClientFoldingRangeKindOptions {
-    pub(crate) fn resolve(&self) -> ResolvedClientFoldingRangeKindOptions {
+    fn resolve(&self) -> ResolvedClientFoldingRangeKindOptions {
         ResolvedClientFoldingRangeKindOptions {
             value_set: self.value_set.clone().unwrap_or_default(),
         }
@@ -31870,7 +31843,7 @@ pub struct ResolvedClientFoldingRangeOptions {
 }
 
 impl ClientFoldingRangeOptions {
-    pub(crate) fn resolve(self) -> ResolvedClientFoldingRangeOptions {
+    fn resolve(self) -> ResolvedClientFoldingRangeOptions {
         ResolvedClientFoldingRangeOptions {
             collapsed_text: self.collapsed_text.unwrap_or_default(),
         }
@@ -31889,7 +31862,7 @@ pub struct ResolvedFoldingRangeClientCapabilities {
     // The maximum number of folding ranges that the client prefers to receive
     // per document. The value serves as a hint, servers are free to follow the
     // limit.
-    pub range_limit: u32,
+    range_limit: u32,
     // If set, the client signals that it only supports folding complete lines.
     // If set, client will ignore specified `startCharacter` and `endCharacter`
     // properties in a FoldingRange.
@@ -31897,7 +31870,7 @@ pub struct ResolvedFoldingRangeClientCapabilities {
     // Specific options for the folding range kind.
     //
     // Since: 3.17.0
-    pub folding_range_kind: ResolvedClientFoldingRangeKindOptions,
+    folding_range_kind: ResolvedClientFoldingRangeKindOptions,
     // Specific options for the folding range.
     //
     // Since: 3.17.0
@@ -31905,7 +31878,7 @@ pub struct ResolvedFoldingRangeClientCapabilities {
 }
 
 impl FoldingRangeClientCapabilities {
-    pub(crate) fn resolve(&self) -> ResolvedFoldingRangeClientCapabilities {
+    fn resolve(&self) -> ResolvedFoldingRangeClientCapabilities {
         ResolvedFoldingRangeClientCapabilities {
             dynamic_registration: self.dynamic_registration.unwrap_or_default(),
             range_limit: self.range_limit.unwrap_or_default(),
@@ -31913,9 +31886,8 @@ impl FoldingRangeClientCapabilities {
             folding_range_kind: self
                 .folding_range_kind
                 .as_ref()
-                .map(ClientFoldingRangeKindOptions::resolve)
-                .unwrap_or_default(),
-            folding_range: self.folding_range.as_ref().map(|v| v.resolve()).unwrap_or_default(),
+                .map_or_default(ClientFoldingRangeKindOptions::resolve),
+            folding_range: self.folding_range.as_ref().map_or_default(|v| v.resolve()),
         }
     }
 }
@@ -31931,7 +31903,7 @@ pub struct ResolvedSelectionRangeClientCapabilities {
 }
 
 impl SelectionRangeClientCapabilities {
-    pub(crate) fn resolve(self) -> ResolvedSelectionRangeClientCapabilities {
+    fn resolve(self) -> ResolvedSelectionRangeClientCapabilities {
         ResolvedSelectionRangeClientCapabilities {
             dynamic_registration: self.dynamic_registration.unwrap_or_default(),
         }
@@ -31949,7 +31921,7 @@ pub struct ResolvedClientDiagnosticsTagOptions {
 }
 
 impl ClientDiagnosticsTagOptions {
-    pub(crate) fn resolve(&self) -> ResolvedClientDiagnosticsTagOptions {
+    fn resolve(&self) -> ResolvedClientDiagnosticsTagOptions {
         ResolvedClientDiagnosticsTagOptions { value_set: self.value_set.clone() }
     }
 }
@@ -31970,29 +31942,28 @@ pub struct ResolvedPublishDiagnosticsClientCapabilities {
     // Client supports a codeDescription property
     //
     // Since: 3.16.0
-    pub code_description_support: bool,
+    code_description_support: bool,
     // Whether code action supports the `data` property which is
     // preserved between a `textDocument/publishDiagnostics` and
     // `textDocument/codeAction` request.
     //
     // Since: 3.16.0
-    pub data_support: bool,
+    data_support: bool,
     // Whether the client interprets the version property of the
     // `textDocument/publishDiagnostics` notification's parameter.
     //
     // Since: 3.15.0
-    pub version_support: bool,
+    version_support: bool,
 }
 
 impl PublishDiagnosticsClientCapabilities {
-    pub(crate) fn resolve(&self) -> ResolvedPublishDiagnosticsClientCapabilities {
+    fn resolve(&self) -> ResolvedPublishDiagnosticsClientCapabilities {
         ResolvedPublishDiagnosticsClientCapabilities {
             related_information: self.related_information.unwrap_or_default(),
             tag_support: self
                 .tag_support
                 .as_ref()
-                .map(ClientDiagnosticsTagOptions::resolve)
-                .unwrap_or_default(),
+                .map_or_default(ClientDiagnosticsTagOptions::resolve),
             code_description_support: self.code_description_support.unwrap_or_default(),
             data_support: self.data_support.unwrap_or_default(),
             version_support: self.version_support.unwrap_or_default(),
@@ -32013,7 +31984,7 @@ pub struct ResolvedCallHierarchyClientCapabilities {
 }
 
 impl CallHierarchyClientCapabilities {
-    pub(crate) fn resolve(self) -> ResolvedCallHierarchyClientCapabilities {
+    fn resolve(self) -> ResolvedCallHierarchyClientCapabilities {
         ResolvedCallHierarchyClientCapabilities {
             dynamic_registration: self.dynamic_registration.unwrap_or_default(),
         }
@@ -32028,14 +31999,14 @@ impl CallHierarchyClientCapabilities {
 pub struct ResolvedClientSemanticTokensRequestOptions {
     // The client will send the `textDocument/semanticTokens/range` request if
     // the server provides a corresponding handler.
-    pub range: BooleanOrEmptyObject,
+    range: BooleanOrEmptyObject,
     // The client will send the `textDocument/semanticTokens/full` request if
     // the server provides a corresponding handler.
-    pub full: BooleanOrClientSemanticTokensRequestFullDelta,
+    full: BooleanOrClientSemanticTokensRequestFullDelta,
 }
 
 impl ClientSemanticTokensRequestOptions {
-    pub(crate) fn resolve(self) -> ResolvedClientSemanticTokensRequestOptions {
+    fn resolve(self) -> ResolvedClientSemanticTokensRequestOptions {
         ResolvedClientSemanticTokensRequestOptions {
             range: self.range.unwrap_or_default(),
             full: self.full.unwrap_or_default(),
@@ -32061,24 +32032,24 @@ pub struct ResolvedSemanticTokensClientCapabilities {
     // `request.range` are both set to true but the server only provides a
     // range provider the client might not render a minimap correctly or might
     // even decide to not show any semantic tokens at all.
-    pub requests: ResolvedClientSemanticTokensRequestOptions,
+    requests: ResolvedClientSemanticTokensRequestOptions,
     // The token types that the client supports.
     pub token_types: Vec<String>,
     // The token modifiers that the client supports.
     pub token_modifiers: Vec<String>,
     // The token formats the clients supports.
-    pub formats: Vec<TokenFormat>,
+    formats: Vec<TokenFormat>,
     // Whether the client supports tokens that can overlap each other.
-    pub overlapping_token_support: bool,
+    overlapping_token_support: bool,
     // Whether the client supports tokens that can span multiple lines.
-    pub multiline_token_support: bool,
+    multiline_token_support: bool,
     // Whether the client allows the server to actively cancel a
     // semantic token request, e.g. supports returning
     // LSPErrorCodes.ServerCancelled. If a server does the client
     // needs to retrigger the request.
     //
     // Since: 3.17.0
-    pub server_cancel_support: bool,
+    server_cancel_support: bool,
     // Whether the client uses semantic tokens to augment existing
     // syntax tokens. If set to `true` client side created syntax
     // tokens and semantic tokens are both used for colorization. If
@@ -32089,11 +32060,11 @@ pub struct ResolvedSemanticTokensClientCapabilities {
     // specified.
     //
     // Since: 3.17.0
-    pub augments_syntax_tokens: bool,
+    augments_syntax_tokens: bool,
 }
 
 impl SemanticTokensClientCapabilities {
-    pub(crate) fn resolve(&self) -> ResolvedSemanticTokensClientCapabilities {
+    fn resolve(&self) -> ResolvedSemanticTokensClientCapabilities {
         ResolvedSemanticTokensClientCapabilities {
             dynamic_registration: self.dynamic_registration.unwrap_or_default(),
             requests: self.requests.resolve(),
@@ -32123,7 +32094,7 @@ pub struct ResolvedLinkedEditingRangeClientCapabilities {
 }
 
 impl LinkedEditingRangeClientCapabilities {
-    pub(crate) fn resolve(self) -> ResolvedLinkedEditingRangeClientCapabilities {
+    fn resolve(self) -> ResolvedLinkedEditingRangeClientCapabilities {
         ResolvedLinkedEditingRangeClientCapabilities {
             dynamic_registration: self.dynamic_registration.unwrap_or_default(),
         }
@@ -32141,11 +32112,11 @@ pub struct ResolvedMonikerClientCapabilities {
     // Whether moniker supports dynamic registration. If this is set to `true`
     // the client supports the new `MonikerRegistrationOptions` return value
     // for the corresponding server capability as well.
-    pub dynamic_registration: bool,
+    dynamic_registration: bool,
 }
 
 impl MonikerClientCapabilities {
-    pub(crate) fn resolve(self) -> ResolvedMonikerClientCapabilities {
+    fn resolve(self) -> ResolvedMonikerClientCapabilities {
         ResolvedMonikerClientCapabilities {
             dynamic_registration: self.dynamic_registration.unwrap_or_default(),
         }
@@ -32161,11 +32132,11 @@ pub struct ResolvedTypeHierarchyClientCapabilities {
     // Whether implementation supports dynamic registration. If this is set to `true`
     // the client supports the new `(TextDocumentRegistrationOptions & StaticRegistrationOptions)`
     // return value for the corresponding server capability as well.
-    pub dynamic_registration: bool,
+    dynamic_registration: bool,
 }
 
 impl TypeHierarchyClientCapabilities {
-    pub(crate) fn resolve(self) -> ResolvedTypeHierarchyClientCapabilities {
+    fn resolve(self) -> ResolvedTypeHierarchyClientCapabilities {
         ResolvedTypeHierarchyClientCapabilities {
             dynamic_registration: self.dynamic_registration.unwrap_or_default(),
         }
@@ -32181,11 +32152,11 @@ impl TypeHierarchyClientCapabilities {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ResolvedInlineValueClientCapabilities {
     // Whether implementation supports dynamic registration for inline value providers.
-    pub dynamic_registration: bool,
+    dynamic_registration: bool,
 }
 
 impl InlineValueClientCapabilities {
-    pub(crate) fn resolve(self) -> ResolvedInlineValueClientCapabilities {
+    fn resolve(self) -> ResolvedInlineValueClientCapabilities {
         ResolvedInlineValueClientCapabilities {
             dynamic_registration: self.dynamic_registration.unwrap_or_default(),
         }
@@ -32199,11 +32170,11 @@ impl InlineValueClientCapabilities {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ResolvedClientInlayHintResolveOptions {
     // The properties that a client can resolve lazily.
-    pub properties: Vec<String>,
+    properties: Vec<String>,
 }
 
 impl ClientInlayHintResolveOptions {
-    pub(crate) fn resolve(&self) -> ResolvedClientInlayHintResolveOptions {
+    fn resolve(&self) -> ResolvedClientInlayHintResolveOptions {
         ResolvedClientInlayHintResolveOptions { properties: self.properties.clone() }
     }
 }
@@ -32220,18 +32191,17 @@ pub struct ResolvedInlayHintClientCapabilities {
     pub dynamic_registration: bool,
     // Indicates which properties a client can resolve lazily on an inlay
     // hint.
-    pub resolve_support: ResolvedClientInlayHintResolveOptions,
+    resolve_support: ResolvedClientInlayHintResolveOptions,
 }
 
 impl InlayHintClientCapabilities {
-    pub(crate) fn resolve(&self) -> ResolvedInlayHintClientCapabilities {
+    fn resolve(&self) -> ResolvedInlayHintClientCapabilities {
         ResolvedInlayHintClientCapabilities {
             dynamic_registration: self.dynamic_registration.unwrap_or_default(),
             resolve_support: self
                 .resolve_support
                 .as_ref()
-                .map(ClientInlayHintResolveOptions::resolve)
-                .unwrap_or_default(),
+                .map_or_default(ClientInlayHintResolveOptions::resolve),
         }
     }
 }
@@ -32254,34 +32224,33 @@ pub struct ResolvedDiagnosticClientCapabilities {
     // Client supports a codeDescription property
     //
     // Since: 3.16.0
-    pub code_description_support: bool,
+    code_description_support: bool,
     // Whether code action supports the `data` property which is
     // preserved between a `textDocument/publishDiagnostics` and
     // `textDocument/codeAction` request.
     //
     // Since: 3.16.0
-    pub data_support: bool,
+    data_support: bool,
     // Whether implementation supports dynamic registration. If this is set to `true`
     // the client supports the new `(TextDocumentRegistrationOptions & StaticRegistrationOptions)`
     // return value for the corresponding server capability as well.
     pub dynamic_registration: bool,
     // Whether the clients supports related documents for document diagnostic pulls.
-    pub related_document_support: bool,
+    related_document_support: bool,
     // Whether the client supports `MarkupContent` in diagnostic messages.
     //
     // Since: 3.18.0
-    pub markup_message_support: bool,
+    markup_message_support: bool,
 }
 
 impl DiagnosticClientCapabilities {
-    pub(crate) fn resolve(&self) -> ResolvedDiagnosticClientCapabilities {
+    fn resolve(&self) -> ResolvedDiagnosticClientCapabilities {
         ResolvedDiagnosticClientCapabilities {
             related_information: self.related_information.unwrap_or_default(),
             tag_support: self
                 .tag_support
                 .as_ref()
-                .map(ClientDiagnosticsTagOptions::resolve)
-                .unwrap_or_default(),
+                .map_or_default(ClientDiagnosticsTagOptions::resolve),
             code_description_support: self.code_description_support.unwrap_or_default(),
             data_support: self.data_support.unwrap_or_default(),
             dynamic_registration: self.dynamic_registration.unwrap_or_default(),
@@ -32300,11 +32269,11 @@ impl DiagnosticClientCapabilities {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ResolvedInlineCompletionClientCapabilities {
     // Whether implementation supports dynamic registration for inline completion providers.
-    pub dynamic_registration: bool,
+    dynamic_registration: bool,
 }
 
 impl InlineCompletionClientCapabilities {
-    pub(crate) fn resolve(self) -> ResolvedInlineCompletionClientCapabilities {
+    fn resolve(self) -> ResolvedInlineCompletionClientCapabilities {
         ResolvedInlineCompletionClientCapabilities {
             dynamic_registration: self.dynamic_registration.unwrap_or_default(),
         }
@@ -32322,7 +32291,7 @@ pub struct ResolvedTextDocumentClientCapabilities {
     // Defines which filters the client supports.
     //
     // Since: 3.18.0
-    pub filters: ResolvedTextDocumentFilterClientCapabilities,
+    filters: ResolvedTextDocumentFilterClientCapabilities,
     // Capabilities specific to the `textDocument/completion` request.
     pub completion: ResolvedCompletionClientCapabilities,
     // Capabilities specific to the `textDocument/hover` request.
@@ -32332,7 +32301,7 @@ pub struct ResolvedTextDocumentClientCapabilities {
     // Capabilities specific to the `textDocument/declaration` request.
     //
     // Since: 3.14.0
-    pub declaration: ResolvedDeclarationClientCapabilities,
+    declaration: ResolvedDeclarationClientCapabilities,
     // Capabilities specific to the `textDocument/definition` request.
     pub definition: ResolvedDefinitionClientCapabilities,
     // Capabilities specific to the `textDocument/typeDefinition` request.
@@ -32354,12 +32323,12 @@ pub struct ResolvedTextDocumentClientCapabilities {
     // Capabilities specific to the `textDocument/codeLens` request.
     pub code_lens: ResolvedCodeLensClientCapabilities,
     // Capabilities specific to the `textDocument/documentLink` request.
-    pub document_link: ResolvedDocumentLinkClientCapabilities,
+    document_link: ResolvedDocumentLinkClientCapabilities,
     // Capabilities specific to the `textDocument/documentColor` and the
     // `textDocument/colorPresentation` request.
     //
     // Since: 3.6.0
-    pub color_provider: ResolvedDocumentColorClientCapabilities,
+    color_provider: ResolvedDocumentColorClientCapabilities,
     // Capabilities specific to the `textDocument/formatting` request.
     pub formatting: ResolvedDocumentFormattingClientCapabilities,
     // Capabilities specific to the `textDocument/rangeFormatting` request.
@@ -32393,15 +32362,15 @@ pub struct ResolvedTextDocumentClientCapabilities {
     // Client capabilities specific to the `textDocument/moniker` request.
     //
     // Since: 3.16.0
-    pub moniker: ResolvedMonikerClientCapabilities,
+    moniker: ResolvedMonikerClientCapabilities,
     // Capabilities specific to the various type hierarchy requests.
     //
     // Since: 3.17.0
-    pub type_hierarchy: ResolvedTypeHierarchyClientCapabilities,
+    type_hierarchy: ResolvedTypeHierarchyClientCapabilities,
     // Capabilities specific to the `textDocument/inlineValue` request.
     //
     // Since: 3.17.0
-    pub inline_value: ResolvedInlineValueClientCapabilities,
+    inline_value: ResolvedInlineValueClientCapabilities,
     // Capabilities specific to the `textDocument/inlayHint` request.
     //
     // Since: 3.17.0
@@ -32413,104 +32382,74 @@ pub struct ResolvedTextDocumentClientCapabilities {
     // Client capabilities specific to inline completions.
     //
     // Since: 3.18.0
-    pub inline_completion: ResolvedInlineCompletionClientCapabilities,
+    inline_completion: ResolvedInlineCompletionClientCapabilities,
 }
 
 impl TextDocumentClientCapabilities {
-    pub(crate) fn resolve(&self) -> ResolvedTextDocumentClientCapabilities {
+    fn resolve(&self) -> ResolvedTextDocumentClientCapabilities {
         ResolvedTextDocumentClientCapabilities {
-            synchronization: self.synchronization.as_ref().map(|v| v.resolve()).unwrap_or_default(),
-            filters: self.filters.as_ref().map(|v| v.resolve()).unwrap_or_default(),
+            synchronization: self.synchronization.as_ref().map_or_default(|v| v.resolve()),
+            filters: self.filters.as_ref().map_or_default(|v| v.resolve()),
             completion: self
                 .completion
                 .as_ref()
-                .map(CompletionClientCapabilities::resolve)
-                .unwrap_or_default(),
-            hover: self.hover.as_ref().map(HoverClientCapabilities::resolve).unwrap_or_default(),
+                .map_or_default(CompletionClientCapabilities::resolve),
+            hover: self.hover.as_ref().map_or_default(HoverClientCapabilities::resolve),
             signature_help: self
                 .signature_help
                 .as_ref()
-                .map(SignatureHelpClientCapabilities::resolve)
-                .unwrap_or_default(),
-            declaration: self.declaration.as_ref().map(|v| v.resolve()).unwrap_or_default(),
-            definition: self.definition.as_ref().map(|v| v.resolve()).unwrap_or_default(),
-            type_definition: self.type_definition.as_ref().map(|v| v.resolve()).unwrap_or_default(),
-            implementation: self.implementation.as_ref().map(|v| v.resolve()).unwrap_or_default(),
-            references: self.references.as_ref().map(|v| v.resolve()).unwrap_or_default(),
-            document_highlight: self
-                .document_highlight
-                .as_ref()
-                .map(|v| v.resolve())
-                .unwrap_or_default(),
+                .map_or_default(SignatureHelpClientCapabilities::resolve),
+            declaration: self.declaration.as_ref().map_or_default(|v| v.resolve()),
+            definition: self.definition.as_ref().map_or_default(|v| v.resolve()),
+            type_definition: self.type_definition.as_ref().map_or_default(|v| v.resolve()),
+            implementation: self.implementation.as_ref().map_or_default(|v| v.resolve()),
+            references: self.references.as_ref().map_or_default(|v| v.resolve()),
+            document_highlight: self.document_highlight.as_ref().map_or_default(|v| v.resolve()),
             document_symbol: self
                 .document_symbol
                 .as_ref()
-                .map(DocumentSymbolClientCapabilities::resolve)
-                .unwrap_or_default(),
+                .map_or_default(DocumentSymbolClientCapabilities::resolve),
             code_action: self
                 .code_action
                 .as_ref()
-                .map(CodeActionClientCapabilities::resolve)
-                .unwrap_or_default(),
-            code_lens: self
-                .code_lens
-                .as_ref()
-                .map(CodeLensClientCapabilities::resolve)
-                .unwrap_or_default(),
-            document_link: self.document_link.as_ref().map(|v| v.resolve()).unwrap_or_default(),
-            color_provider: self.color_provider.as_ref().map(|v| v.resolve()).unwrap_or_default(),
-            formatting: self.formatting.as_ref().map(|v| v.resolve()).unwrap_or_default(),
-            range_formatting: self
-                .range_formatting
-                .as_ref()
-                .map(|v| v.resolve())
-                .unwrap_or_default(),
-            on_type_formatting: self
-                .on_type_formatting
-                .as_ref()
-                .map(|v| v.resolve())
-                .unwrap_or_default(),
-            rename: self.rename.as_ref().map(|v| v.resolve()).unwrap_or_default(),
+                .map_or_default(CodeActionClientCapabilities::resolve),
+            code_lens: self.code_lens.as_ref().map_or_default(CodeLensClientCapabilities::resolve),
+            document_link: self.document_link.as_ref().map_or_default(|v| v.resolve()),
+            color_provider: self.color_provider.as_ref().map_or_default(|v| v.resolve()),
+            formatting: self.formatting.as_ref().map_or_default(|v| v.resolve()),
+            range_formatting: self.range_formatting.as_ref().map_or_default(|v| v.resolve()),
+            on_type_formatting: self.on_type_formatting.as_ref().map_or_default(|v| v.resolve()),
+            rename: self.rename.as_ref().map_or_default(|v| v.resolve()),
             folding_range: self
                 .folding_range
                 .as_ref()
-                .map(FoldingRangeClientCapabilities::resolve)
-                .unwrap_or_default(),
-            selection_range: self.selection_range.as_ref().map(|v| v.resolve()).unwrap_or_default(),
+                .map_or_default(FoldingRangeClientCapabilities::resolve),
+            selection_range: self.selection_range.as_ref().map_or_default(|v| v.resolve()),
             publish_diagnostics: self
                 .publish_diagnostics
                 .as_ref()
-                .map(PublishDiagnosticsClientCapabilities::resolve)
-                .unwrap_or_default(),
-            call_hierarchy: self.call_hierarchy.as_ref().map(|v| v.resolve()).unwrap_or_default(),
+                .map_or_default(PublishDiagnosticsClientCapabilities::resolve),
+            call_hierarchy: self.call_hierarchy.as_ref().map_or_default(|v| v.resolve()),
             semantic_tokens: self
                 .semantic_tokens
                 .as_ref()
-                .map(SemanticTokensClientCapabilities::resolve)
-                .unwrap_or_default(),
+                .map_or_default(SemanticTokensClientCapabilities::resolve),
             linked_editing_range: self
                 .linked_editing_range
                 .as_ref()
-                .map(|v| v.resolve())
-                .unwrap_or_default(),
-            moniker: self.moniker.as_ref().map(|v| v.resolve()).unwrap_or_default(),
-            type_hierarchy: self.type_hierarchy.as_ref().map(|v| v.resolve()).unwrap_or_default(),
-            inline_value: self.inline_value.as_ref().map(|v| v.resolve()).unwrap_or_default(),
+                .map_or_default(|v| v.resolve()),
+            moniker: self.moniker.as_ref().map_or_default(|v| v.resolve()),
+            type_hierarchy: self.type_hierarchy.as_ref().map_or_default(|v| v.resolve()),
+            inline_value: self.inline_value.as_ref().map_or_default(|v| v.resolve()),
             inlay_hint: self
                 .inlay_hint
                 .as_ref()
-                .map(InlayHintClientCapabilities::resolve)
-                .unwrap_or_default(),
+                .map_or_default(InlayHintClientCapabilities::resolve),
             diagnostic: self
                 .diagnostic
                 .as_ref()
-                .map(DiagnosticClientCapabilities::resolve)
-                .unwrap_or_default(),
-            inline_completion: self
-                .inline_completion
-                .as_ref()
-                .map(|v| v.resolve())
-                .unwrap_or_default(),
+                .map_or_default(DiagnosticClientCapabilities::resolve),
+            inline_completion: self.inline_completion.as_ref().map_or_default(|v| v.resolve()),
         }
     }
 }
@@ -32524,11 +32463,11 @@ pub struct ResolvedClientShowMessageActionItemOptions {
     // Whether the client supports additional attributes which
     // are preserved and send back to the server in the
     // request's response.
-    pub additional_properties_support: bool,
+    additional_properties_support: bool,
 }
 
 impl ClientShowMessageActionItemOptions {
-    pub(crate) fn resolve(self) -> ResolvedClientShowMessageActionItemOptions {
+    fn resolve(self) -> ResolvedClientShowMessageActionItemOptions {
         ResolvedClientShowMessageActionItemOptions {
             additional_properties_support: self.additional_properties_support.unwrap_or_default(),
         }
@@ -32542,17 +32481,13 @@ impl ClientShowMessageActionItemOptions {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ResolvedShowMessageRequestClientCapabilities {
     // Capabilities specific to the `MessageActionItem` type.
-    pub message_action_item: ResolvedClientShowMessageActionItemOptions,
+    message_action_item: ResolvedClientShowMessageActionItemOptions,
 }
 
 impl ShowMessageRequestClientCapabilities {
-    pub(crate) fn resolve(self) -> ResolvedShowMessageRequestClientCapabilities {
+    fn resolve(self) -> ResolvedShowMessageRequestClientCapabilities {
         ResolvedShowMessageRequestClientCapabilities {
-            message_action_item: self
-                .message_action_item
-                .as_ref()
-                .map(|v| v.resolve())
-                .unwrap_or_default(),
+            message_action_item: self.message_action_item.as_ref().map_or_default(|v| v.resolve()),
         }
     }
 }
@@ -32567,11 +32502,11 @@ impl ShowMessageRequestClientCapabilities {
 pub struct ResolvedShowDocumentClientCapabilities {
     // The client has support for the showDocument
     // request.
-    pub support: bool,
+    support: bool,
 }
 
 impl ShowDocumentClientCapabilities {
-    pub(crate) fn resolve(self) -> ResolvedShowDocumentClientCapabilities {
+    fn resolve(self) -> ResolvedShowDocumentClientCapabilities {
         ResolvedShowDocumentClientCapabilities { support: self.support }
     }
 }
@@ -32593,19 +32528,19 @@ pub struct ResolvedWindowClientCapabilities {
     // Capabilities specific to the showMessage request.
     //
     // Since: 3.16.0
-    pub show_message: ResolvedShowMessageRequestClientCapabilities,
+    show_message: ResolvedShowMessageRequestClientCapabilities,
     // Capabilities specific to the showDocument request.
     //
     // Since: 3.16.0
-    pub show_document: ResolvedShowDocumentClientCapabilities,
+    show_document: ResolvedShowDocumentClientCapabilities,
 }
 
 impl WindowClientCapabilities {
-    pub(crate) fn resolve(self) -> ResolvedWindowClientCapabilities {
+    fn resolve(self) -> ResolvedWindowClientCapabilities {
         ResolvedWindowClientCapabilities {
             work_done_progress: self.work_done_progress.unwrap_or_default(),
-            show_message: self.show_message.as_ref().map(|v| v.resolve()).unwrap_or_default(),
-            show_document: self.show_document.as_ref().map(|v| v.resolve()).unwrap_or_default(),
+            show_message: self.show_message.as_ref().map_or_default(|v| v.resolve()),
+            show_document: self.show_document.as_ref().map_or_default(|v| v.resolve()),
         }
     }
 }
@@ -32617,15 +32552,15 @@ impl WindowClientCapabilities {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ResolvedStaleRequestSupportOptions {
     // The client will actively cancel the request.
-    pub cancel: bool,
+    cancel: bool,
     // The list of requests for which the client
     // will retry the request if it receives a
     // response with error code `ContentModified`
-    pub retry_on_content_modified: Vec<String>,
+    retry_on_content_modified: Vec<String>,
 }
 
 impl StaleRequestSupportOptions {
-    pub(crate) fn resolve(&self) -> ResolvedStaleRequestSupportOptions {
+    fn resolve(&self) -> ResolvedStaleRequestSupportOptions {
         ResolvedStaleRequestSupportOptions {
             cancel: self.cancel,
             retry_on_content_modified: self.retry_on_content_modified.clone(),
@@ -32642,13 +32577,13 @@ impl StaleRequestSupportOptions {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ResolvedRegularExpressionsClientCapabilities {
     // The engine's name.
-    pub engine: String,
+    engine: String,
     // The engine's version.
-    pub version: String,
+    version: String,
 }
 
 impl RegularExpressionsClientCapabilities {
-    pub(crate) fn resolve(&self) -> ResolvedRegularExpressionsClientCapabilities {
+    fn resolve(&self) -> ResolvedRegularExpressionsClientCapabilities {
         ResolvedRegularExpressionsClientCapabilities {
             engine: self.engine.clone(),
             version: self.version.clone().unwrap_or_default(),
@@ -32665,18 +32600,18 @@ impl RegularExpressionsClientCapabilities {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ResolvedMarkdownClientCapabilities {
     // The name of the parser.
-    pub parser: String,
+    parser: String,
     // The version of the parser.
-    pub version: String,
+    version: String,
     // A list of HTML tags that the client allows / supports in
     // Markdown.
     //
     // Since: 3.17.0
-    pub allowed_tags: Vec<String>,
+    allowed_tags: Vec<String>,
 }
 
 impl MarkdownClientCapabilities {
-    pub(crate) fn resolve(&self) -> ResolvedMarkdownClientCapabilities {
+    fn resolve(&self) -> ResolvedMarkdownClientCapabilities {
         ResolvedMarkdownClientCapabilities {
             parser: self.parser.clone(),
             version: self.version.clone().unwrap_or_default(),
@@ -32699,15 +32634,15 @@ pub struct ResolvedGeneralClientCapabilities {
     // anymore since the information is outdated).
     //
     // Since: 3.17.0
-    pub stale_request_support: ResolvedStaleRequestSupportOptions,
+    stale_request_support: ResolvedStaleRequestSupportOptions,
     // Client capabilities specific to regular expressions.
     //
     // Since: 3.16.0
-    pub regular_expressions: ResolvedRegularExpressionsClientCapabilities,
+    regular_expressions: ResolvedRegularExpressionsClientCapabilities,
     // Client capabilities specific to the client's markdown parser.
     //
     // Since: 3.16.0
-    pub markdown: ResolvedMarkdownClientCapabilities,
+    markdown: ResolvedMarkdownClientCapabilities,
     // The position encodings supported by the client. Client and server
     // have to agree on the same position encoding to ensure that offsets
     // (e.g. character position in a line) are interpreted the same on both
@@ -32730,23 +32665,17 @@ pub struct ResolvedGeneralClientCapabilities {
 }
 
 impl GeneralClientCapabilities {
-    pub(crate) fn resolve(&self) -> ResolvedGeneralClientCapabilities {
+    fn resolve(&self) -> ResolvedGeneralClientCapabilities {
         ResolvedGeneralClientCapabilities {
             stale_request_support: self
                 .stale_request_support
                 .as_ref()
-                .map(StaleRequestSupportOptions::resolve)
-                .unwrap_or_default(),
+                .map_or_default(StaleRequestSupportOptions::resolve),
             regular_expressions: self
                 .regular_expressions
                 .as_ref()
-                .map(RegularExpressionsClientCapabilities::resolve)
-                .unwrap_or_default(),
-            markdown: self
-                .markdown
-                .as_ref()
-                .map(MarkdownClientCapabilities::resolve)
-                .unwrap_or_default(),
+                .map_or_default(RegularExpressionsClientCapabilities::resolve),
+            markdown: self.markdown.as_ref().map_or_default(MarkdownClientCapabilities::resolve),
             position_encodings: self.position_encodings.clone().unwrap_or_default(),
         }
     }
@@ -32763,7 +32692,7 @@ pub struct ResolvedExperimentalClientCapabilities {
 }
 
 impl ExperimentalClientCapabilities {
-    pub(crate) fn resolve(self) -> ResolvedExperimentalClientCapabilities {
+    fn resolve(self) -> ResolvedExperimentalClientCapabilities {
         ResolvedExperimentalClientCapabilities {
             hover_verbosity_level: self.hover_verbosity_level.unwrap_or_default(),
         }
@@ -32804,23 +32733,14 @@ pub struct ResolvedClientCapabilities {
 impl ClientCapabilities {
     pub fn resolve(&self) -> ResolvedClientCapabilities {
         ResolvedClientCapabilities {
-            workspace: self
-                .workspace
-                .as_ref()
-                .map(WorkspaceClientCapabilities::resolve)
-                .unwrap_or_default(),
+            workspace: self.workspace.as_ref().map_or_default(WorkspaceClientCapabilities::resolve),
             text_document: self
                 .text_document
                 .as_ref()
-                .map(TextDocumentClientCapabilities::resolve)
-                .unwrap_or_default(),
-            window: self.window.as_ref().map(|v| v.resolve()).unwrap_or_default(),
-            general: self
-                .general
-                .as_ref()
-                .map(GeneralClientCapabilities::resolve)
-                .unwrap_or_default(),
-            experimental: self.experimental.as_ref().map(|v| v.resolve()).unwrap_or_default(),
+                .map_or_default(TextDocumentClientCapabilities::resolve),
+            window: self.window.as_ref().map_or_default(|v| v.resolve()),
+            general: self.general.as_ref().map_or_default(GeneralClientCapabilities::resolve),
+            experimental: self.experimental.as_ref().map_or_default(|v| v.resolve()),
             vs_supports_visual_studio_extensions: self
                 .vs_supports_visual_studio_extensions
                 .unwrap_or_default(),

@@ -46,7 +46,7 @@ fn trim_left_white_space_like(s: &str) -> &str {
     &s[i..]
 }
 
-pub(crate) fn normalize_jsdoc_type_source_text(text: &str) -> String {
+pub fn normalize_jsdoc_type_source_text(text: &str) -> String {
     let line_starts = tsrs_core::compute_ecma_line_starts(text);
     if line_starts.len() == 1 {
         return strip_leading_jsdoc_comment(text).to_string();

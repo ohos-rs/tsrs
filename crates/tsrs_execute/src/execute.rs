@@ -13,21 +13,22 @@ use tsrs_vfs::FS;
 
 use crate::tsc::{
     self, CommandLineResult, CompileTimes, EmitInput, ExitStatus, ExtendedConfigCache, System,
-    create_diagnostic_reporter, create_report_error_summary, emit_and_report_statistics,
+    create_diagnostic_formatter, create_diagnostic_reporter, create_report_error_summary,
+    emit_and_report_statistics,
 };
 
 // The system doubles as the config-parsing host (Go's tsc.System satisfies tsoptions.ParseConfigHost).
-pub(crate) struct sysParseConfigHost {
+pub struct SysParseConfigHost {
     sys: &'static dyn System,
     fs: Arc<dyn FS>,
 }
 
 /// The config parse host for `sys` (leaked: tsoptions keeps it for the parsed command line's lifetime).
-pub(crate) fn parse_config_host(sys: &'static dyn System) -> &'static sysParseConfigHost {
-    Box::leak(Box::new(sysParseConfigHost { sys, fs: sys.fs() }))
+pub fn parse_config_host(sys: &'static dyn System) -> &'static SysParseConfigHost {
+    Box::leak(Box::new(SysParseConfigHost { sys, fs: sys.fs() }))
 }
 
-impl ParseConfigHost for sysParseConfigHost {
+impl ParseConfigHost for SysParseConfigHost {
     fn fs(&self) -> &dyn FS {
         &*self.fs
     }
@@ -37,11 +38,10 @@ impl ParseConfigHost for sysParseConfigHost {
     }
 }
 
+// tsrs-only, so on stderr: tsgo has no such message, and `tsrs --showConfig > tsconfig.out.json` writes no error into
+// the file.
 fn not_supported(sys: &dyn System, what: &str) -> CommandLineResult {
-    sys.write(&format!(
-        "error: {what} is not supported by tsrs.
-"
-    ));
+    sys.write_error(&format!("error: {what} is not supported by tsrs.\n"));
     CommandLineResult { watcher: None, status: ExitStatus::NotImplemented }
 }
 
@@ -60,6 +60,7 @@ pub fn command_line_with_testing(
             "-b" | "--b" | "-build" | "--build" => {
                 let host = parse_config_host(sys);
                 let mut command = tsoptions::parse_build_command_line(&command_line_args, host);
+                configure_performance(&command.raw);
                 if tsrs_core::NO_THREADS {
                     command.compiler_options.single_threaded = tsrs_core::Tristate::True;
                 }
@@ -85,7 +86,7 @@ pub fn command_line_with_testing(
             sys.write(&format!("error: unknown --checkerAssignment {name:?} (expected locality, go, random:<seed> or file:<path>).\n"));
             return CommandLineResult {
                 watcher: None,
-                status: ExitStatus::DiagnosticsPresent_OutputsSkipped,
+                status: ExitStatus::DiagnosticsPresentOutputsSkipped,
             };
         }
         args.drain(pos..(pos + 2).min(args.len()));
@@ -97,14 +98,14 @@ pub fn command_line_with_testing(
             sys.write("error: --checkerCostCache expects a file path.\n");
             return CommandLineResult {
                 watcher: None,
-                status: ExitStatus::DiagnosticsPresent_OutputsSkipped,
+                status: ExitStatus::DiagnosticsPresentOutputsSkipped,
             };
         };
         if tsrs_core::NO_THREADS {
             sys.write("error: --checkerCostCache is not supported by the WebAssembly build.\n");
             return CommandLineResult {
                 watcher: None,
-                status: ExitStatus::DiagnosticsPresent_OutputsSkipped,
+                status: ExitStatus::DiagnosticsPresentOutputsSkipped,
             };
         }
         tsrs_compiler::set_checker_cost_cache_from_cli(&path);
@@ -119,7 +120,7 @@ pub fn command_line_with_testing(
             sys.write("error: --maxMemory expects a size such as 12G, 12000M or 12000 (MiB).\n");
             return CommandLineResult {
                 watcher: None,
-                status: ExitStatus::DiagnosticsPresent_OutputsSkipped,
+                status: ExitStatus::DiagnosticsPresentOutputsSkipped,
             };
         };
         tsrs_compiler::set_max_memory_from_cli(bytes);
@@ -127,10 +128,19 @@ pub fn command_line_with_testing(
     }
     let host = parse_config_host(sys);
     let mut command = tsoptions::parse_command_line(&args, host);
+    configure_performance(&command.raw);
     if tsrs_core::NO_THREADS {
         force_single_threaded(&mut command);
     }
     tsc_compilation(sys, host, P::new(command), testing)
+}
+
+fn configure_performance(raw: &CompilerOptionsValue) {
+    if let CompilerOptionsValue::Object(options) = raw
+        && let Some(fast) = options.get("fast")
+    {
+        tsrs_core::fast::set_enabled(matches!(fast, CompilerOptionsValue::Bool(true)));
+    }
 }
 
 /// `tsrs_core::NO_THREADS`: `--singleThreaded`, set on the parsed options so every reader agrees (a config file
@@ -145,13 +155,14 @@ fn force_single_threaded(command: &mut ParsedCommandLine) {
 
 fn tsc_compilation(
     sys: &'static dyn System,
-    host: &'static sysParseConfigHost,
+    host: &'static SysParseConfigHost,
     command_line: P<ParsedCommandLine>,
     testing: Option<&'static dyn tsc::CommandLineTesting>,
 ) -> CommandLineResult {
     let mut config_file_name = String::new();
     let command_line_options = command_line.compiler_options().unwrap();
     let report_diagnostic = create_diagnostic_reporter(sys, Some(&command_line_options));
+    let mut format_diagnostic = create_diagnostic_formatter(sys, Some(&command_line_options));
 
     if !command_line.errors.is_empty() {
         for &e in &command_line.errors {
@@ -159,7 +170,7 @@ fn tsc_compilation(
         }
         return CommandLineResult {
             watcher: None,
-            status: ExitStatus::DiagnosticsPresent_OutputsSkipped,
+            status: ExitStatus::DiagnosticsPresentOutputsSkipped,
         };
     }
 
@@ -174,18 +185,18 @@ fn tsc_compilation(
 
     if command_line_options.help.is_true() || command_line_options.all.is_true() {
         print_version(sys);
-        sys.write("Usage: tsrs [-p <project>] [options] [files...]\n  Compiles like `tsc`. See `tsc --help` for options.\n");
+        sys.write("Usage: tsrs [-p <project>] [options] [files...]\n  Compiles like `tsc`. See `tsc --help` for options.\n  --fast  Enable tsrs performance modes that may differ from pinned TypeScript behavior.\n");
         return CommandLineResult { watcher: None, status: ExitStatus::Success };
     }
 
     if command_line_options.watch.is_true() && command_line_options.list_files_only.is_true() {
         report_diagnostic(new_compiler_diagnostic(
-            &diagnostics::Options_0_and_1_cannot_be_combined,
+            &diagnostics::OPTIONS_0_AND_1_CANNOT_BE_COMBINED,
             &[&"watch", &"listFilesOnly"],
         ));
         return CommandLineResult {
             watcher: None,
-            status: ExitStatus::DiagnosticsPresent_OutputsSkipped,
+            status: ExitStatus::DiagnosticsPresentOutputsSkipped,
         };
     }
 
@@ -193,12 +204,12 @@ fn tsc_compilation(
     if !command_line_options.project.is_empty() {
         if !command_line.file_names().is_empty() {
             report_diagnostic(new_compiler_diagnostic(
-                &diagnostics::Option_project_cannot_be_mixed_with_source_files_on_a_command_line,
+                &diagnostics::OPTION_PROJECT_CANNOT_BE_MIXED_WITH_SOURCE_FILES_ON_A_COMMAND_LINE,
                 &[],
             ));
             return CommandLineResult {
                 watcher: None,
-                status: ExitStatus::DiagnosticsPresent_OutputsSkipped,
+                status: ExitStatus::DiagnosticsPresentOutputsSkipped,
             };
         }
 
@@ -207,24 +218,24 @@ fn tsc_compilation(
             config_file_name = tspath::combine_paths(&file_or_directory, &["tsconfig.json"]);
             if !fs.file_exists(&config_file_name) {
                 report_diagnostic(new_compiler_diagnostic(
-                    &diagnostics::Cannot_find_a_tsconfig_json_file_at_the_current_directory_Colon_0,
+                    &diagnostics::CANNOT_FIND_A_TSCONFIG_JSON_FILE_AT_THE_CURRENT_DIRECTORY_COLON_0,
                     &[&config_file_name],
                 ));
                 return CommandLineResult {
                     watcher: None,
-                    status: ExitStatus::DiagnosticsPresent_OutputsSkipped,
+                    status: ExitStatus::DiagnosticsPresentOutputsSkipped,
                 };
             }
         } else {
             config_file_name.clone_from(&file_or_directory);
             if !fs.file_exists(&config_file_name) {
                 report_diagnostic(new_compiler_diagnostic(
-                    &diagnostics::The_specified_path_does_not_exist_Colon_0,
+                    &diagnostics::THE_SPECIFIED_PATH_DOES_NOT_EXIST_COLON_0,
                     &[&file_or_directory],
                 ));
                 return CommandLineResult {
                     watcher: None,
-                    status: ExitStatus::DiagnosticsPresent_OutputsSkipped,
+                    status: ExitStatus::DiagnosticsPresentOutputsSkipped,
                 };
             }
         }
@@ -236,18 +247,18 @@ fn tsc_compilation(
             if !config_file_name.is_empty() {
                 // Error to not specify config file
                 report_diagnostic(new_compiler_diagnostic(
-                    &diagnostics::X_tsconfig_json_is_present_but_will_not_be_loaded_if_files_are_specified_on_commandline_Use_ignoreConfig_to_skip_this_error,
+                    &diagnostics::X_TSCONFIG_JSON_IS_PRESENT_BUT_WILL_NOT_BE_LOADED_IF_FILES_ARE_SPECIFIED_ON_COMMANDLINE_USE_IGNORE_CONFIG_TO_SKIP_THIS_ERROR,
                     &[],
                 ));
                 return CommandLineResult {
                     watcher: None,
-                    status: ExitStatus::DiagnosticsPresent_OutputsSkipped,
+                    status: ExitStatus::DiagnosticsPresentOutputsSkipped,
                 };
             }
         } else if config_file_name.is_empty() {
             if command_line_options.show_config.is_true() {
                 report_diagnostic(new_compiler_diagnostic(
-                    &diagnostics::Cannot_find_a_tsconfig_json_file_at_the_current_directory_Colon_0,
+                    &diagnostics::CANNOT_FIND_A_TSCONFIG_JSON_FILE_AT_THE_CURRENT_DIRECTORY_COLON_0,
                     &[&tspath::normalize_path(sys.get_current_directory())],
                 ));
             } else {
@@ -256,7 +267,7 @@ fn tsc_compilation(
             }
             return CommandLineResult {
                 watcher: None,
-                status: ExitStatus::DiagnosticsPresent_OutputsSkipped,
+                status: ExitStatus::DiagnosticsPresentOutputsSkipped,
             };
         }
     }
@@ -301,13 +312,15 @@ fn tsc_compilation(
             }
             return CommandLineResult {
                 watcher: None,
-                status: ExitStatus::DiagnosticsPresent_OutputsGenerated,
+                status: ExitStatus::DiagnosticsPresentOutputsGenerated,
             };
         }
         config_for_compilation = P::new(config_parse_result.unwrap());
         // Updater to reflect pretty
         report_diagnostic =
             create_diagnostic_reporter(sys, Some(&command_line.compiler_options().unwrap()));
+        format_diagnostic =
+            create_diagnostic_formatter(sys, Some(&command_line.compiler_options().unwrap()));
     }
 
     let config_options = config_for_compilation.compiler_options().unwrap();
@@ -341,6 +354,7 @@ fn tsc_compilation(
             sys,
             config_for_compilation,
             &report_diagnostic,
+            format_diagnostic.as_ref(),
             &report_error_summary,
             extended_config_cache,
             compile_times,
@@ -351,6 +365,7 @@ fn tsc_compilation(
         sys,
         config_for_compilation,
         &report_diagnostic,
+        format_diagnostic.as_ref(),
         &report_error_summary,
         extended_config_cache,
         compile_times,
@@ -374,7 +389,7 @@ fn find_config_file(
 fn print_version(sys: &dyn System) {
     sys.write(&format!(
         "{} (tsrs {}, microsoft/TypeScript@{})\n",
-        diagnostics::Version_0.localize(&[&tsrs_core::version()]),
+        diagnostics::VERSION_0.localize(&[&tsrs_core::version()]),
         env!("TSRS_RELEASE_VERSION"),
         env!("TSRS_TYPESCRIPT_COMMIT"),
     ));
@@ -393,6 +408,7 @@ fn perform_compilation(
     sys: &'static dyn System,
     config: P<ParsedCommandLine>,
     report_diagnostic: &tsc::DiagnosticReporter,
+    format_diagnostic: Option<&tsc::DiagnosticFormatter>,
     report_error_summary: &tsc::DiagnosticsReporter,
     extended_config_cache: Arc<ExtendedConfigCache>,
     mut compile_times: CompileTimes,
@@ -401,7 +417,7 @@ fn perform_compilation(
     let content_mapper_host =
         tsc::new_content_mapper_host(sys, &config.compiler_options().unwrap());
     let content_mapper_project = get_content_mapper_project(content_mapper_host.as_ref(), config);
-    let _close_content_mappers = tsc::contentMapperCloser {
+    let _close_content_mappers = tsc::ContentMapperCloser {
         host: content_mapper_host.clone(),
         project: content_mapper_project.clone(),
     };
@@ -436,9 +452,7 @@ fn perform_compilation(
     }
     // tsrs-only (notes/mem-lazy-dts-members.md): when no declaration file is type-checked, the member lists of
     // interfaces, classes and type literals in declaration files are parsed and bound on first use.
-    if testing.is_none()
-        && (options.skip_lib_check.is_true() || options.no_check.is_true())
-        && tsrs_compiler::lazy_dts_allowed()
+    if testing.is_none() && declaration_files_unchecked(config) && tsrs_compiler::lazy_dts_allowed()
     {
         tsrs_compiler::enable_lazy_dts();
     }
@@ -459,6 +473,7 @@ fn perform_compilation(
         program,
         config,
         report_diagnostic,
+        format_diagnostic,
         report_error_summary,
         compile_times,
         incremental: None,
@@ -479,6 +494,7 @@ fn perform_incremental_compilation(
     sys: &'static dyn System,
     config: P<ParsedCommandLine>,
     report_diagnostic: &tsc::DiagnosticReporter,
+    format_diagnostic: Option<&tsc::DiagnosticFormatter>,
     report_error_summary: &tsc::DiagnosticsReporter,
     extended_config_cache: Arc<ExtendedConfigCache>,
     mut compile_times: CompileTimes,
@@ -487,7 +503,7 @@ fn perform_incremental_compilation(
     let content_mapper_host =
         tsc::new_content_mapper_host(sys, &config.compiler_options().unwrap());
     let content_mapper_project = get_content_mapper_project(content_mapper_host.as_ref(), config);
-    let _close_content_mappers = tsc::contentMapperCloser {
+    let _close_content_mappers = tsc::ContentMapperCloser {
         host: content_mapper_host.clone(),
         project: content_mapper_project.clone(),
     };
@@ -499,6 +515,12 @@ fn perform_incremental_compilation(
         Some(get_trace_from_sys(sys, testing)),
         content_mapper_project,
     );
+    // tsrs-only (notes/mem-lazy-dts-members.md): as in `perform_compilation`. The builder uses declaration files'
+    // versions as their signatures; its tree readers force any member lists they visit through the usual accessors.
+    if testing.is_none() && declaration_files_unchecked(config) && tsrs_compiler::lazy_dts_allowed()
+    {
+        tsrs_compiler::enable_lazy_dts();
+    }
     // Go reads the old program and then builds the new one. The two are independent (the read only uses the
     // config and the host's file system, both thread-safe), so the read runs on its own thread while the program
     // is built; "BuildInfo read time" is the read's own duration. `--singleThreaded` keeps Go's order.
@@ -559,6 +581,7 @@ fn perform_incremental_compilation(
         program: incremental_program.get_program(),
         config,
         report_diagnostic,
+        format_diagnostic,
         report_error_summary,
         compile_times,
         incremental: Some(incremental_program),
@@ -572,6 +595,12 @@ fn perform_incremental_compilation(
         testing.on_program(incremental_program);
     }
     CommandLineResult { watcher: None, status: result.status }
+}
+
+// tsrs-only (notes/mem-lazy-dts-members.md): no declaration file of this program is type-checked.
+pub(crate) fn declaration_files_unchecked(config: P<ParsedCommandLine>) -> bool {
+    let options = config.compiler_options().unwrap();
+    options.skip_lib_check.is_true() || options.no_check.is_true()
 }
 
 // tsc.go:394
@@ -603,7 +632,7 @@ fn tsc_build_compilation(
         sys.write("error: diagnostics as JSON are not supported with --build\n");
         return CommandLineResult {
             watcher: None,
-            status: ExitStatus::DiagnosticsPresent_OutputsSkipped,
+            status: ExitStatus::DiagnosticsPresentOutputsSkipped,
         };
     }
     let report_diagnostic = create_diagnostic_reporter(sys, Some(&build_command.compiler_options));
@@ -614,13 +643,13 @@ fn tsc_build_compilation(
         }
         return CommandLineResult {
             watcher: None,
-            status: ExitStatus::DiagnosticsPresent_OutputsSkipped,
+            status: ExitStatus::DiagnosticsPresentOutputsSkipped,
         };
     }
 
     if build_command.compiler_options.help.is_true() {
         print_version(sys);
-        sys.write("Usage: tsrs -b [projects...] [options]\n  See `tsc -b --help` for options.\n");
+        sys.write("Usage: tsrs -b [projects...] [options]\n  See `tsc -b --help` for options.\n  --fast  Enable tsrs performance modes that may differ from pinned TypeScript behavior.\n");
         return CommandLineResult { watcher: None, status: ExitStatus::Success };
     }
     // tsrs-only: no file watching backend on this platform (Windows; Go has ReadDirectoryChangesW).

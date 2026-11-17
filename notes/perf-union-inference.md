@@ -1,5 +1,9 @@
 # Union front cache and the generic-call inference memo (2026-10-05)
 
+The cache defaults and acceptance threshold below are historical. Since 0.20.0, additional checker caches are
+part of the opt-in fast preset; see [current options](../docs/USAGE.md#performance-options). The
+[current measurement policy](../AGENTS.md#performance-and-memory-changes) has no fixed percentage threshold.
+
 Tasks 2 and 3 of the flow-memo handoff (notes/perf-flow-union-inference.md; their briefs are not kept), under the round-3
 rule (notes/perf-round3.md): caches Go does not have are allowed. Diagnostics, determinism, emit and the conformance
 baselines must not change, and anything on by default that departs from Go is off under `--checkerAssignment go`.
@@ -151,7 +155,7 @@ that created the union; it was shadow-checked on webpack only, and was clean.
 - **fourslash:** 4,066 pass, 63 fail, 417 skip, with identical lists.
 - **`tools/regressions.sh`:** all 8 cases pass.
 - **Lints:** `RUSTFLAGS="-D warnings" cargo check --workspace --locked`, `tools/lint/ratchet.py` (no new findings) and
-  `tools/lint/source.py` all pass.
+  `tools/lint/source.mjs` all pass.
 - **Diagnostics:** byte-identical to base on all four corpora, with default checkers, with `--checkers 1` and with
   `--checkerAssignment go`. The same exit codes.
 - **The checkout:** the 38k-file codebase's checkout is untouched (`git status` empty before and after).

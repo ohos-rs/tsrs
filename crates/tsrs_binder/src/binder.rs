@@ -47,7 +47,7 @@ pub struct ExpandoAssignmentInfo {
     block_scope_container: Option<P<Node>>,
 }
 
-pub struct Binder {
+struct Binder {
     file: P<SourceFile>,
     unreachable_flow: P<FlowNode>,
 
@@ -79,7 +79,7 @@ pub struct Binder {
     bind_diagnostics: Vec<P<Diagnostic>>,
 }
 
-pub struct ActiveLabel {
+struct ActiveLabel {
     break_target: Option<P<FlowNode>>,
     continue_target: Option<P<FlowNode>>,
     name: &'static str,
@@ -87,10 +87,10 @@ pub struct ActiveLabel {
 }
 
 impl ActiveLabel {
-    pub fn break_target(&self) -> Option<P<FlowNode>> {
+    fn break_target(&self) -> Option<P<FlowNode>> {
         self.break_target
     }
-    pub fn continue_target(&self) -> Option<P<FlowNode>> {
+    fn continue_target(&self) -> Option<P<FlowNode>> {
         self.continue_target
     }
 }
@@ -194,7 +194,7 @@ impl Binder {
         self.current_flow.unwrap()
     }
 
-    pub(crate) fn new_symbol(&mut self, flags: SymbolFlags, name: &'static str) -> P<Symbol> {
+    fn new_symbol(&mut self, flags: SymbolFlags, name: &'static str) -> P<Symbol> {
         self.symbol_count += 1;
         Symbol::new(flags, name)
     }
@@ -207,7 +207,7 @@ impl Binder {
      * @param includes - The `SymbolFlags` that node has in addition to its declaration type (eg: export, ambient, etc.)
      * @param excludes - The flags which node cannot be declared alongside in a symbol table. Used to report forbidden declarations.
      */
-    pub(crate) fn declare_symbol(
+    fn declare_symbol(
         &mut self,
         symbol_table: P<SymbolTable>,
         parent: Option<P<Symbol>>,
@@ -226,7 +226,7 @@ impl Binder {
         )
     }
 
-    pub(crate) fn declare_symbol_ex(
+    fn declare_symbol_ex(
         &mut self,
         symbol_table: P<SymbolTable>,
         parent: Option<P<Symbol>>,
@@ -242,15 +242,15 @@ impl Binder {
                 && ast::module_export_name_is_default(node.name().unwrap());
         // The exported symbol for an export default function/class node is always named "default"
         let name: &'static str = if is_computed_name {
-            ast::InternalSymbolNameComputed
+            ast::INTERNAL_SYMBOL_NAME_COMPUTED
         } else if is_default_export && parent.is_some() {
-            ast::InternalSymbolNameDefault
+            ast::INTERNAL_SYMBOL_NAME_DEFAULT
         } else {
             Self::get_declaration_name(node)
         };
         let mut symbol: P<Symbol>;
-        if name == ast::InternalSymbolNameMissing {
-            symbol = self.new_symbol(SymbolFlags::None, ast::InternalSymbolNameMissing);
+        if name == ast::INTERNAL_SYMBOL_NAME_MISSING {
+            symbol = self.new_symbol(SymbolFlags::None, ast::INTERNAL_SYMBOL_NAME_MISSING);
         } else {
             // Check and see if the symbol table already has a symbol with this name.  If not,
             // create a new symbol with this name and add it to the table.  Note that we don't
@@ -340,15 +340,15 @@ impl Binder {
     ) -> P<Symbol> {
         let mut message: &'static Message =
             if symbol.flags.get().intersects(SymbolFlags::BlockScopedVariable) {
-                &diagnostics::Cannot_redeclare_block_scoped_variable_0
+                &diagnostics::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE_0
             } else {
-                &diagnostics::Duplicate_identifier_0
+                &diagnostics::DUPLICATE_IDENTIFIER_0
             };
         let mut message_needs_name = true;
         if symbol.flags.get().intersects(SymbolFlags::Enum)
             || includes.intersects(SymbolFlags::Enum)
         {
-            message = &diagnostics::Enum_declarations_can_only_merge_with_namespace_or_other_enum_declarations;
+            message = &diagnostics::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS;
             message_needs_name = false;
         }
         let mut multiple_default_exports = false;
@@ -358,7 +358,7 @@ impl Binder {
             // there are any other default exports that we need to error on.
             // We'll know whether we have other default exports depending on if `symbol` already has a declaration list set.
             if is_default_export {
-                message = &diagnostics::A_module_cannot_have_multiple_default_exports;
+                message = &diagnostics::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS;
                 message_needs_name = false;
                 multiple_default_exports = true;
             } else {
@@ -370,7 +370,7 @@ impl Binder {
                     && ast::is_export_assignment(node)
                     && !node.as_export_assignment().is_export_equals()
                 {
-                    message = &diagnostics::A_module_cannot_have_multiple_default_exports;
+                    message = &diagnostics::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS;
                     message_needs_name = false;
                     multiple_default_exports = true;
                 }
@@ -395,7 +395,7 @@ impl Binder {
             let suggestion = format!("export type {{ {} }}", node.name().unwrap().text());
             diag.add_related_info(self.create_diagnostic_for_node(
                 node,
-                &diagnostics::Did_you_mean_0,
+                &diagnostics::DID_YOU_MEAN_0,
                 &[&suggestion],
             ));
         }
@@ -410,9 +410,9 @@ impl Binder {
             };
             if multiple_default_exports {
                 let related_message: &'static Message = if index == 0 {
-                    &diagnostics::Another_export_default_is_here
+                    &diagnostics::ANOTHER_EXPORT_DEFAULT_IS_HERE
                 } else {
-                    &diagnostics::X_and_here
+                    &diagnostics::X_AND_HERE
                 };
                 d.add_related_info(self.create_diagnostic_for_node(
                     declaration_name,
@@ -424,7 +424,7 @@ impl Binder {
             if multiple_default_exports {
                 diag.add_related_info(self.create_diagnostic_for_node(
                     decl,
-                    &diagnostics::The_first_export_default_is_here,
+                    &diagnostics::THE_FIRST_EXPORT_DEFAULT_IS_HERE,
                     &[],
                 ));
             }
@@ -444,12 +444,12 @@ impl Binder {
 
     // Should not be called on a declaration with a computed property name,
     // unless it is a well known Symbol.
-    pub(crate) fn get_declaration_name(node: P<Node>) -> &'static str {
+    fn get_declaration_name(node: P<Node>) -> &'static str {
         if ast::is_export_assignment(node) {
             return if node.as_export_assignment().is_export_equals() {
-                ast::InternalSymbolNameExportEquals
+                ast::INTERNAL_SYMBOL_NAME_EXPORT_EQUALS
             } else {
-                ast::InternalSymbolNameDefault
+                ast::INTERNAL_SYMBOL_NAME_DEFAULT
             };
         }
         let name = ast::get_name_of_declaration(Some(node));
@@ -457,18 +457,18 @@ impl Binder {
             if ast::is_ambient_module(node) {
                 let module_name = name.text();
                 if ast::is_global_scope_augmentation(node) {
-                    return ast::InternalSymbolNameGlobal;
+                    return ast::INTERNAL_SYMBOL_NAME_GLOBAL;
                 }
                 let pattern = tsrs_core::try_parse_pattern(module_name);
-                if matches!(pattern.kind, PatternKind::Wildcard(_)) {
-                    if let Some(attributes) = node.as_module_declaration().attributes() {
-                        return alloc_str(&format!(
-                            "{}\"{}\"pattern@{}",
-                            ast::InternalSymbolNamePrefix,
-                            module_name,
-                            ast::get_node_id(attributes).0
-                        ));
-                    }
+                if matches!(pattern.kind, PatternKind::Wildcard(_))
+                    && let Some(attributes) = node.as_module_declaration().attributes()
+                {
+                    return alloc_str(&format!(
+                        "{}\"{}\"pattern@{}",
+                        ast::INTERNAL_SYMBOL_NAME_PREFIX,
+                        module_name,
+                        ast::get_node_id(attributes).0
+                    ));
                 }
                 return alloc_str(&format!("\"{module_name}\""));
             }
@@ -476,7 +476,7 @@ impl Binder {
                 // containingClass exists because private names only allowed inside classes
                 let Some(containing_class) = ast::get_containing_class(node) else {
                     // we can get here in cases where there is already a parse error.
-                    return ast::InternalSymbolNameMissing;
+                    return ast::INTERNAL_SYMBOL_NAME_MISSING;
                 };
                 return alloc_str(&get_symbol_name_for_private_identifier(
                     containing_class.symbol().unwrap(),
@@ -502,28 +502,30 @@ impl Binder {
                 }
                 panic!("Only computed properties with literal names have declaration names");
             }
-            return ast::InternalSymbolNameMissing;
+            return ast::INTERNAL_SYMBOL_NAME_MISSING;
         }
         match node.kind() {
-            Kind::Constructor => return ast::InternalSymbolNameConstructor,
-            Kind::FunctionType | Kind::CallSignature => return ast::InternalSymbolNameCall,
-            Kind::ConstructorType | Kind::ConstructSignature => return ast::InternalSymbolNameNew,
-            Kind::IndexSignature => return ast::InternalSymbolNameIndex,
-            Kind::ExportDeclaration => return ast::InternalSymbolNameExportStar,
+            Kind::Constructor => return ast::INTERNAL_SYMBOL_NAME_CONSTRUCTOR,
+            Kind::FunctionType | Kind::CallSignature => return ast::INTERNAL_SYMBOL_NAME_CALL,
+            Kind::ConstructorType | Kind::ConstructSignature => {
+                return ast::INTERNAL_SYMBOL_NAME_NEW;
+            }
+            Kind::IndexSignature => return ast::INTERNAL_SYMBOL_NAME_INDEX,
+            Kind::ExportDeclaration => return ast::INTERNAL_SYMBOL_NAME_EXPORT_STAR,
             Kind::SourceFile | Kind::BinaryExpression => {
-                return ast::InternalSymbolNameExportEquals;
+                return ast::INTERNAL_SYMBOL_NAME_EXPORT_EQUALS;
             }
             _ => {}
         }
-        ast::InternalSymbolNameMissing
+        ast::INTERNAL_SYMBOL_NAME_MISSING
     }
 
-    pub(crate) fn get_display_name(node: P<Node>) -> String {
+    fn get_display_name(node: P<Node>) -> String {
         if let Some(name_node) = node.name() {
             return scanner::declaration_name_to_string(Some(name_node));
         }
         let name = Self::get_declaration_name(node);
-        if name != ast::InternalSymbolNameMissing {
+        if name != ast::INTERNAL_SYMBOL_NAME_MISSING {
             return name.to_string();
         }
         "(Missing)".to_string()
@@ -536,14 +538,14 @@ pub fn get_symbol_name_for_private_identifier(
 ) -> String {
     format!(
         "{}#{}@{}",
-        ast::InternalSymbolNamePrefix,
+        ast::INTERNAL_SYMBOL_NAME_PREFIX,
         ast::get_symbol_id(containing_class_symbol).0,
         description
     )
 }
 
 impl Binder {
-    pub(crate) fn declare_module_member(
+    fn declare_module_member(
         &mut self,
         node: P<Node>,
         symbol_flags: SymbolFlags,
@@ -593,7 +595,7 @@ impl Binder {
         {
             if !ast::is_locals_container(container)
                 || (ast::has_syntactic_modifier(node, ModifierFlags::Default)
-                    && Self::get_declaration_name(node) == ast::InternalSymbolNameMissing)
+                    && Self::get_declaration_name(node) == ast::INTERNAL_SYMBOL_NAME_MISSING)
             {
                 return self.declare_symbol(
                     ast::get_exports(container.symbol().unwrap()),
@@ -636,7 +638,7 @@ impl Binder {
         )
     }
 
-    pub(crate) fn declare_class_member(
+    fn declare_class_member(
         &mut self,
         node: P<Node>,
         symbol_flags: SymbolFlags,
@@ -661,7 +663,7 @@ impl Binder {
         )
     }
 
-    pub(crate) fn declare_source_file_member(
+    fn declare_source_file_member(
         &mut self,
         node: P<Node>,
         symbol_flags: SymbolFlags,
@@ -679,7 +681,7 @@ impl Binder {
         )
     }
 
-    pub(crate) fn declare_symbol_and_add_to_symbol_table(
+    fn declare_symbol_and_add_to_symbol_table(
         &mut self,
         node: P<Node>,
         symbol_flags: SymbolFlags,
@@ -740,11 +742,11 @@ impl Binder {
         }
     }
 
-    pub(crate) fn new_flow_node(&self, flags: FlowFlags) -> P<FlowNode> {
+    fn new_flow_node(&self, flags: FlowFlags) -> P<FlowNode> {
         new_flow_node_value(flags, None, None, self.file.text_index.get())
     }
 
-    pub(crate) fn new_flow_node_ex(
+    fn new_flow_node_ex(
         &self,
         flags: FlowFlags,
         node: Option<P<Node>>,
@@ -753,15 +755,15 @@ impl Binder {
         new_flow_node_value(flags, node, antecedent, self.file.text_index.get())
     }
 
-    pub(crate) fn create_loop_label(&self) -> P<FlowNode> {
+    fn create_loop_label(&self) -> P<FlowNode> {
         self.new_flow_node(FlowFlags::LoopLabel)
     }
 
-    pub(crate) fn create_branch_label(&self) -> P<FlowNode> {
+    fn create_branch_label(&self) -> P<FlowNode> {
         self.new_flow_node(FlowFlags::BranchLabel)
     }
 
-    pub(crate) fn create_reduce_label(
+    fn create_reduce_label(
         &self,
         target: P<FlowNode>,
         antecedents: Option<P<FlowList>>,
@@ -774,7 +776,7 @@ impl Binder {
         )
     }
 
-    pub(crate) fn create_flow_condition(
+    fn create_flow_condition(
         &self,
         flags: FlowFlags,
         antecedent: P<FlowNode>,
@@ -804,7 +806,7 @@ impl Binder {
         self.new_flow_node_ex(flags, Some(expression), Some(antecedent))
     }
 
-    pub(crate) fn create_flow_mutation(
+    fn create_flow_mutation(
         &mut self,
         flags: FlowFlags,
         antecedent: P<FlowNode>,
@@ -819,7 +821,7 @@ impl Binder {
         result
     }
 
-    pub(crate) fn create_flow_switch_clause(
+    fn create_flow_switch_clause(
         &self,
         antecedent: P<FlowNode>,
         switch_statement: P<Node>,
@@ -834,21 +836,17 @@ impl Binder {
         )
     }
 
-    pub(crate) fn create_flow_call(
-        &mut self,
-        antecedent: P<FlowNode>,
-        node: P<Node>,
-    ) -> P<FlowNode> {
+    fn create_flow_call(&mut self, antecedent: P<FlowNode>, node: P<Node>) -> P<FlowNode> {
         set_flow_node_referenced(antecedent);
         self.has_flow_effects = true;
         self.new_flow_node_ex(FlowFlags::Call, Some(node), Some(antecedent))
     }
 
-    pub(crate) fn new_flow_list(head: P<FlowNode>, tail: Option<P<FlowList>>) -> P<FlowList> {
+    fn new_flow_list(head: P<FlowNode>, tail: Option<P<FlowList>>) -> P<FlowList> {
         P::new_recycled(FlowList { flow: head, next: OwnedCell::new(tail) })
     }
 
-    pub(crate) fn combine_flow_lists(
+    fn combine_flow_lists(
         head: Option<P<FlowList>>,
         tail: Option<P<FlowList>>,
     ) -> Option<P<FlowList>> {
@@ -860,17 +858,17 @@ impl Binder {
     }
 }
 
-pub(crate) fn set_flow_node_referenced(flow: P<FlowNode>) {
+fn set_flow_node_referenced(flow: P<FlowNode>) {
     // On first reference we set the Referenced flag, thereafter we set the Shared flag
-    if !flow.flags.get().intersects(FlowFlags::Referenced) {
-        flow.flags.set(flow.flags.get() | FlowFlags::Referenced);
-    } else {
+    if flow.flags.get().intersects(FlowFlags::Referenced) {
         flow.flags.set(flow.flags.get() | FlowFlags::Shared);
+    } else {
+        flow.flags.set(flow.flags.get() | FlowFlags::Referenced);
     }
 }
 
 impl Binder {
-    pub(crate) fn add_antecedent(label: Option<P<FlowNode>>, antecedent: P<FlowNode>) {
+    fn add_antecedent(label: Option<P<FlowNode>>, antecedent: P<FlowNode>) {
         if antecedent.flags.get().intersects(FlowFlags::Unreachable) {
             return;
         }
@@ -893,7 +891,7 @@ impl Binder {
         set_flow_node_referenced(antecedent);
     }
 
-    pub(crate) fn finish_flow_label(&self, label: P<FlowNode>) -> P<FlowNode> {
+    fn finish_flow_label(&self, label: P<FlowNode>) -> P<FlowNode> {
         let Some(antecedents) = label.antecedents() else {
             return self.unreachable_flow;
         };
@@ -905,7 +903,7 @@ impl Binder {
 
     /// `finishFlowLabel` for a branch label that only its creator and the binder's target fields have seen (if
     /// statements, loops, conditional and logical expressions): a dropped label is recycled (notes/mem-recycle.md).
-    pub(crate) fn finish_local_flow_label(&mut self, label: P<FlowNode>) -> P<FlowNode> {
+    fn finish_local_flow_label(&mut self, label: P<FlowNode>) -> P<FlowNode> {
         let result = self.finish_flow_label(label);
         if result != label {
             self.recycle_flow_label(label);
@@ -919,7 +917,7 @@ impl Binder {
         clippy::needless_pass_by_ref_mut,
         reason = "Recycling frees binder-owned flow nodes and requires exclusive access to the binder."
     )]
-    pub(crate) fn recycle_flow_label(&mut self, label: P<FlowNode>) {
+    fn recycle_flow_label(&mut self, label: P<FlowNode>) {
         debug_assert!(label.flags.get().intersects(FlowFlags::BranchLabel));
         let held = |t: Option<P<FlowNode>>| t == Some(label);
         if label.flags.get().intersects(FlowFlags::Referenced)
@@ -950,7 +948,7 @@ impl Binder {
         unsafe { tsrs_core::free!(label) };
     }
 
-    pub(crate) fn bind(&mut self, node: impl Into<Option<P<Node>>>) -> bool {
+    fn bind(&mut self, node: impl Into<Option<P<Node>>>) -> bool {
         let Some(node) = node.into() else {
             return false;
         };
@@ -1087,12 +1085,12 @@ impl Binder {
             Kind::TypeLiteral | Kind::MappedType => self.bind_anonymous_declaration(
                 node,
                 SymbolFlags::TypeLiteral,
-                ast::InternalSymbolNameType,
+                ast::INTERNAL_SYMBOL_NAME_TYPE,
             ),
             Kind::ObjectLiteralExpression => self.bind_anonymous_declaration(
                 node,
                 SymbolFlags::ObjectLiteral,
-                ast::InternalSymbolNameObject,
+                ast::INTERNAL_SYMBOL_NAME_OBJECT,
             ),
             Kind::FunctionExpression | Kind::ArrowFunction => self.bind_function_expression(node),
             Kind::ClassExpression | Kind::ClassDeclaration => {
@@ -1162,7 +1160,7 @@ impl Binder {
         // children, as an optimization we don't process those.
         let mut this_node_or_any_subnodes_has_error =
             node.flags().intersects(NodeFlags::ThisNodeHasError);
-        if node.kind() > Kind::LastToken {
+        if node.kind() > Kind::LAST_TOKEN {
             let save_seen_parse_error = self.seen_parse_error;
             self.seen_parse_error = false;
             let container_flags = get_container_flags(node);
@@ -1183,7 +1181,7 @@ impl Binder {
         false
     }
 
-    pub(crate) fn bind_property_worker(&mut self, node: P<Node>) {
+    fn bind_property_worker(&mut self, node: P<Node>) {
         let is_auto_accessor = ast::is_auto_accessor_property_declaration(node);
         let mut includes = if is_auto_accessor { SymbolFlags::Accessor } else { SymbolFlags::Property };
         if ast::is_annotation_property_declaration(node) && node.initializer().is_some() {
@@ -1201,7 +1199,7 @@ impl Binder {
         );
     }
 
-    pub(crate) fn bind_source_file_if_external_module(&mut self) {
+    fn bind_source_file_if_external_module(&mut self) {
         Self::set_export_context_flag(self.file.as_node());
         if ast::is_external_or_common_js_module(self.file) {
             self.bind_source_file_as_external_module();
@@ -1221,19 +1219,19 @@ impl Binder {
         }
     }
 
-    pub(crate) fn bind_source_file_as_external_module(&mut self) {
+    fn bind_source_file_as_external_module(&mut self) {
         let name =
             alloc_str(&format!("\"{}\"", tspath::remove_file_extension(self.file.file_name())));
         self.bind_anonymous_declaration(self.file.as_node(), SymbolFlags::ValueModule, name);
     }
 
-    pub(crate) fn bind_module_declaration(&mut self, node: P<Node>) {
+    fn bind_module_declaration(&mut self, node: P<Node>) {
         Self::set_export_context_flag(node);
         if ast::is_ambient_module(node) {
             if ast::has_syntactic_modifier(node, ModifierFlags::Export) {
                 self.error_on_first_token(
                     node,
-                    &diagnostics::X_export_modifier_cannot_be_applied_to_ambient_modules_and_module_augmentations_since_they_are_always_visible,
+                    &diagnostics::X_EXPORT_MODIFIER_CANNOT_BE_APPLIED_TO_AMBIENT_MODULES_AND_MODULE_AUGMENTATIONS_SINCE_THEY_ARE_ALWAYS_VISIBLE,
                     &[],
                 );
             }
@@ -1254,7 +1252,7 @@ impl Binder {
                         // An invalid pattern - must have multiple wildcards.
                         self.error_on_first_token(
                             name,
-                            &diagnostics::Pattern_0_can_have_at_most_one_Asterisk_character,
+                            &diagnostics::PATTERN_0_CAN_HAVE_AT_MOST_ONE_ASTERISK_CHARACTER,
                             &[&name.text()],
                         );
                     } else if matches!(pattern.kind, PatternKind::Wildcard(_)) {
@@ -1268,7 +1266,7 @@ impl Binder {
                     } else if attributes.is_some() {
                         self.error_on_node(
                             name,
-                            &diagnostics::An_ambient_module_declaration_with_import_attributes_must_use_a_pattern_name_with_an_Asterisk_character,
+                            &diagnostics::AN_AMBIENT_MODULE_DECLARATION_WITH_IMPORT_ATTRIBUTES_MUST_USE_A_PATTERN_NAME_WITH_AN_ASTERISK_CHARACTER,
                             &[],
                         );
                     }
@@ -1294,7 +1292,7 @@ impl Binder {
         }
     }
 
-    pub(crate) fn declare_module_symbol(&mut self, node: P<Node>) -> ast::ModuleInstanceState {
+    fn declare_module_symbol(&mut self, node: P<Node>) -> ast::ModuleInstanceState {
         let state = ast::get_module_instance_state(node);
         let instantiated = state != ast::ModuleInstanceState::NonInstantiated;
         self.declare_symbol_and_add_to_symbol_table(
@@ -1309,27 +1307,27 @@ impl Binder {
         state
     }
 
-    pub(crate) fn bind_namespace_export_declaration(&mut self, node: P<Node>) {
+    fn bind_namespace_export_declaration(&mut self, node: P<Node>) {
         if node.modifiers().is_some() {
-            self.error_on_node(node, &diagnostics::Modifiers_cannot_appear_here, &[]);
+            self.error_on_node(node, &diagnostics::MODIFIERS_CANNOT_APPEAR_HERE, &[]);
         }
         let parent = node.parent().unwrap();
         if !ast::is_source_file(parent) {
             self.error_on_node(
                 node,
-                &diagnostics::Global_module_exports_may_only_appear_at_top_level,
+                &diagnostics::GLOBAL_MODULE_EXPORTS_MAY_ONLY_APPEAR_AT_TOP_LEVEL,
                 &[],
             );
         } else if !ast::is_external_module(parent.as_source_file().as_p()) {
             self.error_on_node(
                 node,
-                &diagnostics::Global_module_exports_may_only_appear_in_module_files,
+                &diagnostics::GLOBAL_MODULE_EXPORTS_MAY_ONLY_APPEAR_IN_MODULE_FILES,
                 &[],
             );
         } else if !parent.as_source_file().is_declaration_file() {
             self.error_on_node(
                 node,
-                &diagnostics::Global_module_exports_may_only_appear_in_declaration_files,
+                &diagnostics::GLOBAL_MODULE_EXPORTS_MAY_ONLY_APPEAR_IN_DECLARATION_FILES,
                 &[],
             );
         } else {
@@ -1344,7 +1342,7 @@ impl Binder {
         }
     }
 
-    pub(crate) fn bind_import_clause(&mut self, node: P<Node>) {
+    fn bind_import_clause(&mut self, node: P<Node>) {
         if node.name().is_some() {
             self.declare_symbol_and_add_to_symbol_table(
                 node,
@@ -1354,7 +1352,7 @@ impl Binder {
         }
     }
 
-    pub(crate) fn bind_export_declaration(&mut self, node: P<Node>) {
+    fn bind_export_declaration(&mut self, node: P<Node>) {
         let decl = node.as_export_declaration();
         let container_symbol = self.container().symbol();
         match container_symbol {
@@ -1388,7 +1386,7 @@ impl Binder {
         }
     }
 
-    pub(crate) fn bind_export_assignment(&mut self, node: P<Node>) {
+    fn bind_export_assignment(&mut self, node: P<Node>) {
         let container = self.container();
         if container.symbol().is_none() && ast::is_export_assignment(node) {
             // Incorrect export assignment in some sort of block construct
@@ -1416,15 +1414,15 @@ impl Binder {
         }
     }
 
-    pub(crate) fn bind_jsx_attributes(&mut self, node: P<Node>) {
+    fn bind_jsx_attributes(&mut self, node: P<Node>) {
         self.bind_anonymous_declaration(
             node,
             SymbolFlags::ObjectLiteral,
-            ast::InternalSymbolNameJSXAttributes,
+            ast::INTERNAL_SYMBOL_NAME_JSX_ATTRIBUTES,
         );
     }
 
-    pub(crate) fn bind_jsx_attribute(
+    fn bind_jsx_attribute(
         &mut self,
         node: P<Node>,
         symbol_flags: SymbolFlags,
@@ -1433,7 +1431,7 @@ impl Binder {
         self.declare_symbol_and_add_to_symbol_table(node, symbol_flags, symbol_excludes);
     }
 
-    pub(crate) fn set_export_context_flag(node: P<Node>) {
+    fn set_export_context_flag(node: P<Node>) {
         // A declaration source file or ambient module declaration that contains no export declarations (but possibly regular
         // declarations with export modifiers) is an export context in which declarations are implicitly exported.
         if node.flags().intersects(NodeFlags::Ambient) && !Self::has_export_declarations(node) {
@@ -1443,17 +1441,17 @@ impl Binder {
         }
     }
 
-    pub(crate) fn has_export_declarations(node: P<Node>) -> bool {
+    fn has_export_declarations(node: P<Node>) -> bool {
         let mut statements: &[P<Node>] = &[];
         match node.kind() {
             Kind::SourceFile => {
                 statements = node.statements();
             }
             Kind::ModuleDeclaration => {
-                if let Some(body) = node.body() {
-                    if ast::is_module_block(body) {
-                        statements = body.statements();
-                    }
+                if let Some(body) = node.body()
+                    && ast::is_module_block(body)
+                {
+                    statements = body.statements();
                 }
             }
             _ => {}
@@ -1461,7 +1459,7 @@ impl Binder {
         statements.iter().any(|&s| ast::is_export_declaration(s) || ast::is_export_assignment(s))
     }
 
-    pub(crate) fn bind_function_expression(&mut self, node: P<Node>) {
+    fn bind_function_expression(&mut self, node: P<Node>) {
         if !self.file.is_declaration_file()
             && !node.flags().intersects(NodeFlags::Ambient)
             && ast::is_async_function(node)
@@ -1469,17 +1467,17 @@ impl Binder {
             self.emit_flags |= NodeFlags::HasAsyncFunctions;
         }
         set_flow_node(node, self.current_flow);
-        let mut binding_name = ast::InternalSymbolNameFunction;
-        if ast::is_function_expression(node) {
-            if let Some(name) = node.name() {
-                self.check_strict_mode_function_name(node);
-                binding_name = name.text();
-            }
+        let mut binding_name = ast::INTERNAL_SYMBOL_NAME_FUNCTION;
+        if ast::is_function_expression(node)
+            && let Some(name) = node.name()
+        {
+            self.check_strict_mode_function_name(node);
+            binding_name = name.text();
         }
         self.bind_anonymous_declaration(node, SymbolFlags::Function, binding_name);
     }
 
-    pub(crate) fn bind_call_expression(&mut self, node: P<Node>) {
+    fn bind_call_expression(&mut self, node: P<Node>) {
         // We're only inspecting call expressions to detect CommonJS modules, so we can skip
         // this check if we've already seen the module indicator
         if self.file.common_js_module_indicator.get().is_none()
@@ -1489,11 +1487,11 @@ impl Binder {
         }
     }
 
-    pub(crate) fn set_common_js_module_indicator(&mut self, node: P<Node>) -> bool {
-        if let Some(external_module_indicator) = self.file.external_module_indicator.get() {
-            if external_module_indicator != self.file.as_node() {
-                return false;
-            }
+    fn set_common_js_module_indicator(&mut self, node: P<Node>) -> bool {
+        if let Some(external_module_indicator) = self.file.external_module_indicator.get()
+            && external_module_indicator != self.file.as_node()
+        {
+            return false;
         }
         if self.file.common_js_module_indicator.get().is_none() {
             self.file.common_js_module_indicator.set(Some(node));
@@ -1504,7 +1502,7 @@ impl Binder {
         true
     }
 
-    pub(crate) fn bind_class_like_declaration(&mut self, node: P<Node>) {
+    fn bind_class_like_declaration(&mut self, node: P<Node>) {
         let name = node.name();
         match node.kind() {
             Kind::ClassDeclaration => {
@@ -1518,7 +1516,7 @@ impl Binder {
             Kind::ClassExpression => {
                 let name_text = match name {
                     Some(name) => name.text(),
-                    None => ast::InternalSymbolNameClass,
+                    None => ast::INTERNAL_SYMBOL_NAME_CLASS,
                 };
                 self.bind_anonymous_declaration(node, SymbolFlags::Class, name_text);
             }
@@ -1536,20 +1534,20 @@ impl Binder {
         // that would clash with the built-in 'prototype' for the class.
         let prototype_symbol =
             self.new_symbol(SymbolFlags::Property | SymbolFlags::Prototype, "prototype");
-        let symbol_export = (*ast::get_exports(symbol)).get(prototype_symbol.name.get());
+        let symbol_export = (*ast::get_exports(symbol)).get(prototype_symbol.name());
         if let Some(symbol_export) = symbol_export {
             let first_declaration = symbol_export.declarations()[0];
             self.error_on_node(
                 first_declaration,
-                &diagnostics::Duplicate_identifier_0,
+                &diagnostics::DUPLICATE_IDENTIFIER_0,
                 &[&ast::symbol_name(prototype_symbol)],
             );
         }
-        ast::get_exports(symbol).set(prototype_symbol.name.get(), prototype_symbol);
+        ast::get_exports(symbol).set(prototype_symbol.name(), prototype_symbol);
         prototype_symbol.set_parent(Some(symbol));
     }
 
-    pub(crate) fn bind_property_or_method_or_accessor(
+    fn bind_property_or_method_or_accessor(
         &mut self,
         node: P<Node>,
         symbol_flags: SymbolFlags,
@@ -1567,13 +1565,13 @@ impl Binder {
             set_flow_node(node, self.current_flow);
         }
         if ast::has_dynamic_name(node) {
-            self.bind_anonymous_declaration(node, symbol_flags, ast::InternalSymbolNameComputed);
+            self.bind_anonymous_declaration(node, symbol_flags, ast::INTERNAL_SYMBOL_NAME_COMPUTED);
         } else {
             self.declare_symbol_and_add_to_symbol_table(node, symbol_flags, symbol_excludes);
         }
     }
 
-    pub(crate) fn bind_function_or_constructor_type(&mut self, node: P<Node>) {
+    fn bind_function_or_constructor_type(&mut self, node: P<Node>) {
         // For a given function symbol "<...>(...) => T" we want to generate a symbol identical
         // to the one we would get for: { <...>(...): T }
         //
@@ -1584,32 +1582,33 @@ impl Binder {
         let symbol = self.new_symbol(SymbolFlags::Signature, name);
         self.add_declaration_to_symbol(symbol, node, SymbolFlags::Signature);
         let type_literal_symbol =
-            self.new_symbol(SymbolFlags::TypeLiteral, ast::InternalSymbolNameType);
+            self.new_symbol(SymbolFlags::TypeLiteral, ast::INTERNAL_SYMBOL_NAME_TYPE);
         self.add_declaration_to_symbol(type_literal_symbol, node, SymbolFlags::TypeLiteral);
         let members = SymbolTable::new();
-        members.set(symbol.name.get(), symbol);
+        members.set(symbol.name(), symbol);
         type_literal_symbol.set_members(Some(members));
     }
 
-    pub(crate) fn add_late_bound_assignment_declaration_to_symbol(
+    fn add_late_bound_assignment_declaration_to_symbol(
         &mut self,
         node: P<Node>,
         symbol: P<Symbol>,
     ) {
         let exports = ast::get_exports(symbol);
-        let assignment_symbol =
-            if let Some(s) = (*exports).get(ast::InternalSymbolNameAssignmentDeclaration) {
-                s
-            } else {
-                let s = self
-                    .new_symbol(SymbolFlags::None, ast::InternalSymbolNameAssignmentDeclaration);
-                exports.set(ast::InternalSymbolNameAssignmentDeclaration, s);
-                s
-            };
+        let assignment_symbol = if let Some(s) =
+            (*exports).get(ast::INTERNAL_SYMBOL_NAME_ASSIGNMENT_DECLARATION)
+        {
+            s
+        } else {
+            let s = self
+                .new_symbol(SymbolFlags::None, ast::INTERNAL_SYMBOL_NAME_ASSIGNMENT_DECLARATION);
+            exports.set(ast::INTERNAL_SYMBOL_NAME_ASSIGNMENT_DECLARATION, s);
+            s
+        };
         assignment_symbol.append_declarations(&[node]);
     }
 
-    pub(crate) fn bind_module_exports_assignment(&mut self, node: P<Node>) {
+    fn bind_module_exports_assignment(&mut self, node: P<Node>) {
         if self.set_common_js_module_indicator(node) {
             let container = self.file.as_node();
             let flags = if ast::expression_is_alias(node.as_binary_expression().right()) {
@@ -1628,7 +1627,7 @@ impl Binder {
         }
     }
 
-    pub(crate) fn bind_expando_property_assignment(&mut self, node: P<Node>) {
+    fn bind_expando_property_assignment(&mut self, node: P<Node>) {
         self.expando_assignments.push(ExpandoAssignmentInfo {
             node,
             container: self.container,
@@ -1636,7 +1635,7 @@ impl Binder {
         });
     }
 
-    pub(crate) fn bind_deferred_expando_assignments(&mut self) {
+    fn bind_deferred_expando_assignments(&mut self) {
         let assignments = std::mem::take(&mut self.expando_assignments);
         for info in &assignments {
             self.container = info.container;
@@ -1649,16 +1648,17 @@ impl Binder {
     // If the given module symbol has an export= symbol, promote exports with a type or namespace meaning
     // from the module symbol onto the export= symbol and, if any such exports exist, mark the export=
     // symbol as a namespace module.
-    pub(crate) fn bind_common_js_type_exports(module_symbol: P<Symbol>) {
+    fn bind_common_js_type_exports(module_symbol: P<Symbol>) {
         let Some(module_exports) = module_symbol.exports() else {
             return;
         };
-        if let Some(export_equals) = (*module_exports).get(ast::InternalSymbolNameExportEquals) {
+        if let Some(export_equals) = (*module_exports).get(ast::INTERNAL_SYMBOL_NAME_EXPORT_EQUALS)
+        {
             for symbol in module_exports.values() {
-                if symbol.name.get() != ast::InternalSymbolNameExportEquals
+                if symbol.name() != ast::INTERNAL_SYMBOL_NAME_EXPORT_EQUALS
                     && symbol.flags.get().intersects(SymbolFlags::Type | SymbolFlags::Namespace)
                 {
-                    ast::get_exports(export_equals).set(symbol.name.get(), symbol);
+                    ast::get_exports(export_equals).set(symbol.name(), symbol);
                     export_equals
                         .flags
                         .set(export_equals.flags.get() | SymbolFlags::NamespaceModule);
@@ -1667,7 +1667,7 @@ impl Binder {
         }
     }
 
-    pub(crate) fn bind_deferred_expando_assignment(&mut self, node: P<Node>) {
+    fn bind_deferred_expando_assignment(&mut self, node: P<Node>) {
         let parent = get_parent_of_property_assignment(node);
         let mut symbol = self.lookup_entity(parent, self.block_scope_container.unwrap());
         if symbol.is_none() {
@@ -1678,7 +1678,7 @@ impl Binder {
                 self.bind_anonymous_declaration(
                     node,
                     SymbolFlags::Property | SymbolFlags::Assignment,
-                    ast::InternalSymbolNameComputed,
+                    ast::INTERNAL_SYMBOL_NAME_COMPUTED,
                 );
                 self.add_late_bound_assignment_declaration_to_symbol(node, symbol);
             } else {
@@ -1701,7 +1701,7 @@ impl Binder {
     }
 }
 
-pub(crate) fn get_parent_of_property_assignment(node: P<Node>) -> P<Node> {
+fn get_parent_of_property_assignment(node: P<Node>) -> P<Node> {
     match node.kind() {
         Kind::BinaryExpression => node.as_binary_expression().left().expression().unwrap(),
         Kind::CallExpression => node.arguments()[0],
@@ -1710,7 +1710,7 @@ pub(crate) fn get_parent_of_property_assignment(node: P<Node>) -> P<Node> {
 }
 
 impl Binder {
-    pub(crate) fn bind_exports_or_object_define_property(&mut self, node: P<Node>) {
+    fn bind_exports_or_object_define_property(&mut self, node: P<Node>) {
         if self.set_common_js_module_indicator(node) {
             let container = self.file.as_node();
             let flags = if ast::is_binary_expression(node)
@@ -1731,7 +1731,7 @@ impl Binder {
     }
 }
 
-pub(crate) fn get_initializer_symbol(symbol: Option<P<Symbol>>) -> Option<P<Symbol>> {
+fn get_initializer_symbol(symbol: Option<P<Symbol>>) -> Option<P<Symbol>> {
     let symbol = symbol?;
     let declaration = symbol.value_declaration()?;
     // For an assignment 'fn.xxx = ...', where 'fn' is a previously declared function or a previously
@@ -1760,7 +1760,7 @@ pub(crate) fn get_initializer_symbol(symbol: Option<P<Symbol>>) -> Option<P<Symb
 }
 
 impl Binder {
-    pub(crate) fn bind_this_property_assignment(&mut self, node: P<Node>) {
+    fn bind_this_property_assignment(&mut self, node: P<Node>) {
         if !ast::is_in_js_file(Some(node)) {
             return;
         }
@@ -1807,18 +1807,13 @@ impl Binder {
         }
     }
 
-    pub(crate) fn get_this_class_and_symbol_table(
-        &self,
-    ) -> (Option<P<Symbol>>, Option<P<SymbolTable>>) {
+    fn get_this_class_and_symbol_table(&self) -> (Option<P<Symbol>>, Option<P<SymbolTable>>) {
         let Some(this_container) = self.this_container else {
             return (None, None);
         };
         let mut class_symbol = None;
         let mut symbol_table = None;
         match this_container.kind() {
-            Kind::FunctionDeclaration | Kind::FunctionExpression => {
-                // !!! constructor functions
-            }
             Kind::Constructor
             | Kind::PropertyDeclaration
             | Kind::MethodDeclaration
@@ -1833,12 +1828,13 @@ impl Binder {
                     symbol_table = Some(ast::get_members(class_symbol.unwrap()));
                 }
             }
+            // !!! constructor functions (FunctionDeclaration and FunctionExpression)
             _ => {}
         }
         (class_symbol, symbol_table)
     }
 
-    pub(crate) fn bind_enum_declaration(&mut self, node: P<Node>) {
+    fn bind_enum_declaration(&mut self, node: P<Node>) {
         if ast::is_enum_const(node) {
             self.bind_block_scoped_declaration(
                 node,
@@ -1854,49 +1850,49 @@ impl Binder {
         }
     }
 
-    pub(crate) fn bind_variable_declaration_or_binding_element(&mut self, node: P<Node>) {
+    fn bind_variable_declaration_or_binding_element(&mut self, node: P<Node>) {
         self.check_strict_mode_eval_or_arguments(node, node.name());
-        if let Some(name) = node.name() {
-            if !ast::is_binding_pattern(name) {
-                if ast::is_variable_declaration_initialized_to_require(node) {
-                    self.declare_symbol_and_add_to_symbol_table(
-                        node,
-                        SymbolFlags::Alias,
-                        SymbolFlags::AliasExcludes,
-                    );
-                } else if ast::is_block_or_catch_scoped(node) {
-                    self.bind_block_scoped_declaration(
-                        node,
-                        SymbolFlags::BlockScopedVariable,
-                        SymbolFlags::BlockScopedVariableExcludes,
-                    );
-                } else if ast::is_part_of_parameter_declaration(node) {
-                    // It is safe to walk up parent chain to find whether the node is a destructuring parameter declaration
-                    // because its parent chain has already been set up, since parents are set before descending into children.
-                    //
-                    // If node is a binding element in parameter declaration, we need to use ParameterExcludes.
-                    // Using ParameterExcludes flag allows the compiler to report an error on duplicate identifiers in Parameter Declaration
-                    // For example:
-                    //      function foo([a,a]) {} // Duplicate Identifier error
-                    //      function bar(a,a) {}   // Duplicate Identifier error, parameter declaration in this case is handled in bindParameter
-                    //                             // which correctly set excluded symbols
-                    self.declare_symbol_and_add_to_symbol_table(
-                        node,
-                        SymbolFlags::FunctionScopedVariable,
-                        SymbolFlags::ParameterExcludes,
-                    );
-                } else {
-                    self.declare_symbol_and_add_to_symbol_table(
-                        node,
-                        SymbolFlags::FunctionScopedVariable,
-                        SymbolFlags::FunctionScopedVariableExcludes,
-                    );
-                }
+        if let Some(name) = node.name()
+            && !ast::is_binding_pattern(name)
+        {
+            if ast::is_variable_declaration_initialized_to_require(node) {
+                self.declare_symbol_and_add_to_symbol_table(
+                    node,
+                    SymbolFlags::Alias,
+                    SymbolFlags::AliasExcludes,
+                );
+            } else if ast::is_block_or_catch_scoped(node) {
+                self.bind_block_scoped_declaration(
+                    node,
+                    SymbolFlags::BlockScopedVariable,
+                    SymbolFlags::BlockScopedVariableExcludes,
+                );
+            } else if ast::is_part_of_parameter_declaration(node) {
+                // It is safe to walk up parent chain to find whether the node is a destructuring parameter declaration
+                // because its parent chain has already been set up, since parents are set before descending into children.
+                //
+                // If node is a binding element in parameter declaration, we need to use ParameterExcludes.
+                // Using ParameterExcludes flag allows the compiler to report an error on duplicate identifiers in Parameter Declaration
+                // For example:
+                //      function foo([a,a]) {} // Duplicate Identifier error
+                //      function bar(a,a) {}   // Duplicate Identifier error, parameter declaration in this case is handled in bindParameter
+                //                             // which correctly set excluded symbols
+                self.declare_symbol_and_add_to_symbol_table(
+                    node,
+                    SymbolFlags::FunctionScopedVariable,
+                    SymbolFlags::ParameterExcludes,
+                );
+            } else {
+                self.declare_symbol_and_add_to_symbol_table(
+                    node,
+                    SymbolFlags::FunctionScopedVariable,
+                    SymbolFlags::FunctionScopedVariableExcludes,
+                );
             }
         }
     }
 
-    pub(crate) fn bind_parameter(&mut self, node: P<Node>) {
+    fn bind_parameter(&mut self, node: P<Node>) {
         let decl = node.as_parameter_declaration();
         if !node.flags().intersects(NodeFlags::Ambient) {
             // It is a SyntaxError if the identifier eval or arguments appears within a FormalParameterList of a
@@ -1943,7 +1939,7 @@ impl Binder {
         }
     }
 
-    pub(crate) fn bind_function_declaration(&mut self, node: P<Node>) {
+    fn bind_function_declaration(&mut self, node: P<Node>) {
         if !self.file.is_declaration_file()
             && !node.flags().intersects(NodeFlags::Ambient)
             && ast::is_async_function(node)
@@ -1958,7 +1954,7 @@ impl Binder {
         );
     }
 
-    pub(crate) fn get_infer_type_container(node: P<Node>) -> Option<P<Node>> {
+    fn get_infer_type_container(node: P<Node>) -> Option<P<Node>> {
         let extends_type = ast::find_ancestor(Some(node), |n| {
             let parent = n.parent();
             match parent {
@@ -1972,7 +1968,7 @@ impl Binder {
         extends_type.map(|e| e.parent().unwrap())
     }
 
-    pub(crate) fn bind_anonymous_declaration(
+    fn bind_anonymous_declaration(
         &mut self,
         node: P<Node>,
         symbol_flags: SymbolFlags,
@@ -1985,7 +1981,7 @@ impl Binder {
         self.add_declaration_to_symbol(symbol, node, symbol_flags);
     }
 
-    pub(crate) fn bind_block_scoped_declaration(
+    fn bind_block_scoped_declaration(
         &mut self,
         node: P<Node>,
         symbol_flags: SymbolFlags,
@@ -2015,7 +2011,7 @@ impl Binder {
         }
     }
 
-    pub(crate) fn bind_type_parameter(&mut self, node: P<Node>) {
+    fn bind_type_parameter(&mut self, node: P<Node>) {
         if node.parent().unwrap().kind() == Kind::InferType {
             let container = Self::get_infer_type_container(node.parent().unwrap());
             if let Some(container) = container {
@@ -2039,43 +2035,40 @@ impl Binder {
         }
     }
 
-    pub(crate) fn lookup_entity(&self, node: P<Node>, container: P<Node>) -> Option<P<Symbol>> {
+    fn lookup_entity(&self, node: P<Node>, container: P<Node>) -> Option<P<Symbol>> {
         if ast::is_identifier(node) {
             return Self::lookup_name(node.text(), container);
         }
         if node.expression().unwrap().kind() == Kind::ThisKeyword {
             let (_, symbol_table) = self.get_this_class_and_symbol_table();
-            if let Some(symbol_table) = symbol_table {
-                if let Some(name) = ast::get_element_or_property_access_name(node) {
-                    return (*symbol_table).get(name.text());
-                }
+            if let Some(symbol_table) = symbol_table
+                && let Some(name) = ast::get_element_or_property_access_name(node)
+            {
+                return (*symbol_table).get(name.text());
             }
             return None;
         }
         if let Some(symbol) =
             get_initializer_symbol(self.lookup_entity(node.expression().unwrap(), container))
+            && let Some(exports) = symbol.exports()
+            && let Some(name) = ast::get_element_or_property_access_name(node)
         {
-            if let Some(exports) = symbol.exports() {
-                if let Some(name) = ast::get_element_or_property_access_name(node) {
-                    return (*exports).get(name.text());
-                }
-            }
+            return (*exports).get(name.text());
         }
         None
     }
 
-    pub(crate) fn lookup_name(name: &str, container: P<Node>) -> Option<P<Symbol>> {
-        if let Some(locals_container) = container.locals_container_data() {
-            if let Some(locals) = locals_container.locals.get() {
-                if let Some(local) = (*locals).get(name) {
-                    return Some(local.export_symbol().unwrap_or(local));
-                }
-            }
+    fn lookup_name(name: &str, container: P<Node>) -> Option<P<Symbol>> {
+        if let Some(locals_container) = container.locals_container_data()
+            && let Some(locals) = locals_container.locals.get()
+            && let Some(local) = (*locals).get(name)
+        {
+            return Some(local.export_symbol().unwrap_or(local));
         }
-        if let Some(declaration) = container.declaration_data() {
-            if let Some(symbol) = declaration.symbol.get() {
-                return (*symbol.exports()?).get(name);
-            }
+        if let Some(declaration) = container.declaration_data()
+            && let Some(symbol) = declaration.symbol.get()
+        {
+            return (*symbol.exports()?).get(name);
         }
         None
     }
@@ -2083,7 +2076,7 @@ impl Binder {
     // The binder visits every node in the syntax tree so it is a convenient place to perform a single localized
     // check for reserved words used as identifiers in strict mode code, as well as `yield` or `await` in
     // [Yield] or [Await] contexts, respectively.
-    pub(crate) fn check_contextual_identifier(&mut self, node: P<Node>) {
+    fn check_contextual_identifier(&mut self, node: P<Node>) {
         // Report error only if there are no parse errors in file
         if self.file.diagnostics().is_empty()
             && !node.flags().intersects(NodeFlags::Ambient)
@@ -2102,8 +2095,8 @@ impl Binder {
     #[cold]
     #[inline(never)]
     fn check_contextual_keyword(&mut self, node: P<Node>, original_keyword_kind: Kind) {
-        if original_keyword_kind >= Kind::FirstFutureReservedWord
-            && original_keyword_kind <= Kind::LastFutureReservedWord
+        if original_keyword_kind >= Kind::FIRST_FUTURE_RESERVED_WORD
+            && original_keyword_kind <= Kind::LAST_FUTURE_RESERVED_WORD
         {
             let message = self.get_strict_mode_identifier_message(node);
             self.error_on_node(node, message, &[&scanner::declaration_name_to_string(Some(node))]);
@@ -2111,13 +2104,13 @@ impl Binder {
             if ast::is_external_module(self.file) && ast::is_in_top_level_context(node) {
                 self.error_on_node(
                     node,
-                    &diagnostics::Identifier_expected_0_is_a_reserved_word_at_the_top_level_of_a_module,
+                    &diagnostics::IDENTIFIER_EXPECTED_0_IS_A_RESERVED_WORD_AT_THE_TOP_LEVEL_OF_A_MODULE,
                     &[&scanner::declaration_name_to_string(Some(node))],
                 );
             } else if node.flags().intersects(NodeFlags::AwaitContext) {
                 self.error_on_node(
                     node,
-                    &diagnostics::Identifier_expected_0_is_a_reserved_word_that_cannot_be_used_here,
+                    &diagnostics::IDENTIFIER_EXPECTED_0_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE,
                     &[&scanner::declaration_name_to_string(Some(node))],
                 );
             }
@@ -2126,40 +2119,40 @@ impl Binder {
         {
             self.error_on_node(
                 node,
-                &diagnostics::Identifier_expected_0_is_a_reserved_word_that_cannot_be_used_here,
+                &diagnostics::IDENTIFIER_EXPECTED_0_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE,
                 &[&scanner::declaration_name_to_string(Some(node))],
             );
         }
     }
 
-    pub(crate) fn check_private_identifier(&mut self, node: P<Node>) {
+    fn check_private_identifier(&mut self, node: P<Node>) {
         if node.text() == "#constructor" {
             // Report error only if there are no parse errors in file
             if self.file.diagnostics().is_empty() {
                 self.error_on_node(
                     node,
-                    &diagnostics::X_constructor_is_a_reserved_word,
+                    &diagnostics::X_CONSTRUCTOR_IS_A_RESERVED_WORD,
                     &[&scanner::declaration_name_to_string(Some(node))],
                 );
             }
         }
     }
 
-    pub(crate) fn get_strict_mode_identifier_message(&self, node: P<Node>) -> &'static Message {
+    fn get_strict_mode_identifier_message(&self, node: P<Node>) -> &'static Message {
         // Provide specialized messages to help the user understand why we think they're in
         // strict mode.
         if ast::get_containing_class(node).is_some() {
-            return &diagnostics::Identifier_expected_0_is_a_reserved_word_in_strict_mode_Class_definitions_are_automatically_in_strict_mode;
+            return &diagnostics::IDENTIFIER_EXPECTED_0_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTOMATICALLY_IN_STRICT_MODE;
         }
         if self.file.external_module_indicator.get().is_some() {
-            return &diagnostics::Identifier_expected_0_is_a_reserved_word_in_strict_mode_Modules_are_automatically_in_strict_mode;
+            return &diagnostics::IDENTIFIER_EXPECTED_0_IS_A_RESERVED_WORD_IN_STRICT_MODE_MODULES_ARE_AUTOMATICALLY_IN_STRICT_MODE;
         }
-        &diagnostics::Identifier_expected_0_is_a_reserved_word_in_strict_mode
+        &diagnostics::IDENTIFIER_EXPECTED_0_IS_A_RESERVED_WORD_IN_STRICT_MODE
     }
 }
 
 // Should be called only on prologue directives (ast.IsPrologueDirective(node) should be true)
-pub(crate) fn is_use_strict_prologue_directive(source_file: P<SourceFile>, node: P<Node>) -> bool {
+fn is_use_strict_prologue_directive(source_file: P<SourceFile>, node: P<Node>) -> bool {
     let node_text = scanner::get_source_text_of_node_from_source_file(
         source_file,
         node.expression().unwrap(),
@@ -2191,14 +2184,14 @@ pub fn find_use_strict_prologue(
 }
 
 impl Binder {
-    pub(crate) fn check_strict_mode_function_name(&mut self, node: P<Node>) {
+    fn check_strict_mode_function_name(&mut self, node: P<Node>) {
         if !node.flags().intersects(NodeFlags::Ambient) {
             // It is a SyntaxError if the identifier eval or arguments appears within a FormalParameterList of a strict mode FunctionDeclaration or FunctionExpression (13.1))
             self.check_strict_mode_eval_or_arguments(node, node.name());
         }
     }
 
-    pub(crate) fn check_strict_mode_binary_expression(&mut self, node: P<Node>) {
+    fn check_strict_mode_binary_expression(&mut self, node: P<Node>) {
         let expr = node.as_binary_expression();
         if ast::is_left_hand_side_expression(expr.left())
             && ast::is_assignment_operator(expr.operator_token().kind())
@@ -2209,7 +2202,7 @@ impl Binder {
         }
     }
 
-    pub(crate) fn check_strict_mode_catch_clause(&mut self, node: P<Node>) {
+    fn check_strict_mode_catch_clause(&mut self, node: P<Node>) {
         // It is a SyntaxError if a TryStatement with a Catch occurs within strict code and the Identifier of the
         // Catch production is eval or arguments
         let clause = node.as_catch_clause();
@@ -2218,7 +2211,7 @@ impl Binder {
         }
     }
 
-    pub(crate) fn check_strict_mode_delete_expression(&mut self, node: P<Node>) {
+    fn check_strict_mode_delete_expression(&mut self, node: P<Node>) {
         // Grammar checking
         let expr = node.as_delete_expression();
         if expr.expression().kind() == Kind::Identifier {
@@ -2226,13 +2219,13 @@ impl Binder {
             // UnaryExpression is a direct reference to a variable, function argument, or function name
             self.error_on_node(
                 expr.expression(),
-                &diagnostics::X_delete_cannot_be_called_on_an_identifier_in_strict_mode,
+                &diagnostics::X_DELETE_CANNOT_BE_CALLED_ON_AN_IDENTIFIER_IN_STRICT_MODE,
                 &[],
             );
         }
     }
 
-    pub(crate) fn check_strict_mode_postfix_unary_expression(&mut self, node: P<Node>) {
+    fn check_strict_mode_postfix_unary_expression(&mut self, node: P<Node>) {
         // Grammar checking
         // The identifier eval or arguments may not appear as the LeftHandSideExpression of an
         // Assignment operator(11.13) or of a PostfixExpression(11.3) or as the UnaryExpression
@@ -2243,7 +2236,7 @@ impl Binder {
         );
     }
 
-    pub(crate) fn check_strict_mode_prefix_unary_expression(&mut self, node: P<Node>) {
+    fn check_strict_mode_prefix_unary_expression(&mut self, node: P<Node>) {
         // Grammar checking
         let expr = node.as_prefix_unary_expression();
         if expr.operator() == Kind::PlusPlusToken || expr.operator() == Kind::MinusMinusToken {
@@ -2251,27 +2244,27 @@ impl Binder {
         }
     }
 
-    pub(crate) fn check_strict_mode_with_statement(&mut self, node: P<Node>) {
+    fn check_strict_mode_with_statement(&mut self, node: P<Node>) {
         // Grammar checking for withStatement
         self.error_on_first_token(
             node,
-            &diagnostics::X_with_statements_are_not_allowed_in_strict_mode,
+            &diagnostics::X_WITH_STATEMENTS_ARE_NOT_ALLOWED_IN_STRICT_MODE,
             &[],
         );
     }
 
-    pub(crate) fn check_strict_mode_labeled_statement(&mut self, node: P<Node>) {
+    fn check_strict_mode_labeled_statement(&mut self, node: P<Node>) {
         // Grammar checking for labeledStatement
         let data = node.as_labeled_statement();
         if ast::is_declaration_statement(data.statement())
             || ast::is_variable_statement(data.statement())
         {
-            self.error_on_first_token(data.label(), &diagnostics::A_label_is_not_allowed_here, &[]);
+            self.error_on_first_token(data.label(), &diagnostics::A_LABEL_IS_NOT_ALLOWED_HERE, &[]);
         }
     }
 }
 
-pub(crate) fn is_eval_or_arguments_identifier(node: P<Node>) -> bool {
+fn is_eval_or_arguments_identifier(node: P<Node>) -> bool {
     if ast::is_identifier(node) {
         let text = node.text();
         return text == "eval" || text == "arguments";
@@ -2280,39 +2273,36 @@ pub(crate) fn is_eval_or_arguments_identifier(node: P<Node>) -> bool {
 }
 
 impl Binder {
-    pub(crate) fn check_strict_mode_eval_or_arguments(
+    fn check_strict_mode_eval_or_arguments(
         &mut self,
         context_node: P<Node>,
         name: Option<P<Node>>,
     ) {
-        if let Some(name) = name {
-            if is_eval_or_arguments_identifier(name) {
-                // We check first if the name is inside class declaration or class expression; if so give explicit message
-                // otherwise report generic error message.
-                let message = self.get_strict_mode_eval_or_arguments_message(context_node);
-                self.error_on_node(name, message, &[&name.text()]);
-            }
+        if let Some(name) = name
+            && is_eval_or_arguments_identifier(name)
+        {
+            // We check first if the name is inside class declaration or class expression; if so give explicit message
+            // otherwise report generic error message.
+            let message = self.get_strict_mode_eval_or_arguments_message(context_node);
+            self.error_on_node(name, message, &[&name.text()]);
         }
     }
 
-    pub(crate) fn get_strict_mode_eval_or_arguments_message(
-        &self,
-        node: P<Node>,
-    ) -> &'static Message {
+    fn get_strict_mode_eval_or_arguments_message(&self, node: P<Node>) -> &'static Message {
         // Provide specialized messages to help the user understand why we think they're in strict mode
         if ast::get_containing_class(node).is_some() {
-            return &diagnostics::Code_contained_in_a_class_is_evaluated_in_JavaScript_s_strict_mode_which_does_not_allow_this_use_of_0_For_more_information_see_https_Colon_Slash_Slashdeveloper_mozilla_org_Slashen_US_Slashdocs_SlashWeb_SlashJavaScript_SlashReference_SlashStrict_mode;
+            return &diagnostics::CODE_CONTAINED_IN_A_CLASS_IS_EVALUATED_IN_JAVA_SCRIPT_S_STRICT_MODE_WHICH_DOES_NOT_ALLOW_THIS_USE_OF_0_FOR_MORE_INFORMATION_SEE_HTTPS_COLON_SLASH_SLASHDEVELOPER_MOZILLA_ORG_SLASHEN_US_SLASHDOCS_SLASH_WEB_SLASH_JAVA_SCRIPT_SLASH_REFERENCE_SLASH_STRICT_MODE;
         }
         if self.file.external_module_indicator.get().is_some() {
-            return &diagnostics::Invalid_use_of_0_Modules_are_automatically_in_strict_mode;
+            return &diagnostics::INVALID_USE_OF_0_MODULES_ARE_AUTOMATICALLY_IN_STRICT_MODE;
         }
-        &diagnostics::Invalid_use_of_0_in_strict_mode
+        &diagnostics::INVALID_USE_OF_0_IN_STRICT_MODE
     }
 
     // All container nodes are kept on a linked list in declaration order. This list is used by
     // the getLocalNameOfContainer function in the type checker to validate that the local name
     // used for a container is unique.
-    pub(crate) fn bind_container(&mut self, node: P<Node>, container_flags: ContainerFlags) {
+    fn bind_container(&mut self, node: P<Node>, container_flags: ContainerFlags) {
         // Before we recurse into a node's children, we first save the existing parent, container
         // and block-container.  Then after we pop out of processing the children, we restore
         // these saved values.
@@ -2397,16 +2387,14 @@ impl Binder {
             );
             if !self.current_flow().flags.get().intersects(FlowFlags::Unreachable)
                 && container_flags.intersects(ContainerFlags::IsFunctionLike)
+                && let Some(body_data) = node.body_data()
+                && ast::node_is_present(body_data.body)
             {
-                if let Some(body_data) = node.body_data() {
-                    if ast::node_is_present(body_data.body) {
-                        node.set_flags(node.flags() | NodeFlags::HasImplicitReturn);
-                        if self.has_explicit_return {
-                            node.set_flags(node.flags() | NodeFlags::HasExplicitReturn);
-                        }
-                        body_data.end_flow_node.set(self.current_flow);
-                    }
+                node.set_flags(node.flags() | NodeFlags::HasImplicitReturn);
+                if self.has_explicit_return {
+                    node.set_flags(node.flags() | NodeFlags::HasExplicitReturn);
                 }
+                body_data.end_flow_node.set(self.current_flow);
             }
             if self.seen_this_keyword {
                 node.set_flags(node.flags() | NodeFlags::ContainsThis);
@@ -2479,7 +2467,7 @@ impl Binder {
         self.block_scope_container = saved_block_scope_container;
     }
 
-    pub(crate) fn declare_common_js_variable(&mut self, name: &'static str) {
+    fn declare_common_js_variable(&mut self, name: &'static str) {
         let locals = ast::get_locals(self.file.as_node());
         if (*locals).get(name).is_none() {
             let symbol = self
@@ -2500,7 +2488,7 @@ impl Binder {
         }
     }
 
-    pub(crate) fn bind_children(&mut self, node: P<Node>) {
+    fn bind_children(&mut self, node: P<Node>) {
         let save_in_assignment_pattern = self.in_assignment_pattern;
         // Most nodes aren't valid in an assignment pattern, so we clear the value here
         // and set it before we descend into nodes that could actually be part of an assignment pattern.
@@ -2519,10 +2507,11 @@ impl Binder {
             return;
         }
 
-        if Kind::FirstStatement <= node.kind() && node.kind() <= Kind::LastStatement {
-            if node.has_flow_node_data() {
-                node.set_flow_node(self.current_flow);
-            }
+        if Kind::FIRST_STATEMENT <= node.kind()
+            && node.kind() <= Kind::LAST_STATEMENT
+            && node.has_flow_node_data()
+        {
+            node.set_flow_node(self.current_flow);
         }
 
         match node.kind() {
@@ -2662,12 +2651,7 @@ impl Binder {
     /// `last_container`, so two threads forcing two of them would write that node's `next_container` at once (a data
     /// race that `ThreadSanitizer` reported in `fileregions::force_shared_lists`). Only declaration files have lazy lists, and
     /// the chain is read only for emitted files (`tsrs_printer` name generator), so nothing reads these links.
-    pub(crate) fn bind_lazy_members(
-        &mut self,
-        ctx: LazyBindContext,
-        nodes: &'static [P<Node>],
-        splice: bool,
-    ) {
+    fn bind_lazy_members(&mut self, ctx: LazyBindContext, nodes: &'static [P<Node>], splice: bool) {
         let saved = (
             self.container,
             self.this_container,
@@ -2706,10 +2690,11 @@ impl Binder {
         };
         self.bind_each(nodes);
         let last = self.last_container;
-        if splice && last != ctx.last_container {
-            if let Some(last) = last {
-                last.locals_container_data().unwrap().next_container.set(next);
-            }
+        if splice
+            && last != ctx.last_container
+            && let Some(last) = last
+        {
+            last.locals_container_data().unwrap().next_container.set(next);
         }
         (
             self.container,
@@ -2734,29 +2719,29 @@ impl Binder {
         }
     }
 
-    pub(crate) fn bind_each_child(&mut self, node: P<Node>) {
+    fn bind_each_child(&mut self, node: P<Node>) {
         node.for_each_child(&mut |child| self.bind(child));
     }
 
-    pub(crate) fn bind_each(&mut self, nodes: &[P<Node>]) {
+    fn bind_each(&mut self, nodes: &[P<Node>]) {
         for &node in nodes {
             self.bind(node);
         }
     }
 
-    pub(crate) fn bind_node_list(&mut self, node_list: Option<P<NodeList>>) {
+    fn bind_node_list(&mut self, node_list: Option<P<NodeList>>) {
         if let Some(node_list) = node_list {
             self.bind_each(node_list.nodes());
         }
     }
 
-    pub(crate) fn bind_modifiers(&mut self, modifiers: Option<P<ast::ModifierList>>) {
+    fn bind_modifiers(&mut self, modifiers: Option<P<ast::ModifierList>>) {
         if let Some(modifiers) = modifiers {
             self.bind_each(modifiers.nodes());
         }
     }
 
-    pub(crate) fn bind_each_statement_functions_first(&mut self, statements: P<NodeList>) {
+    fn bind_each_statement_functions_first(&mut self, statements: P<NodeList>) {
         for &node in statements.nodes() {
             if node.kind() == Kind::FunctionDeclaration {
                 self.bind(node);
@@ -2769,11 +2754,7 @@ impl Binder {
         }
     }
 
-    pub(crate) fn set_continue_target(
-        &mut self,
-        node: P<Node>,
-        target: P<FlowNode>,
-    ) -> P<FlowNode> {
+    fn set_continue_target(&mut self, node: P<Node>, target: P<FlowNode>) -> P<FlowNode> {
         let mut node = node;
         let mut index = self.active_label_list.len();
         while index > 0 && node.parent().unwrap().kind() == Kind::LabeledStatement {
@@ -2784,7 +2765,7 @@ impl Binder {
         target
     }
 
-    pub(crate) fn do_with_conditional_branches(
+    fn do_with_conditional_branches(
         &mut self,
         action: fn(&mut Binder, Option<P<Node>>) -> bool,
         value: Option<P<Node>>,
@@ -2800,7 +2781,7 @@ impl Binder {
         self.current_false_target = saved_false_target;
     }
 
-    pub(crate) fn bind_condition(
+    fn bind_condition(
         &mut self,
         node: Option<P<Node>>,
         true_target: Option<P<FlowNode>>,
@@ -2825,7 +2806,7 @@ impl Binder {
         }
     }
 
-    pub(crate) fn bind_iterative_statement(
+    fn bind_iterative_statement(
         &mut self,
         node: P<Node>,
         break_target: Option<P<FlowNode>>,
@@ -2841,12 +2822,12 @@ impl Binder {
     }
 }
 
-pub(crate) fn is_logical_assignment_expression(node: P<Node>) -> bool {
+fn is_logical_assignment_expression(node: P<Node>) -> bool {
     ast::is_logical_or_coalescing_assignment_expression(ast::skip_parentheses(node))
 }
 
 impl Binder {
-    pub(crate) fn bind_assignment_target_flow(&mut self, node: P<Node>) {
+    fn bind_assignment_target_flow(&mut self, node: P<Node>) {
         match node.kind() {
             Kind::ArrayLiteralExpression => {
                 for &e in node.elements() {
@@ -2885,7 +2866,7 @@ impl Binder {
         }
     }
 
-    pub(crate) fn bind_destructuring_target_flow(&mut self, node: P<Node>) {
+    fn bind_destructuring_target_flow(&mut self, node: P<Node>) {
         if ast::is_binary_expression(node)
             && node.as_binary_expression().operator_token().kind() == Kind::EqualsToken
         {
@@ -2895,7 +2876,7 @@ impl Binder {
         }
     }
 
-    pub(crate) fn bind_while_statement(&mut self, node: P<Node>) {
+    fn bind_while_statement(&mut self, node: P<Node>) {
         let stmt = node.as_while_statement();
         let loop_label = self.create_loop_label();
         let pre_while_label = self.set_continue_target(node, loop_label);
@@ -2914,7 +2895,7 @@ impl Binder {
         self.current_flow = Some(self.finish_local_flow_label(post_while_label));
     }
 
-    pub(crate) fn bind_do_statement(&mut self, node: P<Node>) {
+    fn bind_do_statement(&mut self, node: P<Node>) {
         let stmt = node.as_do_statement();
         let pre_do_label = self.create_loop_label();
         let branch_label = self.create_branch_label();
@@ -2933,7 +2914,7 @@ impl Binder {
         self.current_flow = Some(self.finish_local_flow_label(post_do_label));
     }
 
-    pub(crate) fn bind_for_statement(&mut self, node: P<Node>) {
+    fn bind_for_statement(&mut self, node: P<Node>) {
         let stmt = node.as_for_statement();
         self.bind(stmt.initializer());
         if self.current_flow == Some(self.unreachable_flow) {
@@ -2968,7 +2949,7 @@ impl Binder {
         self.current_flow = Some(self.finish_local_flow_label(post_loop_label));
     }
 
-    pub(crate) fn bind_for_in_or_for_of_statement(&mut self, node: P<Node>) {
+    fn bind_for_in_or_for_of_statement(&mut self, node: P<Node>) {
         let stmt = node.as_for_in_or_of_statement();
         self.bind(stmt.expression());
         if self.current_flow == Some(self.unreachable_flow) {
@@ -3003,7 +2984,7 @@ impl Binder {
         self.current_flow = Some(self.finish_local_flow_label(post_loop_label));
     }
 
-    pub(crate) fn bind_if_statement(&mut self, node: P<Node>) {
+    fn bind_if_statement(&mut self, node: P<Node>) {
         let stmt = node.as_if_statement();
         let then_label = self.create_branch_label();
         let else_label = self.create_branch_label();
@@ -3018,7 +2999,7 @@ impl Binder {
         self.current_flow = Some(self.finish_local_flow_label(post_if_label));
     }
 
-    pub(crate) fn bind_return_statement(&mut self, node: P<Node>) {
+    fn bind_return_statement(&mut self, node: P<Node>) {
         self.bind(node.expression());
         if self.current_return_target.is_some() {
             Self::add_antecedent(self.current_return_target, self.current_flow());
@@ -3028,13 +3009,13 @@ impl Binder {
         self.has_flow_effects = true;
     }
 
-    pub(crate) fn bind_throw_statement(&mut self, node: P<Node>) {
+    fn bind_throw_statement(&mut self, node: P<Node>) {
         self.bind(node.expression());
         self.current_flow = Some(self.unreachable_flow);
         self.has_flow_effects = true;
     }
 
-    pub(crate) fn bind_break_statement(&mut self, node: P<Node>) {
+    fn bind_break_statement(&mut self, node: P<Node>) {
         self.bind_break_or_continue_statement(
             node.label(),
             self.current_break_target,
@@ -3042,7 +3023,7 @@ impl Binder {
         );
     }
 
-    pub(crate) fn bind_continue_statement(&mut self, node: P<Node>) {
+    fn bind_continue_statement(&mut self, node: P<Node>) {
         self.bind_break_or_continue_statement(
             node.label(),
             self.current_continue_target,
@@ -3050,7 +3031,7 @@ impl Binder {
         );
     }
 
-    pub(crate) fn bind_break_or_continue_statement(
+    fn bind_break_or_continue_statement(
         &mut self,
         label: Option<P<Node>>,
         current_target: Option<P<FlowNode>>,
@@ -3069,11 +3050,11 @@ impl Binder {
     }
 
     // Returns the index of the active label in `active_label_list`.
-    pub(crate) fn find_active_label(&self, name: &str) -> Option<usize> {
+    fn find_active_label(&self, name: &str) -> Option<usize> {
         self.active_label_list.iter().rposition(|label| label.name == name)
     }
 
-    pub(crate) fn bind_break_or_continue_flow(&mut self, flow_label: Option<P<FlowNode>>) {
+    fn bind_break_or_continue_flow(&mut self, flow_label: Option<P<FlowNode>>) {
         if flow_label.is_some() {
             Self::add_antecedent(flow_label, self.current_flow());
             self.current_flow = Some(self.unreachable_flow);
@@ -3081,7 +3062,7 @@ impl Binder {
         }
     }
 
-    pub(crate) fn bind_try_statement(&mut self, node: P<Node>) {
+    fn bind_try_statement(&mut self, node: P<Node>) {
         // We conservatively assume that *any* code in the try block can cause an exception, but we only need
         // to track code that causes mutations (because only mutations widen the possible control flow type of
         // a variable). The exceptionLabel is the target label for control flows that result from exceptions.
@@ -3181,7 +3162,7 @@ impl Binder {
         }
     }
 
-    pub(crate) fn bind_switch_statement(&mut self, node: P<Node>) {
+    fn bind_switch_statement(&mut self, node: P<Node>) {
         let stmt = node.as_switch_statement();
         let post_switch_label = self.create_branch_label();
         self.bind(stmt.expression());
@@ -3208,7 +3189,7 @@ impl Binder {
         self.current_flow = Some(self.finish_flow_label(post_switch_label));
     }
 
-    pub(crate) fn bind_case_block(&mut self, node: P<Node>) {
+    fn bind_case_block(&mut self, node: P<Node>) {
         let switch_statement = node.parent().unwrap();
         let clauses = node.as_case_block().clauses().nodes();
         let is_narrowing_switch = switch_statement.expression().unwrap().kind()
@@ -3250,7 +3231,7 @@ impl Binder {
         }
     }
 
-    pub(crate) fn bind_case_or_default_clause(&mut self, node: P<Node>) {
+    fn bind_case_or_default_clause(&mut self, node: P<Node>) {
         let clause = node.as_case_or_default_clause();
         if let Some(expression) = clause.expression() {
             let save_current_flow = self.current_flow;
@@ -3261,13 +3242,13 @@ impl Binder {
         self.bind_each(clause.statements().nodes());
     }
 
-    pub(crate) fn bind_expression_statement(&mut self, node: P<Node>) {
+    fn bind_expression_statement(&mut self, node: P<Node>) {
         let stmt = node.as_expression_statement();
         self.bind(stmt.expression());
         self.maybe_bind_expression_flow_if_call(stmt.expression());
     }
 
-    pub(crate) fn maybe_bind_expression_flow_if_call(&mut self, node: P<Node>) {
+    fn maybe_bind_expression_flow_if_call(&mut self, node: P<Node>) {
         // A top level or comma expression call expression with a dotted function name and at least one argument
         // is potentially an assertion and is therefore included in the control flow.
         if ast::is_call_expression(node) {
@@ -3278,7 +3259,7 @@ impl Binder {
         }
     }
 
-    pub(crate) fn bind_labeled_statement(&mut self, node: P<Node>) {
+    fn bind_labeled_statement(&mut self, node: P<Node>) {
         let stmt = node.as_labeled_statement();
         let post_statement_label = self.create_branch_label();
         self.active_label_list.push(ActiveLabel {
@@ -3298,7 +3279,7 @@ impl Binder {
         self.current_flow = Some(self.finish_flow_label(post_statement_label));
     }
 
-    pub(crate) fn bind_prefix_unary_expression_flow(&mut self, node: P<Node>) {
+    fn bind_prefix_unary_expression_flow(&mut self, node: P<Node>) {
         let expr = node.as_prefix_unary_expression();
         if expr.operator() == Kind::ExclamationToken {
             std::mem::swap(&mut self.current_true_target, &mut self.current_false_target);
@@ -3312,7 +3293,7 @@ impl Binder {
         }
     }
 
-    pub(crate) fn bind_postfix_unary_expression_flow(&mut self, node: P<Node>) {
+    fn bind_postfix_unary_expression_flow(&mut self, node: P<Node>) {
         let expr = node.as_postfix_unary_expression();
         self.bind_each_child(node);
         if expr.operator() == Kind::PlusPlusToken || expr.operator() == Kind::MinusMinusToken {
@@ -3320,7 +3301,7 @@ impl Binder {
         }
     }
 
-    pub(crate) fn bind_destructuring_assignment_flow(&mut self, node: P<Node>) {
+    fn bind_destructuring_assignment_flow(&mut self, node: P<Node>) {
         let expr = node.as_binary_expression();
         if self.in_assignment_pattern {
             self.in_assignment_pattern = false;
@@ -3340,7 +3321,7 @@ impl Binder {
         self.bind_assignment_target_flow(expr.left());
     }
 
-    pub(crate) fn bind_binary_expression_flow(&mut self, node: P<Node>) {
+    fn bind_binary_expression_flow(&mut self, node: P<Node>) {
         let expr = node.as_binary_expression();
         let operator = expr.operator_token().kind();
         if ast::is_logical_or_coalescing_binary_operator(operator)
@@ -3399,7 +3380,7 @@ impl Binder {
         }
     }
 
-    pub(crate) fn bind_logical_like_expression(
+    fn bind_logical_like_expression(
         &mut self,
         node: P<Node>,
         true_target: Option<P<FlowNode>>,
@@ -3441,7 +3422,7 @@ impl Binder {
         }
     }
 
-    pub(crate) fn bind_delete_expression_flow(&mut self, node: P<Node>) {
+    fn bind_delete_expression_flow(&mut self, node: P<Node>) {
         let expr = node.as_delete_expression();
         self.bind_each_child(node);
         if expr.expression().kind() == Kind::PropertyAccessExpression {
@@ -3449,7 +3430,7 @@ impl Binder {
         }
     }
 
-    pub(crate) fn bind_conditional_expression_flow(&mut self, node: P<Node>) {
+    fn bind_conditional_expression_flow(&mut self, node: P<Node>) {
         let expr = node.as_conditional_expression();
         let true_label = self.create_branch_label();
         let false_label = self.create_branch_label();
@@ -3475,7 +3456,7 @@ impl Binder {
         self.has_flow_effects = self.has_flow_effects || save_has_flow_effects;
     }
 
-    pub(crate) fn bind_variable_declaration_flow(&mut self, node: P<Node>) {
+    fn bind_variable_declaration_flow(&mut self, node: P<Node>) {
         self.bind_each_child(node);
         if node.initializer().is_some()
             || ast::is_for_in_or_of_statement(node.parent().unwrap().parent().unwrap())
@@ -3484,7 +3465,7 @@ impl Binder {
         }
     }
 
-    pub(crate) fn bind_initialized_variable_flow(&mut self, node: P<Node>) {
+    fn bind_initialized_variable_flow(&mut self, node: P<Node>) {
         let name = match node.kind() {
             Kind::VariableDeclaration | Kind::BindingElement => node.name(),
             _ => None,
@@ -3499,7 +3480,7 @@ impl Binder {
         }
     }
 
-    pub(crate) fn bind_access_expression_flow(&mut self, node: P<Node>) {
+    fn bind_access_expression_flow(&mut self, node: P<Node>) {
         if ast::is_optional_chain(node) {
             self.bind_optional_chain_flow(node);
         } else {
@@ -3507,7 +3488,7 @@ impl Binder {
         }
     }
 
-    pub(crate) fn bind_optional_chain_flow(&mut self, node: P<Node>) {
+    fn bind_optional_chain_flow(&mut self, node: P<Node>) {
         if is_top_level_logical_expression(node) {
             let post_expression_label = self.create_branch_label();
             let save_current_flow = self.current_flow;
@@ -3529,7 +3510,7 @@ impl Binder {
         }
     }
 
-    pub(crate) fn bind_optional_chain(
+    fn bind_optional_chain(
         &mut self,
         node: P<Node>,
         true_target: Option<P<FlowNode>>,
@@ -3580,7 +3561,7 @@ impl Binder {
         }
     }
 
-    pub(crate) fn bind_optional_expression(
+    fn bind_optional_expression(
         &mut self,
         node: P<Node>,
         true_target: Option<P<FlowNode>>,
@@ -3603,7 +3584,7 @@ impl Binder {
         }
     }
 
-    pub(crate) fn bind_optional_chain_rest(&mut self, node: P<Node>) -> bool {
+    fn bind_optional_chain_rest(&mut self, node: P<Node>) -> bool {
         match node.kind() {
             Kind::PropertyAccessExpression => {
                 self.bind(node.question_dot_token());
@@ -3623,7 +3604,7 @@ impl Binder {
         false
     }
 
-    pub(crate) fn bind_call_expression_flow(&mut self, node: P<Node>) {
+    fn bind_call_expression_flow(&mut self, node: P<Node>) {
         let call = node.as_call_expression();
         if ast::is_optional_chain(node) {
             self.bind_optional_chain_flow(node);
@@ -3659,7 +3640,7 @@ impl Binder {
         }
     }
 
-    pub(crate) fn bind_non_null_expression_flow(&mut self, node: P<Node>) {
+    fn bind_non_null_expression_flow(&mut self, node: P<Node>) {
         if ast::is_optional_chain(node) {
             self.bind_optional_chain_flow(node);
         } else {
@@ -3667,7 +3648,7 @@ impl Binder {
         }
     }
 
-    pub(crate) fn bind_binding_element_flow(&mut self, node: P<Node>) {
+    fn bind_binding_element_flow(&mut self, node: P<Node>) {
         // When evaluating a binding pattern, the initializer is evaluated before the binding pattern, per:
         // - https://tc39.es/ecma262/#sec-destructuring-binding-patterns-runtime-semantics-iteratorbindinginitialization
         //   - `BindingElement: BindingPattern Initializer?`
@@ -3680,7 +3661,7 @@ impl Binder {
         self.bind(node.name());
     }
 
-    pub(crate) fn bind_parameter_flow(&mut self, node: P<Node>) {
+    fn bind_parameter_flow(&mut self, node: P<Node>) {
         let param = node.as_parameter_declaration();
         self.bind_modifiers(node.modifiers());
         self.bind(param.dot_dot_dot_token());
@@ -3691,7 +3672,7 @@ impl Binder {
     }
 
     // a BindingElement/Parameter does not have side effects if initializers are not evaluated and used. (see GH#49759)
-    pub(crate) fn bind_initializer(&mut self, node: Option<P<Node>>) {
+    fn bind_initializer(&mut self, node: Option<P<Node>>) {
         let Some(node) = node else {
             return;
         };
@@ -3707,13 +3688,13 @@ impl Binder {
     }
 }
 
-pub(crate) fn set_flow_node(node: P<Node>, flow_node: Option<P<FlowNode>>) {
+fn set_flow_node(node: P<Node>, flow_node: Option<P<FlowNode>>) {
     if node.has_flow_node_data() {
         node.set_flow_node(flow_node);
     }
 }
 
-pub(crate) fn set_return_flow_node(node: P<Node>, return_flow_node: Option<P<FlowNode>>) {
+fn set_return_flow_node(node: P<Node>, return_flow_node: Option<P<FlowNode>>) {
     match node.kind() {
         Kind::Constructor => {
             node.as_constructor_declaration().set_return_flow_node(return_flow_node);
@@ -3731,19 +3712,19 @@ pub(crate) fn set_return_flow_node(node: P<Node>, return_flow_node: Option<P<Flo
     }
 }
 
-pub(crate) fn is_generator_function_expression(node: P<Node>) -> bool {
+fn is_generator_function_expression(node: P<Node>) -> bool {
     ast::is_function_expression(node) && node.body_data().unwrap().asterisk_token.is_some()
 }
 
 impl Binder {
-    pub(crate) fn add_to_container_chain(&mut self, next: P<Node>) {
+    fn add_to_container_chain(&mut self, next: P<Node>) {
         if let Some(last_container) = self.last_container {
             last_container.locals_container_data().unwrap().next_container.set(Some(next));
         }
         self.last_container = Some(next);
     }
 
-    pub(crate) fn add_declaration_to_symbol(
+    fn add_declaration_to_symbol(
         &mut self,
         symbol: P<Symbol>,
         node: P<Node>,
@@ -3752,18 +3733,15 @@ impl Binder {
         // tsrs-only (`bind_lazy_member_list`): a declaration that fills a table the deferred list fills merges into the
         // symbol: an interface or class fills `members` (type parameters, members), a namespace or enum fills
         // `exports`, which only a class's list fills too (static members). Value and function merges fill neither.
-        if let Some(lazy) = symbol.lazy_list() {
-            if lazy.state() == lazylist::DEFERRED
-                && match node.kind() {
-                    Kind::InterfaceDeclaration | Kind::ClassDeclaration | Kind::ClassExpression => {
-                        true
-                    }
-                    Kind::ModuleDeclaration | Kind::EnumDeclaration => lazy.fills_exports(),
-                    _ => false,
-                }
-            {
-                self.force_pending_lazy_list(lazy.get());
+        if let Some(lazy) = symbol.lazy_list()
+            && lazy.state() == lazylist::DEFERRED
+            && match node.kind() {
+                Kind::InterfaceDeclaration | Kind::ClassDeclaration | Kind::ClassExpression => true,
+                Kind::ModuleDeclaration | Kind::EnumDeclaration => lazy.fills_exports(),
+                _ => false,
             }
+        {
+            self.force_pending_lazy_list(lazy.get());
         }
         symbol.flags.set(symbol.flags.get() | symbol_flags);
         node.declaration_data().unwrap().symbol.set(Some(symbol));
@@ -3902,7 +3880,7 @@ pub fn get_container_flags(node: P<Node>) -> ContainerFlags {
     }
 }
 
-pub(crate) fn is_narrowing_expression(expr: P<Node>) -> bool {
+fn is_narrowing_expression(expr: P<Node>) -> bool {
     match expr.kind() {
         Kind::Identifier | Kind::ThisKeyword => true,
         Kind::PropertyAccessExpression | Kind::ElementAccessExpression => {
@@ -3921,7 +3899,7 @@ pub(crate) fn is_narrowing_expression(expr: P<Node>) -> bool {
     }
 }
 
-pub(crate) fn contains_narrowable_reference(expr: P<Node>) -> bool {
+fn contains_narrowable_reference(expr: P<Node>) -> bool {
     if is_narrowable_reference(expr) {
         return true;
     }
@@ -3939,7 +3917,7 @@ pub(crate) fn contains_narrowable_reference(expr: P<Node>) -> bool {
     false
 }
 
-pub(crate) fn is_narrowable_reference(node: P<Node>) -> bool {
+fn is_narrowable_reference(node: P<Node>) -> bool {
     match node.kind() {
         Kind::Identifier | Kind::ThisKeyword | Kind::SuperKeyword | Kind::MetaProperty => true,
         Kind::PropertyAccessExpression
@@ -3962,20 +3940,20 @@ pub(crate) fn is_narrowable_reference(node: P<Node>) -> bool {
     }
 }
 
-pub(crate) fn has_narrowable_argument(expr: P<Node>) -> bool {
+fn has_narrowable_argument(expr: P<Node>) -> bool {
     let call = expr.as_call_expression();
     if call.arguments().nodes().iter().any(|&argument| contains_narrowable_reference(argument)) {
         return true;
     }
-    if ast::is_property_access_expression(call.expression()) {
-        if contains_narrowable_reference(call.expression().expression().unwrap()) {
-            return true;
-        }
+    if ast::is_property_access_expression(call.expression())
+        && contains_narrowable_reference(call.expression().expression().unwrap())
+    {
+        return true;
     }
     false
 }
 
-pub(crate) fn is_narrowing_binary_expression(node: P<Node>) -> bool {
+fn is_narrowing_binary_expression(node: P<Node>) -> bool {
     let expr = node.as_binary_expression();
     match expr.operator_token().kind() {
         Kind::EqualsToken
@@ -3996,13 +3974,12 @@ pub(crate) fn is_narrowing_binary_expression(node: P<Node>) -> bool {
                     || ast::is_boolean_literal(left) && is_narrowing_expression(right))
         }
         Kind::InstanceOfKeyword => is_narrowable_operand(expr.left()),
-        Kind::InKeyword => is_narrowing_expression(expr.right()),
-        Kind::CommaToken => is_narrowing_expression(expr.right()),
+        Kind::InKeyword | Kind::CommaToken => is_narrowing_expression(expr.right()),
         _ => false,
     }
 }
 
-pub(crate) fn is_narrowable_operand(expr: P<Node>) -> bool {
+fn is_narrowable_operand(expr: P<Node>) -> bool {
     match expr.kind() {
         Kind::ParenthesizedExpression => return is_narrowable_operand(expr.expression().unwrap()),
         Kind::BinaryExpression => {
@@ -4018,14 +3995,14 @@ pub(crate) fn is_narrowable_operand(expr: P<Node>) -> bool {
     contains_narrowable_reference(expr)
 }
 
-pub(crate) fn is_narrowing_type_of_operands(expr1: P<Node>, expr2: P<Node>) -> bool {
+fn is_narrowing_type_of_operands(expr1: P<Node>, expr2: P<Node>) -> bool {
     ast::is_type_of_expression(expr1)
         && is_narrowable_operand(expr1.expression().unwrap())
         && ast::is_string_literal_like(expr2)
 }
 
 impl Binder {
-    pub(crate) fn error_on_node(
+    fn error_on_node(
         &mut self,
         node: P<Node>,
         message: &'static Message,
@@ -4035,7 +4012,7 @@ impl Binder {
         self.add_diagnostic(diagnostic);
     }
 
-    pub(crate) fn error_on_first_token(
+    fn error_on_first_token(
         &mut self,
         node: P<Node>,
         message: &'static Message,
@@ -4051,7 +4028,7 @@ impl Binder {
     // Inside the binder, we may create a diagnostic for an as-yet unbound node (with potentially no parent pointers, implying no accessible source file)
     // If so, the node _must_ be in the current file (as that's the only way anything could have traversed to it to yield it as the error node)
     // This version of `createDiagnosticForNode` uses the binder's context to account for this, and always yields correct diagnostics even in these situations.
-    pub(crate) fn create_diagnostic_for_node(
+    fn create_diagnostic_for_node(
         &self,
         node: P<Node>,
         message: &'static Message,
@@ -4065,19 +4042,19 @@ impl Binder {
         )
     }
 
-    pub(crate) fn add_diagnostic(&mut self, diagnostic: P<Diagnostic>) {
+    fn add_diagnostic(&mut self, diagnostic: P<Diagnostic>) {
         self.bind_diagnostics.push(diagnostic);
     }
 }
 
-pub(crate) fn get_optional_symbol_flag_for_node(node: P<Node>) -> SymbolFlags {
+fn get_optional_symbol_flag_for_node(node: P<Node>) -> SymbolFlags {
     match node.postfix_token() {
         Some(postfix_token) if postfix_token.kind() == Kind::QuestionToken => SymbolFlags::Optional,
         _ => SymbolFlags::None,
     }
 }
 
-pub(crate) fn is_statement_condition(node: P<Node>) -> bool {
+fn is_statement_condition(node: P<Node>) -> bool {
     let parent = node.parent().unwrap();
     match parent.kind() {
         Kind::IfStatement | Kind::WhileStatement | Kind::DoStatement => {
@@ -4089,7 +4066,7 @@ pub(crate) fn is_statement_condition(node: P<Node>) -> bool {
     }
 }
 
-pub(crate) fn is_top_level_logical_expression(node: P<Node>) -> bool {
+fn is_top_level_logical_expression(node: P<Node>) -> bool {
     let mut node = node;
     loop {
         let parent = node.parent().unwrap();
@@ -4108,13 +4085,13 @@ pub(crate) fn is_top_level_logical_expression(node: P<Node>) -> bool {
         || (ast::is_optional_chain(parent) && parent.expression() == Some(node)))
 }
 
-pub(crate) fn is_assignment_declaration(decl: P<Node>) -> bool {
+fn is_assignment_declaration(decl: P<Node>) -> bool {
     ast::is_binary_expression(decl)
         || ast::is_access_expression(decl)
         || ast::is_identifier(decl)
         || ast::is_call_expression(decl)
 }
 
-pub(crate) fn is_effective_module_declaration(node: P<Node>) -> bool {
+fn is_effective_module_declaration(node: P<Node>) -> bool {
     ast::is_module_declaration(node) || ast::is_identifier(node)
 }

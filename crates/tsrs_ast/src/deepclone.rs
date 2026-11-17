@@ -27,7 +27,7 @@ fn get_deep_clone_visitor(f: NodeFactory, synthetic_location: bool) -> NodeVisit
         Rc::new(move |nodes: Option<P<NodeList>>, v: &mut NodeVisitor| {
             let nodes = nodes?;
             let visited = v.visit_nodes(Some(nodes)).unwrap();
-            let new_list = if visited != nodes { visited } else { nodes.clone_list(&v.factory) };
+            let new_list = if visited == nodes { nodes.clone_list(&v.factory) } else { visited };
             if synthetic_location {
                 new_list.loc.set(undefined_text_range());
                 if nodes.has_trailing_comma() {
@@ -40,7 +40,7 @@ fn get_deep_clone_visitor(f: NodeFactory, synthetic_location: bool) -> NodeVisit
         Rc::new(move |nodes: Option<P<ModifierList>>, v: &mut NodeVisitor| {
             let nodes = nodes?;
             let visited = v.visit_modifiers(Some(nodes)).unwrap();
-            let new_list = if visited != nodes { visited } else { nodes.clone_list(&v.factory) };
+            let new_list = if visited == nodes { nodes.clone_list(&v.factory) } else { visited };
             if synthetic_location {
                 new_list.list.loc.set(undefined_text_range());
                 if nodes.has_trailing_comma() {
@@ -75,53 +75,36 @@ impl NodeFactory {
         self.with_deep_clone_visitor(true /*syntheticLocation*/, |v| v.visit_node(node))
     }
 
+    /// A reparse cloner (`deep_clone_reparse` and `deep_clone_reparse_modifiers`) whose visitor is built once.
+    ///
+    /// The four heap allocations of `get_deep_clone_visitor` (three hook closures and the visitor data) are paid
+    /// per cloner, not per clone. The parser keeps one per file (notes/perf-reparse-cloner.md).
+    pub fn reparse_cloner(&self) -> ReparseCloner {
+        ReparseCloner(get_deep_clone_visitor(self.clone(), false /*syntheticLocation*/))
+    }
+
     pub fn deep_clone_reparse(&self, node: Option<P<Node>>) -> Option<P<Node>> {
-        let node = node?;
-        let node = self
-            .with_deep_clone_visitor(false /*syntheticLocation*/, |v| v.visit_node(Some(node)))
-            .unwrap();
+        self.reparse_cloner().clone_node(node)
+    }
+}
+
+/// `NodeFactory::reparse_cloner`: one deep-clone visitor, reused for every reparse clone of a file.
+pub struct ReparseCloner(NodeVisitor);
+
+impl ReparseCloner {
+    /// `deep_clone_reparse`: a copy of `node` with its source locations, parents set, flagged `Reparsed`.
+    pub fn clone_node(&mut self, node: Option<P<Node>>) -> Option<P<Node>> {
+        let node = self.0.visit_node(Some(node?)).unwrap();
         set_parent_in_children(node);
         node.set_flags(node.flags() | NodeFlags::Reparsed);
         Some(node)
     }
 
-    pub fn deep_clone_reparse_modifiers(
-        &self,
+    /// `deep_clone_reparse_modifiers`.
+    pub fn clone_modifiers(
+        &mut self,
         modifiers: Option<P<ModifierList>>,
     ) -> Option<P<ModifierList>> {
-        self.with_deep_clone_visitor(
-            false, /*syntheticLocation*/
-            |v| v.visit_modifiers(modifiers),
-        )
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tsrs_core::TextRange;
-
-    #[test]
-    fn deep_clone_reparse_copies_subtree_and_sets_parents() {
-        let f = NodeFactory::default();
-        let left = f.new_identifier("a");
-        left.set_loc(TextRange::new(0, 1));
-        let right = f.new_identifier("b");
-        right.set_loc(TextRange::new(2, 3));
-        let name = f.new_qualified_name(left, right);
-        name.set_loc(TextRange::new(0, 3));
-
-        let clone = f.deep_clone_reparse(Some(name)).unwrap();
-        assert_ne!(clone, name);
-        assert_eq!(clone.loc(), name.loc());
-        assert!(clone.flags().intersects(NodeFlags::Reparsed));
-        let q = clone.as_qualified_name();
-        assert!(q.left != left && q.right != right);
-        assert_eq!(q.left.text(), "a");
-        assert_eq!(q.left.parent(), Some(clone));
-
-        let synthetic = f.deep_clone_node(Some(name)).unwrap();
-        assert_eq!(synthetic.loc(), undefined_text_range());
-        assert_eq!(synthetic.as_qualified_name().right.loc(), undefined_text_range());
+        self.0.visit_modifiers(modifiers)
     }
 }

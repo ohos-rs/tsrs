@@ -11,7 +11,7 @@ pub const CODE_PARSE_ERROR: i32 = -32700;
 pub const CODE_INVALID_REQUEST: i32 = -32600;
 pub const CODE_METHOD_NOT_FOUND: i32 = -32601;
 pub const CODE_INVALID_PARAMS: i32 = -32602;
-pub const CODE_INTERNAL_ERROR: i32 = -32603;
+const CODE_INTERNAL_ERROR: i32 = -32603;
 
 /// jsonrpc.ID: either a string or an int32. Like Go, an empty string is indistinguishable from the
 /// integer form (`ID{str: ""}` marshals as its int field).
@@ -32,6 +32,17 @@ impl Id {
             Id::Str(s) if !s.is_empty() => serde_json::to_string(s).expect("string serializes"),
             Id::Str(_) => "0".to_string(),
             Id::Int(i) => i.to_string(),
+        }
+    }
+}
+
+impl Id {
+    /// The `Display` text, borrowed when the id is a non-empty string (the msgpack protocol's ids are method
+    /// names, written on every response).
+    pub(crate) fn text(&self) -> std::borrow::Cow<'_, str> {
+        match self {
+            Id::Str(s) if !s.is_empty() => std::borrow::Cow::Borrowed(s),
+            _ => std::borrow::Cow::Owned(self.to_string()),
         }
     }
 }
@@ -89,19 +100,21 @@ impl Message {
         self.id.is_some() && self.method.is_empty()
     }
 
-    pub fn params_bytes(&self) -> &[u8] {
+    pub(crate) fn params_bytes(&self) -> &[u8] {
         self.params.as_deref().unwrap_or(&[])
     }
 }
 
 /// A handler result.
 ///
-/// `Json` must hold one complete JSON value (validated before it is written); `Binary` is api.RawBinary:
-/// written verbatim as the `MessagePack` tuple payload, and (like Go's json.Marshal of a byte slice) as a
-/// base64 JSON string under JSON-RPC.
+/// `Json` must hold one complete JSON value (validated before it is written, as Go's json.Marshal of a
+/// json.Value does). `ValidJson` is JSON its producer guarantees valid (a JSON encoder's output), written
+/// without that check. `Binary` is api.RawBinary: written verbatim as the `MessagePack` tuple payload, and
+/// (like Go's json.Marshal of a byte slice) as a base64 JSON string under JSON-RPC.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Response {
     Json(Vec<u8>),
+    ValidJson(Vec<u8>),
     Binary(Vec<u8>),
 }
 
@@ -124,7 +137,7 @@ impl Response {
 /// data the client sees (msgpack Error payload / JSON-RPC error.message).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ApiError {
-    pub code: i32,
+    pub(crate) code: i32,
     pub message: String,
 }
 
@@ -178,14 +191,13 @@ impl fmt::Display for TransportError {
             TransportError::Eof => f.write_str("EOF"),
             TransportError::UnexpectedEof(what) => write!(f, "{what}: unexpected EOF"),
             TransportError::Io(e) => write!(f, "{e}"),
-            TransportError::Protocol(msg) => f.write_str(msg),
+            TransportError::Protocol(msg) | TransportError::Unexpected(msg) => f.write_str(msg),
             TransportError::FrameTooLarge { declared, limit } => {
                 write!(f, "ipc: frame of {declared} bytes exceeds the {limit} byte limit")
             }
             TransportError::Closed(None) => f.write_str("ipc: connection closed"),
             TransportError::Closed(Some(cause)) => write!(f, "ipc: connection closed\n{cause}"),
             TransportError::Remote(e) => write!(f, "ipc: remote error [{}]: {}", e.code, e.message),
-            TransportError::Unexpected(msg) => f.write_str(msg),
         }
     }
 }
@@ -199,7 +211,7 @@ impl From<std::io::Error> for TransportError {
 }
 
 /// Default bound for a single incoming frame (Content-Length body or msgpack bin field).
-pub const DEFAULT_MAX_FRAME_BYTES: u64 = 1 << 30;
+pub(crate) const DEFAULT_MAX_FRAME_BYTES: u64 = 1 << 30;
 
 /// Reads exactly `len` bytes without trusting `len` for the up-front allocation: the buffer grows
 /// only as bytes actually arrive, so a hostile length cannot force a huge allocation.
@@ -209,10 +221,11 @@ pub(crate) fn read_exact_bounded<R: std::io::Read>(
     limit: u64,
     what: &'static str,
 ) -> Result<Vec<u8>, TransportError> {
+    const INITIAL: u64 = 64 * 1024;
+
     if len > limit {
         return Err(TransportError::FrameTooLarge { declared: len, limit });
     }
-    const INITIAL: u64 = 64 * 1024;
     let mut out = Vec::with_capacity(len.min(INITIAL) as usize);
     let n = (&mut *r).take(len).read_to_end(&mut out)?;
     if (n as u64) < len {

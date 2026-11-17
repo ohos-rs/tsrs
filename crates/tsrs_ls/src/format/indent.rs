@@ -8,7 +8,7 @@ use crate::astnav;
 use crate::lsutil::{self, FormatCodeSettings, IndentStyle};
 
 // indent.go:17
-pub fn get_indentation_for_node(
+pub(crate) fn get_indentation_for_node(
     n: P<Node>,
     ignore_actual_indentation_range: Option<TextRange>,
     source_file: P<SourceFile>,
@@ -45,7 +45,7 @@ pub fn get_indentation(
 
     // no indentation when the indent style is set to none,
     // so we can return fast
-    if options.indent_style == IndentStyle::None {
+    if options.indent_style == IndentStyle::NONE {
         return 0;
     }
 
@@ -58,10 +58,10 @@ pub fn get_indentation(
 
     let enclosing_comment_range =
         get_range_of_enclosing_comment(source_file, position, preceding_token);
-    if let Some(enclosing_comment_range) = enclosing_comment_range {
-        if enclosing_comment_range.kind == Kind::MultiLineCommentTrivia {
-            return get_comment_indent(source_file, position, options, &enclosing_comment_range);
-        }
+    if let Some(enclosing_comment_range) = enclosing_comment_range
+        && enclosing_comment_range.kind == Kind::MultiLineCommentTrivia
+    {
+        return get_comment_indent(source_file, position, options, &enclosing_comment_range);
     }
 
     let Some(preceding_token) = preceding_token else {
@@ -106,7 +106,7 @@ pub fn get_indentation(
     // ```
     let is_object_literal = current_token.kind() == Kind::OpenBraceToken
         && current_token.parent().is_some_and(|p| p.kind() == Kind::ObjectLiteralExpression);
-    if options.indent_style == IndentStyle::Block || is_object_literal {
+    if options.indent_style == IndentStyle::BLOCK || is_object_literal {
         return get_block_indent(source_file, position, options);
     }
 
@@ -123,23 +123,20 @@ pub fn get_indentation(
 
     let container_list = get_list_by_position(position, preceding_token.parent(), source_file);
     // use list position if the preceding token is before any list items
-    if let Some(container_list) = container_list {
-        if !preceding_token.loc().contained_by(container_list.loc.get()) {
-            let use_the_same_base_indentation = current_token.parent().is_some_and(|p| {
-                p.kind() == Kind::FunctionExpression || p.kind() == Kind::ArrowFunction
-            });
-            let mut indent_size = 0;
-            if !use_the_same_base_indentation {
-                indent_size = options.indent_size;
-            }
-            match get_actual_indentation_for_list_start_line(
-                Some(container_list),
-                source_file,
-                options,
-            ) {
-                Some(indentation) => return indentation + indent_size,
-                None => return indent_size,
-            }
+    if let Some(container_list) = container_list
+        && !preceding_token.loc().contained_by(container_list.loc.get())
+    {
+        let use_the_same_base_indentation = current_token.parent().is_some_and(|p| {
+            p.kind() == Kind::FunctionExpression || p.kind() == Kind::ArrowFunction
+        });
+        let mut indent_size = 0;
+        if !use_the_same_base_indentation {
+            indent_size = options.indent_size;
+        }
+        match get_actual_indentation_for_list_start_line(Some(container_list), source_file, options)
+        {
+            Some(indentation) => return indentation + indent_size,
+            None => return indent_size,
         }
     }
 
@@ -600,12 +597,11 @@ fn get_actual_indentation_for_list_item(
     }
     let containing_list = get_containing_list(node, source_file);
     if let Some(containing_list) = containing_list {
-        if let Some(index) = containing_list.nodes().iter().position(|&element| element == node) {
-            if let Some(result) =
+        if let Some(index) = containing_list.nodes().iter().position(|&element| element == node)
+            && let Some(result) =
                 derive_actual_indentation_from_list(containing_list, index, source_file, options)
-            {
-                return Some(result);
-            }
+        {
+            return Some(result);
         }
         let mut delta = 0;
         if list_indents_child {
@@ -688,7 +684,7 @@ fn find_column_for_first_non_whitespace_character_in_line(
 }
 
 // indent.go:465
-pub fn find_first_non_whitespace_column(
+pub(crate) fn find_first_non_whitespace_column(
     start_pos: u32,
     end_pos: u32,
     source_file: P<SourceFile>,
@@ -701,11 +697,11 @@ pub fn find_first_non_whitespace_column(
 
 // indent.go:477
 /*
-* Character is the actual index of the character since the beginning of the line.
-* Column - position of the character after expanding tabs to spaces.
-* "0\t2$"
-* value of 'character' for '$' is 3
-* value of 'column' for '$' is 6 (assuming that tab size is 4)
+ * Character is the actual index of the character since the beginning of the line.
+ * Column - position of the character after expanding tabs to spaces.
+ * "0\t2$"
+ * value of 'character' for '$' is 3
+ * value of 'column' for '$' is 6 (assuming that tab size is 4)
  */
 pub(crate) fn find_first_non_whitespace_character_and_column(
     start_pos: u32,
@@ -803,7 +799,11 @@ fn get_list_by_range(
     match node.kind() {
         Kind::TypeReference => get_list(node.type_argument_list(), r, node, source_file),
         Kind::ObjectLiteralExpression => get_list(Some(node.property_list()), r, node, source_file),
-        Kind::ArrayLiteralExpression => get_list(Some(node.element_list()), r, node, source_file),
+        Kind::ArrayLiteralExpression
+        | Kind::ObjectBindingPattern
+        | Kind::ArrayBindingPattern
+        | Kind::NamedImports
+        | Kind::NamedExports => get_list(Some(node.element_list()), r, node, source_file),
         Kind::TypeLiteral => get_list(node.member_list(), r, node, source_file),
         Kind::FunctionDeclaration
         | Kind::FunctionExpression
@@ -836,10 +836,6 @@ fn get_list_by_range(
         Kind::VariableDeclarationList => {
             get_list(Some(node.as_variable_declaration_list().declarations), r, node, source_file)
         }
-        Kind::ObjectBindingPattern
-        | Kind::ArrayBindingPattern
-        | Kind::NamedImports
-        | Kind::NamedExports => get_list(Some(node.element_list()), r, node, source_file),
         _ => None, // TODO: should this be a panic? It isn't in strada.
     }
 }
@@ -907,8 +903,8 @@ fn is_control_flow_ending_statement(kind: Kind, parent_kind: Kind) -> bool {
 
 // indent.go:637
 /*
-* True when the parent node should indent the given child by an explicit rule.
-* @param isNextChild If true, we are judging indent of a hypothetical child *after* this one, not the current child.
+ * True when the parent node should indent the given child by an explicit rule.
+ * @param isNextChild If true, we are judging indent of a hypothetical child *after* this one, not the current child.
  */
 pub fn should_indent_child_node(
     settings: &FormatCodeSettings,
@@ -923,7 +919,7 @@ pub fn should_indent_child_node(
 }
 
 // indent.go:646
-pub fn node_will_indent_child(
+pub(crate) fn node_will_indent_child(
     settings: &FormatCodeSettings,
     parent: P<Node>,
     child: Option<P<Node>>,

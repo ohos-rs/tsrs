@@ -28,13 +28,13 @@ pub struct OutputRecorderFS {
 }
 
 // recorderfs.go:17
-pub fn new_output_recorder_fs(fs: Arc<dyn FS>) -> Arc<OutputRecorderFS> {
+pub(crate) fn new_output_recorder_fs(fs: Arc<dyn FS>) -> Arc<OutputRecorderFS> {
     Arc::new(OutputRecorderFS { fs, outputs: Mutex::new((FxHashMap::default(), Vec::new())) })
 }
 
 impl OutputRecorderFS {
     // recorderfs.go:42
-    pub fn outputs(&self) -> Vec<TestFile> {
+    fn outputs(&self) -> Vec<TestFile> {
         self.outputs.lock().unwrap().1.clone()
     }
 }
@@ -90,18 +90,18 @@ impl FS for OutputRecorderFS {
 /// The outputs of an emitting compilation (Go `CompilationResult.JS/DTS/Maps` and `Repeat`).
 #[derive(Default)]
 pub struct EmitOutputs {
-    pub emit_result: compiler::EmitResult,
-    pub js: IndexMap<String, TestFile>,
-    pub dts: IndexMap<String, TestFile>,
-    pub maps: IndexMap<String, TestFile>,
+    pub(crate) emit_result: compiler::EmitResult,
+    pub(crate) js: IndexMap<String, TestFile>,
+    pub(crate) dts: IndexMap<String, TestFile>,
+    pub(crate) maps: IndexMap<String, TestFile>,
     // Go `CompilationResult.inputs` (every program source file) and `.outputs` (the per-input JS/DTS/map outputs).
-    pub inputs: Vec<TestFile>,
-    pub outputs: Vec<TestFile>,
+    pub(crate) inputs: Vec<TestFile>,
+    pub(crate) outputs: Vec<TestFile>,
 }
 
 // harnessutil.go:626 (from the pre-emit program on). Returns the diagnostics and the emit result of the post-emit
 // program.
-pub fn compile_files_with_host_emit(
+pub(crate) fn compile_files_with_host_emit(
     host: Arc<dyn CompilerHost>,
     config: P<ParsedCommandLine>,
     harness_options: &HarnessOptions,
@@ -166,9 +166,9 @@ pub fn compile_files_with_host_emit(
             pre_errors.len(),
             post_errors.len()
         );
-        let mut diag = new_compiler_diagnostic(tsrs_diagnostics::new_ad_hoc_message(&message), &[]);
+        let mut diag = new_compiler_diagnostic(tsrs_ast::new_ad_hoc_message(&message), &[]);
         diag = diag.add_related_info(new_compiler_diagnostic(
-            tsrs_diagnostics::new_ad_hoc_message("The excess diagnostics are:"),
+            tsrs_ast::new_ad_hoc_message("The excess diagnostics are:"),
             &[],
         ));
         for &d in longer_errors {
@@ -186,7 +186,7 @@ pub fn compile_files_with_host_emit(
 }
 
 // harnessutil.go:746 (the output part of newCompilationResult)
-pub fn new_emit_outputs(
+pub(crate) fn new_emit_outputs(
     recorder: &OutputRecorderFS,
     program: &'static compiler::Program,
     options: &CompilerOptions,
@@ -326,7 +326,7 @@ pub(crate) fn file_output(file: &TestFile, settings: &HarnessOptions) -> String 
 
 /// What `DoJSEmitBaseline` needs to recompile (Go: `result.Repeat` and `compileDeclarationFiles` call
 /// `CompileFilesEx` again).
-pub trait Recompile {
+pub(crate) trait Recompile {
     fn compile(
         &self,
         input_files: &[TestFile],
@@ -337,7 +337,7 @@ pub trait Recompile {
 }
 
 // js_emit_baseline.go:20. Returns the baseline text (`NO_CONTENT` when empty); a Go `t.Fatal` is an `Err`.
-pub fn do_js_emit_baseline(
+pub(crate) fn do_js_emit_baseline(
     header: &str,
     options: &CompilerOptions,
     result: &CompilationResult,
@@ -495,10 +495,10 @@ pub fn do_js_emit_baseline(
         compare_result_file_sets(&without.js, &outputs.js);
     }
 
-    if !js_code.is_empty() {
-        Ok(ts_code + "\r\n\r\n" + &js_code)
-    } else {
+    if js_code.is_empty() {
         Ok(NO_CONTENT.to_string())
+    } else {
+        Ok(ts_code + "\r\n\r\n" + &js_code)
     }
 }
 
@@ -540,15 +540,15 @@ fn prepare_declaration_compilation_context(
             return Err(format!("panic: Program has no source file with name '{file_name}'"));
         };
         // Is this file going to be emitted separately
-        let source_file_name = if !options.out_dir.is_empty() {
+        let source_file_name = if options.out_dir.is_empty() {
+            source_file.file_name().to_string()
+        } else {
             let mut source_file_path = tspath::get_normalized_absolute_path(
                 source_file.file_name(),
                 result.host.get_current_directory(),
             );
             source_file_path = source_file_path.replacen(program.common_source_directory(), "", 1);
             tspath::combine_paths(&options.out_dir, &[&source_file_path])
-        } else {
-            source_file.file_name().to_string()
         };
 
         let d_ts_file_name =
@@ -571,21 +571,18 @@ fn prepare_declaration_compilation_context(
         } else if program.get_source_file(&file.unit_name).is_some()
             && (tspath::has_ts_file_extension(&file.unit_name)
                 || (tspath::has_js_file_extension(&file.unit_name) && options.get_allow_js()))
+            && let Some(decl_file) = find_result_code_file(&file.unit_name)?
+            && !find_unit(&decl_file.unit_name, decl_input_files)
+            && !find_unit(&decl_file.unit_name, decl_other_files)
         {
-            if let Some(decl_file) = find_result_code_file(&file.unit_name)? {
-                if !find_unit(&decl_file.unit_name, decl_input_files)
-                    && !find_unit(&decl_file.unit_name, decl_other_files)
-                {
-                    let content = decl_file
-                        .content
-                        .strip_prefix('\u{FEFF}')
-                        .unwrap_or(&decl_file.content)
-                        .to_string();
-                    let dts_files =
-                        if into_input { &mut *decl_input_files } else { &mut *decl_other_files };
-                    dts_files.push(TestFile { unit_name: decl_file.unit_name, content });
-                }
-            }
+            let content = decl_file
+                .content
+                .strip_prefix('\u{FEFF}')
+                .unwrap_or(&decl_file.content)
+                .to_string();
+            let dts_files =
+                if into_input { &mut *decl_input_files } else { &mut *decl_other_files };
+            dts_files.push(TestFile { unit_name: decl_file.unit_name, content });
         }
         Ok(())
     };

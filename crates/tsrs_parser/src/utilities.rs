@@ -2,7 +2,7 @@ use tsrs_ast::{self as ast, CommentRange, Kind, Node, NodeFactory};
 use tsrs_core::{LanguageVariant, P, ScriptKind};
 use tsrs_scanner as scanner;
 
-pub(crate) fn get_language_variant(script_kind: ScriptKind) -> LanguageVariant {
+pub fn get_language_variant(script_kind: ScriptKind) -> LanguageVariant {
     match script_kind {
         ScriptKind::TSX | ScriptKind::JSX | ScriptKind::JS | ScriptKind::JSON => {
             // .tsx and .jsx files are treated as jsx language variant.
@@ -12,11 +12,11 @@ pub(crate) fn get_language_variant(script_kind: ScriptKind) -> LanguageVariant {
     }
 }
 
-pub(crate) fn token_is_identifier_or_keyword(token: Kind) -> bool {
+pub fn token_is_identifier_or_keyword(token: Kind) -> bool {
     token >= Kind::Identifier
 }
 
-pub(crate) fn token_is_identifier_or_keyword_or_greater_than(token: Kind) -> bool {
+pub fn token_is_identifier_or_keyword_or_greater_than(token: Kind) -> bool {
     token == Kind::GreaterThanToken || token_is_identifier_or_keyword(token)
 }
 
@@ -27,6 +27,17 @@ pub fn get_jsdoc_comment_ranges(
     text: &'static str,
 ) -> Vec<CommentRange> {
     let mut comment_ranges = comment_ranges.to_vec();
+    append_jsdoc_comment_ranges(&mut comment_ranges, node, text);
+    comment_ranges
+}
+
+/// `get_jsdoc_comment_ranges` into the caller's vector (the parser keeps one between nodes), which it filters as a
+/// whole like the slice `get_jsdoc_comment_ranges` starts from.
+pub fn append_jsdoc_comment_ranges(
+    comment_ranges: &mut Vec<CommentRange>,
+    node: P<Node>,
+    text: &'static str,
+) {
     let node_pos = node.pos().expect_source("parsed nodes have source positions");
     let node_end = node.end().expect_source("parsed nodes have source positions");
     match node.kind() {
@@ -55,14 +66,13 @@ pub fn get_jsdoc_comment_ranges(
             || bytes[(comment_start + 2) as usize] != b'*'
             || bytes[(comment_start + 3) as usize] == b'/')
     });
-    comment_ranges
 }
 
-pub(crate) fn is_keyword_or_punctuation(token: Kind) -> bool {
+pub fn is_keyword_or_punctuation(token: Kind) -> bool {
     ast::is_keyword_kind(token) || ast::is_punctuation_kind(token)
 }
 
-pub(crate) fn is_jsdoc_like_text(text: &str) -> bool {
+pub fn is_jsdoc_like_text(text: &str) -> bool {
     let text = text.as_bytes();
     text.len() >= 4 && text[1] == b'*' && text[2] == b'*' && text[3] != b'/'
 }

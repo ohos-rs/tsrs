@@ -7,7 +7,7 @@ use crate::*;
 impl SymbolTrackerImpl {
     // tracker.go:27
     // PopErrorFallbackNode implements checker.SymbolTracker.
-    pub fn pop_error_fallback_node(&self) {
+    pub(crate) fn pop_error_fallback_node(&self) {
         let mut fallback_stack = self.fallback_stack.borrow_mut();
         let len = fallback_stack.len();
         fallback_stack.truncate(len - 1);
@@ -15,39 +15,39 @@ impl SymbolTrackerImpl {
 
     // tracker.go:32
     // PushErrorFallbackNode implements checker.SymbolTracker.
-    pub fn push_error_fallback_node(&self, node: Option<P<Node>>) {
+    pub(crate) fn push_error_fallback_node(&self, node: Option<P<Node>>) {
         self.fallback_stack.borrow_mut().push(node);
     }
 
     // tracker.go:37
     // ReportCyclicStructureError implements checker.SymbolTracker.
-    pub fn report_cyclic_structure_error(&self) {
+    pub(crate) fn report_cyclic_structure_error(&self) {
         let location = self.error_location();
         if let Some(location) = location {
-            self.state.add_diagnostic(create_diagnostic_for_node(location, &diagnostics::The_inferred_type_of_0_references_a_type_with_a_cyclic_structure_which_cannot_be_trivially_serialized_A_type_annotation_is_necessary, &[&self.error_declaration_name_with_fallback()]));
+            self.state.add_diagnostic(create_diagnostic_for_node(location, &diagnostics::THE_INFERRED_TYPE_OF_0_REFERENCES_A_TYPE_WITH_A_CYCLIC_STRUCTURE_WHICH_CANNOT_BE_TRIVIALLY_SERIALIZED_A_TYPE_ANNOTATION_IS_NECESSARY, &[&self.error_declaration_name_with_fallback()]));
         }
     }
 
     // tracker.go:45
     // ReportInaccessibleThisError implements checker.SymbolTracker.
-    pub fn report_inaccessible_this_error(&self) {
+    pub(crate) fn report_inaccessible_this_error(&self) {
         let location = self.error_location();
         if let Some(location) = location {
-            self.state.add_diagnostic(create_diagnostic_for_node(location, &diagnostics::The_inferred_type_of_0_references_an_inaccessible_1_type_A_type_annotation_is_necessary, &[&self.error_declaration_name_with_fallback(), &"this"]));
+            self.state.add_diagnostic(create_diagnostic_for_node(location, &diagnostics::THE_INFERRED_TYPE_OF_0_REFERENCES_AN_INACCESSIBLE_1_TYPE_A_TYPE_ANNOTATION_IS_NECESSARY, &[&self.error_declaration_name_with_fallback(), &"this"]));
         }
     }
 
     // tracker.go:53
     // ReportInaccessibleUniqueSymbolError implements checker.SymbolTracker.
-    pub fn report_inaccessible_unique_symbol_error(&self) {
+    pub(crate) fn report_inaccessible_unique_symbol_error(&self) {
         let location = self.error_location();
         if let Some(location) = location {
-            self.state.add_diagnostic(create_diagnostic_for_node(location, &diagnostics::The_inferred_type_of_0_references_an_inaccessible_1_type_A_type_annotation_is_necessary, &[&self.error_declaration_name_with_fallback(), &"unique symbol"]));
+            self.state.add_diagnostic(create_diagnostic_for_node(location, &diagnostics::THE_INFERRED_TYPE_OF_0_REFERENCES_AN_INACCESSIBLE_1_TYPE_A_TYPE_ANNOTATION_IS_NECESSARY, &[&self.error_declaration_name_with_fallback(), &"unique symbol"]));
         }
     }
 
     // tracker.go:60
-    pub(crate) fn is_bound_expando(&self, c: &mut Checker, node: P<Node>) -> bool {
+    fn is_bound_expando(&self, c: &mut Checker, node: P<Node>) -> bool {
         if !(ast::is_expando_property_declaration(node)
             && ast::is_property_access_expression(node.as_binary_expression().left))
         {
@@ -66,7 +66,7 @@ impl SymbolTrackerImpl {
     }
 
     // tracker.go:77
-    pub(crate) fn is_child_of_bound_expando(&self, c: &mut Checker, node: P<Node>) -> bool {
+    fn is_child_of_bound_expando(&self, c: &mut Checker, node: P<Node>) -> bool {
         ast::find_ancestor_or_quit(node, |n| {
             if ast::is_source_file(n) || ast::is_block(n) {
                 return FindAncestorResult::Quit;
@@ -78,7 +78,7 @@ impl SymbolTrackerImpl {
 
     // tracker.go:87
     // ReportInferenceFallback implements checker.SymbolTracker.
-    pub fn report_inference_fallback(&self, c: &mut Checker, node: P<Node>) {
+    pub(crate) fn report_inference_fallback(&self, c: &mut Checker, node: P<Node>) {
         if !self.state.isolated_declarations {
             return;
         }
@@ -99,29 +99,33 @@ impl SymbolTrackerImpl {
 
     // tracker.go:103
     // ReportLikelyUnsafeImportRequiredError implements checker.SymbolTracker.
-    pub fn report_likely_unsafe_import_required_error(&self, specifier: &str, symbol_name: &str) {
+    pub(crate) fn report_likely_unsafe_import_required_error(
+        &self,
+        specifier: &str,
+        symbol_name: &str,
+    ) {
         let location = self.error_location();
         if let Some(location) = location {
-            if !symbol_name.is_empty() {
-                self.state.add_diagnostic(create_diagnostic_for_node(location, &diagnostics::The_inferred_type_of_0_cannot_be_named_without_a_reference_to_2_from_1_This_is_likely_not_portable_A_type_annotation_is_necessary, &[&self.error_declaration_name_with_fallback(), &specifier, &symbol_name]));
+            if symbol_name.is_empty() {
+                self.state.add_diagnostic(create_diagnostic_for_node(location, &diagnostics::THE_INFERRED_TYPE_OF_0_CANNOT_BE_NAMED_WITHOUT_A_REFERENCE_TO_1_THIS_IS_LIKELY_NOT_PORTABLE_A_TYPE_ANNOTATION_IS_NECESSARY, &[&self.error_declaration_name_with_fallback(), &specifier]));
             } else {
-                self.state.add_diagnostic(create_diagnostic_for_node(location, &diagnostics::The_inferred_type_of_0_cannot_be_named_without_a_reference_to_1_This_is_likely_not_portable_A_type_annotation_is_necessary, &[&self.error_declaration_name_with_fallback(), &specifier]));
+                self.state.add_diagnostic(create_diagnostic_for_node(location, &diagnostics::THE_INFERRED_TYPE_OF_0_CANNOT_BE_NAMED_WITHOUT_A_REFERENCE_TO_2_FROM_1_THIS_IS_LIKELY_NOT_PORTABLE_A_TYPE_ANNOTATION_IS_NECESSARY, &[&self.error_declaration_name_with_fallback(), &specifier, &symbol_name]));
             }
         }
     }
 
     // tracker.go:115
     // ReportNonSerializableProperty implements checker.SymbolTracker.
-    pub fn report_non_serializable_property(&self, property_name: &str) {
+    pub(crate) fn report_non_serializable_property(&self, property_name: &str) {
         let location = self.error_location();
         if let Some(location) = location {
-            self.state.add_diagnostic(create_diagnostic_for_node(location, &diagnostics::The_type_of_this_node_cannot_be_serialized_because_its_property_0_cannot_be_serialized, &[&property_name]));
+            self.state.add_diagnostic(create_diagnostic_for_node(location, &diagnostics::THE_TYPE_OF_THIS_NODE_CANNOT_BE_SERIALIZED_BECAUSE_ITS_PROPERTY_0_CANNOT_BE_SERIALIZED, &[&property_name]));
         }
     }
 
     // tracker.go:123
     // ReportNonlocalAugmentation implements checker.SymbolTracker.
-    pub fn report_nonlocal_augmentation(
+    pub(crate) fn report_nonlocal_augmentation(
         &self,
         containing_file: P<SourceFile>,
         parent_symbol: P<Symbol>,
@@ -142,8 +146,8 @@ impl SymbolTrackerImpl {
             && !augmenting_declarations.is_empty()
         {
             for augmentations in augmenting_declarations {
-                let diag = create_diagnostic_for_node(augmentations, &diagnostics::Declaration_augments_declaration_in_another_file_This_cannot_be_serialized, &[]);
-                let related = create_diagnostic_for_node(primary_declaration, &diagnostics::This_is_the_declaration_being_augmented_Consider_moving_the_augmenting_declaration_into_the_same_file, &[]);
+                let diag = create_diagnostic_for_node(augmentations, &diagnostics::DECLARATION_AUGMENTS_DECLARATION_IN_ANOTHER_FILE_THIS_CANNOT_BE_SERIALIZED, &[]);
+                let related = create_diagnostic_for_node(primary_declaration, &diagnostics::THIS_IS_THE_DECLARATION_BEING_AUGMENTED_CONSIDER_MOVING_THE_AUGMENTING_DECLARATION_INTO_THE_SAME_FILE, &[]);
                 diag.add_related_info(related);
                 self.state.add_diagnostic(diag);
             }
@@ -152,14 +156,14 @@ impl SymbolTrackerImpl {
 
     // tracker.go:137
     // ReportPrivateInBaseOfClassExpression implements checker.SymbolTracker.
-    pub fn report_private_in_base_of_class_expression(&self, property_name: &str) {
+    pub(crate) fn report_private_in_base_of_class_expression(&self, property_name: &str) {
         let location = self.error_location();
         if let Some(location) = location {
-            let diag = create_diagnostic_for_node(location, &diagnostics::Property_0_of_exported_anonymous_class_type_may_not_be_private_or_protected, &[&property_name]);
+            let diag = create_diagnostic_for_node(location, &diagnostics::PROPERTY_0_OF_EXPORTED_ANONYMOUS_CLASS_TYPE_MAY_NOT_BE_PRIVATE_OR_PROTECTED, &[&property_name]);
             if ast::is_variable_declaration(location.parent().unwrap()) {
                 let related = create_diagnostic_for_node(
                     location,
-                    &diagnostics::Add_a_type_annotation_to_the_variable_0,
+                    &diagnostics::ADD_A_TYPE_ANNOTATION_TO_THE_VARIABLE_0,
                     &[&self.error_declaration_name_with_fallback()],
                 );
                 diag.add_related_info(related);
@@ -170,15 +174,15 @@ impl SymbolTrackerImpl {
 
     // tracker.go:150
     // ReportTruncationError implements checker.SymbolTracker.
-    pub fn report_truncation_error(&self) {
+    pub(crate) fn report_truncation_error(&self) {
         let location = self.error_location();
         if let Some(location) = location {
-            self.state.add_diagnostic(create_diagnostic_for_node(location, &diagnostics::The_inferred_type_of_this_node_exceeds_the_maximum_length_the_compiler_will_serialize_An_explicit_type_annotation_is_needed, &[]));
+            self.state.add_diagnostic(create_diagnostic_for_node(location, &diagnostics::THE_INFERRED_TYPE_OF_THIS_NODE_EXCEEDS_THE_MAXIMUM_LENGTH_THE_COMPILER_WILL_SERIALIZE_AN_EXPLICIT_TYPE_ANNOTATION_IS_NEEDED, &[]));
         }
     }
 
     // tracker.go:157
-    pub(crate) fn error_fallback_node(&self) -> Option<P<Node>> {
+    fn error_fallback_node(&self) -> Option<P<Node>> {
         let fallback_stack = self.fallback_stack.borrow();
         if !fallback_stack.is_empty() {
             return fallback_stack[fallback_stack.len() - 1];
@@ -187,7 +191,7 @@ impl SymbolTrackerImpl {
     }
 
     // tracker.go:164
-    pub(crate) fn error_location(&self) -> Option<P<Node>> {
+    fn error_location(&self) -> Option<P<Node>> {
         let mut location = self.state.error_name_node.get();
         if location.is_none() {
             location = self.error_fallback_node();
@@ -196,7 +200,7 @@ impl SymbolTrackerImpl {
     }
 
     // tracker.go:172
-    pub(crate) fn error_declaration_name_with_fallback(&self) -> String {
+    fn error_declaration_name_with_fallback(&self) -> String {
         if self.state.error_name_node.get().is_some() {
             return scanner::declaration_name_to_string(self.state.error_name_node.get());
         }
@@ -220,7 +224,7 @@ impl SymbolTrackerImpl {
 
     // tracker.go:189
     // TrackSymbol implements checker.SymbolTracker.
-    pub fn track_symbol(
+    pub(crate) fn track_symbol(
         &self,
         c: &mut Checker,
         symbol: P<Symbol>,
@@ -306,7 +310,7 @@ impl SymbolTrackerImpl {
 // tracker.go:235
 // SIG: node is `impl Into<Option<P<Node>>>` (was `P<Node>`): Go passes a possibly-nil node (handleSymbolAccessibilityError's
 // diagNode) and NewDiagnosticForNode accepts nil; existing `P<Node>` callers compile unchanged.
-pub(crate) fn create_diagnostic_for_node(
+pub fn create_diagnostic_for_node(
     node: impl Into<Option<P<Node>>>,
     message: &'static Message,
     args: &[&dyn Display],
@@ -323,12 +327,10 @@ impl SymbolTrackerSharedState {
 
 // tracker.go:255
 pub fn new_symbol_tracker(
-    host: &'static dyn DeclarationEmitHost,
     resolver: Resolver,
     state: P<SymbolTrackerSharedState>,
 ) -> P<SymbolTrackerImpl> {
     P::new(SymbolTrackerImpl {
-        host,
         resolver,
         state,
         fallback_stack: RefCell::new(Vec::new()),

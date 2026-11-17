@@ -3,11 +3,11 @@ use std::sync::{Arc, Mutex};
 
 use tsrs_core::collections::SyncMap;
 
-struct refCountCacheEntry<V> {
-    mu: Mutex<refCountCacheEntryState<V>>,
+struct RefCountCacheEntry<V> {
+    mu: Mutex<RefCountCacheEntryState<V>>,
 }
 
-struct refCountCacheEntryState<V> {
+struct RefCountCacheEntryState<V> {
     value: Option<V>,
     ref_count: usize,
 }
@@ -20,8 +20,8 @@ pub struct RefCountCacheOptions {
 }
 
 pub struct RefCountCache<K: Hash + Eq, V, AcquireArgs> {
-    pub options: RefCountCacheOptions,
-    entries: SyncMap<K, Arc<refCountCacheEntry<V>>>,
+    options: RefCountCacheOptions,
+    entries: SyncMap<K, Arc<RefCountCacheEntry<V>>>,
 
     parse: Box<dyn Fn(&K, AcquireArgs) -> V + Send + Sync>,
 
@@ -32,7 +32,7 @@ pub struct RefCountCache<K: Hash + Eq, V, AcquireArgs> {
 }
 
 // refcountcache.go:28
-pub fn new_ref_count_cache<K: Hash + Eq, V, AcquireArgs>(
+pub(crate) fn new_ref_count_cache<K: Hash + Eq, V, AcquireArgs>(
     options: RefCountCacheOptions,
     parse: impl Fn(&K, AcquireArgs) -> V + Send + Sync + 'static,
 ) -> RefCountCache<K, V, AcquireArgs> {
@@ -53,7 +53,7 @@ impl<K: Hash + Eq + Clone, V: Clone, AcquireArgs> RefCountCache<K, V, AcquireArg
     // value, which is stored and returned with refcount 1.
     //
     // The caller is responsible for calling Deref when done with the value.
-    pub fn acquire(&self, identity: &K, acquire_args: AcquireArgs) -> V {
+    pub(crate) fn acquire(&self, identity: &K, acquire_args: AcquireArgs) -> V {
         self.load_or_store_new_locked_entry(identity, |entry, loaded| {
             if !loaded {
                 // New entry - parse the value
@@ -75,7 +75,7 @@ impl<K: Hash + Eq + Clone, V: Clone, AcquireArgs> RefCountCache<K, V, AcquireArg
     // It returns false without producing a value when no live entry exists.
     //
     // The caller is responsible for calling Deref when a value is returned.
-    pub fn acquire_existing(&self, identity: &K) -> Option<V> {
+    pub(crate) fn acquire_existing(&self, identity: &K) -> Option<V> {
         let entry = self.entries.load(identity)?;
         let mut st = entry.mu.lock().unwrap();
         if st.ref_count == 0 && !self.options.disable_deletion {
@@ -119,7 +119,7 @@ impl<K: Hash + Eq + Clone, V: Clone, AcquireArgs> RefCountCache<K, V, AcquireArg
     // refcountcache.go:105
     // Ref increments the reference count for an existing entry.
     // Panics if the entry does not exist.
-    pub fn ref_(&self, identity: &K) {
+    pub(crate) fn ref_(&self, identity: &K) {
         let Some(entry) = self.entries.load(identity) else {
             panic!("cache entry not found");
         };
@@ -142,7 +142,7 @@ impl<K: Hash + Eq + Clone, V: Clone, AcquireArgs> RefCountCache<K, V, AcquireArg
     // Deref decrements the reference count for an entry.
     // When the refcount reaches zero, the entry is removed from the cache
     // (unless DisableDeletion is set).
-    pub fn deref(&self, identity: &K) {
+    pub(crate) fn deref(&self, identity: &K) {
         let Some(entry) = self.entries.load(identity) else {
             return;
         };
@@ -166,11 +166,11 @@ impl<K: Hash + Eq + Clone, V: Clone, AcquireArgs> RefCountCache<K, V, AcquireArg
     fn load_or_store_new_locked_entry<R>(
         &self,
         key: &K,
-        f: impl FnOnce(&mut refCountCacheEntryState<V>, bool) -> R,
+        f: impl FnOnce(&mut RefCountCacheEntryState<V>, bool) -> R,
     ) -> R {
         loop {
-            let entry = Arc::new(refCountCacheEntry {
-                mu: Mutex::new(refCountCacheEntryState { value: None, ref_count: 1 }),
+            let entry = Arc::new(RefCountCacheEntry {
+                mu: Mutex::new(RefCountCacheEntryState { value: None, ref_count: 1 }),
             });
             let mut guard = entry.mu.lock().unwrap();
             let (existing, loaded) = self.entries.load_or_store(key.clone(), Arc::clone(&entry));
@@ -188,7 +188,8 @@ impl<K: Hash + Eq + Clone, V: Clone, AcquireArgs> RefCountCache<K, V, AcquireArg
         }
     }
 
-    pub(crate) fn len(&self) -> usize {
+    #[expect(clippy::len_without_is_empty, reason = "Public for the integration tests.")]
+    pub fn len(&self) -> usize {
         self.entries.size()
     }
 }

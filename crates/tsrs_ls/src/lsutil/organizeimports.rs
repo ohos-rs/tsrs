@@ -14,7 +14,7 @@ use tsrs_core::{
 use super::*;
 
 pub type StringComparer = Rc<dyn Fn(&str, &str) -> Ordering>;
-pub type NodeComparer = Rc<dyn Fn(P<Node>, P<Node>) -> Ordering>;
+pub(crate) type NodeComparer = Rc<dyn Fn(P<Node>, P<Node>) -> Ordering>;
 
 // Go `cmp.Compare` / `strings.Compare`.
 fn go_cmp<T: Ord + Copy>(a: T, b: T) -> Ordering {
@@ -23,13 +23,13 @@ fn go_cmp<T: Ord + Copy>(a: T, b: T) -> Ordering {
 
 // organizeimports.go:18
 // FilterImportDeclarations filters out non-import declarations from a list of statements.
-pub fn filter_import_declarations(statements: &[P<Node>]) -> Vec<P<Node>> {
+pub(crate) fn filter_import_declarations(statements: &[P<Node>]) -> Vec<P<Node>> {
     statements.iter().copied().filter(|stmt| stmt.kind() == Kind::ImportDeclaration).collect()
 }
 
 // organizeimports.go:25
 // GetDetectionLists returns the lists of comparers and type orders to test for organize imports detection.
-pub fn get_detection_lists(
+pub(crate) fn get_detection_lists(
     preferences: &UserPreferences,
 ) -> (Vec<StringComparer>, Vec<OrganizeImportsTypeOrder>) {
     let comparers_to_test: Vec<StringComparer> =
@@ -48,14 +48,14 @@ pub fn get_detection_lists(
         };
 
     let type_orders_to_test =
-        if preferences.organize_imports_type_order != OrganizeImportsTypeOrder::Auto {
-            vec![preferences.organize_imports_type_order]
-        } else {
+        if preferences.organize_imports_type_order == OrganizeImportsTypeOrder::Auto {
             vec![
                 OrganizeImportsTypeOrder::Last,
                 OrganizeImportsTypeOrder::Inline,
                 OrganizeImportsTypeOrder::First,
             ]
+        } else {
+            vec![preferences.organize_imports_type_order]
         };
 
     (comparers_to_test, type_orders_to_test)
@@ -294,9 +294,7 @@ fn compare_organize_imports_case(
 }
 
 // organizeimports.go:248
-pub(crate) fn get_organize_imports_preset_string_comparer(
-    sort: OrganizeImportsSort,
-) -> StringComparer {
+pub fn get_organize_imports_preset_string_comparer(sort: OrganizeImportsSort) -> StringComparer {
     match sort {
         OrganizeImportsSort::OrdinalIgnoreCase => {
             get_organize_imports_ordinal_string_comparer(true)
@@ -343,12 +341,12 @@ fn get_module_specifier_expression(declaration: P<Node>) -> Option<P<Node>> {
                 .nodes();
             if !declarations.is_empty() {
                 let initializer = declarations[0].initializer();
-                if let Some(initializer) = initializer {
-                    if initializer.kind() == Kind::CallExpression {
-                        let call_expr = initializer.as_call_expression();
-                        if !call_expr.arguments.nodes().is_empty() {
-                            return Some(call_expr.arguments.nodes()[0]);
-                        }
+                if let Some(initializer) = initializer
+                    && initializer.kind() == Kind::CallExpression
+                {
+                    let call_expr = initializer.as_call_expression();
+                    if !call_expr.arguments.nodes().is_empty() {
+                        return Some(call_expr.arguments.nodes()[0]);
                     }
                 }
             }
@@ -360,18 +358,18 @@ fn get_module_specifier_expression(declaration: P<Node>) -> Option<P<Node>> {
 
 // organizeimports.go:299
 // GetExternalModuleName returns the module name from a module specifier expression.
-pub fn get_external_module_name(specifier: Option<P<Node>>) -> &'static str {
-    if let Some(specifier) = specifier {
-        if ast::is_string_literal_like(specifier) {
-            return specifier.text();
-        }
+pub(crate) fn get_external_module_name(specifier: Option<P<Node>>) -> &'static str {
+    if let Some(specifier) = specifier
+        && ast::is_string_literal_like(specifier)
+    {
+        return specifier.text();
     }
     ""
 }
 
 // organizeimports.go:307
 // CompareModuleSpecifiers compares two module specifiers using the given comparer.
-pub fn compare_module_specifiers(
+pub(crate) fn compare_module_specifiers(
     m1: Option<P<Node>>,
     m2: Option<P<Node>>,
     comparer: &dyn Fn(&str, &str) -> Ordering,
@@ -443,7 +441,7 @@ fn get_import_kind_order(s1: P<Node>) -> u8 {
 
 // organizeimports.go:370
 // CompareImportsOrRequireStatements compares two import or require statements.
-pub fn compare_imports_or_require_statements(
+pub(crate) fn compare_imports_or_require_statements(
     s1: P<Node>,
     s2: P<Node>,
     comparer: &dyn Fn(&str, &str) -> Ordering,
@@ -493,7 +491,7 @@ fn compare_import_or_export_specifiers(
 
 // organizeimports.go:400
 // GetNamedImportSpecifierComparer returns a comparer function for sorting import specifiers.
-pub fn get_named_import_specifier_comparer(
+pub(crate) fn get_named_import_specifier_comparer(
     preferences: &UserPreferences,
     comparer: Option<StringComparer>,
 ) -> NodeComparer {
@@ -514,7 +512,7 @@ pub fn get_named_import_specifier_comparer(
 
 // organizeimports.go:414
 // GetImportSpecifierInsertionIndex returns the index at which to insert a new import specifier.
-pub fn get_import_specifier_insertion_index(
+pub(crate) fn get_import_specifier_insertion_index(
     sorted_imports: &[P<Node>],
     new_import: P<Node>,
     comparer: &dyn Fn(P<Node>, P<Node>) -> Ordering,
@@ -524,7 +522,7 @@ pub fn get_import_specifier_insertion_index(
 
 // organizeimports.go:421
 // GetImportDeclarationInsertIndex returns the index at which to insert a new import declaration.
-pub fn get_import_declaration_insert_index(
+pub(crate) fn get_import_declaration_insert_index(
     sorted_imports: &[P<Node>],
     new_import: P<Node>,
     comparer: &dyn Fn(P<Node>, P<Node>) -> Ordering,
@@ -534,7 +532,7 @@ pub fn get_import_declaration_insert_index(
 
 // organizeimports.go:428
 // GetOrganizeImportsStringComparerWithDetection returns a string comparer based on detecting the order of import statements by the module specifier
-pub fn get_organize_imports_string_comparer_with_detection(
+pub(crate) fn get_organize_imports_string_comparer_with_detection(
     original_import_decls: &[P<Node>],
     preferences: &UserPreferences,
 ) -> (Option<StringComparer>, bool) {
@@ -571,7 +569,7 @@ struct NamedImportSortResult {
 
 // organizeimports.go:454
 // DetectNamedImportOrganizationBySort detects the order of named imports throughout the file by considering the named imports in each statement as a group
-pub fn detect_named_import_organization_by_sort(
+pub(crate) fn detect_named_import_organization_by_sort(
     original_groups: &[P<Node>],
     comparers_to_test: &[StringComparer],
     types_to_test: &[OrganizeImportsTypeOrder],
@@ -731,7 +729,7 @@ struct CaseSensitivityDetectionResult {
 
 // organizeimports.go:603
 // DetectModuleSpecifierCaseBySort detects the order of module specifiers based on import statements throughout the module/file
-pub fn detect_module_specifier_case_by_sort(
+pub(crate) fn detect_module_specifier_case_by_sort(
     import_decls_by_group: &[Vec<P<Node>>],
     comparers_to_test: &[StringComparer],
 ) -> (Option<StringComparer>, bool) {
@@ -793,7 +791,7 @@ fn measure_sortedness<T>(arr: &[T], comparer: impl Fn(&T, &T) -> Ordering) -> us
 
 // organizeimports.go:662
 // GetNamedImportSpecifierComparerWithDetection returns a specifier comparer based on detecting the existing sort order within a single import statement
-pub fn get_named_import_specifier_comparer_with_detection(
+pub(crate) fn get_named_import_specifier_comparer_with_detection(
     import_decl: P<Node>,
     source_file: Option<P<SourceFile>>,
     preferences: &UserPreferences,
@@ -809,41 +807,40 @@ pub fn get_named_import_specifier_comparer_with_detection(
         get_named_import_specifier_comparer(preferences, Some(Rc::clone(&comparers_to_test[0])));
     let mut is_sorted = Tristate::Unknown;
 
-    if resolve_organize_imports_sort(preferences) == OrganizeImportsSort::Auto
-        || preferences.organize_imports_type_order == OrganizeImportsTypeOrder::Auto
+    if (resolve_organize_imports_sort(preferences) == OrganizeImportsSort::Auto
+        || preferences.organize_imports_type_order == OrganizeImportsTypeOrder::Auto)
+        && let Some(import_stmt) = import_stmt
     {
-        if let Some(import_stmt) = import_stmt {
-            let detect_from_decl = detect_named_import_organization_by_sort_worker(
-                &[import_stmt],
+        let detect_from_decl = detect_named_import_organization_by_sort_worker(
+            &[import_stmt],
+            &comparers_to_test,
+            &type_orders_to_test,
+        );
+        if let Some(detect_from_decl) = detect_from_decl {
+            is_sorted = bool_to_tristate(detect_from_decl.is_sorted);
+            specifier_comparer = get_named_import_specifier_comparer(
+                &UserPreferences {
+                    organize_imports_type_order: detect_from_decl.type_order,
+                    ..Default::default()
+                },
+                detect_from_decl.named_import_comparer,
+            );
+        } else if let Some(source_file) = source_file {
+            let all_imports = filter_import_declarations(source_file.statements().nodes());
+            let detect_from_file = detect_named_import_organization_by_sort_worker(
+                &all_imports,
                 &comparers_to_test,
                 &type_orders_to_test,
             );
-            if let Some(detect_from_decl) = detect_from_decl {
-                is_sorted = bool_to_tristate(detect_from_decl.is_sorted);
+            if let Some(detect_from_file) = detect_from_file {
+                is_sorted = bool_to_tristate(detect_from_file.is_sorted);
                 specifier_comparer = get_named_import_specifier_comparer(
                     &UserPreferences {
-                        organize_imports_type_order: detect_from_decl.type_order,
+                        organize_imports_type_order: detect_from_file.type_order,
                         ..Default::default()
                     },
-                    detect_from_decl.named_import_comparer,
+                    detect_from_file.named_import_comparer,
                 );
-            } else if let Some(source_file) = source_file {
-                let all_imports = filter_import_declarations(source_file.statements().nodes());
-                let detect_from_file = detect_named_import_organization_by_sort_worker(
-                    &all_imports,
-                    &comparers_to_test,
-                    &type_orders_to_test,
-                );
-                if let Some(detect_from_file) = detect_from_file {
-                    is_sorted = bool_to_tristate(detect_from_file.is_sorted);
-                    specifier_comparer = get_named_import_specifier_comparer(
-                        &UserPreferences {
-                            organize_imports_type_order: detect_from_file.type_order,
-                            ..Default::default()
-                        },
-                        detect_from_file.named_import_comparer,
-                    );
-                }
             }
         }
     }

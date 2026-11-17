@@ -1,3 +1,8 @@
+#![expect(
+    clippy::redundant_pub_crate,
+    reason = "Only the public API is re-exported; implementation helpers remain crate-private."
+)]
+
 // internal/testutil/tsbaseline/type_symbol_baseline.go: the `.types` and `.symbols` baselines.
 
 use std::fmt::Write as _;
@@ -27,7 +32,7 @@ static LINE_DELIMITER: LazyLock<Regex> = LazyLock::new(|| Regex::new("\r?\n").un
 // DoTypeAndSymbolBaseline: both baselines from one walker, the type walk first (it runs first in Go's
 // test process, and it can create types that the symbol walk then sees). Each walk runs under its own
 // panic guard (Go's per-subtest RecoverAndFail); a panic is returned as `Err(message)`.
-pub fn do_type_and_symbol_baseline(
+pub(crate) fn do_type_and_symbol_baseline(
     header: &str,
     program: &'static Program,
     all_files: &[TestFile],

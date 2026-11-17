@@ -1,5 +1,6 @@
 //! OH ets2bundle's normal / syntactic / strict-linter build phases.
 use super::*;
+use crate::checkerpool::CheckerPoolImpl;
 use rustc_hash::FxHashSet;
 use tsrs_core::{ScriptKind, Tristate};
 
@@ -31,11 +32,11 @@ pub struct ArkTsNormalDiagnostics {
     pub keys: ArkTsDiagnosticKeys,
 }
 impl Program {
-    fn arkts_build_pool(&'static self) -> &'static checkerPool {
-        self.compiler_checker_pool().unwrap_or_else(|| self.arkts_build_checker_pool.get_or_init(|| checkerPool::new(self, None)))
+    fn arkts_build_pool(&'static self) -> &'static CheckerPoolImpl {
+        self.compiler_checker_pool().unwrap_or_else(|| self.arkts_build_checker_pool.get_or_init(|| CheckerPoolImpl::new(self, None)))
     }
-    fn arkts_linter_pool(&'static self) -> &'static checkerPool {
-        self.arkts_linter_checker_pool.get_or_init(|| checkerPool::new_arkts_linter(self))
+    fn arkts_linter_pool(&'static self) -> &'static CheckerPoolImpl {
+        self.arkts_linter_checker_pool.get_or_init(|| CheckerPoolImpl::new_arkts_linter(self))
     }
     /// Value-only transform facts share the normal build checkers and their SDK-use caches.
     pub fn for_each_arkts_build_checker_group(&'static self, files: &[P<SourceFile>], cb: impl Fn(&mut Checker, usize, P<SourceFile>) + Sync) {

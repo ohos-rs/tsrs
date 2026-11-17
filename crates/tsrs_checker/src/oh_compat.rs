@@ -59,7 +59,7 @@ impl Checker {
             let constraint = self.instantiate_type(constraint, n.non_fixing_mapper());
             let replace = if let Some(inferred) = inferred {
                 let target = self.get_type_with_this_argument(constraint, Some(inferred), false);
-                n.compare_types.get().unwrap()(self, inferred, target, false) == Ternary::False
+                n.compare_types.get().unwrap()(self, inferred, target, false) == Ternary::FALSE
             } else { true };
             if replace { inference.inferred_type.set(Some(constraint)); }
         }

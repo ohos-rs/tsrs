@@ -9,6 +9,87 @@ use crate::*;
 
 static NEXT_NODE_ID: AtomicU64 = AtomicU64::new(0);
 static NEXT_SYMBOL_ID: AtomicU64 = AtomicU64::new(0);
+static NEXT_NODE_BLOCK_ID: AtomicU64 = AtomicU64::new(0);
+static NEXT_SYMBOL_BLOCK_ID: AtomicU64 = AtomicU64::new(0);
+
+/// Go reserves this part of the 64-bit id space for ids assigned by the checker's dense link stores.
+pub const BLOCK_ID_OFFSET: u64 = 0x1_0000_0000_0000;
+const BLOCK_ID_SIZE: u32 = tsrs_core::LINK_PAGE_SIZE as u32;
+
+// Nodes and symbols keep a 32-bit id in the AST. The high bit tags a block id; the remaining bits are its
+// offset from BLOCK_ID_OFFSET. This preserves the Go-visible 64-bit id without enlarging every AST object.
+const BLOCK_ID_TAG: u32 = 1 << 31;
+
+#[inline]
+fn decode_id(stored: u32) -> u64 {
+    if stored & BLOCK_ID_TAG != 0 {
+        BLOCK_ID_OFFSET + u64::from(stored & !BLOCK_ID_TAG)
+    } else {
+        u64::from(stored)
+    }
+}
+
+#[derive(Default)]
+pub struct NodeIdGenerator {
+    block: Cell<(u32, u32)>,
+}
+
+#[derive(Default)]
+pub struct SymbolIdGenerator {
+    block: Cell<(u32, u32)>,
+}
+
+#[inline]
+fn next_block_id(counter: &AtomicU64, block: &Cell<(u32, u32)>) -> u32 {
+    let (mut next, mut last) = block.get();
+    if next == last {
+        // Relaxed: the counter only reserves disjoint id ranges, as for ordinary ids below.
+        let first = counter.fetch_add(u64::from(BLOCK_ID_SIZE), Ordering::Relaxed);
+        next = u32::try_from(first).expect("more than 2^31 block ids");
+        last = next.checked_add(BLOCK_ID_SIZE).expect("more than 2^31 block ids");
+        assert!(last <= BLOCK_ID_TAG, "more than 2^31 block ids");
+    }
+    block.set((next + 1, last));
+    BLOCK_ID_TAG | next
+}
+
+impl NodeIdGenerator {
+    #[inline]
+    pub fn get_node_id(&self, node: P<Node>) -> NodeId {
+        // Relaxed: an id is immutable once assigned and publishes no other node state.
+        let id = node.id.load(Ordering::Relaxed);
+        if id != 0 {
+            return NodeId(decode_id(id));
+        }
+        let candidate = next_block_id(&NEXT_NODE_BLOCK_ID, &self.block);
+        // Relaxed: competing generators only choose the node's one immutable id.
+        let id = match node.id.compare_exchange(0, candidate, Ordering::Relaxed, Ordering::Relaxed)
+        {
+            Ok(_) => candidate,
+            Err(winner) => winner,
+        };
+        NodeId(decode_id(id))
+    }
+}
+
+impl SymbolIdGenerator {
+    #[inline]
+    pub fn get_symbol_id(&self, symbol: P<Symbol>) -> SymbolId {
+        // Relaxed: an id is immutable once assigned and publishes no other symbol state.
+        let id = symbol.id.load(Ordering::Relaxed);
+        if id != 0 {
+            return SymbolId(decode_id(id));
+        }
+        let candidate = next_block_id(&NEXT_SYMBOL_BLOCK_ID, &self.block);
+        // Relaxed: competing generators only choose the symbol's one immutable id.
+        let id =
+            match symbol.id.compare_exchange(0, candidate, Ordering::Relaxed, Ordering::Relaxed) {
+                Ok(_) => candidate,
+                Err(winner) => winner,
+            };
+        SymbolId(decode_id(id))
+    }
+}
 
 /// Ids a thread in id-block mode (`use_id_blocks`) takes from a counter at a time.
 const ID_BLOCK: u64 = 1024;
@@ -32,6 +113,14 @@ pub fn use_id_blocks() {
     ID_BLOCK_MODE.set(true);
 }
 
+/// Ends `use_id_blocks` on the current thread and drops the rest of its blocks, as the thread's exit would: a reused
+/// checker thread must not hand out ids from a block it took in an earlier group.
+pub fn stop_id_blocks() {
+    ID_BLOCK_MODE.set(false);
+    NODE_ID_BLOCK.set((0, 0));
+    SYMBOL_ID_BLOCK.set((0, 0));
+}
+
 #[inline]
 fn next_id(counter: &AtomicU64, block: &'static std::thread::LocalKey<Cell<(u64, u64)>>) -> u64 {
     if !ID_BLOCK_MODE.get() {
@@ -53,63 +142,67 @@ fn next_id(counter: &AtomicU64, block: &'static std::thread::LocalKey<Cell<(u64,
 
 #[inline]
 pub fn get_node_id(node: P<Node>) -> NodeId {
+    // Relaxed: the id is immutable and does not publish any other node state.
     let id = node.id.load(Ordering::Relaxed);
     if id != 0 {
-        return NodeId(id as u64);
+        return NodeId(decode_id(id));
     }
     assign_node_id(node)
 }
 
 /// The node's id if it has one; unlike `get_node_id`, never assigns one.
 #[inline]
-pub fn get_assigned_node_id(node: P<Node>) -> Option<u32> {
+pub fn get_assigned_node_id(node: P<Node>) -> Option<NodeId> {
     // Relaxed, as in `get_node_id`: the id is the only data read, and it is written once.
     let id = node.id.load(Ordering::Relaxed);
-    (id != 0).then_some(id)
+    (id != 0).then(|| NodeId(decode_id(id)))
 }
 
 #[inline(never)]
 fn assign_node_id(node: P<Node>) -> NodeId {
     // Worst case, we burn a few ids if we have to CAS.
     let next = next_id(&NEXT_NODE_ID, &NODE_ID_BLOCK);
-    // Nodes store their id in 32 bits (memory); Go's ids are 64-bit but no program gets near 2^32.
-    let mut id = u32::try_from(next).expect("more than u32::MAX node ids");
+    // The high bit tags Go's reserved block range; ordinary ids use the lower 31 bits.
+    let mut id = u32::try_from(next).expect("more than 2^31 ordinary node ids");
+    assert!(id < BLOCK_ID_TAG, "more than 2^31 ordinary node ids");
     // Relaxed: the id is the only data published, and it is written once.
     if node.id.compare_exchange(0, id, Ordering::Relaxed, Ordering::Relaxed).is_err() {
         // Relaxed: only the winning id is needed.
         id = node.id.load(Ordering::Relaxed);
     }
-    NodeId(id as u64)
+    NodeId(decode_id(id))
 }
 
 #[inline]
 pub fn get_symbol_id(symbol: P<Symbol>) -> SymbolId {
+    // Relaxed: the id is immutable and does not publish any other symbol state.
     let id = symbol.id.load(Ordering::Relaxed);
     if id != 0 {
-        return SymbolId(id as u64);
+        return SymbolId(decode_id(id));
     }
     assign_symbol_id(symbol)
 }
 
 /// The symbol's id if it has one; unlike `get_symbol_id`, never assigns one.
 #[inline]
-pub fn get_assigned_symbol_id(symbol: P<Symbol>) -> Option<u32> {
+pub fn get_assigned_symbol_id(symbol: P<Symbol>) -> Option<SymbolId> {
     let id = symbol.id.load(Ordering::Relaxed);
-    (id != 0).then_some(id)
+    (id != 0).then(|| SymbolId(decode_id(id)))
 }
 
 #[inline(never)]
 fn assign_symbol_id(symbol: P<Symbol>) -> SymbolId {
     // Worst case, we burn a few ids if we have to CAS.
     let next = next_id(&NEXT_SYMBOL_ID, &SYMBOL_ID_BLOCK);
-    // Symbols store their id in 32 bits (memory); Go's ids are 64-bit but no program gets near 2^32.
-    let mut id = u32::try_from(next).expect("more than u32::MAX symbol ids");
+    // The high bit tags Go's reserved block range; ordinary ids use the lower 31 bits.
+    let mut id = u32::try_from(next).expect("more than 2^31 ordinary symbol ids");
+    assert!(id < BLOCK_ID_TAG, "more than 2^31 ordinary symbol ids");
     // Relaxed: the id is the only data published, and it is written once.
     if symbol.id.compare_exchange(0, id, Ordering::Relaxed, Ordering::Relaxed).is_err() {
         // Relaxed: only the winning id is needed.
         id = symbol.id.load(Ordering::Relaxed);
     }
-    SymbolId(id as u64)
+    SymbolId(decode_id(id))
 }
 
 pub fn get_symbol_table(data: &Cell<Option<P<SymbolTable>>>) -> P<SymbolTable> {
@@ -185,7 +278,7 @@ pub fn is_modifier_like(node: P<Node>) -> bool {
 }
 
 pub fn is_compound_assignment(token: Kind) -> bool {
-    token >= Kind::FirstCompoundAssignment && token <= Kind::LastCompoundAssignment
+    token >= Kind::FIRST_COMPOUND_ASSIGNMENT && token <= Kind::LAST_COMPOUND_ASSIGNMENT
 }
 
 pub fn is_assignment_expression(node: P<Node>, exclude_compound_assignment: bool) -> bool {
@@ -211,17 +304,6 @@ pub fn is_destructuring_assignment(node: P<Node>) -> bool {
         return kind == Kind::ObjectLiteralExpression || kind == Kind::ArrayLiteralExpression;
     }
     false
-}
-
-// utilities.go:140
-pub fn is_object_binding_or_assignment_element(node: P<Node>) -> bool {
-    matches!(
-        node.kind(),
-        Kind::BindingElement
-            | Kind::PropertyAssignment
-            | Kind::ShorthandPropertyAssignment
-            | Kind::SpreadAssignment
-    )
 }
 
 // utilities.go:151
@@ -402,8 +484,7 @@ pub fn is_identifier_name(node: P<Node>) -> bool {
         | Kind::PropertyAssignment
         | Kind::PropertyAccessExpression => parent.name() == Some(node),
         Kind::QualifiedName => parent.as_qualified_name().right == node,
-        Kind::BindingElement => parent.property_name() == Some(node),
-        Kind::ImportSpecifier => parent.property_name() == Some(node),
+        Kind::BindingElement | Kind::ImportSpecifier => parent.property_name() == Some(node),
         Kind::ExportSpecifier
         | Kind::JsxAttribute
         | Kind::JsxSelfClosingElement
@@ -457,7 +538,7 @@ pub fn is_optional_chain(node: P<Node>) -> bool {
     false
 }
 
-pub(crate) fn get_question_dot_token(node: P<Node>) -> Option<P<Node>> {
+fn get_question_dot_token(node: P<Node>) -> Option<P<Node>> {
     node.question_dot_token()
 }
 
@@ -500,7 +581,7 @@ pub fn is_assertion_expression(node: P<Node>) -> bool {
     kind == Kind::TypeAssertionExpression || kind == Kind::AsExpression
 }
 
-pub(crate) fn is_left_hand_side_expression_kind(kind: Kind) -> bool {
+fn is_left_hand_side_expression_kind(kind: Kind) -> bool {
     matches!(
         kind,
         Kind::PropertyAccessExpression
@@ -542,7 +623,7 @@ pub fn is_left_hand_side_expression(node: P<Node>) -> bool {
     is_left_hand_side_expression_kind(skip_partially_emitted_expressions(node).kind())
 }
 
-pub(crate) fn is_unary_expression_kind(kind: Kind) -> bool {
+fn is_unary_expression_kind(kind: Kind) -> bool {
     match kind {
         Kind::PrefixUnaryExpression
         | Kind::PostfixUnaryExpression
@@ -555,7 +636,7 @@ pub(crate) fn is_unary_expression_kind(kind: Kind) -> bool {
     }
 }
 
-pub(crate) fn is_expression_kind(kind: Kind) -> bool {
+fn is_expression_kind(kind: Kind) -> bool {
     match kind {
         Kind::ConditionalExpression
         | Kind::YieldExpression
@@ -604,7 +685,7 @@ pub fn is_access_expression(node: P<Node>) -> bool {
     node.kind() == Kind::PropertyAccessExpression || node.kind() == Kind::ElementAccessExpression
 }
 
-pub(crate) fn is_function_like_declaration_kind(kind: Kind) -> bool {
+fn is_function_like_declaration_kind(kind: Kind) -> bool {
     matches!(
         kind,
         Kind::FunctionDeclaration
@@ -762,7 +843,7 @@ pub fn is_jsx_attribute_like(node: P<Node>) -> bool {
     is_jsx_attribute(node) || is_jsx_spread_attribute(node)
 }
 
-pub(crate) fn is_declaration_statement_kind(kind: Kind) -> bool {
+fn is_declaration_statement_kind(kind: Kind) -> bool {
     matches!(
         kind,
         Kind::FunctionDeclaration
@@ -828,14 +909,14 @@ pub fn is_statement(node: P<Node>) -> bool {
 
 // Determines whether a node is a BlockStatement. If parents are available, this ensures the Block is
 // not part of a `try` statement, `catch` clause, or the Block-like body of a function
-pub(crate) fn is_block_statement(node: P<Node>) -> bool {
+fn is_block_statement(node: P<Node>) -> bool {
     if node.kind() != Kind::Block {
         return false;
     }
-    if let Some(parent) = node.parent() {
-        if parent.kind() == Kind::TryStatement || parent.kind() == Kind::CatchClause {
-            return false;
-        }
+    if let Some(parent) = node.parent()
+        && (parent.kind() == Kind::TryStatement || parent.kind() == Kind::CatchClause)
+    {
+        return false;
     }
     !is_function_block(node)
 }
@@ -880,7 +961,7 @@ pub fn is_type_node_kind(kind: Kind) -> bool {
         | Kind::JSDocNonNullableType
         | Kind::JSDocOptionalType
         | Kind::JSDocVariadicType => true,
-        _ => kind >= Kind::FirstTypeNode && kind <= Kind::LastTypeNode,
+        _ => kind >= Kind::FIRST_TYPE_NODE && kind <= Kind::LAST_TYPE_NODE,
     }
 }
 
@@ -889,7 +970,7 @@ pub fn is_type_node(node: P<Node>) -> bool {
 }
 
 pub fn is_jsdoc_kind(kind: Kind) -> bool {
-    Kind::FirstJSDocNode <= kind && kind <= Kind::LastJSDocNode
+    Kind::FIRST_JSDOC_NODE <= kind && kind <= Kind::LAST_JSDOC_NODE
 }
 
 pub fn is_jsdoc_type_assertion(node: impl Into<Option<P<Node>>>) -> bool {
@@ -1049,29 +1130,6 @@ pub fn find_ancestor(
         node = n.parent();
     }
     None
-}
-
-pub fn find_many_ancestors(
-    node: impl Into<Option<P<Node>>>,
-    callbacks: &mut [&mut dyn FnMut(P<Node>) -> bool],
-) -> Vec<Option<P<Node>>> {
-    let mut node = node.into();
-    let mut ancestors: Vec<Option<P<Node>>> = vec![None; callbacks.len()];
-    let mut found = 0;
-    while let Some(n) = node {
-        for (i, callback) in callbacks.iter_mut().enumerate() {
-            if ancestors[i].is_none() && callback(n) {
-                ancestors[i] = Some(n);
-                found += 1;
-                if found == ancestors.len() {
-                    return ancestors;
-                }
-                break;
-            }
-        }
-        node = n.parent();
-    }
-    ancestors
 }
 
 // Walks up the parents of a node to find the ancestor that matches the kind
@@ -1372,21 +1430,21 @@ pub fn get_combined_modifier_flags(node: P<Node>) -> ModifierFlags {
     let node = get_root_declaration(node);
     let mut flags = node.modifier_flags();
     let mut node = Some(node);
-    if let Some(n) = node {
-        if n.kind() == Kind::VariableDeclaration {
-            node = n.parent();
-        }
+    if let Some(n) = node
+        && n.kind() == Kind::VariableDeclaration
+    {
+        node = n.parent();
     }
-    if let Some(n) = node {
-        if n.kind() == Kind::VariableDeclarationList {
-            flags |= n.modifier_flags();
-            node = n.parent();
-        }
+    if let Some(n) = node
+        && n.kind() == Kind::VariableDeclarationList
+    {
+        flags |= n.modifier_flags();
+        node = n.parent();
     }
-    if let Some(n) = node {
-        if n.kind() == Kind::VariableStatement {
-            flags |= n.modifier_flags();
-        }
+    if let Some(n) = node
+        && n.kind() == Kind::VariableStatement
+    {
+        flags |= n.modifier_flags();
     }
     flags
 }
@@ -1395,21 +1453,21 @@ pub fn get_combined_node_flags(node: P<Node>) -> NodeFlags {
     let node = get_root_declaration(node);
     let mut flags = node.flags();
     let mut node = Some(node);
-    if let Some(n) = node {
-        if n.kind() == Kind::VariableDeclaration {
-            node = n.parent();
-        }
+    if let Some(n) = node
+        && n.kind() == Kind::VariableDeclaration
+    {
+        node = n.parent();
     }
-    if let Some(n) = node {
-        if n.kind() == Kind::VariableDeclarationList {
-            flags |= n.flags();
-            node = n.parent();
-        }
+    if let Some(n) = node
+        && n.kind() == Kind::VariableDeclarationList
+    {
+        flags |= n.flags();
+        node = n.parent();
     }
-    if let Some(n) = node {
-        if n.kind() == Kind::VariableStatement {
-            flags |= n.flags();
-        }
+    if let Some(n) = node
+        && n.kind() == Kind::VariableStatement
+    {
+        flags |= n.flags();
     }
     flags
 }
@@ -1417,14 +1475,13 @@ pub fn get_combined_node_flags(node: P<Node>) -> NodeFlags {
 // GetJSDocDeprecatedTag returns the first @deprecated JSDoc tag for the given node, or nil if none exists.
 pub fn get_jsdoc_deprecated_tag(node: P<Node>) -> Option<P<Node>> {
     for &jsdoc in node.jsdoc(None) {
-        if let Some(tags) = jsdoc.as_jsdoc().tags {
-            if let Some(result) = tags
+        if let Some(tags) = jsdoc.as_jsdoc().tags
+            && let Some(result) = tags
                 .nodes()
                 .iter()
                 .find_map(|&tag| if is_jsdoc_deprecated_tag(tag) { Some(Some(tag)) } else { None })
-            {
-                return result;
-            }
+        {
+            return result;
         }
     }
     None
@@ -1592,10 +1649,7 @@ pub fn is_bindable_static_access_expression(node: P<Node>, exclude_this_keyword:
         || is_bindable_static_element_access_expression(node, exclude_this_keyword)
 }
 
-pub fn is_bindable_static_element_access_expression(
-    node: P<Node>,
-    exclude_this_keyword: bool,
-) -> bool {
+fn is_bindable_static_element_access_expression(node: P<Node>, exclude_this_keyword: bool) -> bool {
     is_literal_like_element_access(node)
         && ((!exclude_this_keyword && node.expression().unwrap().kind() == Kind::ThisKeyword)
             || is_entity_name_expression(node.expression().unwrap())
@@ -1606,15 +1660,15 @@ pub fn is_bindable_static_element_access_expression(
 }
 
 pub fn is_prototype_access(node: P<Node>) -> bool {
-    if is_bindable_static_access_expression(node, false /*excludeThisKeyword*/) {
-        if let Some(name) = get_element_or_property_access_name(node) {
-            return name.text() == "prototype";
-        }
+    if is_bindable_static_access_expression(node, false /*excludeThisKeyword*/)
+        && let Some(name) = get_element_or_property_access_name(node)
+    {
+        return name.text() == "prototype";
     }
     false
 }
 
-pub fn is_literal_like_element_access(node: P<Node>) -> bool {
+fn is_literal_like_element_access(node: P<Node>) -> bool {
     is_element_access_expression(node)
         && is_string_or_numeric_literal_like(
             node.as_element_access_expression().argument_expression,
@@ -1728,8 +1782,7 @@ pub fn get_non_assigned_name_of_declaration(declaration: P<Node>) -> Option<P<No
 pub fn get_assigned_name(node: P<Node>) -> Option<P<Node>> {
     if let Some(parent) = node.parent() {
         match parent.kind() {
-            Kind::PropertyAssignment => return parent.name(),
-            Kind::BindingElement => return parent.name(),
+            Kind::PropertyAssignment | Kind::BindingElement => return parent.name(),
             Kind::BinaryExpression => {
                 if node == parent.as_binary_expression().right() {
                     let left = parent.as_binary_expression().left;

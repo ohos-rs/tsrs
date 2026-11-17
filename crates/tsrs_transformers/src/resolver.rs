@@ -16,7 +16,7 @@ use crate::*;
 #[derive(Clone, Copy)]
 pub struct Resolver {
     pub r: P<EmitResolver>,
-    pub slot: P<CheckerSlot>,
+    slot: P<CheckerSlot>,
 }
 
 impl Resolver {
@@ -127,7 +127,6 @@ impl Resolver {
 
     pub fn create_return_type_of_signature_declaration(
         self,
-        emit_context: P<EmitContext>,
         signature_declaration: P<Node>,
         enclosing_declaration: Option<P<Node>>,
         flags: nodebuilder::Flags,
@@ -137,7 +136,6 @@ impl Resolver {
         self.lock(|c| {
             self.r.create_return_type_of_signature_declaration(
                 c,
-                emit_context,
                 signature_declaration,
                 enclosing_declaration,
                 flags,
@@ -149,7 +147,6 @@ impl Resolver {
 
     pub fn create_type_parameters_of_signature_declaration(
         self,
-        emit_context: P<EmitContext>,
         signature_declaration: P<Node>,
         enclosing_declaration: Option<P<Node>>,
         flags: nodebuilder::Flags,
@@ -159,7 +156,6 @@ impl Resolver {
         self.lock(|c| {
             self.r.create_type_parameters_of_signature_declaration(
                 c,
-                emit_context,
                 signature_declaration,
                 enclosing_declaration,
                 flags,
@@ -171,7 +167,6 @@ impl Resolver {
 
     pub fn create_type_of_declaration(
         self,
-        emit_context: P<EmitContext>,
         declaration: P<Node>,
         enclosing_declaration: Option<P<Node>>,
         flags: nodebuilder::Flags,
@@ -181,7 +176,6 @@ impl Resolver {
         self.lock(|c| {
             self.r.create_type_of_declaration(
                 c,
-                emit_context,
                 declaration,
                 enclosing_declaration,
                 flags,
@@ -193,16 +187,14 @@ impl Resolver {
 
     pub fn create_literal_const_value(
         self,
-        emit_context: P<EmitContext>,
         node: P<Node>,
         tracker: &'static dyn SymbolTracker,
     ) -> Option<P<Node>> {
-        self.lock(|c| self.r.create_literal_const_value(c, emit_context, node, tracker))
+        self.lock(|c| self.r.create_literal_const_value(c, node, tracker))
     }
 
     pub fn create_type_of_expression(
         self,
-        emit_context: P<EmitContext>,
         expression: P<Node>,
         enclosing_declaration: Option<P<Node>>,
         flags: nodebuilder::Flags,
@@ -212,7 +204,6 @@ impl Resolver {
         self.lock(|c| {
             self.r.create_type_of_expression(
                 c,
-                emit_context,
                 expression,
                 enclosing_declaration,
                 flags,
@@ -224,7 +215,6 @@ impl Resolver {
 
     pub fn create_late_bound_index_signatures(
         self,
-        emit_context: P<EmitContext>,
         container: P<Node>,
         enclosing_declaration: Option<P<Node>>,
         flags: nodebuilder::Flags,
@@ -234,7 +224,6 @@ impl Resolver {
         self.lock(|c| {
             self.r.create_late_bound_index_signatures(
                 c,
-                emit_context,
                 container,
                 enclosing_declaration,
                 flags,
@@ -246,7 +235,6 @@ impl Resolver {
 
     pub fn try_js_type_node_to_type_node(
         self,
-        emit_context: P<EmitContext>,
         type_node: P<Node>,
         enclosing_declaration: Option<P<Node>>,
         flags: nodebuilder::Flags,
@@ -256,7 +244,6 @@ impl Resolver {
         self.lock(|c| {
             self.r.try_js_type_node_to_type_node(
                 c,
-                emit_context,
                 type_node,
                 enclosing_declaration,
                 flags,
@@ -268,27 +255,30 @@ impl Resolver {
 
     // The rest of Go's `printer.EmitResolver` (used by the script transformers).
 
-    pub fn is_referenced_alias_declaration(self, node: P<Node>) -> bool {
+    pub(crate) fn is_referenced_alias_declaration(self, node: P<Node>) -> bool {
         self.lock(|c| self.r.is_referenced_alias_declaration(c, node))
     }
 
-    pub fn is_value_alias_declaration(self, node: P<Node>) -> bool {
+    pub(crate) fn is_value_alias_declaration(self, node: P<Node>) -> bool {
         self.lock(|c| self.r.is_value_alias_declaration(c, node))
     }
 
-    pub fn is_top_level_value_import_equals_with_entity_name(self, node: P<Node>) -> bool {
+    pub(crate) fn is_top_level_value_import_equals_with_entity_name(self, node: P<Node>) -> bool {
         self.lock(|c| self.r.is_top_level_value_import_equals_with_entity_name(c, node))
     }
 
-    pub fn mark_linked_references_recursively(self, file: P<SourceFile>) {
+    pub(crate) fn mark_linked_references_recursively(self, file: P<SourceFile>) {
         self.lock(|c| self.r.mark_linked_references_recursively(c, Some(file)));
     }
 
-    pub fn get_external_module_file_from_declaration(self, node: P<Node>) -> Option<P<SourceFile>> {
+    pub(crate) fn get_external_module_file_from_declaration(
+        self,
+        node: P<Node>,
+    ) -> Option<P<SourceFile>> {
         self.lock(|c| self.r.get_external_module_file_from_declaration(c, node))
     }
 
-    pub fn get_type_reference_serialization_kind(
+    pub(crate) fn get_type_reference_serialization_kind(
         self,
         name: P<Node>,
         serial_scope: Option<P<Node>>,
@@ -296,25 +286,25 @@ impl Resolver {
         self.lock(|c| self.r.get_type_reference_serialization_kind(c, Some(name), serial_scope))
     }
 
-    pub fn get_constant_value(self, node: P<Node>) -> Option<checker::LiteralValue> {
+    pub(crate) fn get_constant_value(self, node: P<Node>) -> Option<checker::LiteralValue> {
         self.lock(|c| self.r.get_constant_value(c, node))
     }
 
-    pub fn get_jsx_factory_entity(self, location: P<Node>) -> Option<P<Node>> {
+    pub(crate) fn get_jsx_factory_entity(self, location: P<Node>) -> Option<P<Node>> {
         self.lock(|c| self.r.get_jsx_factory_entity(c, location))
     }
 
-    pub fn get_jsx_fragment_factory_entity(self, location: P<Node>) -> Option<P<Node>> {
+    pub(crate) fn get_jsx_fragment_factory_entity(self, location: P<Node>) -> Option<P<Node>> {
         self.lock(|c| self.r.get_jsx_fragment_factory_entity(c, location))
     }
 
-    pub fn set_referenced_import_declaration(self, node: P<Node>, ref_: P<Node>) {
+    pub(crate) fn set_referenced_import_declaration(self, node: P<Node>, ref_: P<Node>) {
         self.lock(|c| self.r.set_referenced_import_declaration(c, node, ref_));
     }
 
     // binder.ReferenceResolver (embedded in Go's EmitResolver).
 
-    pub fn get_referenced_export_container(
+    pub(crate) fn get_referenced_export_container(
         self,
         node: P<Node>,
         prefix_locals: bool,
@@ -322,11 +312,11 @@ impl Resolver {
         self.lock(|c| self.r.get_referenced_export_container(c, node, prefix_locals))
     }
 
-    pub fn get_referenced_import_declaration(self, node: P<Node>) -> Option<P<Node>> {
+    fn get_referenced_import_declaration(self, node: P<Node>) -> Option<P<Node>> {
         self.lock(|c| self.r.get_referenced_import_declaration(c, node))
     }
 
-    pub fn get_referenced_value_declarations(self, node: P<Node>) -> Vec<P<Node>> {
+    fn get_referenced_value_declarations(self, node: P<Node>) -> Vec<P<Node>> {
         self.lock(|c| self.r.get_referenced_value_declarations(c, node))
     }
 
@@ -394,7 +384,7 @@ pub enum ReferenceResolverRef {
 }
 
 impl ReferenceResolverRef {
-    pub fn get_referenced_export_container(
+    pub(crate) fn get_referenced_export_container(
         self,
         node: P<Node>,
         prefix_locals: bool,
@@ -407,42 +397,24 @@ impl ReferenceResolverRef {
         }
     }
 
-    pub fn get_referenced_import_declaration(self, node: P<Node>) -> Option<P<Node>> {
+    pub(crate) fn get_referenced_import_declaration(self, node: P<Node>) -> Option<P<Node>> {
         match self {
             ReferenceResolverRef::Emit(r) => r.get_referenced_import_declaration(node),
             ReferenceResolverRef::Plain(r) => r.get_referenced_import_declaration(&mut (), node),
         }
     }
 
-    pub fn get_referenced_value_declaration(self, node: P<Node>) -> Option<P<Node>> {
+    pub(crate) fn get_referenced_value_declaration(self, node: P<Node>) -> Option<P<Node>> {
         match self {
             ReferenceResolverRef::Emit(r) => r.get_referenced_value_declaration(node),
             ReferenceResolverRef::Plain(r) => r.get_referenced_value_declaration(&mut (), node),
         }
     }
 
-    pub fn get_referenced_value_declarations(self, node: P<Node>) -> Vec<P<Node>> {
+    pub(crate) fn get_referenced_value_declarations(self, node: P<Node>) -> Vec<P<Node>> {
         match self {
             ReferenceResolverRef::Emit(r) => r.get_referenced_value_declarations(node),
             ReferenceResolverRef::Plain(r) => r.get_referenced_value_declarations(&mut (), node),
-        }
-    }
-
-    pub fn get_element_access_expression_name(self, expression: P<Node>) -> String {
-        match self {
-            ReferenceResolverRef::Emit(r) => r.get_element_access_expression_name(expression),
-            ReferenceResolverRef::Plain(r) => {
-                r.get_element_access_expression_name(&mut (), Some(expression))
-            }
-        }
-    }
-
-    pub fn get_referenced_member_value_declaration(self, node: P<Node>) -> Option<P<Node>> {
-        match self {
-            ReferenceResolverRef::Emit(r) => r.get_referenced_member_value_declaration(node),
-            ReferenceResolverRef::Plain(r) => {
-                r.get_referenced_member_value_declaration(&mut (), node)
-            }
         }
     }
 }

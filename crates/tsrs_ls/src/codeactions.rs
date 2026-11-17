@@ -16,11 +16,10 @@ use crate::spanmap::Feature;
 // codeactions.go:21
 // CodeFixProvider represents a provider for a specific type of code fix
 pub struct CodeFixProvider {
-    pub error_codes: &'static [i32],
-    pub get_code_actions:
+    pub(crate) error_codes: &'static [i32],
+    pub(crate) get_code_actions:
         fn(ctx: &Context, fix_context: &CodeFixContext) -> Result<Vec<CodeAction>, lsproto::Error>,
-    pub fix_ids: &'static [&'static str],
-    pub get_all_code_actions: Option<
+    pub(crate) get_all_code_actions: Option<
         fn(
             ctx: &Context,
             fix_context: &CodeFixContext,
@@ -31,30 +30,28 @@ pub struct CodeFixProvider {
 // codeactions.go:29
 // CodeFixContext contains the context needed to generate code fixes
 pub struct CodeFixContext<'a> {
-    pub source_file: P<SourceFile>,
-    pub span: TextRange,
-    pub error_code: i32,
-    pub program: &'static Program,
-    pub ls: &'a LanguageService,
-    pub diagnostic: Option<&'a lsproto::Diagnostic>,
-    pub params: Option<&'a lsproto::CodeActionParams>,
+    pub(crate) source_file: P<SourceFile>,
+    pub(crate) span: TextRange,
+    pub(crate) error_code: i32,
+    pub(crate) program: &'static Program,
+    pub(crate) ls: &'a LanguageService,
+    pub(crate) diagnostic: Option<&'a lsproto::Diagnostic>,
 }
 
 // codeactions.go:40
 // CodeAction represents a single code action fix
 #[derive(Clone, Debug, Default)]
 pub struct CodeAction {
-    pub description: String,
-    pub changes: Vec<lsproto::TextEdit>,
-    pub fix_id: String,
-    pub fix_all_description: String,
+    pub(crate) description: String,
+    pub(crate) changes: Vec<lsproto::TextEdit>,
+    pub(crate) fix_id: String,
 }
 
 impl CodeAction {
     // codeactions.go:49
     // Compare defines a total ordering for CodeAction values, comparing description
     // then text edits lexicographically. Used with slices.BinarySearchFunc.
-    pub fn compare(&self, b: &CodeAction) -> Ordering {
+    fn compare(&self, b: &CodeAction) -> Ordering {
         let c = go_compare(&self.description, &b.description);
         if c != Ordering::Equal {
             return c;
@@ -85,8 +82,8 @@ fn go_compare<T: Ord + ?Sized>(a: &T, b: &T) -> Ordering {
 // CombinedCodeActions represents combined code actions for fix-all scenarios
 #[derive(Clone, Debug, Default)]
 pub struct CombinedCodeActions {
-    pub description: String,
-    pub changes: Vec<lsproto::TextEdit>,
+    pub(crate) description: String,
+    pub(crate) changes: Vec<lsproto::TextEdit>,
 }
 
 // codeactions.go:72
@@ -164,7 +161,6 @@ impl LanguageService {
                             program,
                             ls: self,
                             diagnostic: Some(diag),
-                            params: Some(params),
                         };
 
                         let provider_actions = (provider.get_code_actions)(ctx, &fix_context)?;
@@ -236,27 +232,26 @@ impl LanguageService {
                 program,
                 ls: self,
                 diagnostic: None,
-                params: None,
             };
             let combined = get_all_code_actions(ctx, &fix_context)?;
-            if let Some(combined) = combined {
-                if !combined.changes.is_empty() {
-                    let kind = lsproto::CodeActionKind::QuickFix;
-                    let mut changes = OrderedMap::default();
-                    changes.insert(uri.clone(), combined.changes);
-                    actions.push(lsproto::CommandOrCodeAction {
-                        code_action: Some(lsproto::CodeAction {
-                            title: combined.description,
-                            kind: Some(kind),
-                            edit: Some(lsproto::WorkspaceEdit {
-                                changes: Some(changes),
-                                ..Default::default()
-                            }),
+            if let Some(combined) = combined
+                && !combined.changes.is_empty()
+            {
+                let kind = lsproto::CodeActionKind::QUICK_FIX;
+                let mut changes = OrderedMap::default();
+                changes.insert(uri.clone(), combined.changes);
+                actions.push(lsproto::CommandOrCodeAction {
+                    code_action: Some(lsproto::CodeAction {
+                        title: combined.description,
+                        kind: Some(kind),
+                        edit: Some(lsproto::WorkspaceEdit {
+                            changes: Some(changes),
                             ..Default::default()
                         }),
                         ..Default::default()
-                    });
-                }
+                    }),
+                    ..Default::default()
+                });
             }
         }
 
@@ -273,7 +268,7 @@ impl LanguageService {
         file: P<SourceFile>,
         uri: &lsproto::DocumentUri,
     ) -> Result<Option<lsproto::CommandOrCodeAction>, lsproto::Error> {
-        let kind = lsproto::CodeActionKind::SourceFixAllTs;
+        let kind = lsproto::CodeActionKind::SOURCE_FIX_ALL_TS;
         let mut lsp_changes: OrderedMap<lsproto::DocumentUri, Vec<lsproto::TextEdit>> =
             OrderedMap::default();
 
@@ -289,14 +284,13 @@ impl LanguageService {
                 program,
                 ls: self,
                 diagnostic: None,
-                params: None,
             };
 
             let combined = get_all_code_actions(ctx, &fix_context)?;
-            if let Some(combined) = combined {
-                if !combined.changes.is_empty() {
-                    lsp_changes.entry(uri.clone()).or_default().extend(combined.changes);
-                }
+            if let Some(combined) = combined
+                && !combined.changes.is_empty()
+            {
+                lsp_changes.entry(uri.clone()).or_default().extend(combined.changes);
             }
         }
 
@@ -306,7 +300,7 @@ impl LanguageService {
 
         Ok(Some(lsproto::CommandOrCodeAction {
             code_action: Some(lsproto::CodeAction {
-                title: diagnostics::Fix_All.localize(&[]),
+                title: diagnostics::FIX_ALL.localize(&[]),
                 kind: Some(kind),
                 edit: Some(lsproto::WorkspaceEdit {
                     changes: Some(lsp_changes),
@@ -385,10 +379,10 @@ fn code_fix_provider_matches_lsp_diagnostic(
     provider: &CodeFixProvider,
     diagnostic: &lsproto::Diagnostic,
 ) -> bool {
-    if let Some(source) = &diagnostic.source {
-        if source != "ts" {
-            return false;
-        }
+    if let Some(source) = &diagnostic.source
+        && source != "ts"
+    {
+        return false;
     }
     diagnostic
         .code
@@ -398,14 +392,14 @@ fn code_fix_provider_matches_lsp_diagnostic(
 }
 
 // codeactions.go:220
-pub(crate) fn is_fixable_diagnostic(diagnostic: P<Diagnostic>, error_codes: &[i32]) -> bool {
+pub fn is_fixable_diagnostic(diagnostic: P<Diagnostic>, error_codes: &[i32]) -> bool {
     diagnostic.source().is_empty() && contains_error_code(error_codes, diagnostic.code())
 }
 
 // codeactions.go:225
 // isFixAllKind returns true if the requested kind matches source.fixAll
 fn is_fix_all_kind(kind: lsproto::CodeActionKind) -> bool {
-    kind.contains(lsproto::CodeActionKind::SourceFixAllTs)
+    kind.contains(lsproto::CodeActionKind::SOURCE_FIX_ALL_TS)
 }
 
 // codeactions.go:231
@@ -418,18 +412,18 @@ fn wants_quick_fixes(only: Option<&[lsproto::CodeActionKind]>) -> bool {
     if only.is_empty() {
         return true;
     }
-    only.iter().any(|&kind| kind.contains(lsproto::CodeActionKind::QuickFix))
+    only.iter().any(|&kind| kind.contains(lsproto::CodeActionKind::QUICK_FIX))
 }
 
 // codeactions.go:299
 // getOrganizeImportsActionTitle returns the appropriate title for the given organize imports kind
 fn get_organize_imports_action_title(kind: lsproto::CodeActionKind) -> String {
     match kind {
-        lsproto::CodeActionKind::SourceRemoveUnusedImportsTs => {
-            diagnostics::Remove_Unused_Imports.localize(&[])
+        lsproto::CodeActionKind::SOURCE_REMOVE_UNUSED_IMPORTS_TS => {
+            diagnostics::REMOVE_UNUSED_IMPORTS.localize(&[])
         }
-        lsproto::CodeActionKind::SourceSortImportsTs => diagnostics::Sort_Imports.localize(&[]),
-        _ => diagnostics::Organize_Imports.localize(&[]),
+        lsproto::CodeActionKind::SOURCE_SORT_IMPORTS_TS => diagnostics::SORT_IMPORTS.localize(&[]),
+        _ => diagnostics::ORGANIZE_IMPORTS.localize(&[]),
     }
 }
 
@@ -440,9 +434,9 @@ fn get_organize_imports_actions_for_kind(
     requested_kind: lsproto::CodeActionKind,
 ) -> Vec<lsproto::CodeActionKind> {
     let organize_imports_kinds = [
-        lsproto::CodeActionKind::SourceOrganizeImportsTs,
-        lsproto::CodeActionKind::SourceRemoveUnusedImportsTs,
-        lsproto::CodeActionKind::SourceSortImportsTs,
+        lsproto::CodeActionKind::SOURCE_ORGANIZE_IMPORTS_TS,
+        lsproto::CodeActionKind::SOURCE_REMOVE_UNUSED_IMPORTS_TS,
+        lsproto::CodeActionKind::SOURCE_SORT_IMPORTS_TS,
     ];
 
     let mut result = Vec::new();
@@ -461,7 +455,7 @@ fn get_organize_imports_actions_for_kind(
 
 // codeactions.go:378
 // containsErrorCode checks if the error code is in the list
-pub(crate) fn contains_error_code(codes: &[i32], code: i32) -> bool {
+pub fn contains_error_code(codes: &[i32], code: i32) -> bool {
     codes.contains(&code)
 }
 
@@ -472,7 +466,7 @@ fn convert_to_lsp_code_action(
     diag: &lsproto::Diagnostic,
     uri: &lsproto::DocumentUri,
 ) -> lsproto::CommandOrCodeAction {
-    let kind = lsproto::CodeActionKind::QuickFix;
+    let kind = lsproto::CodeActionKind::QUICK_FIX;
     let mut changes = OrderedMap::default();
     changes.insert(uri.clone(), action.changes.clone());
     let diagnostics = vec![diag.clone()];

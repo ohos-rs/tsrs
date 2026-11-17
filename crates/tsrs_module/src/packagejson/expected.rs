@@ -120,6 +120,7 @@ impl ExpectedValue for ContentMapperFields {
                         "exec" => self.exec.unmarshal_json(member),
                         "compilerOptions" => self.compiler_options.unmarshal_json(member),
                         "dynamicConfig" => self.dynamic_config.unmarshal_json(member),
+                        "outputExtensions" => self.output_extensions.unmarshal_json(member),
                         _ => {}
                     }
                 }
@@ -146,7 +147,7 @@ pub struct Expected<T> {
 }
 
 impl<T: ExpectedValue> Expected<T> {
-    pub(crate) fn unmarshal_json(&mut self, data: &Json) {
+    pub fn unmarshal_json(&mut self, data: &Json) {
         if matches!(data, Json::Null) {
             *self = Expected {
                 actual_json_type: "null",
@@ -181,11 +182,11 @@ impl<T: ExpectedValue> Expected<T> {
         self.valid
     }
 
-    pub fn expected_json_type() -> &'static str {
+    fn expected_json_type() -> &'static str {
         T::expected_json_type()
     }
 
-    pub fn actual_json_type(&self) -> &'static str {
+    fn actual_json_type(&self) -> &'static str {
         self.actual_json_type
     }
 }

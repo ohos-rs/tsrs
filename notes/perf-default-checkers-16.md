@@ -1,5 +1,8 @@
 # perf-default-checkers-16: every core gets a checker up to 16
 
+Since 0.20.0, this adaptive rule belongs to `--fast`; ordinary compilation uses four checkers.
+Explicit checker counts override either preset. See [current defaults](../docs/DEFAULTS.md#command-line).
+
 Without `--checkers`, tsrs ran `clamp(max(cores / 2, min(cores, 8)), 4, 32)` checker threads
 (notes/perf-default-checkers-small-machines.md): every core up to 8, then half the cores. The comment justified the
 halving with "the other half parse", but parsing and checking are sequential phases: by the time the checkers start,
@@ -106,8 +109,8 @@ next publish on.
 - `cargo test -p tsrs_compiler default_`: the count rule's table (1-128 cores).
 - `tools/ci/determinism.sh` default set (xstate-main, webpack, nuxt, drizzle-orm, testdata/regressions): 576 runs
   identical to the single-threaded output.
-- `tools/regressions.sh`: 29 of 29. `tools/lint/ratchet.py` and `tools/lint/source.py` pass.
-- bench/run.py `tsrs_default_checkers` mirrors the new rule for the table titles; bench/compare.py, bench/README.md,
+- `tools/regressions.sh`: 29 of 29. `tools/lint/ratchet.py` and `tools/lint/source.mjs` pass.
+- bench/run.mjs `tsrs_default_checkers` mirrors the new rule for the table titles; bench/compare.py, bench/README.md,
   README.md, npm/README.md, npm/tsrs/README.md and docs/PORTING.md state it.
 
 ## 5. What remains

@@ -131,14 +131,14 @@ enum RareTypeMapper {
 }
 
 pub struct DeferredTypeMapper {
-    pub sources: &'static [P<Type>],
-    pub targets: Vec<Box<dyn Fn(&mut Checker) -> P<Type>>>,
+    sources: &'static [P<Type>],
+    targets: Vec<Box<dyn Fn(&mut Checker) -> P<Type>>>,
 }
 
 impl TypeMapperData {
     /// The sources and targets of an array mapper (Go `ArrayMapper`).
     #[inline]
-    pub fn array_sources_targets(&self) -> Option<(&'static [P<Type>], &'static [P<Type>])> {
+    pub(crate) fn array_sources_targets(&self) -> Option<(&'static [P<Type>], &'static [P<Type>])> {
         match *self {
             TypeMapperData::Array { sources, targets } => Some((sources, targets)),
             _ => None,
@@ -292,7 +292,7 @@ impl TypeMapper {
         self.second.set(self.second.get() | ESCAPED);
     }
 
-    pub fn map(&self, c: &mut Checker, t: P<Type>) -> P<Type> {
+    pub(crate) fn map(&self, c: &mut Checker, t: P<Type>) -> P<Type> {
         match self.data() {
             TypeMapperData::Simple { source, target } => {
                 if t == source {
@@ -387,7 +387,7 @@ impl TypeMapper {
 
 /// Marks `m` escaped, with everything it references that could be recycled (see `ESCAPED`). Invariant: an escaped
 /// mapper's children are escaped, so the walk stops at the first escaped mapper.
-pub(crate) fn escape_mapper(m: P<TypeMapper>) {
+pub fn escape_mapper(m: P<TypeMapper>) {
     // A mapper of the frozen shared-graph seed is never recycled by a fork (it is not the fork's to free), so it counts
     // as escaped; its escape bit cannot be written.
     if m.escaped() || tsrs_core::sharedgraph::frozen(&*m) {
@@ -462,18 +462,18 @@ pub struct MapperCell(Cell<Option<P<TypeMapper>>>);
 
 impl MapperCell {
     #[inline]
-    pub fn new(m: Option<P<TypeMapper>>) -> MapperCell {
+    pub(crate) fn new(m: Option<P<TypeMapper>>) -> MapperCell {
         if let Some(m) = m {
             escape_mapper(m);
         }
         MapperCell(Cell::new(m))
     }
     #[inline]
-    pub fn get(&self) -> Option<P<TypeMapper>> {
+    pub(crate) fn get(&self) -> Option<P<TypeMapper>> {
         self.0.get()
     }
     #[inline]
-    pub fn set(&self, m: Option<P<TypeMapper>>) {
+    pub(crate) fn set(&self, m: Option<P<TypeMapper>>) {
         if let Some(m) = m {
             escape_mapper(m);
         }
@@ -593,7 +593,7 @@ pub(crate) fn append_type_mapping(
 }
 
 #[cfg_attr(feature = "site-counts", track_caller)]
-pub(crate) fn new_simple_type_mapper(source: P<Type>, target: P<Type>) -> P<TypeMapper> {
+pub fn new_simple_type_mapper(source: P<Type>, target: P<Type>) -> P<TypeMapper> {
     crate::sitecount::hit("mapper", "simple");
     P::new_recycled(TypeMapper {
         first: tagged(source, TAG_SIMPLE),
@@ -602,7 +602,7 @@ pub(crate) fn new_simple_type_mapper(source: P<Type>, target: P<Type>) -> P<Type
 }
 
 #[cfg_attr(feature = "site-counts", track_caller)]
-pub(crate) fn new_array_type_mapper(
+pub fn new_array_type_mapper(
     sources: &'static [P<Type>],
     targets: &'static [P<Type>],
 ) -> P<TypeMapper> {
@@ -617,7 +617,7 @@ pub(crate) fn new_array_type_mapper(
 }
 
 #[cfg_attr(feature = "site-counts", track_caller)]
-pub(crate) fn new_array_to_single_type_mapper(
+pub fn new_array_to_single_type_mapper(
     sources: &'static [P<Type>],
     target: P<Type>,
 ) -> P<TypeMapper> {
@@ -632,7 +632,7 @@ pub(crate) fn new_array_to_single_type_mapper(
 }
 
 #[cfg_attr(feature = "site-counts", track_caller)]
-pub(crate) fn new_deferred_type_mapper(
+pub fn new_deferred_type_mapper(
     sources: &'static [P<Type>],
     targets: Vec<Box<dyn Fn(&mut Checker) -> P<Type>>>,
 ) -> P<TypeMapper> {
@@ -641,13 +641,13 @@ pub(crate) fn new_deferred_type_mapper(
 }
 
 #[cfg_attr(feature = "site-counts", track_caller)]
-pub(crate) fn new_function_type_mapper(f: fn(&mut Checker, P<Type>) -> P<Type>) -> P<TypeMapper> {
+pub fn new_function_type_mapper(f: fn(&mut Checker, P<Type>) -> P<Type>) -> P<TypeMapper> {
     crate::sitecount::hit("mapper", "function");
     TypeMapper::alloc_rare(RareTypeMapper::Function(f))
 }
 
 #[cfg_attr(feature = "site-counts", track_caller)]
-pub(crate) fn new_merged_type_mapper(m1: P<TypeMapper>, m2: P<TypeMapper>) -> P<TypeMapper> {
+pub fn new_merged_type_mapper(m1: P<TypeMapper>, m2: P<TypeMapper>) -> P<TypeMapper> {
     crate::sitecount::hit("mapper", "merged");
     P::new_recycled(TypeMapper {
         first: tagged(m1, TAG_MERGED),
@@ -656,7 +656,7 @@ pub(crate) fn new_merged_type_mapper(m1: P<TypeMapper>, m2: P<TypeMapper>) -> P<
 }
 
 #[cfg_attr(feature = "site-counts", track_caller)]
-pub(crate) fn new_composite_type_mapper(m1: P<TypeMapper>, m2: P<TypeMapper>) -> P<TypeMapper> {
+pub fn new_composite_type_mapper(m1: P<TypeMapper>, m2: P<TypeMapper>) -> P<TypeMapper> {
     crate::sitecount::hit("mapper", "composite");
     P::new_recycled(TypeMapper {
         first: tagged(m1, TAG_COMPOSITE),

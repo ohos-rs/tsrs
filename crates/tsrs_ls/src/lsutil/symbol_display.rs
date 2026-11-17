@@ -1,4 +1,3 @@
-use rustc_hash::FxHashSet;
 use tsrs_ast::{
     self as ast, CheckFlags, FindAncestorResult, Kind, ModifierFlags, Node, NodeFlags, Symbol,
     SymbolFlags,
@@ -112,63 +111,12 @@ bitflags::bitflags! {
 }
 
 impl ScriptElementKindModifier {
-    pub const None: ScriptElementKindModifier = ScriptElementKindModifier::empty();
+    #[expect(non_upper_case_globals, reason = "Keep the upstream bitflags constant name.")]
+    pub(crate) const None: ScriptElementKindModifier = ScriptElementKindModifier::empty();
 }
-
-// symbol_display.go:108
-const SCRIPT_ELEMENT_KIND_MODIFIER_NAMES: &[(ScriptElementKindModifier, &str)] = &[
-    (ScriptElementKindModifier::Public, "public"),
-    (ScriptElementKindModifier::Private, "private"),
-    (ScriptElementKindModifier::Protected, "protected"),
-    (ScriptElementKindModifier::Exported, "export"),
-    (ScriptElementKindModifier::Ambient, "declare"),
-    (ScriptElementKindModifier::Static, "static"),
-    (ScriptElementKindModifier::Abstract, "abstract"),
-    (ScriptElementKindModifier::Optional, "optional"),
-    (ScriptElementKindModifier::Deprecated, "deprecated"),
-    (ScriptElementKindModifier::Dts, ".d.ts"),
-    (ScriptElementKindModifier::Ts, ".ts"),
-    (ScriptElementKindModifier::Tsx, ".tsx"),
-    (ScriptElementKindModifier::Js, ".js"),
-    (ScriptElementKindModifier::Jsx, ".jsx"),
-    (ScriptElementKindModifier::Json, ".json"),
-    (ScriptElementKindModifier::Dmts, ".d.mts"),
-    (ScriptElementKindModifier::Mts, ".mts"),
-    (ScriptElementKindModifier::Mjs, ".mjs"),
-    (ScriptElementKindModifier::Dcts, ".d.cts"),
-    (ScriptElementKindModifier::Cts, ".cts"),
-    (ScriptElementKindModifier::Cjs, ".cjs"),
-];
-
-impl ScriptElementKindModifier {
-    // symbol_display.go:135
-    pub fn strings(self) -> FxHashSet<&'static str> {
-        let mut result = FxHashSet::default();
-        result.extend(
-            SCRIPT_ELEMENT_KIND_MODIFIER_NAMES
-                .iter()
-                .filter_map(|&(flag, name)| if self.intersects(flag) { Some(name) } else { None }),
-        );
-        result
-    }
-}
-
-// symbol_display.go:145
-pub const FILE_EXTENSION_KIND_MODIFIERS: ScriptElementKindModifier = ScriptElementKindModifier::Dts
-    .union(ScriptElementKindModifier::Ts)
-    .union(ScriptElementKindModifier::Tsx)
-    .union(ScriptElementKindModifier::Js)
-    .union(ScriptElementKindModifier::Jsx)
-    .union(ScriptElementKindModifier::Json)
-    .union(ScriptElementKindModifier::Dmts)
-    .union(ScriptElementKindModifier::Mts)
-    .union(ScriptElementKindModifier::Mjs)
-    .union(ScriptElementKindModifier::Dcts)
-    .union(ScriptElementKindModifier::Cts)
-    .union(ScriptElementKindModifier::Cjs);
 
 // symbol_display.go:159
-pub fn get_symbol_kind(
+pub(crate) fn get_symbol_kind(
     type_checker: Option<&mut Checker>,
     symbol: P<Symbol>,
     location: P<Node>,
@@ -298,31 +246,30 @@ fn get_symbol_kind_of_constructor_property_method_accessor_function_or_var(
     }
 
     if flags.intersects(SymbolFlags::Property) {
-        if let Some(c) = type_checker {
-            if flags.intersects(SymbolFlags::Transient)
-                && symbol.check_flags().intersects(CheckFlags::Synthetic)
-            {
-                // If union property is result of union of non method (property/accessors/variables), it is labeled as property
-                let mut union_property_kind = ScriptElementKind::Unknown;
-                if roots.iter().any(|root_symbol| {
-                    root_symbol
-                        .flags()
-                        .intersects(SymbolFlags::PropertyOrAccessor | SymbolFlags::Variable)
-                }) {
-                    union_property_kind = ScriptElementKind::MemberVariableElement;
-                }
-                if union_property_kind == ScriptElementKind::Unknown {
-                    // If this was union of all methods,
-                    // make sure it has call signatures before we can label it as method.
-                    let type_of_union_property =
-                        c.get_type_of_symbol_at_location(symbol, Some(location)).unwrap();
-                    if !c.get_call_signatures(type_of_union_property).is_empty() {
-                        return ScriptElementKind::MemberFunctionElement;
-                    }
-                    return ScriptElementKind::MemberVariableElement;
-                }
-                return union_property_kind;
+        if let Some(c) = type_checker
+            && flags.intersects(SymbolFlags::Transient)
+            && symbol.check_flags().intersects(CheckFlags::Synthetic)
+        {
+            // If union property is result of union of non method (property/accessors/variables), it is labeled as property
+            let mut union_property_kind = ScriptElementKind::Unknown;
+            if roots.iter().any(|root_symbol| {
+                root_symbol
+                    .flags()
+                    .intersects(SymbolFlags::PropertyOrAccessor | SymbolFlags::Variable)
+            }) {
+                union_property_kind = ScriptElementKind::MemberVariableElement;
             }
+            if union_property_kind == ScriptElementKind::Unknown {
+                // If this was union of all methods,
+                // make sure it has call signatures before we can label it as method.
+                let type_of_union_property =
+                    c.get_type_of_symbol_at_location(symbol, Some(location)).unwrap();
+                if !c.get_call_signatures(type_of_union_property).is_empty() {
+                    return ScriptElementKind::MemberFunctionElement;
+                }
+                return ScriptElementKind::MemberVariableElement;
+            }
+            return union_property_kind;
         }
 
         return ScriptElementKind::MemberVariableElement;
@@ -385,7 +332,7 @@ fn is_local_variable_or_function(symbol: P<Symbol>) -> bool {
 }
 
 // symbol_display.go:350
-pub fn get_symbol_modifiers(
+pub(crate) fn get_symbol_modifiers(
     mut type_checker: Option<&mut Checker>,
     symbol: Option<P<Symbol>>,
 ) -> ScriptElementKindModifier {
@@ -394,12 +341,12 @@ pub fn get_symbol_modifiers(
     };
 
     let mut modifiers = get_normalized_symbol_modifiers(type_checker.as_deref_mut(), symbol);
-    if symbol.flags().intersects(SymbolFlags::Alias) {
-        if let Some(c) = type_checker {
-            let resolved_symbol = c.get_aliased_symbol(symbol);
-            if resolved_symbol != symbol {
-                modifiers |= get_normalized_symbol_modifiers(Some(c), resolved_symbol);
-            }
+    if symbol.flags().intersects(SymbolFlags::Alias)
+        && let Some(c) = type_checker
+    {
+        let resolved_symbol = c.get_aliased_symbol(symbol);
+        if resolved_symbol != symbol {
+            modifiers |= get_normalized_symbol_modifiers(Some(c), resolved_symbol);
         }
     }
     if symbol.flags().intersects(SymbolFlags::Optional) {

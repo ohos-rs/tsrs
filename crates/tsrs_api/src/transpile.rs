@@ -12,7 +12,6 @@ use tsrs_compiler::{EmitOnly, EmitOptions, ProgramOptions, WriteFileData};
 use tsrs_core::context::Context;
 use tsrs_core::json::Value;
 use tsrs_core::{CompilerOptions, JsxEmit, P, Tristate, tspath};
-use tsrs_tsoptions::gojson;
 use tsrs_vfs::{Entries, FS, FileInfo};
 
 use crate::handler::{ApiError, ApiResult};
@@ -106,15 +105,15 @@ impl FS for TranspileFS {
     }
 }
 
-pub struct TranspileOutput {
-    pub output_text: String,
+struct TranspileOutput {
+    output_text: String,
     /// Already serialized (the diagnostics themselves live in the freed scratch region).
-    pub diagnostics: Vec<Value>,
-    pub source_map_text: String,
+    diagnostics: Vec<Value>,
+    source_map_text: String,
 }
 
 /// Go `transpileWorker` in a scratch region (see the module comment).
-pub fn transpile(
+fn transpile(
     input: &str,
     base: Option<&CompilerOptions>,
     file_name: &str,
@@ -172,7 +171,7 @@ fn transpile_in_current_region(
     }
 
     let file_name = if file_name.is_empty() {
-        if opts.jsx != JsxEmit::None { "module.tsx" } else { "module.ts" }
+        if opts.jsx == JsxEmit::NONE { "module.ts" } else { "module.tsx" }
     } else {
         file_name
     };
@@ -242,7 +241,7 @@ fn transpile_in_current_region(
     );
     all.extend(result.diagnostics);
     let diagnostics: Vec<Value> =
-        all.iter().map(|d| crate::diagnostics::diagnostic_response(d)).collect();
+        all.iter().map(|&d| crate::diagnostics::diagnostic_response(d)).collect();
     drop(all);
     // SAFETY: nothing derived from the program (diagnostics are serialized above) is used after this.
     unsafe { tsrs_compiler::free_unshared_program(program) };
@@ -277,13 +276,10 @@ struct ParsedTranspileOptions {
     report_diagnostics: bool,
 }
 
-fn parse_options(v: &Value) -> ApiResult<ParsedTranspileOptions> {
+fn parse_options(v: &Value, cwd: &str) -> ApiResult<ParsedTranspileOptions> {
     let p = Params(v);
     let compiler_options = if p.has("compilerOptions") {
-        let mut options = gojson::compiler_options_from_go_json(p.get("compilerOptions"))
-            .map_err(ApiError::invalid_request)?;
-        crate::predecode::exact_compiler_options_ints(p.get("compilerOptions"), &mut options);
-        Some(options)
+        Some(crate::raw_options::compiler_options_from_raw(p.get("compilerOptions"), cwd)?)
     } else {
         None
     };
@@ -295,12 +291,8 @@ fn parse_options(v: &Value) -> ApiResult<ParsedTranspileOptions> {
 }
 
 impl Session {
-    #[expect(
-        clippy::unused_self,
-        reason = "API request handlers share the Session receiver used by the request dispatcher."
-    )]
     pub(crate) fn handle_transpile(&self, p: Params, declaration: bool) -> ApiResult<Value> {
-        let o = parse_options(p.get("options"))?;
+        let o = parse_options(p.get("options"), self.current_directory())?;
         let out = transpile(
             p.str("input")?,
             o.compiler_options.as_ref(),
@@ -322,7 +314,7 @@ impl Session {
             .base_fs()
             .read_file(&file_name)
             .ok_or_else(|| ApiError::client(format!("could not read file {file_name:?}")))?;
-        let o = parse_options(p.get("options"))?;
+        let o = parse_options(p.get("options"), self.current_directory())?;
         let out = transpile(
             &input,
             o.compiler_options.as_ref(),

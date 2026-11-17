@@ -11,7 +11,7 @@ use tsrs_vfs::FS;
 use crate::host::CompilerHost;
 use crate::projectreferencedtsfakinghost::new_project_reference_dts_faking_host;
 
-pub(crate) struct projectReferenceFileMapper {
+pub struct ProjectReferenceFileMapper {
     pub(crate) config: P<ParsedCommandLine>,
     pub(crate) use_source_of_project_reference: bool,
     pub(crate) dts_directories: FxHashSet<Path>,
@@ -22,7 +22,7 @@ pub(crate) struct projectReferenceFileMapper {
     pub(crate) output_dts_to_project_reference: FxHashMap<Path, P<SourceOutputAndProjectReference>>,
 
     // Store all the realpath from dts in node_modules to source file from project reference needed during parsing so it can be used later
-    pub(crate) realpath_dts_to_source: SyncMap<Path, Option<P<SourceOutputAndProjectReference>>>,
+    realpath_dts_to_source: SyncMap<Path, Option<P<SourceOutputAndProjectReference>>>,
 
     // Go builds a new dts-faking host on every `resolutionHost` call; the mapper is immutable once built, so the
     // host is built once (its caches only memoize file system queries).
@@ -33,14 +33,14 @@ pub(crate) struct projectReferenceFileMapper {
     pub(crate) loader_host: Option<&'static dyn ResolutionHost>,
 }
 
-pub(crate) struct projectReferenceFileMapperBuilder {
-    pub(crate) mapper: &'static projectReferenceFileMapper,
+pub(crate) struct ProjectReferenceFileMapperBuilder {
+    pub(crate) mapper: &'static ProjectReferenceFileMapper,
     pub(crate) host: &'static dyn ResolutionHost,
 }
 
-struct compilerResolutionHost(Arc<dyn CompilerHost>);
+struct CompilerResolutionHost(Arc<dyn CompilerHost>);
 
-impl ResolutionHost for compilerResolutionHost {
+impl ResolutionHost for CompilerResolutionHost {
     fn fs(&self) -> &dyn FS {
         self.0.fs()
     }
@@ -50,8 +50,8 @@ impl ResolutionHost for compilerResolutionHost {
     }
 }
 
-pub(crate) fn resolution_host_for(host: Arc<dyn CompilerHost>) -> &'static dyn ResolutionHost {
-    Box::leak(Box::new(compilerResolutionHost(host)))
+pub fn resolution_host_for(host: Arc<dyn CompilerHost>) -> &'static dyn ResolutionHost {
+    Box::leak(Box::new(CompilerResolutionHost(host)))
 }
 
 pub(crate) fn as_resolved_project_reference(
@@ -60,12 +60,12 @@ pub(crate) fn as_resolved_project_reference(
     config.get()
 }
 
-impl projectReferenceFileMapper {
-    pub(crate) fn new(
+impl ProjectReferenceFileMapper {
+    pub fn new(
         config: P<ParsedCommandLine>,
         use_source_of_project_reference: bool,
-    ) -> projectReferenceFileMapper {
-        projectReferenceFileMapper {
+    ) -> ProjectReferenceFileMapper {
+        ProjectReferenceFileMapper {
             config,
             use_source_of_project_reference,
             dts_directories: FxHashSet::default(),
@@ -114,10 +114,10 @@ impl projectReferenceFileMapper {
             }
         } else {
             // Map to dts file from project reference
-            if let Some(output) = self.get_project_reference_from_source(path) {
-                if !output.output_dts.is_empty() {
-                    return output.output_dts.clone();
-                }
+            if let Some(output) = self.get_project_reference_from_source(path)
+                && !output.output_dts.is_empty()
+            {
+                return output.output_dts.clone();
             }
         }
         String::new()
@@ -182,7 +182,7 @@ impl projectReferenceFileMapper {
     }
 
     // projectreferencefilemapper.go:99
-    pub(crate) fn get_redirect_for_resolution(
+    fn get_redirect_for_resolution(
         &self,
         file_name: &str,
         path: &Path,
@@ -212,17 +212,6 @@ impl projectReferenceFileMapper {
         }
 
         self.realpath_dts_to_source.load(path).flatten()
-    }
-
-    // projectreferencefilemapper.go:119
-    pub(crate) fn get_resolved_reference_for(
-        &self,
-        path: &Path,
-    ) -> (Option<P<ParsedCommandLine>>, bool) {
-        match self.config_to_project_reference.get(path) {
-            Some(config) => (*config, true),
-            None => (None, false),
-        }
     }
 
     // projectreferencefilemapper.go:124
@@ -268,10 +257,10 @@ impl projectReferenceFileMapper {
                 .map_or(&[] as &[Path], std::vec::Vec::as_slice);
             // A reference that did not resolve has no references of its own (Go recurses with a nil parent over
             // an empty list).
-            if let Some(config) = config {
-                if !self.range_resolved_reference_worker(child_refs, f, config, seen_ref) {
-                    return true;
-                }
+            if let Some(config) = config
+                && !self.range_resolved_reference_worker(child_refs, f, config, seen_ref)
+            {
+                return true;
             }
 
             false
@@ -306,8 +295,8 @@ impl projectReferenceFileMapper {
     }
 }
 
-impl projectReferenceFileMapperBuilder {
-    pub(crate) fn take_mapper(&self) -> &'static projectReferenceFileMapper {
+impl ProjectReferenceFileMapperBuilder {
+    pub(crate) fn take_mapper(&self) -> &'static ProjectReferenceFileMapper {
         self.mapper
     }
 
@@ -383,9 +372,7 @@ impl projectReferenceFileMapperBuilder {
         if !self.mapper.config.resolved_project_reference_paths().is_empty()
             && self.mapper.config.compiler_options().unwrap().preserve_symlinks.is_true()
         {
-            if !file_name.contains("/node_modules/") {
-                self.mapper.realpath_dts_to_source.store(path.clone(), None);
-            } else {
+            if file_name.contains("/node_modules/") {
                 let real_declaration_path = tspath::to_path(
                     &self.host.fs().realpath(file_name),
                     self.host.get_current_directory(),
@@ -399,6 +386,8 @@ impl projectReferenceFileMapperBuilder {
                         self.mapper.get_project_reference_from_output_dts(&real_declaration_path),
                     );
                 }
+            } else {
+                self.mapper.realpath_dts_to_source.store(path.clone(), None);
             }
         }
     }

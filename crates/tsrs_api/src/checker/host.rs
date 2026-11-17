@@ -39,11 +39,11 @@ impl CheckerError {
         CheckerError { kind: CheckerErrorKind::Client, message: message.into() }
     }
 
-    pub fn unsupported(message: impl Into<String>) -> CheckerError {
+    pub(crate) fn unsupported(message: impl Into<String>) -> CheckerError {
         CheckerError { kind: CheckerErrorKind::Unsupported, message: message.into() }
     }
 
-    pub fn invalid(message: impl Into<String>) -> CheckerError {
+    pub(crate) fn invalid(message: impl Into<String>) -> CheckerError {
         CheckerError { kind: CheckerErrorKind::InvalidRequest, message: message.into() }
     }
 }
@@ -65,6 +65,10 @@ pub type CheckerResult<T> = Result<T, CheckerError>;
 /// (typeToTypeNode / signatureToSignatureDeclaration); the transport sends it as raw binary (msgpack)
 /// or as `{ "data": base64 }` (JSON-RPC), exactly like Go's `RawBinary` / `SourceFileResponse`.
 #[derive(Clone, Debug, PartialEq)]
+#[expect(
+    clippy::too_long_first_doc_paragraph,
+    reason = "Public for the integration tests; the comment keeps its upstream wording."
+)]
 pub enum CheckerResponse {
     Json(Value),
     EncodedNode(Vec<u8>),
@@ -118,6 +122,15 @@ pub trait CheckerHost {
     /// `{ fileName, path, contentHash, parseOptionsKey, scriptKind, nodeId }`.
     fn source_file_descriptor(&self, file: P<SourceFile>) -> CheckerResult<Value>;
 
+    /// `source_file_descriptor(file) == descriptor`, which a host may answer without building the descriptor.
+    fn source_file_descriptor_matches(
+        &self,
+        file: P<SourceFile>,
+        descriptor: &Value,
+    ) -> CheckerResult<bool> {
+        Ok(self.source_file_descriptor(file)? == *descriptor)
+    }
+
     /// Go `sourceFileNodeID(file)` (used for `CompactSymbolReference.file`).
     fn source_file_node_id(&self, file: P<SourceFile>) -> CheckerResult<u64>;
 
@@ -141,4 +154,8 @@ pub trait CheckerHost {
         base: &Snapshot,
         file_name: &str,
     ) -> CheckerResult<Arc<Snapshot>>;
+
+    /// Go `if s.projectSession != nil { s.projectSession.TryAdoptSnapshotInBackground(base, prepared) }`: an
+    /// LSP-attached session offers the snapshot it prepared for auto-imports to the language server.
+    fn try_adopt_snapshot_in_background(&self, base: &Arc<Snapshot>, prepared: &Arc<Snapshot>);
 }

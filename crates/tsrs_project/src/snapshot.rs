@@ -10,7 +10,7 @@ use tsrs_core::context::Context;
 use tsrs_core::tspath::Path;
 use tsrs_core::{CompilerOptions, P, ProjectReference};
 use tsrs_ls::autoimport::{self, ProjectID, RegistryCloneHost};
-use tsrs_ls::lsconv::{self, Converters, LSPLineMap};
+use tsrs_ls::lsconv::{self, Converters};
 use tsrs_ls::lsutil::UserPreferences;
 use tsrs_ls::sourcemap::ECMALineInfo;
 use tsrs_lsproto as lsproto;
@@ -26,14 +26,17 @@ use crate::dirty::Shared;
 use crate::filechange::FileChangeSummary;
 use crate::logging::{LogTree, Logger, new_log_tree};
 use crate::overlayfs::{FileHandle, FsRef, OverlayMap, layer_overlay_file_system};
-use crate::parsecache::{parse_cache_key_for_duplicate, parse_cache_key_for_file};
+use crate::parsecache::{
+    content_mapped_parse_cache_key_for_duplicate, content_mapped_parse_cache_key_for_file,
+    parse_cache_key_for_duplicate, parse_cache_key_for_file,
+};
 use crate::project::{ID, ProgramUpdateKind, Project, SyntheticProjectID};
 use crate::projectcollection::{ProjectCollection, new_project_collection, open_file_paths};
 use crate::projectcollectionbuilder::new_project_collection_builder;
 use crate::session::{ContentMapperContributions, UpdateReason};
 use crate::snapshotfs::{
-    FileHandleSource, SnapshotFS, new_snapshot_fs_builder_from_source, new_source_fs,
-    snapshotFSBuilder,
+    FileHandleSource, SnapshotFS, SnapshotFSBuilder, new_snapshot_fs_builder_from_source,
+    new_source_fs,
 };
 use crate::snapshothost::SnapshotHost;
 use crate::watch::WatchedFiles;
@@ -41,7 +44,7 @@ use crate::watch::WatchedFiles;
 // Shared as `Arc<Snapshot>`; Go's explicit `ref`/`Deref` counts are kept (they release parse cache entries and
 // programs), the `Arc` only keeps the memory alive (docs/LSP.md "Threading model").
 pub struct Snapshot {
-    pub(crate) host: Arc<SnapshotHost>,
+    host: Arc<SnapshotHost>,
     pub(crate) id: u64,
     pub(crate) parent_id: u64,
     ref_count: AtomicU32,
@@ -52,12 +55,12 @@ pub struct Snapshot {
     pub(crate) fs: Arc<SnapshotFS>,
     pub project_collection: Arc<ProjectCollection>,
     pub config_file_registry: Arc<ConfigFileRegistry>,
-    pub auto_imports: Option<Arc<autoimport::Registry>>,
+    pub(crate) auto_imports: Option<Arc<autoimport::Registry>>,
     pub(crate) auto_imports_watch: Option<Arc<WatchedFiles<FxHashMap<Path, String>>>>,
-    pub(crate) compiler_options_for_inferred_projects: Option<P<CompilerOptions>>,
-    pub(crate) inferred_project_content_mappers: Vec<Mapper>,
+    compiler_options_for_inferred_projects: Option<P<CompilerOptions>>,
+    inferred_project_content_mappers: Vec<Mapper>,
     pub(crate) inferred_project_content_mapper_extensions: Vec<String>,
-    pub(crate) user_preferences: UserPreferences,
+    user_preferences: UserPreferences,
     // Go: contentMapperWatchStateOnce + contentMapperExtensions + contentMapperWatchedFiles.
     content_mapper_watch_state: OnceLock<(Vec<String>, Arc<Set<Path>>)>,
 
@@ -67,7 +70,7 @@ pub struct Snapshot {
     // supplied by an API update rather than the session host filesystem.
     pub(crate) file_system_override: bool,
 
-    pub(crate) created_programs: Vec<Option<Shared<Project>>>,
+    created_programs: Vec<Option<Shared<Project>>>,
 }
 
 impl Snapshot {
@@ -156,7 +159,7 @@ pub trait ModuleResolverFactory: Send + Sync {
     fn new_resolver(
         &self,
         ctx: &Context,
-        options: ResolverOptions,
+        options: ResolverOptions<'static>,
     ) -> (Box<dyn Resolver>, Box<dyn FnOnce() + Send>);
 }
 
@@ -178,6 +181,8 @@ pub struct APIReconfigureProgramRequest {
 // to the language server are out of scope (docs/LSP.md).
 #[derive(Default)]
 pub struct APISnapshotRequest {
+    pub user_preferences: Option<UserPreferences>,
+    pub prepare_auto_imports: lsproto::DocumentUri,
     pub open_projects: Option<Set<String>>,
     pub close_projects: Option<Set<Path>>,
     pub open_files: Option<FxHashMap<Path, String>>,
@@ -200,26 +205,26 @@ pub struct APISnapshotRequest {
 #[derive(Clone, Debug, Default)]
 pub struct ProjectTreeRequest {
     // If null, all project trees need to be loaded, otherwise only those that are referenced
-    pub(crate) referenced_projects: Option<Set<Path>>,
+    referenced_projects: Option<Set<Path>>,
 }
 
 impl ProjectTreeRequest {
-    pub fn new(referenced_projects: Option<Set<Path>>) -> ProjectTreeRequest {
+    pub(crate) fn new(referenced_projects: Option<Set<Path>>) -> ProjectTreeRequest {
         ProjectTreeRequest { referenced_projects }
     }
 
     // snapshot.go:362
-    pub fn is_all_projects(&self) -> bool {
+    pub(crate) fn is_all_projects(&self) -> bool {
         self.referenced_projects.is_none()
     }
 
     // snapshot.go:366
-    pub fn is_project_referenced(&self, project_id: &Path) -> bool {
+    pub(crate) fn is_project_referenced(&self, project_id: &Path) -> bool {
         self.referenced_projects.as_ref().is_some_and(|r| r.has(project_id))
     }
 
     // snapshot.go:370
-    pub fn projects(&self) -> Vec<Path> {
+    pub(crate) fn projects(&self) -> Vec<Path> {
         match &self.referenced_projects {
             None => Vec::new(),
             Some(r) => r.keys().iter().cloned().collect(),
@@ -231,21 +236,21 @@ impl ProjectTreeRequest {
 pub struct ResourceRequest {
     // Documents are URIs that were requested by the client.
     // The new snapshot should ensure projects for these URIs have loaded programs.
-    pub documents: Vec<lsproto::DocumentUri>,
+    pub(crate) documents: Vec<lsproto::DocumentUri>,
     // ConfiguredProjectDocuments are URIs for which configured projects should be loaded
     // (if disableSolutionSearching/disableReferencedProjectLoad settings allow),
     // but no inferred project should be created if no configured project is found.
     // This is used by cross-project operations like find-all-references.
-    pub configured_project_documents: Vec<lsproto::DocumentUri>,
+    pub(crate) configured_project_documents: Vec<lsproto::DocumentUri>,
     // Update requested Projects.
     // this is used when we want to get LS and from all the Projects the file can be part of
-    pub projects: Vec<ID>,
+    pub(crate) projects: Vec<ID>,
     // Update and ensure project trees that reference the projects
     // This is used to compute the solution and project tree so that
     // we can find references across all the projects in the solution irrespective of which project is open
-    pub project_tree: Option<ProjectTreeRequest>,
+    pub(crate) project_tree: Option<ProjectTreeRequest>,
     // AutoImports is the document URI for which auto imports should be prepared.
-    pub auto_imports: lsproto::DocumentUri,
+    pub(crate) auto_imports: lsproto::DocumentUri,
 }
 
 #[derive(Default)]
@@ -276,28 +281,27 @@ pub struct SnapshotChange {
 // ATAStateChange represents a change to a project's ATA state.
 pub struct ATAStateChange {
     // TypingsInfo is the new typings info for the project.
-    pub typings_info: Option<Arc<ata::TypingsInfo>>,
+    pub(crate) typings_info: Option<Arc<ata::TypingsInfo>>,
     // TypingsFiles is the new list of typing files for the project.
-    pub typings_files: Vec<String>,
+    pub(crate) typings_files: Vec<String>,
     // TypingsFilesToWatch is the new list of typing files to watch for changes.
-    pub typings_files_to_watch: Vec<String>,
-    pub logs: LogTree,
+    pub(crate) typings_files_to_watch: Vec<String>,
+    pub(crate) logs: LogTree,
 }
 
 // Go's `defer func() { if r := recover(); r != nil { sessionLogger.Log(logger.String()); panic(r) } }()`.
-struct logOnPanic<'a> {
+struct LogOnPanic<'a> {
     session_logger: Option<&'a dyn Logger>,
     logger: &'a LogTree,
 }
 
-impl Drop for logOnPanic<'_> {
+impl Drop for LogOnPanic<'_> {
     fn drop(&mut self) {
-        if std::thread::panicking() {
-            if let Some(session_logger) = self.session_logger {
-                if !self.logger.is_nil() {
-                    session_logger.log(&self.logger.string());
-                }
-            }
+        if std::thread::panicking()
+            && let Some(session_logger) = self.session_logger
+            && !self.logger.is_nil()
+        {
+            session_logger.log(&self.logger.string());
         }
     }
 }
@@ -337,9 +341,9 @@ impl Snapshot {
     }
 
     // snapshot.go:134
-    pub(crate) fn process_file_changes(
+    fn process_file_changes(
         &self,
-        fs: &snapshotFSBuilder,
+        fs: &SnapshotFSBuilder,
         mut file_changes: FileChangeSummary,
         logger: &LogTree,
         content_mapper_contributions: Option<&ContentMapperContributions>,
@@ -441,11 +445,6 @@ impl Snapshot {
         self.fs.get_file(file_name)
     }
 
-    // snapshot.go:218
-    pub fn lsp_line_map(&self, file_name: &str) -> Option<Arc<LSPLineMap>> {
-        self.fs.get_file(file_name).map(|file| file.lsp_line_map())
-    }
-
     // snapshot.go:236
     pub fn user_preferences(&self) -> &UserPreferences {
         &self.user_preferences
@@ -456,12 +455,8 @@ impl Snapshot {
         self.id
     }
 
-    pub fn parent_id(&self) -> u64 {
-        self.parent_id
-    }
-
     // snapshot.go:252
-    pub(crate) fn to_path(&self, file_name: &str) -> Path {
+    fn to_path(&self, file_name: &str) -> Path {
         (self.host.to_path)(file_name)
     }
 
@@ -477,16 +472,10 @@ impl Snapshot {
 
     // snapshot.go:275
     // FileSystem returns the filesystem backing this snapshot.
-    pub fn file_system(&self) -> &dyn FS {
-        &*self.fs.fs
-    }
 
     // snapshot.go:281
     // HasFileSystemOverride reports whether this snapshot uses an API-supplied
     // filesystem instead of the session host filesystem.
-    pub fn has_file_system_override(&self) -> bool {
-        self.file_system_override
-    }
 
     // snapshot.go:309
     pub fn fs(&self) -> Arc<dyn FS> {
@@ -498,17 +487,13 @@ impl Snapshot {
     }
 
     // snapshot.go:313
-    pub fn get_current_directory(&self) -> &str {
-        self.host.get_current_directory()
-    }
-
-    // snapshot.go:317
     pub fn content_mapper_extensions(&self) -> Vec<String> {
-        self.content_mapper_watch_state().0
+        let (extensions, _) = self.content_mapper_watch_state();
+        extensions
     }
 
     // snapshot.go:431
-    pub fn clone_snapshot(
+    pub(crate) fn clone_snapshot(
         &self,
         ctx: &Context,
         mut change: SnapshotChange,
@@ -526,7 +511,7 @@ impl Snapshot {
             logger = new_log_tree(&format!("Cloning snapshot {}", self.id));
         }
         // Print in-progress logs immediately if cloning fails
-        let _log_on_panic = logOnPanic {
+        let _log_on_panic = LogOnPanic {
             session_logger: if store.options.logging_enabled { session_logger } else { None },
             logger: &logger,
         };
@@ -709,6 +694,7 @@ impl Snapshot {
             Arc::clone(&store.parse_cache),
             Arc::clone(&store.content_mapped_parse_cache),
             Arc::clone(&store.extended_config_cache),
+            store.content_mapper_host.clone(),
             client,
         );
 
@@ -724,18 +710,18 @@ impl Snapshot {
 
             project_collection_builder
                 .did_change_custom_config_file_name(&logger.fork("DidChangeCustomConfigFileName"));
-            if let Some(options) = change.compiler_options_for_inferred_projects {
-                if let Some(inferred) = project_collection_builder.inferred_project_value() {
-                    let command_line = inferred.command_line.unwrap();
-                    project_collection_builder.update_inferred_project(
-                        command_line.file_names().to_vec(),
-                        Some(options),
-                        command_line.project_references().to_vec(),
-                        command_line.errors.clone(),
-                        command_line.content_mappers().to_vec(),
-                        &logger.fork("DidChangeCompilerOptionsForInferredProjects"),
-                    );
-                }
+            if let Some(options) = change.compiler_options_for_inferred_projects
+                && let Some(inferred) = project_collection_builder.inferred_project_value()
+            {
+                let command_line = inferred.command_line.unwrap();
+                project_collection_builder.update_inferred_project(
+                    command_line.file_names().to_vec(),
+                    Some(options),
+                    command_line.project_references().to_vec(),
+                    command_line.errors.clone(),
+                    command_line.content_mappers().to_vec(),
+                    &logger.fork("DidChangeCompilerOptionsForInferredProjects"),
+                );
             }
             if change.content_mapper_contributions.is_some() {
                 project_collection_builder.did_change_content_mapper_contributions(
@@ -796,7 +782,9 @@ impl Snapshot {
         let (api_error, project_collection, config_file_registry) = match built {
             Ok(built) => built,
             Err(panic) => {
-                project_collection_builder.parse_cache_journal.roll_back(&store.parse_cache);
+                project_collection_builder
+                    .parse_cache_journal
+                    .roll_back(&store.parse_cache, &store.content_mapped_parse_cache);
                 std::panic::resume_unwind(panic);
             }
         };
@@ -872,9 +860,11 @@ impl Snapshot {
             overlays.iter().map(|(path, overlay)| (path.clone(), overlay.base.file_name.clone())),
         );
         let mut prepare_auto_imports = Path::default();
+        let mut prepare_auto_imports_file_name = String::new();
         if !change.resource_request.auto_imports.0.is_empty() {
             prepare_auto_imports =
                 change.resource_request.auto_imports.path(self.use_case_sensitive_file_names());
+            prepare_auto_imports_file_name = change.resource_request.auto_imports.file_name();
         }
         let old_auto_imports = match &self.auto_imports {
             Some(auto_imports) => Arc::clone(auto_imports),
@@ -886,6 +876,7 @@ impl Snapshot {
             ctx,
             &autoimport::RegistryChange {
                 requested_file: prepare_auto_imports,
+                requested_file_name: prepare_auto_imports_file_name,
                 open_files,
                 changed: change.file_changes.changed.clone(),
                 created: change.file_changes.created.clone(),
@@ -951,13 +942,12 @@ impl Snapshot {
             reason = "only adds this snapshot as an owner (a set insert); Go ranges the map too"
         )]
         for config in new_snapshot.config_file_registry.configs.values() {
-            if let Some(command_line) = config.command_line {
-                if let Some(config_file) = command_line.config_file {
-                    for file in config_file.extended_source_files.borrow().iter() {
-                        store
-                            .extended_config_cache
-                            .add_owner(&(store.to_path)(file), new_snapshot.id);
-                    }
+            if let Some(command_line) = config.command_line
+                && let Some(config_file) = command_line.config_file
+            {
+                let extended_source_files = config_file.extended_source_files.lock().unwrap();
+                for file in extended_source_files.iter() {
+                    store.extended_config_cache.add_owner(&(store.to_path)(file), new_snapshot.id);
                 }
             }
         }
@@ -1024,7 +1014,9 @@ impl Snapshot {
                 continue;
             };
             if store.program_counter.deref(program) {
-                // (Content mappers are not ported: no program has a content mapper project.)
+                if let Some(content_mapper_project) = program.content_mapper_project() {
+                    let _ = content_mapper_project.close();
+                }
                 // This program is no longer referenced by any snapshot.
                 // Mark its checker pool as discarded so its idle-cleanup timer stops
                 // keeping the pool alive, allowing the pool and any idle checkers it
@@ -1033,10 +1025,28 @@ impl Snapshot {
                     checker_pool.discard();
                 }
                 for &file in program.source_files() {
-                    store.parse_cache.deref(&parse_cache_key_for_file(file));
+                    if !file.is_content_mapper_failure_stub()
+                        && !file.is_content_mapper_supplemental()
+                    {
+                        if file.content_mapper().is_empty() {
+                            store.parse_cache.deref(&parse_cache_key_for_file(file));
+                        } else {
+                            store
+                                .content_mapped_parse_cache
+                                .deref(&content_mapped_parse_cache_key_for_file(file));
+                        }
+                    }
                 }
                 for file in program.duplicate_source_files() {
-                    store.parse_cache.deref(&parse_cache_key_for_duplicate(file));
+                    if !file.is_content_mapper_failure_stub {
+                        if file.content_mapper.is_empty() {
+                            store.parse_cache.deref(&parse_cache_key_for_duplicate(file));
+                        } else {
+                            store
+                                .content_mapped_parse_cache
+                                .deref(&content_mapped_parse_cache_key_for_duplicate(file));
+                        }
+                    }
                 }
             }
         }
@@ -1053,8 +1063,7 @@ impl Snapshot {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn ref_count(&self) -> u32 {
+    pub fn ref_count(&self) -> u32 {
         self.ref_count.load(Ordering::SeqCst)
     }
 }
@@ -1081,6 +1090,16 @@ impl tsrs_ls::Host for Snapshot {
     fn read_file(&self, file_name: &str) -> Option<String> {
         let handle = self.get_file(file_name)?;
         Some(handle.content().to_string())
+    }
+
+    fn read_file_text(&self, file_name: &str) -> Option<tsrs_ls::FileText> {
+        struct HandleText(Arc<dyn FileHandle>);
+        impl AsRef<str> for HandleText {
+            fn as_ref(&self) -> &str {
+                self.0.content()
+            }
+        }
+        Some(tsrs_ls::FileText::new(HandleText(self.get_file(file_name)?)))
     }
 
     // snapshot.go:240
@@ -1141,7 +1160,7 @@ impl tsrs_ls::Host for Snapshot {
 }
 
 impl Snapshot {
-    pub fn use_case_sensitive_file_names(&self) -> bool {
+    fn use_case_sensitive_file_names(&self) -> bool {
         tsrs_ls::Host::use_case_sensitive_file_names(self)
     }
 
@@ -1151,10 +1170,6 @@ impl Snapshot {
 
     pub fn read_file(&self, file_name: &str) -> Option<String> {
         tsrs_ls::Host::read_file(self, file_name)
-    }
-
-    pub fn get_ecma_line_info(&self, file_name: &str) -> Option<Arc<ECMALineInfo>> {
-        tsrs_ls::Host::get_ecma_line_info(self, file_name)
     }
 
     pub fn auto_import_registry(&self) -> Option<Arc<autoimport::Registry>> {

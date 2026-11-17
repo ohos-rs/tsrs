@@ -27,7 +27,7 @@ impl Parser {
             self.parse_error_at(
                 at + 1,
                 keyword,
-                &diagnostics::In_annotation_declaration_any_symbols_between_and_interface_are_forbidden,
+                &diagnostics::IN_ANNOTATION_DECLARATION_ANY_SYMBOLS_BETWEEN_AND_INTERFACE_ARE_FORBIDDEN,
                 &[],
             );
         }

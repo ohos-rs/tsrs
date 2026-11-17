@@ -31,7 +31,7 @@ pub enum ScriptKind {
 }
 
 impl ScriptKind {
-    pub fn string(self) -> &'static str {
+    fn string(self) -> &'static str {
         match self {
             ScriptKind::Unknown => "ScriptKindUnknown",
             ScriptKind::JS => "ScriptKindJS",

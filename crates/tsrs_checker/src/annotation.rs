@@ -86,18 +86,18 @@ impl Checker {
     pub(crate) fn check_annotation_declaration(&mut self, node: P<Node>) {
         self.check_annotation_js_har(node);
         if !ast::is_source_file(node.parent().unwrap()) {
-            self.grammar_error_on_node(node, &diagnostics::Annotation_must_be_defined_at_top_level_only, &[]);
+            self.grammar_error_on_node(node, &diagnostics::ANNOTATION_MUST_BE_DEFINED_AT_TOP_LEVEL_ONLY, &[]);
         }
         self.check_grammar_modifiers(node);
         if ast::has_syntactic_modifier(node, ModifierFlags::Default) {
-            self.error(Some(node), &diagnostics::Annotation_cannot_be_exported_as_default, &[]);
+            self.error(Some(node), &diagnostics::ANNOTATION_CANNOT_BE_EXPORTED_AS_DEFAULT, &[]);
         }
         for &modifier in node.modifier_nodes() {
             if ast::is_decorator(modifier) {
                 if let Some(declaration) = self.annotation_for_decorator(modifier) {
                     self.check_annotation_use(modifier, declaration);
                 } else {
-                    self.grammar_error_on_node(modifier, &diagnostics::Decorators_are_not_valid_here, &[]);
+                    self.grammar_error_on_node(modifier, &diagnostics::DECORATORS_ARE_NOT_VALID_HERE, &[]);
                 }
             }
         }
@@ -148,7 +148,7 @@ impl Checker {
             if expression.arguments().len() != 1 || !ast::is_object_literal_expression(expression.arguments()[0]) {
                 self.error(
                     Some(node),
-                    &diagnostics::Only_an_object_literal_have_to_be_provided_as_annotation_parameters_list_got_Colon_0,
+                    &diagnostics::ONLY_AN_OBJECT_LITERAL_HAVE_TO_BE_PROVIDED_AS_ANNOTATION_PARAMETERS_LIST_GOT_COLON_0,
                     &[&tsrs_scanner::get_text_of_node(expression.arguments()[0])],
                 );
                 return;
@@ -160,7 +160,7 @@ impl Checker {
                 if member.initializer().is_none() {
                     self.error(
                         Some(node),
-                        &diagnostics::When_annotation_0_is_applied_all_fields_without_default_values_must_be_provided,
+                        &diagnostics::WHEN_ANNOTATION_0_IS_APPLIED_ALL_FIELDS_WITHOUT_DEFAULT_VALUES_MUST_BE_PROVIDED,
                         &[&tsrs_scanner::get_text_of_node(expression)],
                     );
                     return;
@@ -171,7 +171,7 @@ impl Checker {
                 if !ast::is_property_assignment(prop) {
                     self.error(
                         Some(node),
-                        &diagnostics::Only_an_object_literal_have_to_be_provided_as_annotation_parameters_list_got_Colon_0,
+                        &diagnostics::ONLY_AN_OBJECT_LITERAL_HAVE_TO_BE_PROVIDED_AS_ANNOTATION_PARAMETERS_LIST_GOT_COLON_0,
                         &[&tsrs_scanner::get_text_of_node(argument.unwrap())],
                     );
                     return;
@@ -180,7 +180,7 @@ impl Checker {
                     .evaluate_annotation_constant(prop.initializer().unwrap(), &mut FxHashSet::default())
                     .is_none()
                 {
-                    self.error(Some(node), &diagnostics::All_members_of_object_literal_which_is_provided_as_annotation_parameters_list_have_to_be_constant_expressions_got_Colon_0, &[&tsrs_scanner::get_text_of_node(prop.initializer().unwrap())]);
+                    self.error(Some(node), &diagnostics::ALL_MEMBERS_OF_OBJECT_LITERAL_WHICH_IS_PROVIDED_AS_ANNOTATION_PARAMETERS_LIST_HAVE_TO_BE_CONSTANT_EXPRESSIONS_GOT_COLON_0, &[&tsrs_scanner::get_text_of_node(prop.initializer().unwrap())]);
                     return;
                 }
             }
@@ -194,7 +194,7 @@ impl Checker {
             if !is_source_retention_annotation_target(parent) {
                 self.error(
                     Some(node),
-                    &diagnostics::X_0_annotation_are_not_valid_here_got_Colon_1,
+                    &diagnostics::X_0_ANNOTATION_ARE_NOT_VALID_HERE_GOT_COLON_1,
                     &[
                         &tsrs_scanner::get_text_of_node(declaration.name().unwrap()),
                         &tsrs_scanner::get_text_of_node(parent),
@@ -206,7 +206,7 @@ impl Checker {
             if !ast::is_annotation_declaration(parent) {
                 self.error(
                     Some(node),
-                    &diagnostics::X_0_should_only_be_applied_to_annotation_declarations,
+                    &diagnostics::X_0_SHOULD_ONLY_BE_APPLIED_TO_ANNOTATION_DECLARATIONS,
                     &[&"@Retention"],
                 );
                 return;
@@ -215,10 +215,10 @@ impl Checker {
             let class = |n| ast::is_class_declaration(n) && !ast::is_annotation_declaration(n) && !ast::is_struct_declaration(n);
             if !(class(parent) || ast::is_method_declaration(parent) && class(parent.parent().unwrap())) {
                 let message = match parent.kind() {
-                    Kind::Constructor => &diagnostics::Annotation_cannot_be_applied_for_constructor_got_Colon_0,
-                    Kind::GetAccessor | Kind::SetAccessor => &diagnostics::Annotation_cannot_be_applied_for_getter_or_setter_got_Colon_0,
-                    _ if ast::is_annotation_declaration(parent) => &diagnostics::Annotation_cannot_be_applied_for_annotation_declaration,
-                    _ => &diagnostics::Annotation_have_to_be_applied_for_classes_or_methods_in_classes_only_got_Colon_0,
+                    Kind::Constructor => &diagnostics::ANNOTATION_CANNOT_BE_APPLIED_FOR_CONSTRUCTOR_GOT_COLON_0,
+                    Kind::GetAccessor | Kind::SetAccessor => &diagnostics::ANNOTATION_CANNOT_BE_APPLIED_FOR_GETTER_OR_SETTER_GOT_COLON_0,
+                    _ if ast::is_annotation_declaration(parent) => &diagnostics::ANNOTATION_CANNOT_BE_APPLIED_FOR_ANNOTATION_DECLARATION,
+                    _ => &diagnostics::ANNOTATION_HAVE_TO_BE_APPLIED_FOR_CLASSES_OR_METHODS_IN_CLASSES_ONLY_GOT_COLON_0,
                 };
                 self.error(Some(node), message, &[&tsrs_scanner::get_text_of_node(parent)]);
                 return;
@@ -226,7 +226,7 @@ impl Checker {
             if ast::has_syntactic_modifier(parent, ModifierFlags::Abstract)
                 || ast::is_method_declaration(parent) && ast::has_syntactic_modifier(parent.parent().unwrap(), ModifierFlags::Abstract)
             {
-                self.error(Some(node), &diagnostics::Annotation_have_to_be_applied_only_for_non_abstract_class_declarations_and_method_declarations_in_non_abstract_classes_got_Colon_0, &[&tsrs_scanner::get_text_of_node(parent)]);
+                self.error(Some(node), &diagnostics::ANNOTATION_HAVE_TO_BE_APPLIED_ONLY_FOR_NON_ABSTRACT_CLASS_DECLARATIONS_AND_METHOD_DECLARATIONS_IN_NON_ABSTRACT_CLASSES_GOT_COLON_0, &[&tsrs_scanner::get_text_of_node(parent)]);
                 return;
             }
         }
@@ -237,7 +237,7 @@ impl Checker {
             if ast::is_decorator(previous) && self.annotation_for_decorator(previous) == Some(declaration) {
                 self.error(
                     Some(node),
-                    &diagnostics::Repeatable_annotation_are_not_supported_got_Colon_0,
+                    &diagnostics::REPEATABLE_ANNOTATION_ARE_NOT_SUPPORTED_GOT_COLON_0,
                     &[&tsrs_scanner::get_text_of_node(node)],
                 );
                 return;
@@ -249,7 +249,7 @@ impl Checker {
     fn check_annotation_js_har(&mut self, node: P<Node>) {
         if self.compiler_options.is_compile_js_har == Tristate::True && !self.compiler_options.module_root_path.is_empty()
             && tspath::normalize_path(ast::get_source_file_of_node(node).unwrap().file_name()).starts_with(&tspath::normalize_path(&self.compiler_options.module_root_path)) {
-            self.grammar_error_on_node(node, &diagnostics::Annotations_are_not_supported_in_Hars_compiled_to_JavaScript_files, &[]);
+            self.grammar_error_on_node(node, &diagnostics::ANNOTATIONS_ARE_NOT_SUPPORTED_IN_HARS_COMPILED_TO_JAVA_SCRIPT_FILES, &[]);
         }
     }
 
@@ -257,7 +257,7 @@ impl Checker {
         if node.type_node().is_none() && node.initializer().is_none() {
             self.error(
                 Some(node),
-                &diagnostics::An_annotation_property_must_have_a_type_or_Slashand_an_initializer,
+                &diagnostics::AN_ANNOTATION_PROPERTY_MUST_HAVE_A_TYPE_OR_SLASHAND_AN_INITIALIZER,
                 &[],
             );
         }
@@ -265,13 +265,13 @@ impl Checker {
         let t = self.get_type_of_node(node);
         if !self.is_allowed_annotation_property_type(t) {
             let type_name = self.type_to_string_exported(t);
-            self.error(Some(node), &diagnostics::A_type_of_annotation_property_have_to_be_number_boolean_string_const_enumeration_types_or_array_of_above_types_got_Colon_0, &[&type_name]);
+            self.error(Some(node), &diagnostics::A_TYPE_OF_ANNOTATION_PROPERTY_HAVE_TO_BE_NUMBER_BOOLEAN_STRING_CONST_ENUMERATION_TYPES_OR_ARRAY_OF_ABOVE_TYPES_GOT_COLON_0, &[&type_name]);
         }
         if let Some(init) = node.initializer() {
             if self.evaluate_annotation_constant(init, &mut FxHashSet::default()).is_none() {
                 self.error(
                     Some(node),
-                    &diagnostics::Default_value_of_annotation_property_can_be_a_constant_expression_got_Colon_0,
+                    &diagnostics::DEFAULT_VALUE_OF_ANNOTATION_PROPERTY_CAN_BE_A_CONSTANT_EXPRESSION_GOT_COLON_0,
                     &[&tsrs_scanner::get_text_of_node(init)],
                 );
             }

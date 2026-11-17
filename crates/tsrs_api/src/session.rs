@@ -14,9 +14,10 @@ use std::sync::Weak;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
-use tsrs_compiler::{CheckerHandle, Program};
-use tsrs_core::context::{CheckerLifetime, Context, with_checker_lifetime};
-use tsrs_core::json::{self, Value};
+use tsrs_api_transport::strictjson::DecodeError;
+use tsrs_compiler::Program;
+use tsrs_core::context::Context;
+use tsrs_core::json::{self, JsonMap, Value};
 use tsrs_project::{ID as ProjectID, Snapshot, SnapshotHost};
 use tsrs_vfs::FS;
 
@@ -38,10 +39,11 @@ pub struct SessionOptions {
     pub fs: Arc<dyn FS>,
     /// Go `UseBinaryResponses`: true for the sync `MessagePack` protocol, false for JSON-RPC.
     pub binary_responses: bool,
-    /// Go `RunExternalCode` (false by default). Forwarded to the project session, but API projects get no content
-    /// mapper project yet (see `Session::new`), so content-mapped files are not transformed.
+    /// Go `RunExternalCode` (false by default): allows configured content mappers to execute.
     pub run_external_code: bool,
     pub sdk_plugin_callbacks: bool,
+    /// Go `ContentMapperSpawner`: launches content mapper processes (None when the host cannot spawn them).
+    pub content_mapper_spawner: Option<Arc<dyn tsrs_contentmapper::Spawner>>,
 }
 
 impl SessionOptions {
@@ -51,20 +53,27 @@ impl SessionOptions {
         fs: Arc<dyn FS>,
         binary_responses: bool,
     ) -> SessionOptions {
-        SessionOptions { cwd, default_library_path, fs, binary_responses, run_external_code: false, sdk_plugin_callbacks: false }
+        SessionOptions {
+            cwd,
+            default_library_path,
+            fs,
+            binary_responses,
+            run_external_code: false,
+            sdk_plugin_callbacks: false,
+            content_mapper_spawner: None,
+        }
     }
 }
 
 /// Go `snapshotOpenState`: projects/files this client opened in a snapshot lineage.
 #[derive(Clone, Default)]
-pub(crate) struct OpenState {
+pub struct OpenState {
     pub open_projects: tsrs_core::collections::Set<tsrs_core::tspath::Path>,
     pub open_files: tsrs_core::collections::Set<tsrs_core::tspath::Path>,
 }
 
 /// Go `snapshotData`: one registered snapshot plus its per-snapshot registries.
 pub struct SnapshotData {
-    pub handle: SnapshotID,
     pub snapshot: Arc<Snapshot>,
     /// Request filesystem the snapshot was created with (inherited by updates), if any.
     pub(crate) file_system: Option<Arc<crate::requestfs::RequestFileSystem>>,
@@ -92,20 +101,21 @@ impl SnapshotData {
     }
 }
 
-/// Go `checkerSetup`. Holds the snapshot alive and the checker exclusively until dropped. Checker
-/// handles are not reentrant: never call `Session::setup_checker` again while one is held on the
-/// same program.
-pub struct CheckerSetup {
-    pub sd: Arc<SnapshotData>,
-    pub snapshot: SnapshotID,
-    pub project: ProjectID,
-    pub program: &'static Program,
-    pub checker: CheckerHandle,
+/// Go `Session.openProjects` / `openFiles` / `createdPrograms`, guarded by `languageServerUpdateMu`: the canonical
+/// LSP-state resources owned by this API client.
+#[derive(Default)]
+pub struct LanguageServerState {
+    pub open_state: OpenState,
+    pub(crate) created_programs: tsrs_core::collections::Set<tsrs_project::SyntheticProjectID>,
 }
 
 pub struct Session {
     id: String,
     pub(crate) snapshot_host: Arc<SnapshotHost>,
+    /// Go `projectSession`: the language server's project session, for sessions created by `new_lsp_session`.
+    pub(crate) project_session: Option<Arc<tsrs_project::Session>>,
+    pub language_server: Mutex<LanguageServerState>,
+    pub(crate) parse_config_host: crate::config::ApiParseConfigHost,
     binary_responses: bool,
     sdk_plugin_callbacks: bool,
     pub(crate) oh_sdk_plugin_executor: std::sync::OnceLock<Arc<dyn tsrs_core::OhSdkPluginExecutor>>,
@@ -146,19 +156,57 @@ impl Session {
             client: None,
             logger: None,
             npm_executor: None,
+            spawner: options.content_mapper_spawner,
+            content_mapper_logger: None,
             parse_cache: None,
             content_mapped_parse_cache: None,
-            // Go also passes the server's ContentMapperSpawner here (api/server.go:99). The project system does not
-            // transform content-mapped files yet (phase 2, notes/contentmappers.md): `--runExternalCode` is accepted
-            // and recorded in the session options, and its projects get no content mapper project.
+        };
+
+        let base_fs = Arc::clone(&init.fs);
+        Self::new_session(
+            tsrs_project::new_snapshot_host(&init),
+            None,
+            base_fs,
+            options.binary_responses,
+            options.sdk_plugin_callbacks,
+        )
+    }
+
+    /// Go `NewLSPSession`: an API session over the language server's project session. Its snapshots are the
+    /// language server's (`getCurrentLanguageServerSnapshot`), and the projects, files and programs it opens
+    /// there are released when it closes.
+    pub fn new_lsp_session(
+        project_session: Arc<tsrs_project::Session>,
+        binary_responses: bool,
+    ) -> Arc<Session> {
+        let snapshot_host = Arc::clone(project_session.snapshot_host());
+        // Go `Session.FS()` is the project session's (overlay) file system.
+        let base_fs = project_session.shared_fs();
+        Self::new_session(snapshot_host, Some(project_session), base_fs, binary_responses, false)
+    }
+
+    /// Go `newSession`.
+    fn new_session(
+        snapshot_host: Arc<SnapshotHost>,
+        project_session: Option<Arc<tsrs_project::Session>>,
+        base_fs: Arc<dyn FS>,
+        binary_responses: bool,
+        sdk_plugin_callbacks: bool,
+    ) -> Arc<Session> {
+        // Go parses configs with the snapshot host as the `ParseConfigHost`.
+        let parse_config_host = crate::config::ApiParseConfigHost {
+            fs: snapshot_host.shared_fs(),
+            cwd: snapshot_host.get_current_directory().to_string(),
         };
         let id = SESSION_ID_COUNTER.fetch_add(1, Ordering::SeqCst) + 1;
-        let base_fs = Arc::clone(&init.fs);
         Arc::new_cyclic(|weak_self| Session {
             id: format!("api-session-{id}"),
-            snapshot_host: tsrs_project::new_snapshot_host(&init),
-            binary_responses: options.binary_responses,
-            sdk_plugin_callbacks: options.sdk_plugin_callbacks,
+            snapshot_host,
+            project_session,
+            language_server: Mutex::new(LanguageServerState::default()),
+            parse_config_host,
+            binary_responses,
+            sdk_plugin_callbacks,
             oh_sdk_plugin_executor: std::sync::OnceLock::default(),
             snapshots: RwLock::new(FxHashMap::default()),
             conn: Mutex::new(None),
@@ -170,7 +218,7 @@ impl Session {
             weak_self: Weak::clone(weak_self),
             build_state: crate::build::BuildState::default(),
             source_files: crate::sourcefiles::SourceFileState::default(),
-            build_backend: Mutex::new(None),
+            build_backend: Mutex::new(Some(Arc::new(crate::build::ExecuteBuildBackend))),
         })
     }
 
@@ -178,7 +226,7 @@ impl Session {
         &self.id
     }
 
-    /// Installs the in-process build orchestrator implementation (the CLI's `tsc -b`).
+    /// Replaces the default in-process build orchestrator implementation.
     pub fn set_build_backend(&self, backend: Arc<dyn crate::build::BuildBackend>) {
         *self.build_backend.lock().unwrap() = Some(backend);
     }
@@ -187,7 +235,10 @@ impl Session {
         self.build_backend.lock().unwrap().clone()
     }
 
-    pub fn default_library_path(&self) -> &str {
+    pub(crate) fn default_library_path(&self) -> &str {
+        if let Some(project_session) = &self.project_session {
+            return project_session.default_library_path();
+        }
         self.snapshot_host.default_library_path()
     }
 
@@ -195,8 +246,15 @@ impl Session {
         Weak::clone(&self.weak_self)
     }
 
-    pub(crate) fn snapshot_host_fs(&self) -> Arc<dyn FS> {
+    /// Go `Session.FS()`: the language server's (overlay) filesystem for an LSP-attached session, otherwise the
+    /// snapshot host's.
+    pub(crate) fn fs(&self) -> Arc<dyn FS> {
         Arc::clone(&self.base_fs)
+    }
+
+    /// Go `snapshotHost.FS()`: the host filesystem, without the language server's overlays.
+    pub(crate) fn snapshot_host_fs(&self) -> Arc<dyn FS> {
+        self.snapshot_host.shared_fs()
     }
 
     pub(crate) fn next_batch_page_id(&self) -> u64 {
@@ -214,20 +272,20 @@ impl Session {
         self.conn.lock().unwrap().clone()
     }
 
-    pub fn binary_responses(&self) -> bool {
+    pub(crate) fn binary_responses(&self) -> bool {
         self.binary_responses
     }
 
-    pub fn current_directory(&self) -> &str {
+    pub(crate) fn current_directory(&self) -> &str {
         self.snapshot_host.get_current_directory()
     }
 
     /// Go `Session.FS()` for a standalone session: the host filesystem (possibly callback-backed).
-    pub fn base_fs(&self) -> &dyn FS {
+    pub(crate) fn base_fs(&self) -> &dyn FS {
         self.snapshot_host.fs()
     }
 
-    pub fn to_path(&self, file_name: &str) -> tsrs_core::tspath::Path {
+    pub(crate) fn to_path(&self, file_name: &str) -> tsrs_core::tspath::Path {
         tsrs_core::tspath::to_path(
             file_name,
             self.current_directory(),
@@ -235,7 +293,7 @@ impl Session {
         )
     }
 
-    pub fn use_case_sensitive_file_names(&self) -> bool {
+    pub(crate) fn use_case_sensitive_file_names(&self) -> bool {
         self.snapshot_host.fs().use_case_sensitive_file_names()
     }
 
@@ -246,10 +304,55 @@ impl Session {
             return;
         }
         *closed = true;
+        self.release_language_server_refs();
+        self.source_files.release_all_leases();
         let all: Vec<_> = self.snapshots.write().unwrap().drain().collect();
         drop(all);
+
+        // Go `ownsSnapshotHost`: only a standalone session (no project session) owns its snapshot host.
+        if self.project_session.is_none() {
+            self.snapshot_host.close();
+        }
         self.batch_pages.lock().unwrap().clear();
-        self.source_files.release_all_leases();
+    }
+
+    /// Go `releaseLanguageServerRefs`: closes the projects and files this client opened in the language server
+    /// and removes the programs it created there.
+    fn release_language_server_refs(&self) {
+        let Some(project_session) = &self.project_session else {
+            return;
+        };
+
+        let mut state = self.language_server.lock().unwrap();
+        if state.open_state.open_projects.is_empty()
+            && state.open_state.open_files.is_empty()
+            && state.created_programs.is_empty()
+        {
+            return;
+        }
+
+        let mut api_request = tsrs_project::APISnapshotRequest::default();
+        if !state.open_state.open_projects.is_empty() {
+            api_request.close_projects = Some(state.open_state.open_projects.clone());
+        }
+        if !state.open_state.open_files.is_empty() {
+            api_request.close_files = Some(state.open_state.open_files.clone());
+        }
+        if !state.created_programs.is_empty() {
+            api_request.remove_programs = Some(state.created_programs.clone());
+        }
+        let ctx = project_session.with_current_locale(&Context::background());
+        let Ok(snapshot) = project_session.api_update(
+            &ctx,
+            &tsrs_project::FileChangeSummary::default(),
+            Some(Arc::new(api_request)),
+        ) else {
+            return;
+        };
+        snapshot.deref();
+        state.open_state.open_projects.clear();
+        state.open_state.open_files.clear();
+        state.created_programs.clear();
     }
 
     /// Go `getSnapshotData`: resolves a client snapshot handle, pinning it for the caller.
@@ -260,19 +363,6 @@ impl Session {
             .get(&handle)
             .map(|(sd, _)| Arc::clone(sd))
             .ok_or_else(|| ApiError::client(format!("snapshot {handle} not found")))
-    }
-
-    /// Go `setupChecker`: resolves snapshot -> project -> program and acquires the API-lifetime checker.
-    pub fn setup_checker(
-        &self,
-        snapshot: SnapshotID,
-        project: &ProjectID,
-    ) -> ApiResult<CheckerSetup> {
-        let sd = self.snapshot_data(snapshot)?;
-        let program = sd.get_program(project)?;
-        let ctx = with_checker_lifetime(&Context::background(), CheckerLifetime::API);
-        let checker = program.get_type_checker(&ctx);
-        Ok(CheckerSetup { sd, snapshot, project: project.clone(), program, checker })
     }
 
     /// Go `registerSnapshot`: the same snapshot id returned twice (no changes) bumps the API ref count so
@@ -291,7 +381,6 @@ impl Session {
             entry.1 += 1;
         } else {
             let sd = Arc::new(SnapshotData {
-                handle,
                 snapshot,
                 file_system,
                 open_state,
@@ -334,13 +423,20 @@ impl Session {
         // Go `unmarshalPayload`: `noParams` methods ignore the payload; the others decode with Go's strict
         // JSON (unpaired surrogates and duplicate members are errors), reported as
         // `failed to unmarshal *api.<Type>: <jsontext error>`.
-        let params = match crate::methods::params_type(method) {
-            None => Value::Null,
+        let (params, lexemes) = match crate::methods::params_type(method) {
+            None => (Value::Null, rustc_hash::FxHashMap::default()),
             Some(go_type) => {
-                tsrs_api_transport::strictjson::validate(params).map_err(|e| {
-                    ApiError::invalid_request(format!("failed to unmarshal *api.{go_type}: {e}"))
+                let decoded = tsrs_api_transport::strictjson::decode_with_names(
+                    params,
+                    crate::predecode::known_member_name,
+                )
+                .map_err(|e| match e {
+                    DecodeError::Invalid(e) => ApiError::invalid_request(format!(
+                        "failed to unmarshal *api.{go_type}: {e}"
+                    )),
+                    DecodeError::OutOfRange(e) => ApiError::invalid_request(e),
                 })?;
-                let value = parse_params(params)?;
+                let value = decoded.value;
                 // encoding/json/v2 into a struct: `null` leaves the zero value; any other non-object is an error.
                 let kind = match &value {
                     Value::Null | Value::Object(_) => None,
@@ -355,17 +451,16 @@ impl Session {
                     )));
                 }
                 // `null` decodes to the zero-value struct: handlers see `{}`.
-                if matches!(value, Value::Null) {
-                    Value::Object(tsrs_core::collections::OrderedMap::default())
+                let value = if matches!(value, Value::Null) {
+                    Value::Object(JsonMap::new())
                 } else {
                     value
-                }
+                };
+                // Go decodes the whole params struct before any lookup (see predecode.rs).
+                let lexemes =
+                    crate::predecode::predecode(method, go_type, &value, decoded.lexemes)?;
+                (value, lexemes)
             }
-        };
-        // Go decodes the whole params struct before any lookup (see predecode.rs).
-        let lexemes = match crate::methods::params_type(method) {
-            Some(t) => crate::predecode::predecode(method, t, &params, raw_params)?,
-            None => rustc_hash::FxHashMap::default(),
         };
         let go_type = crate::methods::params_type(method);
         let typed = |e: ApiError| match (e.kind.clone(), go_type) {
@@ -392,17 +487,16 @@ impl Session {
         raw: &[u8],
         lexemes: rustc_hash::FxHashMap<String, String>,
     ) -> ApiResult<Response> {
-        let params = params.clone();
         // Raw payload and exact number literals of this request, for the objects of this params tree (by address).
-        let _request = crate::predecode::enter_request(raw, lexemes, &params);
+        let _request = crate::predecode::enter_request(raw, lexemes, params);
         if *self.closed.lock().unwrap() {
             return Err(ApiError::client("session is closed"));
         }
         if owner == Owner::Checker {
-            return checker::handle(self, method, &params)
+            return checker::handle(self, method, params)
                 .unwrap_or_else(|| Err(ApiError::unsupported(method)));
         }
-        let p = Params(&params);
+        let p = Params(params);
         if method == "batchRequests" {
             if !matches!(params, Value::Null) {
                 p.object()?;
@@ -417,11 +511,15 @@ impl Session {
             "retainSourceFile" => return self.handle_retain_source_file(p),
             "releaseSourceFile" => return self.handle_release_source_file(p),
             "getCachedSourceFile" => return self.handle_get_cached_source_file(p),
+            "getSymbolOfDeclaration" => return self.handle_get_symbol_of_declaration(p),
             _ => {}
         }
         let result = match method {
             "initialize" => Obj::new()
-                .set("useCaseSensitiveFileNames", Value::Bool(self.use_case_sensitive_file_names()))
+                .set(
+                    "caseSensitivity",
+                    Value::Number(f64::from(u8::from(self.use_case_sensitive_file_names()))),
+                )
                 .set("currentDirectory", Value::String(self.current_directory().to_string()))
                 .build(),
             // Config requests allocate their parsed command lines in a scratch region freed once the response
@@ -452,6 +550,7 @@ impl Session {
             }
             "getConfigFileNames" => self.handle_get_config_file_names(p)?,
             "getSourceFileMetadata" => self.handle_get_source_file_metadata(p)?,
+            "formatNodeForInsertion" => self.handle_format_node_for_insertion(p)?,
             "getSyntacticDiagnostics" => {
                 self.handle_get_diagnostics(p, DiagnosticKind::Syntactic)?
             }
@@ -472,21 +571,28 @@ impl Session {
             }
             "createModuleResolver" => self.handle_create_module_resolver(p)?,
             "releaseModuleResolver" => self.handle_release_module_resolver(p)?,
-            "resolveModuleName" => self.handle_resolve_module_name(p)?,
+            // Standalone resolveModuleName creates a fresh resolver and resolution caches on every call.
+            // Go reclaims them via GC; tsrs allocates them in the API server's leak arena unless each
+            // request is routed through a scratch region that is freed once the JSON response is built.
+            // The inProgressSnapshot path is excluded because resolvers cached in a ProgramResolutionContext
+            // outlive the request.
+            "resolveModuleName" => {
+                if p.u64("inProgressSnapshot")? == 0 {
+                    scratch(|| self.handle_resolve_module_name(p))?
+                } else {
+                    self.handle_resolve_module_name(p)?
+                }
+            }
             "createBuildOrchestrator" => self.handle_create_build_orchestrator(p)?,
             "disposeBuildOrchestrator" => self.handle_dispose_build_orchestrator(p)?,
             "build" => self.handle_build(p, false, false)?,
             "buildReferences" => self.handle_build(p, true, false)?,
             "cleanBuild" => self.handle_build(p, false, true)?,
             "cleanReferences" => self.handle_build(p, true, true)?,
-            // Go: standalone (non-LSP) sessions reject it the same way.
             "getCurrentLanguageServerSnapshot" => {
-                return Err(ApiError::client(
-                    "getCurrentLanguageServerSnapshot requires an LSP-connected API session",
-                ));
+                self.handle_get_current_language_server_snapshot(p)?
             }
             "printNode" => self.handle_print_node(p)?,
-            "formatNodeForInsertion" => self.handle_format_node_for_insertion(p)?,
             "transpileModule" => self.handle_transpile(p, false)?,
             "transpileDeclaration" => self.handle_transpile(p, true)?,
             "transpileModuleFromFile" => self.handle_transpile_from_file(p, false)?,
@@ -537,7 +643,7 @@ impl Handler for Session {
 
 /// Runs `f` with a fresh arena region as the allocation target and frees the region afterwards. Only for
 /// work whose result is owned data (JSON values) and that stores nothing arena-allocated in longer-lived state.
-pub(crate) fn scratch<T>(f: impl FnOnce() -> T) -> T {
+fn scratch<T>(f: impl FnOnce() -> T) -> T {
     let region = tsrs_core::arena::Region::new(64 << 10);
     let result = {
         let _scope = region.enter();
@@ -548,15 +654,7 @@ pub(crate) fn scratch<T>(f: impl FnOnce() -> T) -> T {
 }
 
 /// Parses request params (raw JSON bytes; empty means absent, Go `UnmarshalParams` returns nil).
-pub fn parse_params(params: &[u8]) -> ApiResult<Value> {
-    if params.is_empty() {
-        return Ok(Value::Null);
-    }
-    let text = tsrs_core::utf8::compat::from_utf8(params)
-        .map_err(|e| ApiError::invalid_request(format!("params are not UTF-8: {e}")))?;
-    json::unmarshal(text).map_err(ApiError::invalid_request)
-}
-
-pub fn json_response(value: &Value) -> ApiResult<Response> {
-    json::marshal(value).map(Response::Json).map_err(ApiError::internal)
+pub(crate) fn json_response(value: &Value) -> ApiResult<Response> {
+    // Most results are small objects: start with room for one instead of growing to it.
+    json::marshal_with_capacity(value, 256).map(Response::Json).map_err(ApiError::internal)
 }

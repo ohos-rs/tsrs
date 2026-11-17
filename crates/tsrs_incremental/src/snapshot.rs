@@ -19,10 +19,13 @@ use crate::referencemap::ReferenceMap;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FileInfo {
-    pub(crate) version: String,
-    pub(crate) signature: String,
-    pub(crate) affects_global_scope: bool,
-    pub(crate) implied_node_format: ResolutionMode,
+    pub version: String,
+    pub signature: String,
+    pub affects_global_scope: bool,
+    pub implied_node_format: ResolutionMode,
+    // tsrs-only: whether this version of the file declares an interface. Recorded under canonical diagnostics
+    // (build info `tsrsInterfaceFiles`); `None` when unknown.
+    pub declares_interface: Option<bool>,
 }
 
 impl FileInfo {
@@ -166,7 +169,7 @@ impl EmitSignature {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct buildInfoDiagnosticWithFileName {
+pub struct BuildInfoDiagnosticWithFileName {
     // filename if it is for a File thats other than its stored for
     pub(crate) file: Path,
     pub(crate) no_file: bool,
@@ -178,17 +181,17 @@ pub(crate) struct buildInfoDiagnosticWithFileName {
     pub(crate) message_text: String,
     pub(crate) message_key: String,
     pub(crate) message_args: Vec<String>,
-    pub(crate) message_chain: Vec<buildInfoDiagnosticWithFileName>,
-    pub(crate) related_information: Vec<buildInfoDiagnosticWithFileName>,
+    pub(crate) message_chain: Vec<BuildInfoDiagnosticWithFileName>,
+    pub(crate) related_information: Vec<BuildInfoDiagnosticWithFileName>,
     pub(crate) reports_unnecessary: bool,
     pub(crate) reports_deprecated: bool,
     pub(crate) skipped_on_no_emit: bool,
     pub(crate) repopulate_info: Option<RepopulateDiagnosticInfo>,
 }
 
-impl Default for buildInfoDiagnosticWithFileName {
+impl Default for BuildInfoDiagnosticWithFileName {
     fn default() -> Self {
-        buildInfoDiagnosticWithFileName {
+        BuildInfoDiagnosticWithFileName {
             file: Path::default(),
             no_file: false,
             pos: 0,
@@ -212,7 +215,7 @@ impl Default for buildInfoDiagnosticWithFileName {
 #[derive(Debug, Default)]
 pub struct DiagnosticsOrBuildInfoDiagnosticsWithFileName {
     pub(crate) diagnostics: Mutex<Option<Vec<P<Diagnostic>>>>,
-    pub(crate) build_info_diagnostics: Vec<buildInfoDiagnosticWithFileName>,
+    pub(crate) build_info_diagnostics: Vec<BuildInfoDiagnosticWithFileName>,
 }
 
 impl DiagnosticsOrBuildInfoDiagnosticsWithFileName {
@@ -238,9 +241,9 @@ fn key_of(key: &str) -> Key {
     Key(alloc_str(key))
 }
 
-impl buildInfoDiagnosticWithFileName {
+impl BuildInfoDiagnosticWithFileName {
     // snapshot.go:150
-    pub(crate) fn to_diagnostic(
+    fn to_diagnostic(
         &self,
         p: &'static CompilerProgram,
         file: Option<P<SourceFile>>,
@@ -287,7 +290,7 @@ impl buildInfoDiagnosticWithFileName {
     }
 
     // snapshot.go:203
-    pub(crate) fn to_diagnostic_without_repopulate(
+    fn to_diagnostic_without_repopulate(
         &self,
         p: &'static CompilerProgram,
         file: Option<P<SourceFile>>,
@@ -316,7 +319,7 @@ impl buildInfoDiagnosticWithFileName {
 // program state which may have changed between incremental builds.
 // snapshot.go:189
 pub(crate) fn repopulate_diagnostic_chain(
-    b: &buildInfoDiagnosticWithFileName,
+    b: &BuildInfoDiagnosticWithFileName,
     p: &'static CompilerProgram,
     file: Option<P<SourceFile>>,
 ) -> P<Diagnostic> {
@@ -331,7 +334,7 @@ pub(crate) fn repopulate_diagnostic_chain(
 
 // snapshot.go:225
 fn repopulate_mode_mismatch_chain(
-    b: &buildInfoDiagnosticWithFileName,
+    b: &BuildInfoDiagnosticWithFileName,
     p: &'static CompilerProgram,
     file: Option<P<SourceFile>>,
 ) -> P<Diagnostic> {
@@ -362,7 +365,7 @@ fn repopulate_mode_mismatch_chain(
 
 // snapshot.go:252
 fn repopulate_module_not_found_chain(
-    b: &buildInfoDiagnosticWithFileName,
+    b: &BuildInfoDiagnosticWithFileName,
     p: &'static CompilerProgram,
     file: Option<P<SourceFile>>,
     info: &RepopulateDiagnosticInfo,
@@ -427,18 +430,18 @@ pub struct Snapshot {
     // These are the fields that get serialized
 
     // Information of the file eg. its version, signature etc
-    pub(crate) file_infos: SyncMap<Path, FileInfo>,
+    pub file_infos: SyncMap<Path, FileInfo>,
     pub(crate) options: Cell<Option<P<CompilerOptions>>>,
     //  Contains the map of ReferencedSet=Referenced files of the file if module emit is enabled
-    pub(crate) referenced_map: ReferenceMap,
+    pub referenced_map: ReferenceMap,
     // Cache of semantic diagnostics for files with their Path being the key
-    pub(crate) semantic_diagnostics_per_file: SyncMap<Path, DiagnosticsCache>,
+    pub semantic_diagnostics_per_file: SyncMap<Path, DiagnosticsCache>,
     // Cache of dts emit diagnostics for files with their Path being the key
-    pub(crate) emit_diagnostics_per_file: SyncMap<Path, DiagnosticsCache>,
+    pub emit_diagnostics_per_file: SyncMap<Path, DiagnosticsCache>,
     // The map has key by source file's path that has been changed
-    pub(crate) changed_files_set: SyncSet<Path>,
+    pub changed_files_set: SyncSet<Path>,
     // Files pending to be emitted
-    pub(crate) affected_files_pending_emit: SyncMap<Path, FileEmitKind>,
+    pub affected_files_pending_emit: SyncMap<Path, FileEmitKind>,
     // Name of the file whose dts was the latest to change
     pub(crate) latest_changed_dts_file: RefCell<String>,
     // Hash of d.ts emitted for the file, use to track when emit of d.ts changes
@@ -460,7 +463,7 @@ pub struct Snapshot {
     // Program order, also recoverable from build info's fileNames/fileInfos, for history-dependent diagnostics.
     pub(crate) file_order: Vec<Path>,
     // true if build info emit is pending
-    pub(crate) build_info_emit_pending: Cell<bool>,
+    pub build_info_emit_pending: Cell<bool>,
     pub(crate) has_errors_from_old_state: Cell<Tristate>,
     pub(crate) has_semantic_errors_from_old_state: Cell<bool>,
     pub(crate) package_jsons_from_old_state: RefCell<Option<Vec<String>>>,
@@ -568,7 +571,7 @@ pub(crate) fn get_text_handling_source_map_for_signature<'a>(
 }
 
 // snapshot.go:413
-pub(crate) fn diagnostic_to_string_builder(
+pub fn diagnostic_to_string_builder(
     diagnostic: Option<P<Diagnostic>>,
     file: P<SourceFile>,
     builder: &mut String,

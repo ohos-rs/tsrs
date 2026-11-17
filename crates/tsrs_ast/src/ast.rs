@@ -8,9 +8,8 @@ use rustc_hash::FxHashMap;
 use tsrs_core::collections::Set;
 use tsrs_core::tspath::Path;
 use tsrs_core::{
-    FrozenCell, LanguageVariant, OwnedCell, P, ResolutionMode, ScriptKind, TextPos, TextRange,
-    ThinSlice, Tristate, alloc_slice, alloc_str, alloc_vec, compute_ecma_line_starts,
-    undefined_text_range,
+    LanguageVariant, OwnedCell, P, ResolutionMode, ScriptKind, TextPos, TextRange, ThinSlice,
+    Tristate, alloc_slice, alloc_str, alloc_vec, compute_ecma_line_starts, undefined_text_range,
 };
 use tsrs_diagnostics as diagnostics;
 use tsrs_spanmap::SpanMap;
@@ -19,7 +18,7 @@ use crate::*;
 
 // parseJSDocForNode is the package-level function for lazily parsing JSDoc.
 // It is set by the parser crate via set_parse_jsdoc_for_node.
-pub type ParseJSDocForNodeFn = fn(&'static SourceFile, P<Node>) -> Vec<P<Node>>;
+pub type ParseJSDocForNodeFn = fn(&'static SourceFile, P<Node>) -> &'static [P<Node>];
 
 static PARSE_JSDOC_FOR_NODE: OnceLock<ParseJSDocForNodeFn> = OnceLock::new();
 
@@ -72,7 +71,7 @@ pub(crate) fn visit_modifiers<V: FnMut(P<Node>) -> bool + ?Sized>(
 
 /// Go `core.Same` on slices: identity of the backing array and length.
 #[inline]
-pub fn same_slice<T>(a: &[T], b: &[T]) -> bool {
+pub(crate) fn same_slice<T>(a: &[T], b: &[T]) -> bool {
     a.len() == b.len() && std::ptr::eq(a.as_ptr(), b.as_ptr())
 }
 
@@ -96,12 +95,12 @@ pub struct NodeFactoryHooks {
 #[derive(Clone)]
 pub struct NodeFactory {
     pub(crate) hooks: NodeFactoryHooks,
-    pub(crate) node_count: Rc<Cell<usize>>,
+    node_count: Rc<Cell<usize>>,
     pub(crate) text_count: Rc<Cell<usize>>,
     /// tsrs-only: nodes and lists go to the thread's scratch region when one is entered (`P::new_scratch`), also
     /// while the checker has escaped from it: the factory of a per-file emit context, whose nodes die with the file
     /// (notes/mem-emit-regions.md).
-    pub(crate) scratch: bool,
+    scratch: bool,
     /// The common allocation path has neither a create hook nor scratch routing. Keeping that fact beside the
     /// factory folds the allocation-route and create-hook tests into one branch for every node it creates.
     plain_create: bool,
@@ -314,10 +313,6 @@ impl NodeFactory {
         self.text_count.get()
     }
 
-    pub fn as_node_factory(&self) -> &NodeFactory {
-        self
-    }
-
     /// Whether this factory allocates in the scratch region (see `NodeFactory::scratch`).
     #[inline]
     pub fn is_scratch(&self) -> bool {
@@ -360,10 +355,10 @@ pub(crate) fn update_node(
 
 pub(crate) fn clone_node(updated: P<Node>, original: P<Node>, hooks: &NodeFactoryHooks) -> P<Node> {
     update_node(updated, original, hooks);
-    if updated != original {
-        if let Some(on_clone) = &hooks.on_clone {
-            on_clone(updated, original);
-        }
+    if updated != original
+        && let Some(on_clone) = &hooks.on_clone
+    {
+        on_clone(updated, original);
     }
     updated
 }
@@ -436,7 +431,7 @@ impl NodeList {
     }
 
     /// A list whose members are parsed on first use (`lazylist`), with its loc.
-    pub fn new_lazy(loc: TextRange, record: &'static crate::lazylist::LazyNodeList) -> NodeList {
+    fn new_lazy(loc: TextRange, record: &'static crate::lazylist::LazyNodeList) -> NodeList {
         NodeList {
             loc: OwnedCell::new(loc),
             nodes: ThinSlice::from_ref(record.head_ref()),
@@ -538,7 +533,7 @@ impl ModifierList {
         self.list.end()
     }
     #[inline]
-    pub fn has_trailing_comma(&self) -> bool {
+    pub(crate) fn has_trailing_comma(&self) -> bool {
         self.list.has_trailing_comma()
     }
 
@@ -563,8 +558,8 @@ impl ModifierList {
 /// `KeywordTypeNode`, ...) allocate only the header.
 ///
 /// The header is 24 bytes: the kind, the data tag and the parent pointer share one word (`NodeHeaderWord`),
-/// and the id is stored in 32 bits (ids still come from a 64-bit counter and are returned as `NodeId`; more
-/// than `u32::MAX` node ids panic, like symbol ids). 23M nodes on the private monorepo.
+/// and the id is stored in 32 bits (ordinary ids are 31-bit; the high bit tags ids from a checker's reserved
+/// 64-bit block range, decoded by `get_node_id`).
 pub struct Node {
     header: OwnedCell<NodeHeaderWord>,
     pub flags: OwnedCell<NodeFlags>,
@@ -598,9 +593,12 @@ impl NodeHeaderWord {
         )
     }
 
+    /// Decoded without a range check: `Kind::from_i16`'s check measured +3% instructions on webpack here
+    /// (notes/unsafe-audit.md, "Enum-from-integer decodes").
     #[inline]
     fn kind(self) -> Kind {
         let v = (self.0 >> Self::KIND_SHIFT) as u16 & ((1 << Self::KIND_BITS) - 1);
+        debug_assert!(v <= Kind::Count as u16);
         // SAFETY: the bits were stored from a `Kind` (repr(i16), contiguous discriminants 0..=Count < 2^9).
         unsafe { std::mem::transmute::<i16, Kind>(v as i16) }
     }
@@ -617,8 +615,10 @@ impl NodeHeaderWord {
 
     #[inline]
     fn data_tag(self) -> NodeDataTag {
+        let v = (self.0 >> Self::TAG_SHIFT) as u8;
+        debug_assert!(v < NodeDataTag::COUNT);
         // SAFETY: the bits were stored from a `NodeDataTag` (repr(u8)).
-        unsafe { std::mem::transmute::<u8, NodeDataTag>((self.0 >> Self::TAG_SHIFT) as u8) }
+        unsafe { std::mem::transmute::<u8, NodeDataTag>(v) }
     }
 
     #[inline]
@@ -639,8 +639,12 @@ const _: () = assert!(NodeHeaderWord::TAG_SHIFT + 9 < 64);
 /// One arena allocation per node: the header, then the data struct. `repr(C)` puts the header at offset 0 and
 /// the data at `offset_of!(NodeAlloc<T>, data)` (24 for every data struct: none is aligned to more than 8).
 #[repr(C)]
-pub(crate) struct NodeAlloc<T> {
-    pub(crate) node: Node,
+#[expect(
+    clippy::too_long_first_doc_paragraph,
+    reason = "Public for the integration tests; the comment keeps its upstream wording."
+)]
+pub struct NodeAlloc<T> {
+    pub node: Node,
     pub(crate) data: T,
 }
 
@@ -654,10 +658,10 @@ pub(crate) trait NodePayload: Sized + 'static {
 /// set at construction, and read as `None` otherwise. Only fields that are never written after construction can be
 /// rare (tools/gen-ast/gen-ast.ts `RARE_FIELDS`).
 #[repr(C)]
-pub(crate) struct NodeAllocRare<T, R> {
-    pub(crate) node: Node,
-    pub(crate) data: T,
-    pub(crate) rare: R,
+struct NodeAllocRare<T, R> {
+    node: Node,
+    data: T,
+    rare: R,
 }
 
 /// A node data struct with a rare tail (impls are generated).
@@ -691,7 +695,7 @@ impl Node {
 
     /// Which data struct follows this node's header.
     #[inline]
-    pub(crate) fn data_tag(&self) -> NodeDataTag {
+    pub fn data_tag(&self) -> NodeDataTag {
         self.header.get().data_tag()
     }
 
@@ -710,15 +714,11 @@ impl Node {
     /// arena (Node has a crate-private field, so it cannot be constructed elsewhere), so `&self` is
     /// always a reference to a `'static` arena value.
     #[inline]
-    pub fn as_p(&self) -> P<Node> {
+    pub(crate) fn as_p(&self) -> P<Node> {
         // SAFETY: see above; nodes are never freed or moved.
         unsafe { P::from_arena(&*std::ptr::from_ref::<Node>(self)) }
     }
 
-    #[inline]
-    pub fn as_node(&self) -> P<Node> {
-        self.as_p()
-    }
     #[inline]
     pub fn pos(&self) -> TextPos {
         self.loc.get().pos()
@@ -778,10 +778,6 @@ impl Node {
 
     pub fn kind_string(&self) -> String {
         format!("{:?}", self.kind())
-    }
-
-    pub fn kind_value(&self) -> i16 {
-        self.kind() as i16
     }
 
     pub fn decorators(&self) -> Vec<P<Node>> {
@@ -1469,10 +1465,10 @@ impl Node {
             _ => {}
         }
         let postfix = self.postfix_token();
-        if let Some(postfix) = postfix {
-            if postfix.kind() == Kind::QuestionToken {
-                return Some(postfix);
-            }
+        if let Some(postfix) = postfix
+            && postfix.kind() == Kind::QuestionToken
+        {
+            return Some(postfix);
         }
         None
     }
@@ -1550,7 +1546,7 @@ impl Node {
         if file.has_lazy_jsdoc.get() {
             return file.resolve_jsdoc(self.as_p());
         }
-        file.jsdoc_cache.borrow().get(&self.as_p()).copied().unwrap_or(&[])
+        file.parsed_jsdoc(self.as_p())
     }
 
     // EagerJSDoc returns JSDoc nodes that have already been parsed and cached,
@@ -1567,10 +1563,9 @@ impl Node {
             },
         };
         if file.has_lazy_jsdoc.get() {
-            let _guard = file.jsdoc_mu.read().unwrap();
-            return file.jsdoc_cache.borrow().get(&self.as_p()).copied().unwrap_or(&[]);
+            return file.lazy_jsdoc_cache.read().unwrap().get(&self.as_p()).copied().unwrap_or(&[]);
         }
-        file.jsdoc_cache.borrow().get(&self.as_p()).copied().unwrap_or(&[])
+        file.parsed_jsdoc(self.as_p())
     }
 }
 
@@ -1622,25 +1617,25 @@ pub fn get_declaration_from_name(name: Option<P<Node>>) -> Option<P<Node>> {
         }
         if is_qualified_name(parent) {
             let tag = parent.parent();
-            if let Some(tag) = tag {
-                if is_jsdoc_parameter_tag(tag) && tag.name() == Some(parent) {
-                    return Some(tag);
-                }
+            if let Some(tag) = tag
+                && is_jsdoc_parameter_tag(tag)
+                && tag.name() == Some(parent)
+            {
+                return Some(tag);
             }
             return None;
         }
         let bin_exp = parent.parent();
-        if let Some(bin_exp) = bin_exp {
-            if is_binary_expression(bin_exp)
-                && get_assignment_declaration_kind(bin_exp) != JSDeclarationKind::None
+        if let Some(bin_exp) = bin_exp
+            && is_binary_expression(bin_exp)
+            && get_assignment_declaration_kind(bin_exp) != JSDeclarationKind::None
+        {
+            // (binExp.left as BindableStaticNameExpression).symbol || binExp.symbol
+            let left_has_symbol = bin_exp.as_binary_expression().left.symbol().is_some();
+            if (left_has_symbol || bin_exp.symbol().is_some())
+                && get_name_of_declaration(Some(bin_exp)) == Some(name)
             {
-                // (binExp.left as BindableStaticNameExpression).symbol || binExp.symbol
-                let left_has_symbol = bin_exp.as_binary_expression().left.symbol().is_some();
-                if left_has_symbol || bin_exp.symbol().is_some() {
-                    if get_name_of_declaration(Some(bin_exp)) == Some(name) {
-                        return Some(bin_exp);
-                    }
-                }
+                return Some(bin_exp);
             }
         }
     }
@@ -1746,7 +1741,6 @@ fn access_kind(node: P<Node>) -> AccessKind {
         return AccessKind::Read;
     };
     match parent.kind() {
-        Kind::ParenthesizedExpression => access_kind(parent),
         Kind::PrefixUnaryExpression => {
             let operator = parent.as_prefix_unary_expression().operator;
             if operator == Kind::PlusPlusToken || operator == Kind::MinusMinusToken {
@@ -1796,7 +1790,7 @@ fn access_kind(node: P<Node>) -> AccessKind {
             }
             access_kind(parent.parent().unwrap())
         }
-        Kind::ArrayLiteralExpression => access_kind(parent),
+        Kind::ParenthesizedExpression | Kind::ArrayLiteralExpression => access_kind(parent),
         Kind::ForInStatement | Kind::ForOfStatement => {
             if node == parent.as_for_in_or_of_statement().initializer {
                 return AccessKind::Write;
@@ -1851,7 +1845,7 @@ impl NodeFactory {
 
 impl ImportAttributes {
     /// Go `(*ImportAttributesNode).GetResolutionModeOverride`; `node` is the `ImportAttributes` node or None.
-    pub fn get_resolution_mode_override(
+    pub(crate) fn get_resolution_mode_override(
         node: Option<P<Node>>,
         mut grammar_error_on_node: Option<
             &mut dyn FnMut(
@@ -1877,7 +1871,7 @@ impl ImportAttributes {
             if let Some(f) = grammar_error_on_node.as_mut() {
                 f(
                     elem.value,
-                    &diagnostics::X_resolution_mode_should_be_either_require_or_import,
+                    &diagnostics::X_RESOLUTION_MODE_SHOULD_BE_EITHER_REQUIRE_OR_IMPORT,
                     &[],
                 );
             }
@@ -1886,7 +1880,7 @@ impl ImportAttributes {
         if text == "import" {
             Some(tsrs_core::RESOLUTION_MODE_ESM)
         } else {
-            Some(tsrs_core::ModuleKind::CommonJS)
+            Some(tsrs_core::ModuleKind::COMMON_JS)
         }
     }
 }
@@ -1946,8 +1940,8 @@ pub trait HasFileName {
 
 pub struct SourceFile {
     node: OwnedCell<Option<P<Node>>>, // back pointer to the SourceFile node, set by the factory
-    pub declaration_base: DeclarationBase,
-    pub locals_container_base: LocalsContainerBase,
+    pub(crate) declaration_base: DeclarationBase,
+    pub(crate) locals_container_base: LocalsContainerBase,
 
     // Fields set by NewSourceFile
     parse_options: SourceFileParseOptions,
@@ -1958,9 +1952,9 @@ pub struct SourceFile {
     pub end_of_file_token: P<Node>, // TokenNode[*EndOfFileToken]
 
     // Fields set by parser
-    pub diagnostics: OwnedCell<&'static [P<Diagnostic>]>,
-    pub js_diagnostics: OwnedCell<&'static [P<Diagnostic>]>,
-    pub jsdoc_diagnostics: OwnedCell<&'static [P<Diagnostic>]>,
+    diagnostics: OwnedCell<&'static [P<Diagnostic>]>,
+    js_diagnostics: OwnedCell<&'static [P<Diagnostic>]>,
+    jsdoc_diagnostics: OwnedCell<&'static [P<Diagnostic>]>,
     pub language_variant: OwnedCell<LanguageVariant>,
     pub script_kind: OwnedCell<ScriptKind>,
     pub is_declaration_file: OwnedCell<bool>,
@@ -1972,10 +1966,12 @@ pub struct SourceFile {
     pub ambient_module_names: OwnedCell<&'static [&'static str]>,
     pub marked_kit_import_ranges: OwnedCell<&'static [TextRange]>,
     pub comment_directives: OwnedCell<&'static [CommentDirective]>,
-    // Written by the parser; with lazy JSDoc, also by any checker thread under `jsdoc_mu` (Go `jsdocMu`).
-    pub(crate) jsdoc_cache: FrozenCell<FxHashMap<P<Node>, &'static [P<Node>]>>,
-    jsdoc_mu: RwLock<()>,
-    pub(crate) has_lazy_jsdoc: OwnedCell<bool>,
+    // Go `jsdocCache`, in one of two forms per file. Without lazy JSDoc (JS files): the JSDoc the parser attached,
+    // set once by `set_jsdoc_cache` and read without a lock. With lazy JSDoc: the parser's entries plus the ones
+    // `resolve_jsdoc` parses on demand from any checker thread, under the lock (Go `jsdocMu`).
+    jsdoc_cache: OnceLock<FxHashMap<P<Node>, &'static [P<Node>]>>,
+    lazy_jsdoc_cache: RwLock<FxHashMap<P<Node>, &'static [P<Node>]>>,
+    has_lazy_jsdoc: OwnedCell<bool>,
     identifiers: OnceLock<Set<&'static str>>,
     // ast.go:2517 nameTableOnce/nameTable (Go map, random order; insertion order here)
     name_table: OnceLock<tsrs_core::collections::OrderedMap<&'static str, NameTableEntry>>,
@@ -1999,7 +1995,7 @@ pub struct SourceFile {
     // Fields set by binder
     is_bound: AtomicBool,
     bind_once: Once,
-    pub bind_diagnostics: OwnedCell<&'static [P<Diagnostic>]>,
+    bind_diagnostics: OwnedCell<&'static [P<Diagnostic>]>,
     pub symbol_count: OwnedCell<usize>,
     pub pattern_ambient_modules: OwnedCell<&'static [P<PatternAmbientModule>]>,
     pub global_exports: OwnedCell<Option<P<SymbolTable>>>,
@@ -2019,6 +2015,9 @@ pub struct SourceFile {
 
     // Go `declarationMapMu`, `declarationMap` (workspace symbols), see get_declaration_map
     declaration_map: OnceLock<FxHashMap<String, Vec<P<Node>>>>,
+
+    // Go `sourceFileSymbolIndexKey` data (api/session.go getSourceFileSymbolIndex), see get_or_compute_api_symbol_index
+    api_symbol_index: OnceLock<FxHashMap<u64, P<Symbol>>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -2041,59 +2040,65 @@ impl NodeFactory {
         {
             panic!("fileName should be normalized and absolute: {:?}", opts.file_name);
         }
-        let node = self.new_node(Kind::SourceFile, SourceFile {
-            node: OwnedCell::new(None),
-            declaration_base: DeclarationBase { symbol: OwnedCell::new(None) },
-            locals_container_base: LocalsContainerBase { locals: OwnedCell::new(None), next_container: OwnedCell::new(None) },
-            parse_options: opts,
-            text,
-            content_mapper_info: OwnedCell::new(None),
-            statements: OwnedCell::new(statements),
-            end_of_file_token,
-            diagnostics: OwnedCell::new(&[]),
-            js_diagnostics: OwnedCell::new(&[]),
-            jsdoc_diagnostics: OwnedCell::new(&[]),
-            language_variant: OwnedCell::new(LanguageVariant::default()),
-            script_kind: OwnedCell::new(ScriptKind::default()),
-            is_declaration_file: OwnedCell::new(false),
-            uses_uri_style_node_core_modules: OwnedCell::new(Tristate::Unknown),
-            identifier_count: OwnedCell::new(0),
-            text_index: OwnedCell::new(crate::identifier::NO_SOURCE_TEXT),
-            imports: OwnedCell::new(&[]),
-            module_augmentations: OwnedCell::new(&[]),
-            ambient_module_names: OwnedCell::new(&[]),
-            marked_kit_import_ranges: OwnedCell::new(&[]),
-            comment_directives: OwnedCell::new(&[]),
-            jsdoc_cache: FrozenCell::new(FxHashMap::default()),
-            jsdoc_mu: RwLock::new(()),
-            has_lazy_jsdoc: OwnedCell::new(false),
-            identifiers: OnceLock::new(),
-            name_table: OnceLock::new(),
-            reparsed_clones: OwnedCell::new(&[]),
-            lazy_lists: OwnedCell::new(&[]),
-            pragmas: OwnedCell::new(&[]),
-            referenced_files: OwnedCell::new(&[]),
-            type_reference_directives: OwnedCell::new(&[]),
-            lib_reference_directives: OwnedCell::new(&[]),
-            check_js_directive: OwnedCell::new(None),
-            node_count: OwnedCell::new(0),
-            text_count: OwnedCell::new(0),
-            hash: OwnedCell::new(0),
-            common_js_module_indicator: OwnedCell::new(None),
-            external_module_indicator: OwnedCell::new(None),
-            is_bound: AtomicBool::new(false),
-            bind_once: Once::new(),
-            bind_diagnostics: OwnedCell::new(&[]),
-            symbol_count: OwnedCell::new(0),
-            pattern_ambient_modules: OwnedCell::new(&[]),
-            global_exports: OwnedCell::new(None),
-            check_leaf: AtomicBool::new(false),
-            ecma_line_map: OnceLock::new(),
-            position_map: OnceLock::new(),
-            token_cache: std::sync::Mutex::new(FxHashMap::default()),
-            declaration_map: OnceLock::new(),
-        });
-
+        let node = self.new_node(
+            Kind::SourceFile,
+            SourceFile {
+                node: OwnedCell::new(None),
+                declaration_base: DeclarationBase { symbol: OwnedCell::new(None) },
+                locals_container_base: LocalsContainerBase {
+                    locals: OwnedCell::new(None),
+                    next_container: OwnedCell::new(None),
+                },
+                parse_options: opts,
+                text,
+                content_mapper_info: OwnedCell::new(None),
+                statements: OwnedCell::new(statements),
+                end_of_file_token,
+                diagnostics: OwnedCell::new(&[]),
+                js_diagnostics: OwnedCell::new(&[]),
+                jsdoc_diagnostics: OwnedCell::new(&[]),
+                language_variant: OwnedCell::new(LanguageVariant::default()),
+                script_kind: OwnedCell::new(ScriptKind::default()),
+                is_declaration_file: OwnedCell::new(false),
+                uses_uri_style_node_core_modules: OwnedCell::new(Tristate::Unknown),
+                identifier_count: OwnedCell::new(0),
+                text_index: OwnedCell::new(crate::identifier::NO_SOURCE_TEXT),
+                imports: OwnedCell::new(&[]),
+                module_augmentations: OwnedCell::new(&[]),
+                ambient_module_names: OwnedCell::new(&[]),
+                marked_kit_import_ranges: OwnedCell::new(&[]),
+                comment_directives: OwnedCell::new(&[]),
+                jsdoc_cache: OnceLock::new(),
+                lazy_jsdoc_cache: RwLock::new(FxHashMap::default()),
+                has_lazy_jsdoc: OwnedCell::new(false),
+                identifiers: OnceLock::new(),
+                name_table: OnceLock::new(),
+                reparsed_clones: OwnedCell::new(&[]),
+                lazy_lists: OwnedCell::new(&[]),
+                pragmas: OwnedCell::new(&[]),
+                referenced_files: OwnedCell::new(&[]),
+                type_reference_directives: OwnedCell::new(&[]),
+                lib_reference_directives: OwnedCell::new(&[]),
+                check_js_directive: OwnedCell::new(None),
+                node_count: OwnedCell::new(0),
+                text_count: OwnedCell::new(0),
+                hash: OwnedCell::new(0),
+                common_js_module_indicator: OwnedCell::new(None),
+                external_module_indicator: OwnedCell::new(None),
+                is_bound: AtomicBool::new(false),
+                bind_once: Once::new(),
+                bind_diagnostics: OwnedCell::new(&[]),
+                symbol_count: OwnedCell::new(0),
+                pattern_ambient_modules: OwnedCell::new(&[]),
+                global_exports: OwnedCell::new(None),
+                check_leaf: AtomicBool::new(false),
+                ecma_line_map: OnceLock::new(),
+                position_map: OnceLock::new(),
+                token_cache: std::sync::Mutex::new(FxHashMap::default()),
+                declaration_map: OnceLock::new(),
+                api_symbol_index: OnceLock::new(),
+            },
+        );
         node.as_source_file().node.set(Some(node));
         node
     }
@@ -2223,7 +2228,7 @@ pub struct ContentMapperSourceFileInfo {
 
 impl SourceFile {
     // ContentMapperParseOptions returns the parse options used to acquire this file from the mapped parse cache.
-    // ast.go:2636
+    // ast.go:2558
     pub fn content_mapper_parse_options(&self) -> SourceFileParseOptions {
         match self.content_mapper_info.get() {
             None => SourceFileParseOptions::default(),
@@ -2281,9 +2286,6 @@ impl SourceFile {
         }
         let _region = self.owner_region();
         self.name_table.get_or_init(|| {
-            let mut name_table: tsrs_core::collections::OrderedMap<&'static str, NameTableEntry> =
-                tsrs_core::collections::OrderedMap::default();
-            let file: &'static SourceFile = self.as_node().as_source_file();
             fn walk(
                 node: P<Node>,
                 file: &'static SourceFile,
@@ -2312,6 +2314,10 @@ impl SourceFile {
                 }
                 false
             }
+
+            let mut name_table: tsrs_core::collections::OrderedMap<&'static str, NameTableEntry> =
+                tsrs_core::collections::OrderedMap::default();
+            let file: &'static SourceFile = self.as_node().as_source_file();
             self.as_node().for_each_child(&mut |c| walk(c, file, &mut name_table));
             name_table
         })
@@ -2372,15 +2378,31 @@ impl SourceFile {
         self.jsdoc_diagnostics.set(alloc_slice(diags));
     }
 
+    /// Stores the `JSDoc` the parser attached while parsing. The parser calls it once per file, after
+    /// `set_has_lazy_jsdoc`, which decides which map holds the entries.
     pub fn set_jsdoc_cache(&self, cache: FxHashMap<P<Node>, &'static [P<Node>]>) {
-        *self.jsdoc_cache.borrow_mut() = cache;
+        if self.has_lazy_jsdoc.get() {
+            let mut lazy = self.lazy_jsdoc_cache.write().unwrap();
+            assert!(lazy.is_empty(), "SourceFile JSDoc cache set twice");
+            *lazy = cache;
+        } else {
+            let set = self.jsdoc_cache.set(cache);
+            assert!(set.is_ok(), "SourceFile JSDoc cache set twice");
+        }
+    }
+
+    /// The `JSDoc` the parser attached to `n` in a file without lazy `JSDoc`. No lock: the map is set once,
+    /// before the file is shared.
+    #[inline]
+    fn parsed_jsdoc(&self, n: P<Node>) -> &'static [P<Node>] {
+        self.jsdoc_cache.get().and_then(|cache| cache.get(&n)).copied().unwrap_or(&[])
     }
 
     pub fn set_has_lazy_jsdoc(&self, lazy: bool) {
         self.has_lazy_jsdoc.set(lazy);
     }
 
-    pub(crate) fn resolve_jsdoc(&'static self, n: P<Node>) -> &'static [P<Node>] {
+    fn resolve_jsdoc(&'static self, n: P<Node>) -> &'static [P<Node>] {
         let Some(parse) = PARSE_JSDOC_FOR_NODE.get() else {
             panic!(
                 "resolveJSDoc called but parseJSDocForNode is not registered; ensure the parser package is imported"
@@ -2388,20 +2410,20 @@ impl SourceFile {
         };
         // Fast path: check cache under read lock
         {
-            let _guard = self.jsdoc_mu.read().unwrap();
-            if let Some(&jsdocs) = self.jsdoc_cache.borrow().get(&n) {
+            let cache = self.lazy_jsdoc_cache.read().unwrap();
+            if let Some(&jsdocs) = cache.get(&n) {
                 return jsdocs;
             }
         }
         // Slow path: parse and cache under write lock
         let _region = self.owner_region();
-        let _guard = self.jsdoc_mu.write().unwrap();
+        let mut cache = self.lazy_jsdoc_cache.write().unwrap();
         // Double-check after acquiring write lock
-        if let Some(&jsdocs) = self.jsdoc_cache.borrow().get(&n) {
+        if let Some(&jsdocs) = cache.get(&n) {
             return jsdocs;
         }
-        let jsdocs = alloc_vec(parse(self, n));
-        self.jsdoc_cache.borrow_mut_locked().insert(n, jsdocs);
+        let jsdocs = parse(self, n);
+        cache.insert(n, jsdocs);
         jsdocs
     }
 
@@ -2413,11 +2435,11 @@ impl SourceFile {
         self.bind_diagnostics.set(alloc_slice(diags));
     }
 
-    pub fn for_each_child<V: FnMut(P<Node>) -> bool + ?Sized>(&self, v: &mut V) -> bool {
+    pub(crate) fn for_each_child<V: FnMut(P<Node>) -> bool + ?Sized>(&self, v: &mut V) -> bool {
         visit_node_list(v, Some(self.statements.get())) || visit(v, Some(self.end_of_file_token))
     }
 
-    pub fn visit_each_child(&self, node: P<Node>, v: &mut NodeVisitor) -> P<Node> {
+    pub(crate) fn visit_each_child(&self, node: P<Node>, v: &mut NodeVisitor) -> P<Node> {
         let statements = v.visit_top_level_statements_hooked(Some(self.statements.get())).unwrap();
         let end_of_file_token = v.visit_token_hooked(Some(self.end_of_file_token)).unwrap();
         v.factory.update_source_file(node, statements, end_of_file_token)
@@ -2451,7 +2473,7 @@ impl SourceFile {
         node.flags.set(node.flags.get() | other.as_node().flags.get());
     }
 
-    pub fn clone_node(&self, node: P<Node>, f: &NodeFactory) -> P<Node> {
+    pub(crate) fn clone_node(&self, node: P<Node>, f: &NodeFactory) -> P<Node> {
         let updated = f.new_source_file(
             self.parse_options.clone(),
             self.text,
@@ -2527,19 +2549,15 @@ impl SourceFile {
     pub fn uses_uri_style_node_core_modules(&self) -> Tristate {
         self.uses_uri_style_node_core_modules.get()
     }
-    pub fn identifier_count(&self) -> usize {
-        self.identifier_count.get()
-    }
+
     pub fn module_augmentations(&self) -> &'static [P<Node>] {
         self.module_augmentations.get()
     }
     pub fn ambient_module_names(&self) -> &'static [&'static str] {
         self.ambient_module_names.get()
     }
-    pub fn comment_directives(&self) -> &'static [CommentDirective] {
-        self.comment_directives.get()
-    }
-    pub fn reparsed_clones(&self) -> &'static [P<Node>] {
+
+    pub(crate) fn reparsed_clones(&self) -> &'static [P<Node>] {
         self.reparsed_clones.get()
     }
     pub fn pragmas(&self) -> &'static [Pragma] {
@@ -2557,12 +2575,7 @@ impl SourceFile {
     pub fn check_js_directive(&self) -> Option<P<CheckJsDirective>> {
         self.check_js_directive.get()
     }
-    pub fn node_count(&self) -> usize {
-        self.node_count.get()
-    }
-    pub fn text_count(&self) -> usize {
-        self.text_count.get()
-    }
+
     pub fn common_js_module_indicator(&self) -> Option<P<Node>> {
         self.common_js_module_indicator.get()
     }
@@ -2586,9 +2599,6 @@ impl SourceFile {
     }
     pub fn statements(&self) -> P<NodeList> {
         self.statements.get()
-    }
-    pub fn end_of_file_token(&self) -> P<Node> {
-        self.end_of_file_token
     }
 }
 
@@ -2618,7 +2628,6 @@ impl Node {
 }
 
 fn collect_identifiers_for_source_file(source_file: &SourceFile) -> Set<&'static str> {
-    let mut identifiers: Set<&'static str> = Set::default();
     fn collect(node: P<Node>, identifiers: &mut Set<&'static str>) -> bool {
         match node.kind() {
             Kind::Identifier
@@ -2634,6 +2643,8 @@ fn collect_identifiers_for_source_file(source_file: &SourceFile) -> Set<&'static
         node.for_each_child(&mut |child| collect(child, identifiers));
         false
     }
+
+    let mut identifiers: Set<&'static str> = Set::default();
     collect(source_file.as_node(), &mut identifiers);
     identifiers
 }
@@ -2663,8 +2674,8 @@ impl NodeFactory {
 // ast.go:2441
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct TokenCacheKey {
-    pub parent: P<Node>,
-    pub loc: TextRange,
+    parent: P<Node>,
+    loc: TextRange,
 }
 
 impl SourceFile {
@@ -2718,10 +2729,20 @@ impl SourceFile {
         self.declaration_map.get_or_init(|| self.compute_declaration_map())
     }
 
+    // Go `GetOrComputeData(sourceFileSymbolIndexKey, ...)`: the API's file-owned symbols by id, computed once.
+    pub fn get_or_compute_api_symbol_index(
+        &self,
+        compute: impl FnOnce() -> FxHashMap<u64, P<Symbol>>,
+    ) -> &FxHashMap<u64, P<Symbol>> {
+        if let Some(m) = self.api_symbol_index.get() {
+            return m;
+        }
+        let _region = self.owner_region();
+        self.api_symbol_index.get_or_init(compute)
+    }
+
     // ast.go:2982
     fn compute_declaration_map(&self) -> FxHashMap<String, Vec<P<Node>>> {
-        let mut result: FxHashMap<String, Vec<P<Node>>> = FxHashMap::default();
-
         fn add_declaration(result: &mut FxHashMap<String, Vec<P<Node>>>, declaration: P<Node>) {
             let name = get_declaration_name(declaration);
             if !name.is_empty() {
@@ -2848,6 +2869,8 @@ impl SourceFile {
             false
         }
 
+        let mut result: FxHashMap<String, Vec<P<Node>>> = FxHashMap::default();
+
         self.as_node().for_each_child(&mut |c| visit(&mut result, c));
         result
     }
@@ -2912,22 +2935,6 @@ impl CommentRange {
     }
 }
 
-impl NodeFactory {
-    #[expect(
-        clippy::unused_self,
-        reason = "The factory keeps the same instance API for node construction, hooks and arena lifecycle operations."
-    )]
-    pub fn new_comment_range(
-        &self,
-        kind: Kind,
-        pos: u32,
-        end: u32,
-        has_trailing_new_line: bool,
-    ) -> CommentRange {
-        CommentRange { text_range: TextRange::new(pos, end), kind, has_trailing_new_line }
-    }
-}
-
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct FileReference {
     pub text_range: TextRange,
@@ -2963,31 +2970,17 @@ pub struct Pragma {
 
 pub type PragmaKindFlags = u8;
 
-pub const PragmaKindTripleSlashXML: PragmaKindFlags = 1 << 0;
-pub const PragmaKindSingleLine: PragmaKindFlags = 1 << 1;
-pub const PragmaKindMultiLine: PragmaKindFlags = 1 << 2;
-pub const PragmaKindFlagsNone: PragmaKindFlags = 0;
-pub const PragmaKindAll: PragmaKindFlags =
-    PragmaKindTripleSlashXML | PragmaKindSingleLine | PragmaKindMultiLine;
-pub const PragmaKindDefault: PragmaKindFlags = PragmaKindAll;
-
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct PragmaArgumentSpecification {
-    pub name: &'static str,
-    pub optional: bool,
-    pub capture_span: bool,
+    name: &'static str,
+    optional: bool,
+    capture_span: bool,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct PragmaSpecification {
-    pub args: &'static [PragmaArgumentSpecification],
-    pub kind: PragmaKindFlags,
-}
-
-impl PragmaSpecification {
-    pub fn is_triple_slash(&self) -> bool {
-        (self.kind & PragmaKindTripleSlashXML) > 0
-    }
+    args: &'static [PragmaArgumentSpecification],
+    kind: PragmaKindFlags,
 }
 
 // Hand-written visitor implementations for nodes with runtime-dependent
@@ -3029,287 +3022,4 @@ impl NodeFactory {
         reason = "The factory keeps the same instance API for node construction, hooks and arena lifecycle operations."
     )]
     pub fn release_arenas(&self) {}
-}
-
-#[cfg(test)]
-mod tests {
-    use std::rc::Rc;
-
-    use tsrs_core::{P, TextRange};
-
-    use crate::*;
-
-    fn set_parents(node: P<Node>) {
-        node.for_each_child(&mut |child| {
-            child.set_parent(Some(node));
-            set_parents(child);
-            false
-        });
-    }
-
-    fn children(node: P<Node>) -> Vec<P<Node>> {
-        node.iter_children()
-    }
-
-    #[test]
-    fn build_walk_and_cast() {
-        let f = NodeFactory::default();
-        let a = f.new_identifier("a");
-        let plus = f.new_token(Kind::PlusToken);
-        let b = f.new_identifier("b");
-        let bin = f.new_binary_expression(None, a, None, plus, b);
-        let stmt = f.new_expression_statement(bin);
-        let list = f.new_node_list(vec![stmt]);
-        let block = f.new_block(list, false);
-        set_parents(block);
-
-        assert_eq!(f.node_count(), 6);
-        assert!(is_binary_expression(bin));
-        assert!(!is_identifier(bin));
-        assert_eq!(children(bin), vec![a, plus, b]);
-        assert_eq!(children(block), vec![stmt]);
-        assert_eq!(bin.as_binary_expression().left(), a);
-        assert_eq!(bin.as_binary_expression().operator_token.kind(), Kind::PlusToken);
-        assert_eq!(stmt.expression(), Some(bin));
-        assert_eq!(block.statements(), &[stmt]);
-        assert_eq!(a.text(), "a");
-        assert_eq!(a.parent(), Some(bin));
-        assert_eq!(bin.parent(), Some(stmt));
-        assert_eq!(stmt.parent(), Some(block));
-        assert!(block.contains(Some(a)));
-        assert!(block.locals_container_data().is_some());
-        assert!(bin.declaration_data().is_some());
-        assert!(a.has_flow_node_data());
-        assert!(plus.declaration_data().is_none());
-        assert_eq!(a.loc(), TextRange::synthetic());
-
-        // Stopping early propagates true.
-        let mut seen = 0;
-        assert!(bin.for_each_child(&mut |_| {
-            seen += 1;
-            seen == 2
-        }));
-        assert_eq!(seen, 2);
-    }
-
-    #[test]
-    #[should_panic(expected = "as_binary_expression called on")]
-    fn cast_mismatch_panics() {
-        let f = NodeFactory::default();
-        let a = f.new_identifier("a");
-        a.as_binary_expression();
-    }
-
-    #[test]
-    fn source_file_back_pointer() {
-        let f = NodeFactory::default();
-        let stmt = f.new_empty_statement();
-        let statements = f.new_node_list(vec![stmt]);
-        let eof = f.new_token(Kind::EndOfFile);
-        let opts = SourceFileParseOptions { file_name: "/a.ts".to_string(), ..Default::default() };
-        let node = f.new_source_file(opts, ";", statements, eof);
-        set_parents(node);
-        let file = node.as_source_file();
-        assert_eq!(file.as_node(), node);
-        assert_eq!(file.file_name(), "/a.ts");
-        assert_eq!(file.text(), ";");
-        assert_eq!(node.statements(), &[stmt]);
-        assert_eq!(children(node), vec![stmt, eof]);
-        assert_eq!(get_source_file_of_node(stmt).map(|f| f.as_node()), Some(node));
-        file.symbol_count.set(3);
-        assert_eq!(file.symbol_count(), 3);
-        assert!(node.declaration_data().is_some());
-        assert!(is_locals_container(node));
-    }
-
-    #[test]
-    fn reparser_mutations() {
-        let f = NodeFactory::default();
-        let name = f.new_identifier("x");
-        let decl = f.new_variable_declaration(name, None, None, None);
-        assert_eq!(decl.type_node(), None);
-        let t = f.new_keyword_type_node(Kind::NumberKeyword);
-        decl.as_mutable().set_type(Some(t));
-        assert_eq!(decl.type_node(), Some(t));
-        assert_eq!(decl.as_variable_declaration().type_(), Some(t));
-        assert_eq!(children(decl), vec![name, t]);
-
-        let m = f.new_modifier(Kind::ExportKeyword);
-        decl.set_modifiers(None);
-        let stmt_list = f.new_node_list(vec![decl]);
-        let list = f.new_variable_declaration_list(stmt_list, NodeFlags::Const);
-        assert!(list.flags().contains(NodeFlags::Const));
-        let mods = f.new_modifier_list(vec![m]);
-        let var_stmt = f.new_variable_statement(None, list);
-        var_stmt.set_modifiers(Some(mods));
-        assert_eq!(var_stmt.modifier_flags(), ModifierFlags::Export);
-        assert_eq!(children(var_stmt), vec![m, list]);
-    }
-
-    #[test]
-    fn clone_and_visit_each_child() {
-        let mut f = NodeFactory::default();
-        let a = f.new_identifier("a");
-        let plus = f.new_token(Kind::PlusToken);
-        let b = f.new_identifier("b");
-        let bin = f.new_binary_expression(None, a, None, plus, b);
-        bin.set_loc(TextRange::new(3, 8));
-
-        let copy = bin.clone_node(&f);
-        assert_ne!(copy, bin);
-        assert_eq!(copy.loc(), bin.loc());
-        assert_eq!(copy.as_binary_expression().left(), a);
-
-        // Identity visitor: nothing changes.
-        let mut v = new_node_visitor(
-            Some(Rc::new(|_: &mut NodeVisitor, n: P<Node>| Some(n))),
-            None,
-            NodeVisitorHooks::default(),
-        );
-        assert_eq!(v.visit_each_child(Some(bin)), Some(bin));
-
-        // Replacing a child produces an updated node with the original's location.
-        let c: P<Node> = v.factory.new_identifier("c");
-        let mut v = new_node_visitor(
-            Some(Rc::new(
-                move |_: &mut NodeVisitor, n: P<Node>| if n == a { Some(c) } else { Some(n) },
-            )),
-            Some(std::mem::take(&mut f)),
-            NodeVisitorHooks::default(),
-        );
-        let updated = v.visit_each_child(Some(bin)).unwrap();
-        assert_ne!(updated, bin);
-        assert_eq!(updated.loc(), TextRange::new(3, 8));
-        assert_eq!(updated.as_binary_expression().left(), c);
-        assert_eq!(updated.as_binary_expression().right(), b);
-    }
-
-    #[test]
-    fn symbol_table_order_and_snapshot() {
-        let table = SymbolTable::new();
-        let s1 = Symbol::new(SymbolFlags::Variable, "b");
-        let s2 = Symbol::new(SymbolFlags::Function, "a");
-        table.set("b", s1);
-        table.set("a", s2);
-        assert_eq!(table.keys(), vec!["b", "a"]);
-        table.for_each(|name, _| {
-            if name == "b" {
-                table.delete("a");
-            }
-        });
-        assert_eq!(table.len(), 1);
-        assert_eq!(table.lookup("b"), Some(s1));
-        assert!(!table.has("a"));
-        assert!(InternalSymbolNameCall.starts_with(InternalSymbolNamePrefix));
-        assert_eq!(escape_symbol_name(InternalSymbolNameCall), "__call");
-    }
-
-    // Regression: a table past the linear-search size keeps insertion order, keeps the original position on
-    // re-set and finds every remaining name after a delete shifts the hash index (wrong lookups would make the
-    // binder/checker miss or duplicate members).
-    #[test]
-    fn symbol_table_indexed_order_and_delete() {
-        let names: Vec<&'static str> =
-            (0..20).map(|i| &*Box::leak(format!("n{i}").into_boxed_str())).collect();
-        let syms: Vec<P<Symbol>> =
-            names.iter().map(|n| Symbol::new(SymbolFlags::Property, n)).collect();
-        let table = SymbolTable::with_capacity(2);
-        for (n, s) in names.iter().zip(&syms) {
-            table.set(n, *s);
-        }
-        table.set(names[3], syms[0]);
-        table.delete(names[5]);
-        table.delete("missing");
-        let mut expected: Vec<&str> = names.clone();
-        expected.remove(5);
-        assert_eq!(table.keys(), expected);
-        assert_eq!(table.lookup(names[3]), Some(syms[0]));
-        for (i, n) in names.iter().enumerate() {
-            match i {
-                3 => {}
-                5 => assert_eq!(table.lookup(n), None),
-                _ => assert_eq!(table.lookup(n), Some(syms[i])),
-            }
-        }
-        let copy = table.clone_table();
-        copy.set("new", syms[1]);
-        assert_eq!(copy.len(), 20);
-        assert_eq!(table.len(), 19);
-        assert_eq!(copy.lookup(names[19]), Some(syms[19]));
-        // Keys that are not their symbol's name ("n3" -> n0, "new" -> n1) survive deletes before them.
-        assert_eq!(copy.lookup("new"), Some(syms[1]));
-        copy.delete(names[1]);
-        copy.delete(names[0]);
-        assert_eq!(copy.lookup_entry(names[3]), Some((names[3], syms[0])));
-        assert_eq!(copy.keys().last(), Some(&"new"));
-        assert_eq!(copy.lookup("new"), Some(syms[1]));
-        let small = SymbolTable::new();
-        small.set("alias", syms[2]);
-        small.set(names[4], syms[4]);
-        small.delete("alias");
-        assert_eq!(small.entries(), vec![(names[4], syms[4])]);
-    }
-
-    #[test]
-    fn symbol_table_long_names_share_the_capped_length() {
-        // Entries store the key length capped at 63: keys longer than that are told apart by hash and text.
-        let long = |c: char, n: usize| -> &'static str {
-            Box::leak(format!("{}{c}", "x".repeat(n)).into_boxed_str())
-        };
-        let names: Vec<&'static str> =
-            (0..40).map(|i| long(char::from(b'a' + (i % 26) as u8), 63 + i / 26)).collect();
-        let syms: Vec<P<Symbol>> =
-            names.iter().map(|n| Symbol::new(SymbolFlags::Property, n)).collect();
-        for count in [5, 40] {
-            let table = SymbolTable::new();
-            for i in 0..count {
-                table.set(names[i], syms[i]);
-            }
-            for i in 0..count {
-                assert_eq!(table.lookup(names[i]), Some(syms[i]));
-            }
-            assert_eq!(table.lookup(long('z', 70)), None);
-            table.delete(names[1]);
-            assert_eq!(table.lookup(names[1]), None);
-            assert_eq!(table.lookup(names[count - 1]), Some(syms[count - 1]));
-        }
-    }
-
-    #[test]
-    fn kinds_and_flags() {
-        assert_eq!(Kind::FirstKeyword, Kind::BreakKeyword);
-        assert_eq!(Kind::LastToken, Kind::DeferKeyword);
-        assert_eq!(Kind::from_i16(Kind::Identifier as i16), Kind::Identifier);
-        assert!(is_keyword_kind(Kind::ClassKeyword));
-        assert!(is_assignment_operator(Kind::PlusEqualsToken));
-        assert_eq!(NodeFlags::BlockScoped, NodeFlags::Let | NodeFlags::Const | NodeFlags::Using);
-        assert!(SymbolFlags::Value.contains(SymbolFlags::Function));
-        assert!(
-            !SymbolFlags::FunctionScopedVariableExcludes
-                .intersects(SymbolFlags::FunctionScopedVariable)
-        );
-        assert_eq!(std::mem::size_of::<Node>(), 24);
-    }
-
-    #[test]
-    fn node_header_word_keeps_kind_tag_and_parent() {
-        let f = NodeFactory::default();
-        let parent = f.new_keyword_expression(Kind::ThisKeyword);
-        let child = f.new_token(Kind::Count);
-        assert_eq!(
-            (child.kind(), child.data_tag(), child.parent()),
-            (Kind::Count, NodeDataTag::Token, None)
-        );
-        child.set_parent(Some(parent));
-        assert_eq!(
-            (child.kind(), child.data_tag(), child.parent()),
-            (Kind::Count, NodeDataTag::Token, Some(parent))
-        );
-        assert_eq!(
-            (parent.kind(), parent.data_tag()),
-            (Kind::ThisKeyword, NodeDataTag::KeywordExpression)
-        );
-        child.set_parent(None);
-        assert_eq!((child.kind(), child.parent()), (Kind::Count, None));
-    }
 }

@@ -12,12 +12,12 @@ workspace = true
 
 [dependencies]
 tsrs_core.workspace = true
-tsrs_execute = { path = "../tsrs_execute" }
+tsrs_execute.workspace = true
 tsrs_vfs.workspace = true
 rustc-hash.workspace = true
 
 [dev-dependencies]
-codspeed = "4.7.0"
+codspeed.workspace = true
 criterion2.workspace = true
 mimalloc-safe.workspace = true
 
@@ -34,7 +34,8 @@ required-features = ["codspeed"]
 [[bench]]
 name = "compiler_default"
 harness = false
-# One compilation per process: memory must not include earlier arena-heavy warmups.
+# One compilation per process: memory must not include earlier arena-heavy warmups. Walltime samples are child
+# processes.
 required-features = ["codspeed"]
 
 [lib]

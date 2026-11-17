@@ -1,6 +1,6 @@
 # Builds the tsrs binaries and the WebAssembly module, publishes the npm packages, then creates the GitHub release,
-# using docs/releases/<workspace version>.md for its notes. Bump the root package.json version on main to release;
-# it must match the npm version npm/build.mjs derives from Cargo.toml. The conformance and fourslash gates run here on the BOLT-optimized
+# using docs/releases/<crate version>.md for its notes. Use cargo-release-oxc to bump Cargo and the private root package.json together;
+# Cargo and npm use the same TypeScript-aligned version. The conformance and fourslash gates run here on the BOLT-optimized
 # GNU binaries (.github/scripts/bolt.sh). The macOS and Windows binaries get the smoke tests below; Windows also
 # trains on the conformance suite. The broader WebAssembly differential gate
 # (tools/wasm/gate.sh) remains available locally.
@@ -8,7 +8,7 @@
 # Setup before the first release:
 #   - npm trusted publishers for `tsrs`, `@tsrs/wasm` and every platform package: GitHub Actions,
 #     repository oxc-project/tsrs, workflow release.yml, no environment, with direct publishing allowed.
-#   - root package.json version set to `node npm/build.mjs --print-version` when preparing a release.
+#   - Cargo and root package.json versions bumped together with `cargo release-oxc update --release crates --version <version>`.
 # Provenance (`pnpm publish --provenance`) is only possible from a public repository; it is enabled automatically
 # when the repository is public and skipped while it is private.
 
@@ -17,7 +17,7 @@ name: Release
 on:
   push:
     branches: [main]
-    paths: [package.json]
+    paths: [Cargo.toml, package.json]
   workflow_dispatch:
     inputs:
       dry_run:
@@ -39,29 +39,46 @@ env:
 jobs:
   version:
     if: github.repository == 'oxc-project/tsrs'
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     outputs:
       release: ${{ github.event_name == 'workflow_dispatch' || steps.check.outputs.changed == 'true' }}
       version: ${{ steps.v.outputs.version }}
       crate_version: ${{ steps.v.outputs.crate_version }}
+      dist_tag: ${{ steps.v.outputs.dist_tag }}
       ts_commit: ${{ steps.v.outputs.ts_commit }}
       ts_nightly: ${{ steps.v.outputs.ts_nightly }}
     steps:
-      - uses: taiki-e/checkout-action@7d1e50e93dc4fb3bba58f85018fadf77898aee8b # v1.4.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up Node
         uses: oxc-project/setup-node@f46a72f95efdc55273fcd042d61c84e723b2892c # v1.4.1
         with:
           registry-url: ""
 
-      - name: Check version changes
+      - name: Check coordinated version changes
         if: github.event_name == 'push'
+        id: versions
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: node tools/release/version-changed.mjs --before "$BEFORE_SHA"
+
+      - name: Check for an unpublished npm version
+        if: github.event_name == 'push' && steps.versions.outputs.changed == 'true'
         id: check
-        uses: EndBug/version-check@095362f3cd50f690c8fa0e6afeea81834bd8d320 # v3.0.0
-        with:
-          static-checking: localIsNew
-          file-name: package.json
-          file-url: https://registry.npmjs.org/tsrs/latest
+        run: |
+          node --input-type=module <<'JS'
+          import fs from "node:fs";
+          import { execFileSync } from "node:child_process";
+          const version = execFileSync("node", ["npm/build.mjs", "--print-version"], { encoding: "utf8" }).trim();
+          const response = await fetch(`https://registry.npmjs.org/tsrs/${encodeURIComponent(version)}`, {
+            signal: AbortSignal.timeout(30000),
+          });
+          if (!response.ok && response.status !== 404) throw new Error(`npm registry returned HTTP ${response.status}`);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `changed=${response.status === 404}\n`);
+          JS
 
       - name: Validate release version and notes
         if: github.event_name == 'workflow_dispatch' || steps.check.outputs.changed == 'true'
@@ -73,19 +90,26 @@ jobs:
             echo "::error::Real releases must run from main."
             exit 1
           fi
-          version=$(node -p 'require("./package.json").version')
-          expected=$(node npm/build.mjs --print-version)
-          [ "$version" = "$expected" ] || { echo "::error::package.json version $version does not match $expected from Cargo.toml"; exit 1; }
+          version=$(node npm/build.mjs --print-version)
           crate_version=$(node npm/build.mjs --print-crate-version)
+          root_version=$(node -p 'require("./package.json").version')
+          [ "$root_version" = "$crate_version" ] || { echo "::error::package.json version $root_version does not match Cargo version $crate_version"; exit 1; }
+          node --input-type=module <<'JS'
+          import fs from "node:fs";
+          import { distTag, readVersions, validateReleaseVersion } from "./tools/release/version.mjs";
+          const release = readVersions(process.cwd());
+          validateReleaseVersion(release.version, release.typescriptVersion);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `dist_tag=${distTag(release.version)}\n`);
+          JS
           test -s "docs/releases/$crate_version.md" || { echo "::error::Missing release notes for $crate_version"; exit 1; }
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "crate_version=$crate_version" >> "$GITHUB_OUTPUT"
           echo "ts_commit=$(node npm/build.mjs --print-typescript-commit)" >> "$GITHUB_OUTPUT"
           echo "ts_nightly=$(node npm/build.mjs --print-typescript-nightly)" >> "$GITHUB_OUTPUT"
 
-      # The binaries stamp `nightly` as TypeScript's version (Cargo.toml): it must be built from the pinned commit, or
-      # from a later one that changes nothing under tsc/, or tsbuildinfo files would claim to come from another tsgo.
-      - name: Check the TypeScript nightly against the pinned commit
+      # The binaries stamp Cargo.toml's `nightly` npm package version. Its gitHead must equal the pinned commit
+      # or be a later commit with no tsc/ changes; otherwise tsbuildinfo could claim another tsgo's version.
+      - name: Check the TypeScript package against the pinned commit
         if: github.event_name == 'workflow_dispatch' || steps.check.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -112,7 +136,7 @@ jobs:
     needs: version
     if: needs.version.outputs.release == 'true'
     env:
-      # TypeScript's version in the binary (Cargo.toml [workspace.metadata.typescript] nightly).
+      # TypeScript's version in the binary (Cargo.toml [workspace.metadata.typescript] matching npm package).
       TSRS_TS_VERSION: ${{ needs.version.outputs.ts_nightly }}
       TSRS_CARGO_FEATURES: tsrs_cli/noembed
       # PGO requires matching profile settings. BOLT needs symbols until its final strip.
@@ -124,8 +148,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { target: aarch64-apple-darwin, os: macos-14, experimental: false, run: true }
-          # No Intel macOS build: nobody asked for it, and its PGO step had to train under Rosetta 2.
+          - { target: aarch64-apple-darwin, os: macos-latest, experimental: false, run: true }
+          # Train PGO and smoke-test the installed package natively on Intel macOS.
+          - { target: x86_64-apple-darwin, os: macos-26-intel, experimental: false, run: true }
           # Built on 22.04 so the binary needs at most glibc 2.35.
           - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04, experimental: false, run: true }
           - { target: aarch64-unknown-linux-gnu, os: ubuntu-22.04-arm, experimental: false, run: true }
@@ -148,25 +173,7 @@ jobs:
           go-version-file: ts-ref/tsc/go.mod
           cache: false
 
-      - name: Read macOS image revision
-        if: runner.os == 'macOS'
-        id: python-image
-        run: echo "version=${ImageVersion:?}" >> "$GITHUB_OUTPUT"
-
-      # Include the completion marker beside the architecture directory so setup-python recognizes the install.
-      # The image revision refreshes the 3.15 patch selection; the workflow hash covers the setup action and version.
-      - name: Cache macOS Python
-        if: runner.os == 'macOS'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.tool_cache }}/Python/3.15.*
-          key: release-python-v1-${{ matrix.os }}-${{ runner.arch }}-${{ steps.python-image.outputs.version }}-${{ hashFiles('.github/workflows/release.yml') }}
-
-      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
-        with:
-          python-version: '3.15'
-
-      # The bench projects of the training workload install with their pinned package managers via pnpm (bench/run.py --setup-only).
+      # The bench projects of the training workload install with their pinned package managers via pnpm (bench/bench.mjs prepare).
       # No .npmrc: the default registry-url writes one with `_authToken=${NODE_AUTH_TOKEN}`, and yarn 1 (webpack's
       # install in the PGO training run) refuses to run while that variable is unset. Only `publish` needs the registry.
       - uses: oxc-project/setup-node@f46a72f95efdc55273fcd042d61c84e723b2892c # v1.4.1
@@ -257,7 +264,8 @@ jobs:
           name="LLVM-$LLVM_VERSION-Linux-$arch"
           mkdir -p "$RUNNER_TEMP/llvm"
           curl -fsSL "https://github.com/llvm/llvm-project/releases/download/llvmorg-$LLVM_VERSION/$name.tar.zst" |
-            tar -x --zstd -C "$RUNNER_TEMP/llvm" --strip-components=1 --wildcards \
+            zstd -d --long=30 |
+            tar -x -C "$RUNNER_TEMP/llvm" --strip-components=1 --wildcards \
               "$name/bin/llvm-bolt" "$name/bin/merge-fdata" "$name/lib/libbolt_rt_instr.a"
 
       - name: Configure BOLT
@@ -292,13 +300,13 @@ jobs:
             [ "$status" = 2 ] || { echo "expected exit 2 for a type error, got $status"; exit 1; }
           fi
 
-      - name: Installed-package smoke (CLI and Node API)
+      - name: Installed-package smoke (CLI, SDK LSP and Node API)
         shell: bash
         run: |
           node npm/build.mjs --artifacts out --pack
           node npm/sdk/smoke-consumer.mjs --noembed
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: bin-${{ matrix.target }}
           path: out/
@@ -307,11 +315,17 @@ jobs:
   # The Windows profile trains compiler code through tsrs-test and the native CLI. The Unix
   # Fourslash bridge and benchmark installers are not used on Windows.
   build-windows:
-    name: build x86_64-pc-windows-msvc
+    name: build ${{ matrix.target }}
     needs: version
     if: needs.version.outputs.release == 'true'
-    runs-on: windows-latest
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-pc-windows-msvc, os: windows-latest }
+          - { target: aarch64-pc-windows-msvc, os: windows-11-arm }
     env:
       TSRS_TS_VERSION: ${{ needs.version.outputs.ts_nightly }}
       CARGO_PROFILE_RELEASE_STRIP: symbols
@@ -337,7 +351,17 @@ jobs:
           restore-cache: false
           components: llvm-tools
 
-      - run: rustup target add x86_64-pc-windows-msvc
+      - run: rustup target add ${{ matrix.target }}
+
+      - name: Select linker for Windows ARM64 profiles
+        if: matrix.target == 'aarch64-pc-windows-msvc'
+        shell: pwsh
+        run: |
+          # link.exe pads LLVM's one-byte profile section markers on ARM64, corrupting profiles.
+          $hostTriple = (rustc -vV | Select-String '^host: ').ToString().Substring(6)
+          $linker = Join-Path (rustc --print sysroot) "lib/rustlib/$hostTriple/bin/rust-lld.exe"
+          if (-not (Test-Path $linker)) { throw "missing rust-lld at $linker" }
+          "CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_LINKER=$linker" >> $env:GITHUB_ENV
 
       - name: Instrumented build
         shell: pwsh
@@ -347,21 +371,30 @@ jobs:
           $env:CARGO_TARGET_DIR = Join-Path $env:RUNNER_TEMP "pgo/target"
           # Override rustc's LTO while keeping Cargo's release profile identical to the final build.
           $env:CARGO_ENCODED_RUSTFLAGS = @("-Cprofile-generate=$raw", "-Clto=thin") -join [char]31
-          cargo build --release --locked -p tsrs_cli -p tsrs_testrunner --bins --features tsrs_cli/noembed --target x86_64-pc-windows-msvc
+          cargo build --release --locked -p tsrs_cli -p tsrs_testrunner --bins --features tsrs_cli/noembed --target ${{ matrix.target }}
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Training run
         shell: pwsh
         run: |
-          $bin = Join-Path $env:RUNNER_TEMP "pgo/target/x86_64-pc-windows-msvc/release"
+          $bin = Join-Path $env:RUNNER_TEMP "pgo/target/${{ matrix.target }}/release"
           $raw = Join-Path $env:RUNNER_TEMP "pgo/raw"
           & ./.github/scripts/pgo-train-windows.ps1 -BinDir $bin -RawDir $raw
+
+      - name: Upload Windows conformance results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-conformance-results-${{ matrix.target }}
+          path: ${{ runner.temp }}/pgo/test-results/
+          if-no-files-found: ignore
 
       - name: Merge profiles
         id: profile
         shell: pwsh
         run: |
-          $profdata = Join-Path (rustc --print sysroot) "lib/rustlib/x86_64-pc-windows-msvc/bin/llvm-profdata.exe"
+          $hostTriple = (rustc -vV | Select-String '^host: ').ToString().Substring(6)
+          $profdata = Join-Path (rustc --print sysroot) "lib/rustlib/$hostTriple/bin/llvm-profdata.exe"
           if (-not (Test-Path $profdata)) { throw "missing llvm-profdata at $profdata" }
           $raw = Join-Path $env:RUNNER_TEMP "pgo/raw"
           $profiles = @(Get-ChildItem $raw -Filter "*.profraw" | Where-Object Length -gt 0 | ForEach-Object FullName)
@@ -382,13 +415,13 @@ jobs:
           PROFILE_PATH: ${{ steps.profile.outputs.path }}
         run: |
           $env:CARGO_ENCODED_RUSTFLAGS = "-Cprofile-use=$env:PROFILE_PATH"
-          cargo build --release --locked -p tsrs_cli --features tsrs_cli/noembed --target x86_64-pc-windows-msvc
+          cargo build --release --locked -p tsrs_cli --features tsrs_cli/noembed --target ${{ matrix.target }}
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Stage and smoke binary
         shell: pwsh
         run: |
-          $target = "x86_64-pc-windows-msvc"
+          $target = "${{ matrix.target }}"
           $out = Join-Path $env:GITHUB_WORKSPACE "out/$target"
           New-Item -ItemType Directory -Force $out | Out-Null
           $exe = Join-Path $out "tsrs.exe"
@@ -401,8 +434,9 @@ jobs:
           Set-Content -Path (Join-Path $env:RUNNER_TEMP "bad.ts") -Value 'const x: number = "no";'
           & $exe --noEmit --ignoreConfig (Join-Path $env:RUNNER_TEMP "bad.ts")
           if ($LASTEXITCODE -ne 2) { throw "expected exit 2 for a type error, got $LASTEXITCODE" }
+          exit 0
 
-      - name: Installed-package smoke (CLI)
+      - name: Installed-package smoke (CLI and SDK LSP)
         shell: pwsh
         run: |
           node npm/build.mjs --artifacts out --pack
@@ -410,16 +444,16 @@ jobs:
           node npm/sdk/smoke-consumer.mjs --noembed --cli-only
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: bin-x86_64-pc-windows-msvc
+          name: bin-${{ matrix.target }}
           path: out/
           if-no-files-found: error
 
   check:
     needs: version
     if: needs.version.outputs.release == 'true'
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: taiki-e/checkout-action@7d1e50e93dc4fb3bba58f85018fadf77898aee8b # v1.4.2
@@ -435,22 +469,26 @@ jobs:
     needs: version
     if: needs.version.outputs.release == 'true'
     env:
-      # TypeScript's version in the binary (Cargo.toml [workspace.metadata.typescript] nightly).
+      # TypeScript's version in the binary (Cargo.toml [workspace.metadata.typescript] matching npm package).
       TSRS_TS_VERSION: ${{ needs.version.outputs.ts_nightly }}
       TSRS_CARGO_FEATURES: tsrs_cli/noembed
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         include:
-          - { target: x86_64-unknown-linux-musl, os: ubuntu-22.04 }
-          - { target: aarch64-unknown-linux-musl, os: ubuntu-22.04-arm }
+          - { target: x86_64-unknown-linux-musl, os: ubuntu-latest }
+          - { target: aarch64-unknown-linux-musl, os: ubuntu-26.04-arm }
     steps:
       - uses: taiki-e/checkout-action@7d1e50e93dc4fb3bba58f85018fadf77898aee8b # v1.4.2
 
       - uses: oxc-project/setup-rust@3d6fb132fbe7cdcb66bf8ec193911c2945369d12 # v1.0.17
         with:
           restore-cache: false
-          tools: cargo-zigbuild@0.23.4
+
+      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        with:
+          tool: cargo-zigbuild@0.24.0
+          fallback: none
 
       - uses: goto-bus-stop/setup-zig@abea47f85e598557f500fa1fd2ab7464fcb39406 # v2.2.1
         with:
@@ -467,7 +505,7 @@ jobs:
           "out/${{ matrix.target }}/tsrs" --version | tee version.txt
           grep -q "^Version $TSRS_TS_VERSION (" version.txt || { echo "::error::the binary is not stamped with TypeScript $TSRS_TS_VERSION"; exit 1; }
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: bin-${{ matrix.target }}
           path: out/
@@ -480,9 +518,9 @@ jobs:
     needs: version
     if: needs.version.outputs.release == 'true'
     env:
-      # TypeScript's version in the binary (Cargo.toml [workspace.metadata.typescript] nightly).
+      # TypeScript's version in the binary (Cargo.toml [workspace.metadata.typescript] matching npm package).
       TSRS_TS_VERSION: ${{ needs.version.outputs.ts_nightly }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - uses: taiki-e/checkout-action@7d1e50e93dc4fb3bba58f85018fadf77898aee8b # v1.4.2
@@ -531,7 +569,7 @@ jobs:
           set +e; pnpm exec tsrs-wasm bad.ts; status=$?; set -e
           [ "$status" = 2 ] || { echo "expected exit 2 for a type error, got $status"; exit 1; }
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: npm-wasm
           path: |
@@ -541,7 +579,7 @@ jobs:
 
   publish:
     needs: [version, check, build, build-windows, build-musl, wasm]
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     timeout-minutes: 90
     permissions:
       contents: read
@@ -551,31 +589,33 @@ jobs:
 
       - uses: oxc-project/setup-node@f46a72f95efdc55273fcd042d61c84e723b2892c # v1.4.1
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: bin-*
           path: artifacts
           merge-multiple: true
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: npm-wasm
           path: wasm-dist
 
       - name: Require the release platforms and the WebAssembly package
         run: |
-          for t in aarch64-apple-darwin x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu \
+          for t in aarch64-apple-darwin x86_64-apple-darwin x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu \
             x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
             test -f "artifacts/$t/tsrs" || { echo "::error::missing binary for $t"; exit 1; }
           done
-          test -f artifacts/x86_64-pc-windows-msvc/tsrs.exe || { echo "::error::missing Windows binary"; exit 1; }
+          for t in x86_64-pc-windows-msvc aarch64-pc-windows-msvc; do
+            test -f "artifacts/$t/tsrs.exe" || { echo "::error::missing binary for $t"; exit 1; }
+          done
           ls -lR artifacts wasm-dist
 
       - name: Assemble and pack
         run: |
           node npm/build.mjs --artifacts artifacts --pack
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: npm-packages
           path: npm/dist/*.tgz
@@ -584,9 +624,10 @@ jobs:
         env:
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
           VERSION: ${{ needs.version.outputs.version }}
+          DIST_TAG: ${{ needs.version.outputs.dist_tag }}
           PRIVATE_REPO: ${{ github.event.repository.private }}
         run: |
-          flags=(--access public --tag latest --no-git-checks)
+          flags=(--access public --tag "$DIST_TAG" --no-git-checks)
           [ "$PRIVATE_REPO" = false ] && flags+=(--provenance)
           [ "$DRY_RUN" = true ] && flags+=(--dry-run)
           # pnpm authenticates with this job's GitHub Actions OIDC identity and publishes directly.
@@ -617,7 +658,7 @@ jobs:
               status=$?
               cat "$RUNNER_TEMP/publish.log"
               # Staged versions can be absent from `pnpm view` while npm already rejects republishing them.
-              # The availability checks still require their metadata, tarballs and latest tags to become visible.
+              # The availability checks still require their metadata, tarballs and release tags to become visible.
               if [ "$DRY_RUN" != true ] && grep -Eq 'publish over (previously staged|the previously published) version' "$RUNNER_TEMP/publish.log"; then
                 echo "$name@$VERSION already published or staged"
                 continue
@@ -626,14 +667,14 @@ jobs:
             fi
           done < "$RUNNER_TEMP/publish.txt"
 
-      - name: Verify every published package and latest tag
+      - name: Verify every published package and release tag
         if: github.event_name != 'workflow_dispatch' || !inputs.dry_run
         run: node .github/scripts/wait-for-npm-packages.mjs --release npm/dist/packages.json wasm-dist/packages.json
 
   github-release:
     needs: [version, publish]
     if: github.event_name != 'workflow_dispatch' || !inputs.dry_run
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: write
@@ -644,9 +685,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.version.outputs.crate_version }}
-        run: >-
-          gh release create "v$VERSION" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA"
-          --title "$VERSION" --notes-file "docs/releases/$VERSION.md" --prerelease=false --latest
+          DIST_TAG: ${{ needs.version.outputs.dist_tag }}
+        run: |
+          flags=(--latest)
+          if [ "$DIST_TAG" = next ]; then flags=(--prerelease --latest=false); fi
+          gh release create "v$VERSION" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "$VERSION" --notes-file "docs/releases/$VERSION.md" "${flags[@]}"
 
   playground:
     needs: github-release

@@ -5,31 +5,51 @@ use tsrs_core::P;
 use tsrs_tsoptions::ParsedCommandLine;
 
 use super::{
-    CompileAndEmitResult, CompileTimes, DiagnosticReporter, DiagnosticsReporter, ExitStatus,
-    Statistics, System, statistics_from_program,
+    CompileAndEmitResult, CompileTimes, DiagnosticFormatter, DiagnosticReporter,
+    DiagnosticsReporter, ExitStatus, Statistics, System, statistics_from_program,
 };
 
 pub struct EmitInput<'a> {
-    pub sys: &'a dyn System,
-    pub program: &'static Program,
-    pub config: P<ParsedCommandLine>,
-    pub report_diagnostic: &'a DiagnosticReporter<'a>,
-    pub report_error_summary: &'a DiagnosticsReporter<'a>,
-    pub compile_times: CompileTimes,
+    pub(crate) sys: &'a dyn System,
+    pub(crate) program: &'static Program,
+    pub(crate) config: P<ParsedCommandLine>,
+    pub(crate) report_diagnostic: &'a DiagnosticReporter<'a>,
+    // tsrs-only: what `report_diagnostic` writes for a diagnostic, when it writes it through `write` (see
+    // `create_diagnostic_formatter`); the report loop then formats the diagnostics in parallel (`report_diagnostics`).
+    pub(crate) format_diagnostic: Option<&'a DiagnosticFormatter<'a>>,
+    pub(crate) report_error_summary: &'a DiagnosticsReporter<'a>,
+    pub(crate) compile_times: CompileTimes,
     // Go `EmitInput.ProgramLike` when it is an `*incremental.Program`.
-    pub incremental: Option<P<tsrs_incremental::Program>>,
+    pub(crate) incremental: Option<P<tsrs_incremental::Program>>,
     // Go `EmitInput.Writer` (nil here means `sys.Writer()`), `EmitInput.WriteFile` and `EmitInput.Testing`.
-    pub writer: Option<&'a (dyn Fn(&str) + 'a)>,
-    pub write_file: Option<tsrs_compiler::WriteFile<'a>>,
-    pub testing: Option<&'a dyn super::CommandLineTesting>,
-    pub testing_m_times_cache: Option<super::MTimesCache>,
+    pub(crate) writer: Option<&'a (dyn Fn(&str) + 'a)>,
+    pub(crate) write_file: Option<tsrs_compiler::WriteFile<'a>>,
+    pub(crate) testing: Option<&'a dyn super::CommandLineTesting>,
+    pub(crate) testing_m_times_cache: Option<super::MTimesCache>,
 }
 
 impl EmitInput<'_> {
-    pub fn write(&self, text: &str) {
+    fn write(&self, text: &str) {
         match self.writer {
             Some(w) => w(text),
             None => self.sys.write(text),
+        }
+    }
+
+    /// `report_diagnostic` of each diagnostic, in order.
+    fn report_diagnostics(&self, diagnostics: &[P<tsrs_ast::Diagnostic>]) {
+        match self.format_diagnostic {
+            Some(format) => tsrs_compiler::diagnosticwriter::format_diagnostics_in_order(
+                diagnostics,
+                self.program.single_threaded(),
+                &**format,
+                &mut |out| self.write(&tsrs_core::utf8::from_utf8_lossy(out)),
+            ),
+            None => {
+                for &diagnostic in diagnostics {
+                    (self.report_diagnostic)(diagnostic);
+                }
+            }
         }
     }
 }
@@ -58,9 +78,9 @@ pub fn emit_and_report_statistics(input: &EmitInput) -> (CompileAndEmitResult, O
     }
 
     if result.emit_skipped && !result.diagnostics.is_empty() {
-        result.status = ExitStatus::DiagnosticsPresent_OutputsSkipped;
+        result.status = ExitStatus::DiagnosticsPresentOutputsSkipped;
     } else if !result.diagnostics.is_empty() {
-        result.status = ExitStatus::DiagnosticsPresent_OutputsGenerated;
+        result.status = ExitStatus::DiagnosticsPresentOutputsGenerated;
     }
     (result, statistics)
 }
@@ -136,11 +156,7 @@ pub fn emit_files_and_report_errors(input: &EmitInput) -> CompileAndEmitResult {
     tsrs_core::phases::time(
         input.program.options().diagnostics_enabled(),
         "Diagnostics: report",
-        || {
-            for &diagnostic in &all_diagnostics {
-                (input.report_diagnostic)(diagnostic);
-            }
-        },
+        || input.report_diagnostics(&all_diagnostics),
     );
 
     tsrs_core::phases::time(input.program.options().diagnostics_enabled(), "List files", || {
@@ -203,11 +219,12 @@ fn emit_files_and_report_errors_incremental(
     input: &EmitInput,
     program_like: P<tsrs_incremental::Program>,
 ) -> CompileAndEmitResult {
-    let program_like: &'static tsrs_incremental::Program = program_like.get();
     use tsrs_incremental::emit::{
         EmitOptions, EmitResult, ProgramLike,
         get_diagnostics_of_any_program as get_diagnostics_of_any_program_like,
     };
+
+    let program_like: &'static tsrs_incremental::Program = program_like.get();
     let mut times = input.compile_times.clone();
     let bind_time = Cell::new(times.bind_time);
     let check_time = Cell::new(times.check_time);
@@ -268,15 +285,13 @@ fn emit_files_and_report_errors_incremental(
     }
 
     let all_diagnostics = sort_and_deduplicate_diagnostics(&all_diagnostics);
-    for &diagnostic in &all_diagnostics {
-        (input.report_diagnostic)(diagnostic);
-    }
+    input.report_diagnostics(&all_diagnostics);
 
     list_files(input, &emit_result.clone().unwrap_or_default());
 
     (input.report_error_summary)(&all_diagnostics);
     // Go reads EmitResult.EmitSkipped through a nil result here only when the incremental program was cancelled.
-    let emitted_files = emit_result.as_ref().map(|r| r.emitted_files.clone()).unwrap_or_default();
+    let emitted_files = emit_result.as_ref().map_or_default(|r| r.emitted_files.clone());
     let emit_skipped = emit_result.is_some_and(|r| r.emit_skipped);
     CompileAndEmitResult {
         diagnostics: all_diagnostics,

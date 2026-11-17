@@ -28,22 +28,22 @@ pub enum SignatureUpdateKind {
 }
 
 #[derive(Default)]
-struct nestedEmitState {
+struct NestedEmitState {
     depth: usize,
     start: Option<Instant>,
     time: Duration,
 }
 
 pub struct Program {
-    pub(crate) snapshot: P<Snapshot>,
-    pub(crate) program: Option<&'static CompilerProgram>,
+    pub snapshot: P<Snapshot>,
+    pub program: Option<&'static CompilerProgram>,
     pub(crate) host: Option<Box<dyn Host + Send + Sync>>,
 
     // Testing data
     pub(crate) testing_data: Option<Mutex<TestingData>>,
 
     nested_emit_now: Option<fn() -> Instant>,
-    nested_emit: Mutex<nestedEmitState>,
+    nested_emit: Mutex<NestedEmitState>,
 }
 
 // program.go:46
@@ -71,7 +71,7 @@ pub fn new_program(
         host: Some(host),
         testing_data,
         nested_emit_now: nested_emit_now.filter(|_| program.options().diagnostics_enabled()),
-        nested_emit: Mutex::new(nestedEmitState::default()),
+        nested_emit: Mutex::new(NestedEmitState::default()),
     })
 }
 
@@ -79,7 +79,7 @@ pub fn new_program(
 // old snapshot and answers the questions the harness asks (Program::testing_semantic_diagnostics_state).
 pub struct TestingData {
     old_snapshot: Option<P<Snapshot>>,
-    pub updated_signature_kinds: FxHashMap<Path, SignatureUpdateKind>,
+    pub(crate) updated_signature_kinds: FxHashMap<Path, SignatureUpdateKind>,
 }
 
 // The tsctests "SemanticDiagnostics::" line of a file.
@@ -98,12 +98,8 @@ impl Program {
             host: None,
             testing_data: None,
             nested_emit_now: None,
-            nested_emit: Mutex::new(nestedEmitState::default()),
+            nested_emit: Mutex::new(NestedEmitState::default()),
         })
-    }
-
-    pub fn get_testing_data(&self) -> Option<&Mutex<TestingData>> {
-        self.testing_data.as_ref()
     }
 
     // sys.go OnProgram: `*refresh*` when the cached entry is not the one the old program had (by pointer).
@@ -565,7 +561,7 @@ impl Program {
             return Some(EmitResult {
                 emit_skipped: true,
                 diagnostics: vec![new_compiler_diagnostic(
-                    &diagnostics::Could_not_write_file_0_Colon_1,
+                    &diagnostics::COULD_NOT_WRITE_FILE_0_COLON_1,
                     &[&build_info_file_name, &err],
                 )],
                 ..Default::default()

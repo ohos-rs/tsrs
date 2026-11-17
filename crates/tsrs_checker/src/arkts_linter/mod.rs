@@ -56,7 +56,7 @@ impl ArkTsLinter<'_> {
             Fault::VarDeclaration => end = (start + 3).min(end),
             Fault::DeleteOperator | Fault::TypeQuery => end = (start + 6).min(end),
             Fault::WithStatement => {
-                end = get_error_range_for_node(self.file, node.as_with_statement().statement)
+                end = get_error_range_for_node(self.file, node.as_with_statement().statement())
                     .pos()
                     .source_offset()
                     .unwrap_or(0)
@@ -86,7 +86,7 @@ impl ArkTsLinter<'_> {
                 end = start + 10;
             }
             Fault::ConstAssertion => {
-                if ast::is_as_expression(node) {
+                if node.kind() == ast::Kind::AsExpression {
                     start = node.expression().unwrap().end().source_offset().unwrap_or(0) + 1;
                     end = get_error_range_for_node(self.file, node.type_node().unwrap())
                         .pos()

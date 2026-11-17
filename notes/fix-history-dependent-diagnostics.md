@@ -1,5 +1,16 @@
 # fix-history-dependent-diagnostics: TS2320 on a merged interface depended on which files shared a checker
 
+> Historical note: TypeScript commit `237b14a5d98f8e8f748ff36002fdd99786230d90` changes TS2320 and TS2430
+> ownership to the first interface declaration of a merged symbol, regardless of which declaration a checker visits
+> first. The source-15 port follows that rule in both checker modes; these errors no longer use the virtual
+> four-checker reporting sites described below. Canonical mode still checks each declaring file for index-constraint
+> errors. The investigation and measurements below describe the earlier pinned compiler and remain historical
+> evidence; current conformance is recorded in [the port log](typescript-623-ports.md).
+>
+> "Default mode" below names the optimized checker behavior used at the time. It is now opt-in through `--fast`
+> or `TSRS_FAST=1`; ordinary compilation follows Go's checker defaults. Current cache metadata and mode-switching
+> rules are documented in [incremental compilation](../docs/EMIT.md#json).
+
 PR 163 (split default library files when they weigh most of a share) ran pr-verify, and on nuxt at 32 checkers one run
 of three printed three errors instead of four: the TS2320 at `packages/nuxt/src/app/types/augments.ts(8,13)` (`Interface
 'ImportMeta' cannot simultaneously extend types 'NitroImportMeta' and 'NitroStaticBuildFlags'`) was missing. On this Mac

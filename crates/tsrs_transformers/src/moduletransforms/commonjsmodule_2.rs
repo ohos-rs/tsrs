@@ -30,7 +30,7 @@ impl CommonJSModuleTransformer {
 
     // Creates a call to the current file's export function to export a value.
     // commonjsmodule.go:577
-    pub(crate) fn create_export_statement(
+    fn create_export_statement(
         &self,
         name: P<Node>,
         value: P<Node>,
@@ -145,7 +145,7 @@ impl CommonJSModuleTransformer {
 
     // Creates a `require()` call to import an external module.
     // commonjsmodule.go:680
-    pub(crate) fn create_require_call(
+    fn create_require_call(
         &self,
         node: P<Node>, /*ImportDeclaration | ImportEqualsDeclaration | ExportDeclaration*/
     ) -> P<Node> {
@@ -165,6 +165,8 @@ impl CommonJSModuleTransformer {
                     self.emit_context(),
                     Some(module_name),
                     &self.compiler_options,
+                    &self.content_mapper_extension_rewrites,
+                    self.use_case_sensitive_file_names,
                 )
                 .unwrap(),
             );
@@ -244,15 +246,15 @@ impl CommonJSModuleTransformer {
                 Some(self.get_helper_expression_for_import(node, self.create_require_call(node))),
             ));
 
-            if let Some(namespace_declaration) = namespace_declaration {
-                if ast::is_default_import(node) {
-                    variables.push(f.new_variable_declaration(
-                        namespace_declaration.name().unwrap().clone_node(f),
-                        None, /*exclamationToken*/
-                        None, /*type*/
-                        Some(f.new_generated_name_for_node(node)),
-                    ));
-                }
+            if let Some(namespace_declaration) = namespace_declaration
+                && ast::is_default_import(node)
+            {
+                variables.push(f.new_variable_declaration(
+                    namespace_declaration.name().unwrap().clone_node(f),
+                    None, /*exclamationToken*/
+                    None, /*type*/
+                    Some(f.new_generated_name_for_node(node)),
+                ));
             }
         }
 

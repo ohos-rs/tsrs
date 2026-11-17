@@ -27,7 +27,7 @@ pub struct WasmSys {
 impl WasmSys {
     /// `diagnostics`: collect diagnostics there (the JSON reply) instead of printing them.
     /// `out`: where tsc's text goes (stdout, which is WASI fd 1 in the module).
-    pub fn new(
+    pub(crate) fn new(
         cwd: &str,
         case_sensitive: bool,
         tty: bool,
@@ -100,10 +100,10 @@ impl System for WasmSys {
 
 // As native `sys.rs`: the embedded libraries, or TSRS_LIB_PATH.
 fn default_library_path() -> String {
-    if let Ok(dir) = std::env::var("TSRS_LIB_PATH") {
-        if !dir.is_empty() {
-            return tspath::normalize_path(&dir);
-        }
+    if let Ok(dir) = std::env::var("TSRS_LIB_PATH")
+        && !dir.is_empty()
+    {
+        return tspath::normalize_path(&dir);
     }
     bundled::lib_path()
 }

@@ -258,7 +258,7 @@ impl ArkTsLinter<'_> {
     }
 }
 
-fn is_assignment_operator(kind: Kind) -> bool { kind >= Kind::FirstAssignment && kind <= Kind::LastAssignment }
+fn is_assignment_operator(kind: Kind) -> bool { kind >= Kind::EqualsToken && kind <= Kind::CaretEqualsToken }
 fn is_destructuring_assignment_lhs(node: P<Node>) -> bool {
     let mut current = node;
     while let Some(parent) = current.parent() {

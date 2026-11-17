@@ -14,6 +14,13 @@ the [conformance results](docs/COMPATIBILITY.md#conformance) rather than on revi
 ## The fidelity rule: Go is the spec
 
 The Go implementation at the commit in `Cargo.toml` (`[workspace.metadata.typescript]`) is the specification.
+Every reproduction and fix must use that exact reference. [Prepare and verify the reference compiler](#reference-compiler)
+before comparing behavior or generating expected output. Use the same input files, configuration, working directory
+and compiler flags on both sides.
+
+TypeScript itself has known diagnostic differences when checker count or file order changes; tsrs's default
+mode preserves this upstream behavior. Match those conditions when checking parity. Differences between
+configurations alone do not establish varying diagnostics on repeated identical runs.
 
 - A difference from `tsgo` at that commit (diagnostics, their order, message text, exit code) is a tsrs bug, even
   when the tsrs output looks more reasonable. A fix makes tsrs do what the Go code does, not what seems right.
@@ -23,9 +30,13 @@ The Go implementation at the commit in `Cargo.toml` (`[workspace.metadata.typesc
 
 ## Build
 
-Requirements: rustup (it installs the Rust version `rust-toolchain.toml` pins), Node.js 24 (`.node-version`), pnpm 12.10.1 (for `npm/build.mjs` and the JS tooling) and git.
-The Fourslash suite also needs Python 3.12+ and Go with `GOTOOLCHAIN=auto` to select the pinned reference's version.
-Run `pnpm install --frozen-lockfile` from the repository root to install the npm workspace tooling.
+Requirements: rustup (it installs the Rust version `rust-toolchain.toml` pins), [Vite+](https://viteplus.dev/guide/global-cli)
+(it manages Node.js 24 from `.node-version` and pnpm 12.15.0 from `package.json`) and git.
+The Fourslash suite also needs Node.js 24+ and Go with `GOTOOLCHAIN=auto` to select the pinned reference's version.
+Run `vp install --frozen-lockfile` from the repository root to install the npm workspace tooling.
+
+Use `vp run` at the repository root to select tooling commands. The [script catalog](tools/SCRIPTS.md) covers generators,
+oracles, benchmarks, watch checks and maintenance tools. Scripts use Node.js 24 or newer; Python is not required.
 
 ```sh
 cargo build --profile dev -p tsrs_cli -p tsrs_testrunner
@@ -33,14 +44,14 @@ cargo build --profile dev -p tsrs_cli -p tsrs_testrunner
 cargo check                                      # must be 0 errors, 0 warnings (CI sets build.warnings=deny)
 cargo check -p tsrs_wasm --target wasm32-wasip1   # the WebAssembly build still compiles (notes/wasm-build.md)
 cargo clippy --all-targets --config 'build.warnings="deny"'
-tools/lint/source.py                              # unsafe Send/Sync inventory, comments on weakened atomic orderings
+tools/lint/source.mjs                              # unsafe Send/Sync inventory, comments on weakened atomic orderings
 tools/gen-check.sh                                # generated code matches its generator (change the generator, then --write)
 ```
 
-Use the `dev` profile (release optimization, no LTO, incremental) while editing and testing: a checker edit rebuilds
-`tsrs` and `tsrs-test` in about 5 s instead of about 3 minutes with `--release`, and the conformance suite gives the
-same results in the same time (notes/dev-loop-build.md). Build `--release` for performance measurements: its fat LTO
-and single codegen unit are what ships.
+Use the `dev` profile while editing and testing. It uses Cargo's default development settings with debug information
+disabled. CI uses the optimized `ci` profile without LTO, with debug assertions and overflow checks, for workspace
+tests, compiler conformance and determinism.
+Build `--release` for performance measurements: its fat LTO and single codegen unit are what ships.
 
 The language-server test server and WebAssembly module have separate builds:
 
@@ -49,54 +60,134 @@ cargo build --profile dev -p tsrs_fourslash_server
 tools/wasm/build.sh  # requires the wasm32-wasip1 target and wasm-opt
 ```
 
-## Run the tests
+## Reference compiler
 
-The conformance suite and workspace tests use fixtures, API clients and the AST schema from a checkout of
-microsoft/TypeScript at the pinned commit in `ts-ref/` (git-ignored):
+Reproductions, fixes, tests and generators use a checkout of microsoft/TypeScript at the pinned commit in
+`ts-ref/` (git-ignored). Create it once:
 
 ```sh
 commit=$(node npm/build.mjs --print-typescript-commit)
 git clone --filter=blob:none --sparse https://github.com/microsoft/TypeScript ts-ref
 git -C ts-ref sparse-checkout set tsc packages/typescript/src \
   packages/typescript/lib packages/typescript/vendor tools/scripts/tsc
-git -C ts-ref checkout "$commit"
+git -C ts-ref checkout --detach "$commit"
+```
 
-./target/debug/tsrs-test run --suite all                          # summary table; lists in target/test-results/
+For a new or existing checkout, verify the source pin and resolve the matching published Go compiler:
+
+```sh
+commit=$(node npm/build.mjs --print-typescript-commit)
+test "$(git -C ts-ref rev-parse HEAD)" = "$commit"
+git -C ts-ref diff --exit-code HEAD -- tsc packages/typescript
+vp install --frozen-lockfile
+reference_bin=$(node tools/lib/typescript-reference.mjs --binary)
+"$reference_bin" --version
+```
+
+Both source checks must pass before reproducing a bug. The resolver verifies the installed package and native
+compiler versions, their source commits and the executable's version against Cargo metadata. Published-version
+checks use `node tools/port/build-published.mjs` and `target/published/debug/tsrs`, which also exercise npm's on-disk
+library layout. Source conformance keeps Go's source-default version; the two version strings can differ.
+
+Internal oracle programs and instrumentation still build from the verified Go checkout:
+
+```sh
+mkdir -p target/reference
+reference_bin="$PWD/target/reference/tsgo"
+(cd ts-ref/tsc && GOTOOLCHAIN=auto GOWORK=off go build -o "$reference_bin" ./cmd/tsc)
+```
+
+Keep tracked reference sources unchanged;
+[Go overlays](docs/DEBUGGING.md#where-go-reports-an-error-an-instrumented-reference-with-go-build--overlay) support
+instrumentation. Rebuild the reference after the pin changes; its version string alone does not identify the commit.
+The checkout stays at the pinned revision until explicitly updated. `Cargo.toml` records the matching TypeScript
+package version; [the compatibility guide](docs/COMPATIBILITY.md) distinguishes the source pin from published releases.
+
+## Run the tests
+
+With the [reference checkout](#reference-compiler) ready:
+
+```sh
+cargo run --profile dev -p tsrs_determinism -- conformance       # both checker modes and the scheduling sweep
+./target/debug/tsrs-test run --suite all --baselines all          # Go history only; lists in target/test-results/
 ./target/debug/tsrs-test run --filter <substring>                 # one test or a cluster
 ./target/debug/tsrs-test show <suite/name>                        # expected vs actual
 ./target/debug/tsrs-test run --suite all --baselines types,symbols # type and symbol baselines
-PYTHON=python3.12 .github/scripts/go-fourslash-gate.sh             # language-server suite (Go assertions, Rust LSP)
-TSRS_TEST=target/debug/tsrs-test .github/scripts/conformance-gate.sh # what CI enforces: errors, .types, .symbols
+.github/scripts/go-fourslash-gate.sh             # language-server suite (Go assertions, Rust LSP)
 tools/regressions.sh target/debug/tsrs                            # testdata/regressions (CI runs it too)
-tools/ci/determinism.sh --self-test && tools/ci/determinism.sh target/debug/tsrs # checker assignment gate
-cargo test --locked                                             # all workspace unit and integration tests (CI)
+cargo run --profile dev -p tsrs_determinism -- check --tsrs target/debug/tsrs # committed tsgo snapshots
+cargo test --locked                                             # every crate's integration test binary (CI)
 ```
 
-CI runs the gate twice: in tsgo's check history, which the baselines need, and in the default mode
-(`TS_TEST_PROGRAM_SINGLE_THREADED=false TSRS_HISTORY=canonical`, where `conformance/objectLiteralNormalization`'s
-`.types` / `.symbols` differ by design).
+The conformance gate in [the determinism task](tasks/determinism/README.md#conformance-gate), also run by CI and
+release BOLT, compares every supported compiler baseline in tsgo's checker history with eager members and in fast
+mode with lazy members and work stealing. The driver sets `TSRS_FAST=0` and `1` explicitly for those runs. It then
+repeats the upstream fixtures listed in `testdata/checker-determinism.txt` at 4 and 8 checkers, with ten fast-mode
+scheduler runs and eight seeded assignments per count.
+`--baselines all` includes errors, types, symbols, JavaScript/declaration emit, JavaScript maps and source-map
+records. The runner exits unsuccessfully on any baseline difference, crash, timeout or empty selection. The gate also
+rejects a testdata checkout at a different TypeScript source pin. Unsupported cases remain reported as skips.
+
+Without environment overrides, the raw `tsrs-test` command keeps upstream's single-threaded Go history so baseline
+differences are reproducible. `TSRS_FAST=1` enables the fast preset; also set `TS_TEST_PROGRAM_SINGLE_THREADED=false`
+to exercise parallel scheduling. Explicit history/assignment overrides still apply.
+Schedule-dependent output in fast mode is a defect; add its upstream reproduction to
+`testdata/checker-determinism.txt`. The [task guide](tasks/determinism/README.md#conformance-gate) lists the gate's
+options, result directories and replay command.
+
+The Node API job verifies generated compiler sources and the vendored SDK, then runs all existing upstream client
+and local parity cases against both the Go oracle and tsrs.
 
 A change must not lose passing tests: compare `target/test-results/pass.txt` before and after
 (`comm -23 <(sort before.txt) <(sort target/test-results/pass.txt)` must print nothing). `docs/DEBUGGING.md`
-describes the full workflow, the opt-out mode (`TSRS_LAZY_MEMBERS=0`) that must stay reference-identical, and the
-Go oracle programs in `tools/oracle/`.
+describes the full workflow, the reference defaults (`TSRS_FAST` unset and no per-feature overrides) that must stay
+reference-identical, and the Go oracle programs in `tools/oracle/`.
 
 For a bug outside the suite, add a reproduction under `testdata/regressions/<name>/` (`a.ts`, `tsconfig.json`, and
-`expected.txt` with `tsc --pretty false` output from the reference compiler).
+`expected.txt`). Run the pinned reference binary from the case directory with `-p . --pretty false --singleThreaded`.
+Capture its combined stdout and stderr, replacing the case's absolute directory path with `<dir>` to match
+`tools/regressions.sh`.
+
+Rust tests live in each crate's one integration test binary, `tests/integration/main.rs`: add a module there for
+code the fixtures cannot reach. Do not add unit tests in `src`. Every `[lib]` and `[[bin]]` sets `test = false`, so
+they would never run, and `tools/lint/source.mjs` rejects them. A test that changes process-wide state (fast mode,
+checker history, write settling, RSS) runs alone in a child process, as `isolated::in_child` in tsrs_fswatch's tests
+does.
 
 ## Landing changes
 
 - Changes target `main`. CI (`.github/workflows/ci.yml`, on GitHub Actions) runs on pushes
   to `main`, on pull requests (drafts too), on merge groups and by manual dispatch, and must pass. Fork pull requests
   follow the repository's approval setting, run with read-only tokens and never get repository secrets.
-- CI has four independent Linux jobs with separate
-  Rust caches: `lint` runs Clippy and source checks; `test` runs Rust checks and all workspace tests, compiler conformance in
-  both checker modes, and regressions; `determinism` compares checker output across four pinned projects and regression
-  cases; `fourslash` runs the server framing checks, gate checks, and
-  [Go fourslash subprocess gate](tools/go-fourslash/README.md#ci-gate).
+- CI builds the CLI and conformance runner once with `--profile ci` in `build-correctness`; conformance, regressions
+  and determinism use those same binaries. The Linux checks have separate Rust caches: `lint` runs Clippy and source checks;
+  `workspace-tests` runs all workspace tests with warnings denied; `conformance` runs beside it with compiler
+  conformance in both checker modes with the focused upstream scheduling sweep, and regressions; `test` (the
+  required Test Linux check) passes only when both succeed. `check-windows` checks all workspace targets on Windows
+  with warnings denied;
+  `determinism` compares every benchmark project against committed snapshots
+  from the root pnpm TypeScript release matching Cargo metadata, using Go defaults and fast-mode locality/unnamed
+  scheduling at four and all available CPU checkers, three runs each, plus three fixed random assignments per count.
+  It also sweeps every regression fixture in fast mode under its unnamed and seeded random schedules at two and four
+  checkers. Diagnostic order and exit status must match; crashes and incomplete runs fail.
+  The separate `thread-sanitizer` job builds the compiler and standard library with the pinned nightly sanitizer,
+  then runs type checking, emit, incremental builds, watch edits and LSP edits through `tasks/thread_sanitizer`.
+  Reports and failures are retained in its artifact; any sanitizer report or failed workload fails the job.
+  See [the determinism task](tasks/determinism/README.md) for snapshot updates. Regression output must still match
+  the checked-in reference output; `fourslash` runs the gate checks and
+  [Go fourslash subprocess gate](tools/go-fourslash/README.md#ci-gate); `node-api-clients` runs the pinned upstream
+  sync and async client suites against both compilers.
   Source checks overlap Rust setup and Clippy in `lint`. Setup and checkout actions in `test` and `fourslash`
   run sequentially: the runner rewrites the shared GitHub event file when starting steps, so parallel actions
   can read an incomplete payload.
+  `benchmark.yml` asks Clef whether a push or PR needs measurement, then builds all release benchmark artifacts in one
+  job before sharding CodSpeed and PR comparisons. Cross-compiler reports run only by manual dispatch and remain in
+  workflow artifacts without opening update PRs. Manual dispatch forces measurement; unavailable Clef decisions run
+  benchmarks. PR comparisons and cross-compiler reports share the plain release CLI.
+  PR comparisons report single-threaded wall time and instruction counts alongside default-checker wall time and
+  peak RSS, using ten alternating base/PR pairs per configuration by default.
+  Measured main pushes cache it for the exact commit and build configuration; misses build the base in the same job.
+  Benchmark project and Node API harness caches are saved on main pushes and restored by PRs.
   Autofix removes unused Cargo dependencies and updates the lock file on pull requests; merge groups reject pending fixes.
   Auxiliary workflow definitions preserved as `.github/workflows/*.yml.bak` do not run
   automatically or by manual dispatch. Restore the original `.yml` filename to re-enable one.

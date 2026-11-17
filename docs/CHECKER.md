@@ -228,7 +228,7 @@ slice is nil, i.e. empty). Checker-internal callers: `let r = c.get_emit_resolve
 types.rs (`UserPreferences { import_module_specifier_preference: ImportModuleSpecifierPreference::ProjectRelative, .. }`,
 `ModuleSpecifierOptions { override_import_mode }`, `ModuleSpecifiersResult`, string enums with `as_str()`), function bodies
 in compare.rs/preferences.rs/specifiers.rs/util.rs (ported; differential test against Go in
-tsrs_compiler/src/modulespecifiers_oracle_test.rs). Go `Host` = `trait ModuleSpecifierGenerationHost: OutputPathsHost`;
+`crates/tsrs_compiler/tests/integration/modulespecifiers_oracle_test.rs`). Go `Host` = `trait ModuleSpecifierGenerationHost: OutputPathsHost`;
 `NodeBuilder.host`/`NodeBuilderContext.host` are `&'static dyn ModuleSpecifierGenerationHost`, obtained from the program
 by `Program::as_module_specifier_generation_host()` (Go's implicit interface conversion). `CheckerShape` is implemented
 by `Checker` (so pass `c` where Go passes `b.ch`). `SourceFileForSpecifierGeneration`/`ast.HasFileName` parameters are
@@ -357,7 +357,7 @@ it is wrong for the Go semantics, and update its callers in the same change.
 ## Signature indexes
 
 The Rust sources are the reference. `docs/sigs/checker.txt` (and the other `docs/sigs/*.txt`) is an index with one
-line per function, generated from the Rust sources by `python3 tools/sigs-from-rust.py`. CI does not run it, so run
+line per function, generated from the Rust sources by `node tools/sigs-from-rust.mjs`. CI does not run it, so run
 it after changing signatures (or grep the sources). The bootstrap stub generator and its advisory signature files
 have been removed.
 

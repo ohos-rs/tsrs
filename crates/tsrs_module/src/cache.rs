@@ -1,6 +1,7 @@
 use std::ops::Deref;
 
-use rustc_hash::FxHashMap;
+use hashbrown::{Equivalent, HashMap};
+use rustc_hash::FxBuildHasher;
 use tsrs_core::collections::{OrderedMap, SyncMap};
 use tsrs_core::tspath::Path;
 use tsrs_core::{CompilerOptions, P, ResolutionMode};
@@ -12,10 +13,31 @@ use crate::types::{
     ResolvedTypeReferenceDirective,
 };
 
-pub type ModeAwareCache<T> = FxHashMap<ModeAwareCacheKey, T>;
+pub type ModeAwareCache<T> = HashMap<ModeAwareCacheKey, T, FxBuildHasher>;
 
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
-pub(crate) struct ModuleResolutionCacheKey {
+#[derive(Hash)]
+struct ModeAwareCacheLookup<'a> {
+    name: &'a str,
+    mode: ResolutionMode,
+}
+
+impl Equivalent<ModeAwareCacheKey> for ModeAwareCacheLookup<'_> {
+    fn equivalent(&self, key: &ModeAwareCacheKey) -> bool {
+        self.name == key.name && self.mode == key.mode
+    }
+}
+
+/// Looks up a mode-aware cache without allocating or requiring a static name.
+pub fn mode_aware_cache_get<'a, T>(
+    cache: &'a ModeAwareCache<T>,
+    name: &str,
+    mode: ResolutionMode,
+) -> Option<&'a T> {
+    cache.get(&ModeAwareCacheLookup { name, mode })
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ModuleResolutionCacheKey {
     pub(crate) containing_file_is_ets: bool,
     pub(crate) containing_directory: String,
     pub(crate) module_name: String,
@@ -23,19 +45,86 @@ pub(crate) struct ModuleResolutionCacheKey {
     pub(crate) redirect_config_name: String,
 }
 
+/// The key's fields as borrowed values: a lookup builds this from the resolver's arguments instead of an owned
+/// key, so a cache hit (most resolutions in a program) allocates nothing.
+///
+/// The owned key and the borrowed view
+/// hash and compare through the same tuple.
+pub trait ModuleResolutionKey {
+    fn parts(&self) -> (&str, &str, ResolutionMode, &str, bool);
+}
+
+impl ModuleResolutionKey for ModuleResolutionCacheKey {
+    fn parts(&self) -> (&str, &str, ResolutionMode, &str, bool) {
+        (
+            &self.containing_directory,
+            &self.module_name,
+            self.resolution_mode,
+            &self.redirect_config_name,
+            self.containing_file_is_ets,
+        )
+    }
+}
+
+impl ModuleResolutionKey for (&str, &str, ResolutionMode, &str, bool) {
+    fn parts(&self) -> (&str, &str, ResolutionMode, &str, bool) {
+        *self
+    }
+}
+
+impl std::hash::Hash for ModuleResolutionCacheKey {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.parts().hash(state);
+    }
+}
+
+impl std::hash::Hash for dyn ModuleResolutionKey + '_ {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.parts().hash(state);
+    }
+}
+
+impl PartialEq for dyn ModuleResolutionKey + '_ {
+    fn eq(&self, other: &Self) -> bool {
+        self.parts() == other.parts()
+    }
+}
+
+impl Eq for dyn ModuleResolutionKey + '_ {}
+
+impl<'a> std::borrow::Borrow<dyn ModuleResolutionKey + 'a> for ModuleResolutionCacheKey {
+    fn borrow(&self) -> &(dyn ModuleResolutionKey + 'a) {
+        self
+    }
+}
+
 #[derive(Default)]
-pub(crate) struct ModuleResolutionCache {
+pub struct ModuleResolutionCache {
     cache: SyncMap<ModuleResolutionCacheKey, P<ResolvedModule>>,
 }
 
 impl ModuleResolutionCache {
-    #[cfg(test)]
-    pub(crate) fn size(&self) -> usize {
+    pub fn size(&self) -> usize {
         self.cache.size()
     }
 
-    pub(crate) fn get(&self, key: &ModuleResolutionCacheKey) -> Option<P<ResolvedModule>> {
-        self.cache.load(key)
+    /// A lookup by the key's fields, without building an owned key.
+    pub(crate) fn get_parts(
+        &self,
+        containing_directory: &str,
+        module_name: &str,
+        resolution_mode: ResolutionMode,
+        redirect_config_name: &str,
+        containing_file_is_ets: bool,
+    ) -> Option<P<ResolvedModule>> {
+        let key = (
+            containing_directory,
+            module_name,
+            resolution_mode,
+            redirect_config_name,
+            containing_file_is_ets,
+        );
+        self.cache.load(&key as &dyn ModuleResolutionKey)
     }
 
     pub(crate) fn set(&self, key: ModuleResolutionCacheKey, value: P<ResolvedModule>) {
@@ -44,7 +133,7 @@ impl ModuleResolutionCache {
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
-pub(crate) struct TypeRefDirectiveResolutionCacheKey {
+pub struct TypeRefDirectiveResolutionCacheKey {
     pub(crate) containing_directory: String,
     pub(crate) type_reference_name: String,
     pub(crate) resolution_mode: ResolutionMode,
@@ -53,13 +142,12 @@ pub(crate) struct TypeRefDirectiveResolutionCacheKey {
 }
 
 #[derive(Default)]
-pub(crate) struct TypeRefDirectiveResolutionCache {
+pub struct TypeRefDirectiveResolutionCache {
     cache: SyncMap<TypeRefDirectiveResolutionCacheKey, P<ResolvedTypeReferenceDirective>>,
 }
 
 impl TypeRefDirectiveResolutionCache {
-    #[cfg(test)]
-    pub(crate) fn size(&self) -> usize {
+    pub fn size(&self) -> usize {
         self.cache.size()
     }
 
@@ -81,13 +169,12 @@ impl TypeRefDirectiveResolutionCache {
 
 // Keyed by the identity (address) of the path mappings, like Go's pointer key.
 #[derive(Default)]
-pub(crate) struct ParsedPatternsCache {
+pub struct ParsedPatternsCache {
     cache: SyncMap<usize, P<ParsedPatterns>>,
 }
 
 impl ParsedPatternsCache {
-    #[cfg(test)]
-    pub(crate) fn size(&self) -> usize {
+    pub fn size(&self) -> usize {
         self.cache.size()
     }
 
@@ -113,7 +200,7 @@ pub struct ResolutionData {
     pub(crate) package_json_info_cache: P<InfoCache>,
 }
 
-pub(crate) fn new_resolution_data(opts: ResolverOptions) -> P<ResolutionData> {
+pub(crate) fn new_resolution_data(opts: ResolverOptions<'_>) -> P<ResolutionData> {
     let package_json_info_cache = match opts.package_json_cache {
         Some(cache) => cache,
         None => P::new(packagejson::new_info_cache(
@@ -146,19 +233,23 @@ impl ResolutionData {
         self.package_json_info_cache.range(f);
     }
 
-    pub fn new_resolver(&'static self, host: &'static dyn ResolutionHost) -> DefaultResolver {
+    pub fn new_resolver<'h>(&'static self, host: &'h dyn ResolutionHost) -> DefaultResolver<'h> {
         DefaultResolver::new_from_resolution_data(P::from_static(self), host)
     }
 }
 
 pub(crate) fn get_redirect_config_name(redirect: Option<&dyn ResolvedProjectReference>) -> String {
+    redirect_config_name(redirect).to_string()
+}
+
+pub(crate) fn redirect_config_name(redirect: Option<&dyn ResolvedProjectReference>) -> &str {
     match redirect {
-        None => String::new(),
-        Some(redirect) => redirect.config_name().to_string(),
+        None => "",
+        Some(redirect) => redirect.config_name(),
     }
 }
 
-impl Deref for DefaultResolver {
+impl Deref for DefaultResolver<'_> {
     type Target = ResolutionData;
     fn deref(&self) -> &ResolutionData {
         &self.resolution_data

@@ -48,6 +48,7 @@ fn write_file(root: &Path, virtual_path: &str, content: &str) -> std::io::Result
     std::fs::write(dest, content)
 }
 
+#[cfg(unix)]
 fn relative(from_dir: &str, to: &str) -> String {
     let from: Vec<&str> = from_dir.split('/').filter(|s| !s.is_empty()).collect();
     let to_parts: Vec<&str> = to.split('/').filter(|s| !s.is_empty()).collect();
@@ -58,7 +59,6 @@ fn relative(from_dir: &str, to: &str) -> String {
 }
 
 fn copy_test_libs(root: &Path) -> std::io::Result<()> {
-    let src = compiler_runner::testdata_path().join("tests/lib");
     fn walk(dir: &Path, base: &Path, dest: &Path) -> std::io::Result<()> {
         for entry in std::fs::read_dir(dir)? {
             let path = entry?.path();
@@ -72,6 +72,8 @@ fn copy_test_libs(root: &Path) -> std::io::Result<()> {
         }
         Ok(())
     }
+
+    let src = compiler_runner::testdata_path().join("tests/lib");
     walk(&src, &src, &root.join(TEST_LIB_FOLDER.trim_start_matches('/')))
 }
 
@@ -98,7 +100,7 @@ pub fn materialize(
         return Ok(Materialized { skipped: true, dropped: Vec::new() });
     }
     let ts_config = crate::options::parse_test_ts_config(&payload);
-    let mut harness_config: TestConfiguration = named.map(|c| c.config).unwrap_or_default();
+    let mut harness_config: TestConfiguration = named.map_or_default(|c| c.config);
     let split = compiler_runner::split_units(
         &payload,
         &mut harness_config,
@@ -116,20 +118,19 @@ pub fn materialize(
         .map_err(|e| e.to_string())?;
     }
     std::fs::create_dir_all(root.join(cwd.trim_start_matches('/'))).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
     for (link, target) in &payload.symlinks {
         let link = tspath::get_normalized_absolute_path(link, &cwd);
         let target = tspath::get_normalized_absolute_path(target, &cwd);
         let dest = root.join(link.trim_start_matches('/'));
         std::fs::create_dir_all(dest.parent().unwrap()).map_err(|e| e.to_string())?;
-        #[cfg(unix)]
         std::os::unix::fs::symlink(relative(&tspath::get_directory_path(&link), &target), &dest)
             .map_err(|e| e.to_string())?;
     }
 
-    let lib_files: Vec<String> = harness_config
-        .get("libfiles")
-        .map(|v| v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
-        .unwrap_or_default();
+    let lib_files: Vec<String> = harness_config.get("libfiles").map_or_default(|v| {
+        v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
+    });
     let no_lib = harness_config.get("nolib").is_some_and(|v| v == "true");
     let uses_libs = !lib_files.is_empty()
         || split.to_be_compiled.iter().any(|f| f.content.contains(&format!("{TEST_LIB_FOLDER}/")));
