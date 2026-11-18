@@ -93,8 +93,8 @@ func getIndex(dir string) {
 		if err != nil {
 			panic(err)
 		}
-		fileName := "/fixtures/" + name
-		file := parser.ParseSourceFile(ast.SourceFileParseOptions{FileName: fileName, Path: tspath.Path(fileName)}, string(text), core.EnsureScriptKindFromFileName(fileName))
+		fileName := tspath.RootedFilePathFromAbsolute("/fixtures/" + name)
+		file := parser.ParseSourceFile(ast.SourceFileParseOptions{FileName: fileName, PathKey: tspath.PathKey(fileName)}, string(text), core.EnsureScriptKindFromFileName(fileName))
 		file.Hash = xxh3.HashString128(string(text))
 		binder.BindSourceFile(file)
 		table := encoder.GetNodeIndexTable(file)
