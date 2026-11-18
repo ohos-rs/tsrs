@@ -1,25 +1,30 @@
 # tsrs dynamic ArkTS API and binary AST protocol 10.
 --- a/src/api/async/api.ts
 +++ b/src/api/async/api.ts
-@@ -58,6 +58,14 @@
-     createGetCanonicalFileName,
-     toPath,
+@@ -68,6 +68,11 @@
  } from "../path.ts";
-+import type { ArkTSBuildDiagnosticsResponse } from "../proto.ts";
-+import type {
+ import { prepareCompilerOptions } from "../prepareCompilerOptions.generated.ts";
+ import type {
 +    AnnotationInfoResponse,
 +    AnnotationTransformInfoResponse,
++    ArkTSBuildDiagnosticsResponse,
 +    ArkTSTransformTypeFactsFileQuery,
 +    ArkTSTransformTypeFactsResponse,
-+    ProgramSourceGraphResponse,
-+} from "../proto.ts";
- import type {
      BuildResponse,
      CleanBuildResponse,
-@@ -1905,6 +1913,42 @@
-      * Get semantic (type-check) diagnostics for specific files or all files.
-      * @param file - Optional file(s) to get diagnostics for. If omitted, returns diagnostics for all files.
-      */
+     CompactSymbolReference,
+@@ -96,6 +101,7 @@
+     ParsedCommandLine,
+     ProjectId,
+     ProjectReference,
++    ProgramSourceGraphResponse,
+     ProjectResponse,
+     ProtocolSymbolResponse,
+     RawCompilerOptions,
+@@ -1993,6 +1999,42 @@
+         return data ?? [];
+     }
+ 
 +    async getArkTSLinterDiagnostics(file?: DocumentIdentifier | readonly DocumentIdentifier[]): Promise<readonly Diagnostic[]> {
 +        const files = file === undefined ? undefined
 +            : Array.isArray(file) ? file
@@ -56,6 +61,6 @@
 +        return this.client.apiRequest("getArkTSTransformTypeFacts", { snapshot: this.snapshotId, project: this.project.id, queries, sdkApiUseFiles });
 +    }
 +
-     async getSemanticDiagnostics(file?: DocumentIdentifier | readonly DocumentIdentifier[]): Promise<readonly Diagnostic[]> {
-         const files = file === undefined ? undefined
-             : Array.isArray(file) ? file
+     /**
+      * Get semantic (type-check) diagnostics for specific files or all files.
+      * @param file - Optional file(s) to get diagnostics for. If omitted, returns diagnostics for all files.

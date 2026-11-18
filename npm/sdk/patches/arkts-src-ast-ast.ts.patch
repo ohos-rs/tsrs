@@ -1,6 +1,7 @@
+# tsrs dynamic ArkTS API and binary AST protocol 10.
 --- a/src/ast/ast.ts
 +++ b/src/ast/ast.ts
-@@ -88,6 +88,7 @@
+@@ -138,6 +138,7 @@
  export interface Node extends ReadonlyTextRange {
      readonly kind: SyntaxKind;
      readonly flags: NodeFlags;
@@ -8,15 +9,15 @@
      readonly parent: Node;
      readonly jsDoc?: readonly Node[] | undefined;
      childrenIter<TNext = void>(): Generator<Node, TNext | undefined, TNext>;
-@@ -149,6 +150,7 @@
-     readonly path: Path;
+@@ -199,6 +200,7 @@
+     readonly path: PathKey;
      readonly languageVariant: LanguageVariant;
      readonly scriptKind: ScriptKind;
 +    readonly arktsParseOptions?: ArkTSParseOptions;
      readonly isDeclarationFile: boolean;
      readonly referencedFiles: readonly FileReference[];
      readonly typeReferenceDirectives: readonly FileReference[];
-@@ -229,3 +231,36 @@
+@@ -279,4 +281,37 @@
  export interface ObjectAssignmentInitializer extends ShorthandPropertyAssignment {
      readonly objectAssignmentInitializer: Expression;
  }
@@ -53,3 +54,4 @@
 +    /** UTF-16 offsets in SourceFile.text, as with other Node API ranges. */
 +    markedKitImportRanges: readonly (readonly [number, number])[];
 +}
+ 

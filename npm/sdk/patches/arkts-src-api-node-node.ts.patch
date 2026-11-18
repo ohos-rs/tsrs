@@ -7,7 +7,7 @@
      computeLineStarts,
      type FileReference,
      type LineAndCharacter,
-@@ -20,6 +21,7 @@
+@@ -25,6 +26,7 @@
  } from "./node.generated.ts";
  import {
      NODE_EXTENDED_DATA_MASK,
@@ -15,7 +15,7 @@
      readParseOptionsKey,
      readSourceFileHash,
      readSourceFileNodeId,
-@@ -125,6 +127,11 @@
+@@ -138,6 +140,11 @@
      }
  
      /** @internal */

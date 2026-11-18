@@ -13,7 +13,7 @@
  //
  // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
  // !!! THIS FILE IS AUTO-GENERATED - DO NOT EDIT !!!
-@@ -3409,6 +3417,112 @@
+@@ -3555,6 +3563,112 @@
       * Get semantic (type-check) diagnostics for specific files or all files.
       * @param file - Optional file(s) to get diagnostics for. If omitted, returns diagnostics for all files.
       */
