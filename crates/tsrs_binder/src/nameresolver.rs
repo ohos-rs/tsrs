@@ -42,7 +42,9 @@ pub struct NameResolver<H: 'static> {
     pub globals: Option<P<SymbolTable>>,
     pub arguments_symbol: Cell<Option<P<Symbol>>>,
     pub require_symbol: Option<P<Symbol>>,
-    pub lookup: Option<fn(&mut H, Option<P<SymbolTable>>, &str, SymbolFlags, Option<P<Node>>) -> Option<P<Symbol>>>,
+    pub lookup: Option<
+        fn(&mut H, Option<P<SymbolTable>>, &str, SymbolFlags, Option<P<Node>>) -> Option<P<Symbol>>,
+    >,
     pub symbol_referenced: Option<fn(&mut H, P<Symbol>, SymbolFlags)>,
     pub set_requires_scope_change_cache: Option<fn(&mut H, P<Node>, Tristate)>,
     pub get_requires_scope_change_cache: Option<fn(&mut H, P<Node>) -> Tristate>,
@@ -320,7 +322,13 @@ impl<H: 'static> NameResolver<H> {
                             if let Some(ctor) = ctor
                                 && ctor.locals().is_some()
                                 && self
-                                    .lookup(host, ctor.locals(), name, meaning & SymbolFlags::Value, None)
+                                    .lookup(
+                                        host,
+                                        ctor.locals(),
+                                        name,
+                                        meaning & SymbolFlags::Value,
+                                        None,
+                                    )
                                     .is_some()
                             {
                                 // Remember the property node, it will be used later to report appropriate error
@@ -330,7 +338,8 @@ impl<H: 'static> NameResolver<H> {
                     }
                     Kind::ClassDeclaration | Kind::ClassExpression | Kind::InterfaceDeclaration => {
                         let members = self.get_symbol_of_declaration(host, loc).unwrap().members();
-                        result = self.lookup(host, members, name, meaning & SymbolFlags::Type, None);
+                        result =
+                            self.lookup(host, members, name, meaning & SymbolFlags::Type, None);
                         if let Some(res) = result {
                             if !is_type_parameter_symbol_declared_in_container(res, loc) {
                                 // ignore type parameters not declared in this container
@@ -401,13 +410,8 @@ impl<H: 'static> NameResolver<H> {
                             // A reference to this grandparent's type parameters would be an error
                             let members =
                                 self.get_symbol_of_declaration(host, gp).unwrap().members();
-                            result = self.lookup(
-                                host,
-                                members,
-                                name,
-                                meaning & SymbolFlags::Type,
-                                None,
-                            );
+                            result =
+                                self.lookup(host, members, name, meaning & SymbolFlags::Type, None);
                             if result.is_some() {
                                 if name_not_found_message.is_some() {
                                     self.error(
@@ -546,7 +550,13 @@ impl<H: 'static> NameResolver<H> {
             symbol_referenced(host, res, meaning);
         }
         if result.is_none() && !exclude_globals {
-            result = self.lookup(host, self.globals, name, meaning | SymbolFlags::GlobalLookup, original_location);
+            result = self.lookup(
+                host,
+                self.globals,
+                name,
+                meaning | SymbolFlags::GlobalLookup,
+                original_location,
+            );
         }
         if result.is_none()
             && let Some(original) = original_location

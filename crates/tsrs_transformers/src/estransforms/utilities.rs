@@ -331,7 +331,8 @@ impl SuperAccessState {
             ),
             None,
             None,
-            f.new_node_list(vec![f.new_keyword_expression(Kind::NullKeyword), descriptors_object]), None,
+            f.new_node_list(vec![f.new_keyword_expression(Kind::NullKeyword), descriptors_object]),
+            None,
             NodeFlags::None,
         );
 

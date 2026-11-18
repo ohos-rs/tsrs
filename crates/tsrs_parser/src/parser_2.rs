@@ -62,7 +62,10 @@ impl Parser {
         self.check_js_syntax(node)
     }
 
-    pub(crate) fn parse_import_or_export_specifier(&mut self, kind: Kind) -> (bool, Option<P<Node>>, P<Node>) {
+    pub(crate) fn parse_import_or_export_specifier(
+        &mut self,
+        kind: Kind,
+    ) -> (bool, Option<P<Node>>, P<Node>) {
         // ImportSpecifier:
         //   BindingIdentifier
         //   ModuleExportName as BindingIdentifier
@@ -1096,7 +1099,8 @@ impl Parser {
         }
         let pos = self.node_pos();
         let jsdoc = self.jsdoc_scanner_info();
-        let mut modifiers = self.parse_modifiers_ex(self.script_kind == tsrs_core::ScriptKind::ETS, false, false);
+        let mut modifiers =
+            self.parse_modifiers_ex(self.script_kind == tsrs_core::ScriptKind::ETS, false, false);
         if self.parse_contextual_modifier(Kind::GetKeyword) {
             return self.parse_accessor_declaration(
                 pos,
@@ -1118,8 +1122,13 @@ impl Parser {
         if self.is_index_signature() {
             if self.script_kind == tsrs_core::ScriptKind::ETS {
                 if let Some(list) = modifiers {
-                    let nodes: Vec<_> = list.nodes().iter().copied().filter(|n| !ast::is_decorator(*n)).collect();
-                    modifiers = if nodes.is_empty() { None } else { Some(self.new_modifier_list(list.loc(), &nodes)) };
+                    let nodes: Vec<_> =
+                        list.nodes().iter().copied().filter(|n| !ast::is_decorator(*n)).collect();
+                    modifiers = if nodes.is_empty() {
+                        None
+                    } else {
+                        Some(self.new_modifier_list(list.loc(), &nodes))
+                    };
                 }
             }
             return self.parse_index_signature_declaration(pos, jsdoc, modifiers);
@@ -1186,7 +1195,9 @@ impl Parser {
         let name = if virtual_ {
             let declaration = self.arkui.style_declaration.unwrap();
             self.ets_virtual_identifier(&declaration.r#type, pos)
-        } else { self.parse_identifier() };
+        } else {
+            self.parse_identifier()
+        };
         let mut constraint: Option<P<Node>> = None;
         let mut expression: Option<P<Node>> = None;
         if self.parse_optional(Kind::ExtendsKeyword) {
@@ -1355,7 +1366,10 @@ impl Parser {
             || self.token == Kind::OpenBraceToken
     }
 
-    pub(crate) fn parse_name_of_parameter(&mut self, modifiers: Option<P<ModifierList>>) -> P<Node> {
+    pub(crate) fn parse_name_of_parameter(
+        &mut self,
+        modifiers: Option<P<ModifierList>>,
+    ) -> P<Node> {
         // FormalParameter [Yield,Await]:
         //      BindingElement[?Yield,?Await]
         let name = self.parse_identifier_or_pattern_with_diagnostic(Some(
@@ -1489,7 +1503,10 @@ impl Parser {
         prop
     }
 
-    pub(crate) fn parse_property_name_worker(&mut self, allow_computed_property_names: bool) -> P<Node> {
+    pub(crate) fn parse_property_name_worker(
+        &mut self,
+        allow_computed_property_names: bool,
+    ) -> P<Node> {
         if self.token == Kind::StringLiteral
             || self.token == Kind::NumericLiteral
             || self.token == Kind::BigIntLiteral
@@ -2051,7 +2068,11 @@ impl Parser {
         let pos = self.node_pos();
         let start = self.node_stack.len();
         loop {
-            if allow_decorators && self.token == Kind::AtToken && !has_trailing_modifier && !self.is_annotation_declaration() {
+            if allow_decorators
+                && self.token == Kind::AtToken
+                && !has_trailing_modifier
+                && !self.is_annotation_declaration()
+            {
                 let decorator = self.parse_decorator();
                 self.node_stack.push(decorator);
                 if has_leading_modifier {

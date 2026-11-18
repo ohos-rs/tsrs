@@ -111,7 +111,8 @@ impl CommonJSModuleTransformer {
                         ]),
                         false, /*multiLine*/
                     ),
-                ]), None,
+                ]),
+                None,
                 NodeFlags::None,
             )
         } else {

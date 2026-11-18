@@ -3,8 +3,8 @@ use std::fmt::Display;
 use rustc_hash::FxHashMap;
 use tsrs_ast as ast;
 use tsrs_ast::{
-    DiagnosticExt, Kind, ModifierFlags, ModifierList, Node, NodeFlags, NodeList, OperatorPrecedence,
-    TokenFlags,
+    DiagnosticExt, Kind, ModifierFlags, ModifierList, Node, NodeFlags, NodeList,
+    OperatorPrecedence, TokenFlags,
 };
 use tsrs_core::{LanguageVariant, P, ScriptKind, TextRange, Tristate};
 use tsrs_diagnostics as diagnostics;
@@ -103,9 +103,20 @@ impl Parser {
             return self.make_binary_expression(expr, operator_token, right, pos);
         }
         // It wasn't an assignment or a lambda.  This is a conditional expression:
-        if self.arkui.build && ast::is_call_expression(expr) && !ast::is_ets_component_expression(expr) && self.token == Kind::OpenBraceToken {
+        if self.arkui.build
+            && ast::is_call_expression(expr)
+            && !ast::is_ets_component_expression(expr)
+            && self.token == Kind::OpenBraceToken
+        {
             let body = self.parse_function_block(ParseFlags::None, None);
-            let node = self.factory.new_call_expression(expr.expression().unwrap(), None, expr.type_argument_list(), expr.as_call_expression().arguments, Some(body), NodeFlags::None);
+            let node = self.factory.new_call_expression(
+                expr.expression().unwrap(),
+                None,
+                expr.type_argument_list(),
+                expr.as_call_expression().arguments,
+                Some(body),
+                NodeFlags::None,
+            );
             let node = self.finish_node(node, pos);
             node.set_flags(node.flags() | NodeFlags::EtsComponent);
             return node;
@@ -701,7 +712,10 @@ impl Parser {
         self.finish_node(node, pos)
     }
 
-    pub(crate) fn parse_binary_expression_or_higher(&mut self, precedence: OperatorPrecedence) -> P<Node> {
+    pub(crate) fn parse_binary_expression_or_higher(
+        &mut self,
+        precedence: OperatorPrecedence,
+    ) -> P<Node> {
         let pos = self.node_pos();
         let left_operand = self.parse_unary_expression_or_higher();
         self.parse_binary_expression_rest(precedence, left_operand, pos)
@@ -790,7 +804,11 @@ impl Parser {
         left_operand
     }
 
-    pub(crate) fn make_satisfies_expression(&mut self, expression: P<Node>, type_node: P<Node>) -> P<Node> {
+    pub(crate) fn make_satisfies_expression(
+        &mut self,
+        expression: P<Node>,
+        type_node: P<Node>,
+    ) -> P<Node> {
         let node = self.factory.new_satisfies_expression(expression, type_node);
         let node = self.finish_node(
             node,
@@ -1242,7 +1260,11 @@ impl Parser {
         self.token
     }
 
-    pub(crate) fn parse_jsx_closing_element(&mut self, open: P<Node>, in_expression_context: bool) -> P<Node> {
+    pub(crate) fn parse_jsx_closing_element(
+        &mut self,
+        open: P<Node>,
+        in_expression_context: bool,
+    ) -> P<Node> {
         let pos = self.node_pos();
         self.parse_expected(Kind::LessThanSlashToken);
         let tag_name = self.parse_jsx_element_name();
@@ -1896,7 +1918,9 @@ impl Parser {
                 .look_ahead(Parser::next_token_is_identifier_or_keyword_or_open_bracket_or_template)
     }
 
-    pub(crate) fn next_token_is_identifier_or_keyword_or_open_bracket_or_template(&mut self) -> bool {
+    pub(crate) fn next_token_is_identifier_or_keyword_or_open_bracket_or_template(
+        &mut self,
+    ) -> bool {
         self.next_token();
         token_is_identifier_or_keyword(self.token)
             || self.token == Kind::OpenBracketToken
@@ -2208,7 +2232,10 @@ impl Parser {
         if self.script_kind == ScriptKind::ETS
             && self.arkui.ui
             && !self.arkui.new_
-            && tsrs_core::ets_contains(self.opts.ets.components.as_deref(), self.scanner.token_text())
+            && tsrs_core::ets_contains(
+                self.opts.ets.components.as_deref(),
+                self.scanner.token_text(),
+            )
         {
             return self.parse_ets_component();
         }
@@ -2798,7 +2825,9 @@ impl Parser {
     }
 
     pub(crate) fn scan_type_member_start(&mut self) -> bool {
-        if self.script_kind == tsrs_core::ScriptKind::ETS && self.token == Kind::AtToken { return true; }
+        if self.script_kind == tsrs_core::ScriptKind::ETS && self.token == Kind::AtToken {
+            return true;
+        }
         // Return true if we have the start of a signature member
         if self.token == Kind::OpenParenToken
             || self.token == Kind::LessThanToken
@@ -2994,7 +3023,9 @@ impl Parser {
 
     pub(crate) fn scan_start_of_declaration(&mut self) -> bool {
         loop {
-            if self.is_struct_declaration() || self.is_annotation_declaration() { return true; }
+            if self.is_struct_declaration() || self.is_annotation_declaration() {
+                return true;
+            }
             match self.token {
                 Kind::VarKeyword
                 | Kind::LetKeyword
@@ -3102,7 +3133,9 @@ impl Parser {
     }
 
     pub(crate) fn is_start_of_expression(&mut self) -> bool {
-        if self.arkui.styles && self.token == Kind::DotToken { return true; }
+        if self.arkui.styles && self.token == Kind::DotToken {
+            return true;
+        }
         if self.is_start_of_left_hand_side_expression() {
             return true;
         }

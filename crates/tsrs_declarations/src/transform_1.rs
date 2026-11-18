@@ -1148,7 +1148,14 @@ impl DeclarationTransformer {
     // transform.go:985
     pub(crate) fn transform_property_declaration(&self, input: P<Node>) -> Option<P<Node>> {
         if ast::is_annotation_property_declaration(input) {
-            return Some(self.factory().update_property_declaration(input, None, input.name().unwrap(), None, self.ensure_type(input, false), input.initializer()));
+            return Some(self.factory().update_property_declaration(
+                input,
+                None,
+                input.name().unwrap(),
+                None,
+                self.ensure_type(input, false),
+                input.initializer(),
+            ));
         }
         if ast::is_private_identifier(input.name().unwrap()) {
             return None;

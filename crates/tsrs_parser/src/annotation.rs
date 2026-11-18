@@ -34,7 +34,8 @@ impl Parser {
         let is_binding_identifier = self.is_binding_identifier();
         let name = self.create_identifier(is_binding_identifier);
         let members = if self.parse_expected(Kind::OpenBraceToken) {
-            let members = self.parse_list(ParsingContext::AnnotationMembers, Parser::parse_annotation_element);
+            let members = self
+                .parse_list(ParsingContext::AnnotationMembers, Parser::parse_annotation_element);
             self.parse_expected(Kind::CloseBraceToken);
             members
         } else {
@@ -52,7 +53,9 @@ impl Parser {
             return false;
         }
         self.next_token();
-        self.token == Kind::ColonToken || self.token == Kind::EqualsToken || self.can_parse_semicolon()
+        self.token == Kind::ColonToken
+            || self.token == Kind::EqualsToken
+            || self.can_parse_semicolon()
     }
 
     fn parse_annotation_element(&mut self) -> P<Node> {

@@ -173,14 +173,18 @@ pub(crate) static OPTIONS: &[CommandLineOption] = &[
 // They remain typed inputs and participate in semantic/build-info invalidation.
 const fn host_option(name: &'static str, kind: CommandLineOptionKind) -> CommandLineOption {
     CommandLineOption {
-        name, kind, is_tsconfig_only: true,
+        name,
+        kind,
+        is_tsconfig_only: true,
         affects_semantic_diagnostics: true,
         affects_build_info: true,
         ..CommandLineOption::DEFAULT
     }
 }
 
-pub(crate) fn parse_ets(value: &CompilerOptionsValue) -> Result<Arc<EtsOptions>, serde_json::Error> {
+pub(crate) fn parse_ets(
+    value: &CompilerOptionsValue,
+) -> Result<Arc<EtsOptions>, serde_json::Error> {
     serde_json::from_str(&crate::tsconfigparsing::stringify_json(value))
 }
 
@@ -250,10 +254,12 @@ fn serde_options_value(value: serde_json::Value) -> CompilerOptionsValue {
         serde_json::Value::Bool(value) => CompilerOptionsValue::Bool(value),
         serde_json::Value::Number(value) => CompilerOptionsValue::Float(value.as_f64().unwrap()),
         serde_json::Value::String(value) => CompilerOptionsValue::String(value),
-        serde_json::Value::Array(values) => CompilerOptionsValue::Array(values.into_iter().map(serde_options_value).collect()),
-        serde_json::Value::Object(values) => {
-            CompilerOptionsValue::Object(values.into_iter().map(|(key, value)| (key, serde_options_value(value))).collect())
+        serde_json::Value::Array(values) => {
+            CompilerOptionsValue::Array(values.into_iter().map(serde_options_value).collect())
         }
+        serde_json::Value::Object(values) => CompilerOptionsValue::Object(
+            values.into_iter().map(|(key, value)| (key, serde_options_value(value))).collect(),
+        ),
     }
 }
 
@@ -280,10 +286,13 @@ macro_rules! serde_host_option {
     )*};
 }
 impl IsZero for f64 {
-    fn is_zero(&self) -> bool { *self == 0.0 }
+    fn is_zero(&self) -> bool {
+        *self == 0.0
+    }
 }
 serde_host_option!(
-    f64, Option<f64>,
+    f64,
+    Option<f64>,
     Option<Vec<tsrs_core::OhSdkCheckPlugin>>,
     Option<Vec<tsrs_core::OhSdkClassCheckPlugin>>,
     Option<std::sync::Arc<serde_json::Map<String, serde_json::Value>>>,

@@ -2,8 +2,14 @@ use super::*;
 
 fn source(path: &str, text: &'static str) -> P<SourceFile> {
     let factory = ast::NodeFactory::default();
-    factory.new_source_file(ast::SourceFileParseOptions { file_name: path.into(), ..Default::default() },
-        text, factory.new_node_list(vec![]), factory.new_token(Kind::EndOfFile)).as_source_file_p()
+    factory
+        .new_source_file(
+            ast::SourceFileParseOptions { file_name: path.into(), ..Default::default() },
+            text,
+            factory.new_node_list(vec![]),
+            factory.new_token(Kind::EndOfFile),
+        )
+        .as_source_file_p()
 }
 
 #[test]
@@ -23,13 +29,15 @@ fn oh_sdk_file_facts_distinguish_live_versions_at_the_same_path() {
 #[test]
 fn oh_sdk_file_classification_preserves_directory_and_basename_rules() {
     let options = CompilerOptions {
-        oh_project_root_path: "/app".into(), oh_module_path: "/app/module".into(),
+        oh_project_root_path: "/app".into(),
+        oh_module_path: "/app/module".into(),
         oh_card_entry_files: Some(vec!["/app/cards/../card.ets".into()]),
         oh_system_modules: Some(vec!["system.ets".into()]),
         oh_external_api_paths: Some(vec!["/sdk/api".into()]),
         oh_global_module_paths: Some(vec!["/sdk/api/".into()]),
         oh_ark_ui_declaration_dirs: Some(vec!["/sdk/ui".into()]),
-        ets_loader_path: "/loader".into(), ..Default::default()
+        ets_loader_path: "/loader".into(),
+        ..Default::default()
     };
     let mut state = OhSdkState::default();
     assert!(state.file_facts(source("/app/card.ets", ""), &options).card);
@@ -41,7 +49,12 @@ fn oh_sdk_file_classification_preserves_directory_and_basename_rules() {
     assert!(facts.sdk);
     assert_eq!(facts.whitelist, ["apiAvailable"]);
     assert_eq!(facts.api_module, "@ohos.deviceInfo");
-    assert!(state.file_facts(source("/sdk/api/nested/@ohos.deviceInfo.d.ts", ""), &options).whitelist.is_empty());
+    assert!(
+        state
+            .file_facts(source("/sdk/api/nested/@ohos.deviceInfo.d.ts", ""), &options)
+            .whitelist
+            .is_empty()
+    );
     for directory in ["/sdk/ui", "/loader/declarations"] {
         assert!(state.file_facts(source(&format!("{directory}/view.d.ts"), ""), &options).arkui);
         for name in ["global.d.ts", "common_ts_ets_api.d.ts", "nested/view.d.ts"] {

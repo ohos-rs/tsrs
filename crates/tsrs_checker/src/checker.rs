@@ -1626,7 +1626,11 @@ pub fn new_arkts_linter_checker(program: &'static dyn Program) -> Box<Checker> {
     new_checker_with_options(program, P::new(options), true)
 }
 
-fn new_checker_with_options(program: &'static dyn Program, compiler_options: P<CompilerOptions>, for_arkts_linter: bool) -> Box<Checker> {
+fn new_checker_with_options(
+    program: &'static dyn Program,
+    compiler_options: P<CompilerOptions>,
+    for_arkts_linter: bool,
+) -> Box<Checker> {
     program.bind_source_files();
 
     // Placeholders for pointer fields Go leaves nil until they are assigned below.
@@ -3051,7 +3055,11 @@ impl Checker {
         if let Some(t) = self.get_global_iterable_type_cache {
             return t;
         }
-        let t = self.get_global_type("Iterable", if self.compiler_options.ets_loader_path.is_empty() { 3 } else { 1 } /* OH 4.9 arity */, false /*reportErrors*/);
+        let t = self.get_global_type(
+            "Iterable",
+            if self.compiler_options.ets_loader_path.is_empty() { 3 } else { 1 }, /* OH 4.9 arity */
+            false,                                                                /*reportErrors*/
+        );
         self.get_global_iterable_type_cache = Some(t);
         t
     }
@@ -3060,7 +3068,11 @@ impl Checker {
         if let Some(t) = self.get_global_iterable_type_checked_cache {
             return t;
         }
-        let t = self.get_global_type("Iterable", if self.compiler_options.ets_loader_path.is_empty() { 3 } else { 1 } /* OH 4.9 arity */, true /*reportErrors*/);
+        let t = self.get_global_type(
+            "Iterable",
+            if self.compiler_options.ets_loader_path.is_empty() { 3 } else { 1 }, /* OH 4.9 arity */
+            true,                                                                 /*reportErrors*/
+        );
         self.get_global_iterable_type_checked_cache = Some(t);
         t
     }
@@ -3072,7 +3084,7 @@ impl Checker {
         let t = self.get_global_type(
             "IterableIterator",
             if self.compiler_options.ets_loader_path.is_empty() { 3 } else { 1 }, // OH 4.9 arity
-            false, /*reportErrors*/
+            false,                                                                /*reportErrors*/
         );
         self.get_global_iterable_iterator_type_cache = Some(t);
         t
@@ -3085,7 +3097,7 @@ impl Checker {
         let t = self.get_global_type(
             "IterableIterator",
             if self.compiler_options.ets_loader_path.is_empty() { 3 } else { 1 }, // OH 4.9 arity
-            true, /*reportErrors*/
+            true,                                                                 /*reportErrors*/
         );
         self.get_global_iterable_iterator_type_checked_cache = Some(t);
         t
@@ -3127,7 +3139,7 @@ impl Checker {
         let t = self.get_global_type(
             "AsyncIterable",
             if self.compiler_options.ets_loader_path.is_empty() { 3 } else { 1 }, // OH 4.9 arity
-            false, /*reportErrors*/
+            false,                                                                /*reportErrors*/
         );
         self.get_global_async_iterable_type_cache = Some(t);
         t
@@ -3137,7 +3149,11 @@ impl Checker {
         if let Some(t) = self.get_global_async_iterable_type_checked_cache {
             return t;
         }
-        let t = self.get_global_type("AsyncIterable", if self.compiler_options.ets_loader_path.is_empty() { 3 } else { 1 } /* OH 4.9 arity */, true /*reportErrors*/);
+        let t = self.get_global_type(
+            "AsyncIterable",
+            if self.compiler_options.ets_loader_path.is_empty() { 3 } else { 1 }, /* OH 4.9 arity */
+            true,                                                                 /*reportErrors*/
+        );
         self.get_global_async_iterable_type_checked_cache = Some(t);
         t
     }
@@ -3149,7 +3165,7 @@ impl Checker {
         let t = self.get_global_type(
             "AsyncIterableIterator",
             if self.compiler_options.ets_loader_path.is_empty() { 3 } else { 1 }, // OH 4.9 arity
-            false, /*reportErrors*/
+            false,                                                                /*reportErrors*/
         );
         self.get_global_async_iterable_iterator_type_cache = Some(t);
         t
@@ -3162,7 +3178,7 @@ impl Checker {
         let t = self.get_global_type(
             "AsyncIterableIterator",
             if self.compiler_options.ets_loader_path.is_empty() { 3 } else { 1 }, // OH 4.9 arity
-            true, /*reportErrors*/
+            true,                                                                 /*reportErrors*/
         );
         self.get_global_async_iterable_iterator_type_checked_cache = Some(t);
         t

@@ -329,8 +329,14 @@ pub fn parse_compiler_options(
     }
     if key == "ets" {
         return match crate::arkts::parse_ets(value) {
-            Ok(ets) => { all_options.ets = ets; Vec::new() }
-            Err(_) => vec![tsrs_ast::new_compiler_diagnostic(&diagnostics::COMPILER_OPTION_0_REQUIRES_A_VALUE_OF_TYPE_1, &[&"ets", &"object"])],
+            Ok(ets) => {
+                all_options.ets = ets;
+                Vec::new()
+            }
+            Err(_) => vec![tsrs_ast::new_compiler_diagnostic(
+                &diagnostics::COMPILER_OPTION_0_REQUIRES_A_VALUE_OF_TYPE_1,
+                &[&"ets", &"object"],
+            )],
         };
     }
     parse_compiler_options_worker(key, value, all_options);
@@ -351,51 +357,105 @@ pub fn parse_compiler_options_worker(
     match key {
         "isCompileJsHar" => all_options.is_compile_js_har = parse_tristate(value),
         "moduleRootPath" => all_options.module_root_path = parse_string(value),
-        "maxFlowDepth" => all_options.max_flow_depth = serde_json::from_str(&crate::tsconfigparsing::stringify_json(value)).unwrap_or_default(),
-        "compileSdkVersion" => all_options.compile_sdk_version = serde_json::from_str(&crate::tsconfigparsing::stringify_json(value)).unwrap_or_default(),
-        "noTransformedKitInParser" => all_options.no_transformed_kit_in_parser = parse_tristate(value),
+        "maxFlowDepth" => {
+            all_options.max_flow_depth =
+                serde_json::from_str(&crate::tsconfigparsing::stringify_json(value))
+                    .unwrap_or_default()
+        }
+        "compileSdkVersion" => {
+            all_options.compile_sdk_version =
+                serde_json::from_str(&crate::tsconfigparsing::stringify_json(value))
+                    .unwrap_or_default()
+        }
+        "noTransformedKitInParser" => {
+            all_options.no_transformed_kit_in_parser = parse_tristate(value)
+        }
         "tsImportSoCheck" => all_options.ts_import_so_check = parse_tristate(value),
         "needDoArkTsLinter" => all_options.need_do_ark_ts_linter = parse_tristate(value),
         "isCompatibleVersion" => all_options.is_compatible_version = parse_tristate(value),
         "tsImportSendableEnable" => all_options.ts_import_sendable_enable = parse_tristate(value),
         "emitNodeModulesFiles" => all_options.emit_node_modules_files = parse_tristate(value),
         "skipTscOhModuleCheck" => all_options.skip_tsc_oh_module_check = parse_tristate(value),
-        "skipArkTSStaticBlocksCheck" => all_options.skip_ark_ts_static_blocks_check = parse_tristate(value),
-        "skipPathsInKeyForCompilationSettings" => all_options.skip_paths_in_key_for_compilation_settings = parse_tristate(value),
-        "skipBaseUrlInKeyForCompilationSettings" => all_options.skip_base_url_in_key_for_compilation_settings = parse_tristate(value),
-        "compatibleSdkVersion" => all_options.compatible_sdk_version = serde_json::from_str(&crate::tsconfigparsing::stringify_json(value)).unwrap_or_default(),
-        "compatibleSdkVersionStage" => all_options.compatible_sdk_version_stage = parse_string(value),
+        "skipArkTSStaticBlocksCheck" => {
+            all_options.skip_ark_ts_static_blocks_check = parse_tristate(value)
+        }
+        "skipPathsInKeyForCompilationSettings" => {
+            all_options.skip_paths_in_key_for_compilation_settings = parse_tristate(value)
+        }
+        "skipBaseUrlInKeyForCompilationSettings" => {
+            all_options.skip_base_url_in_key_for_compilation_settings = parse_tristate(value)
+        }
+        "compatibleSdkVersion" => {
+            all_options.compatible_sdk_version =
+                serde_json::from_str(&crate::tsconfigparsing::stringify_json(value))
+                    .unwrap_or_default()
+        }
+        "compatibleSdkVersionStage" => {
+            all_options.compatible_sdk_version_stage = parse_string(value)
+        }
         "skipOhModulesLint" => all_options.skip_oh_modules_lint = parse_tristate(value),
-        "enableStrictCheckOHModule" => all_options.enable_strict_check_oh_module = parse_tristate(value),
-        "disableStrictCheckPaths" => all_options.disable_strict_check_paths = parse_string_array(value),
-        "disableSendableCheckRules" => all_options.disable_sendable_check_rules = parse_string_array(value),
+        "enableStrictCheckOHModule" => {
+            all_options.enable_strict_check_oh_module = parse_tristate(value)
+        }
+        "disableStrictCheckPaths" => {
+            all_options.disable_strict_check_paths = parse_string_array(value)
+        }
+        "disableSendableCheckRules" => {
+            all_options.disable_sendable_check_rules = parse_string_array(value)
+        }
         "mixCompile" => all_options.mix_compile = parse_tristate(value),
         "strictCheckerOnly" => all_options.strict_checker_only = parse_tristate(value),
         "ohRuntimeOS" => all_options.oh_runtime_os = parse_string(value),
-        "ohOriginCompatibleSdkVersion" => all_options.oh_origin_compatible_sdk_version = parse_string(value),
+        "ohOriginCompatibleSdkVersion" => {
+            all_options.oh_origin_compatible_sdk_version = parse_string(value)
+        }
         "ohProjectRootPath" => all_options.oh_project_root_path = parse_string(value),
         "ohModulePath" => all_options.oh_module_path = parse_string(value),
         "ohAllModulePaths" => all_options.oh_all_module_paths = parse_string_array(value),
         "ohGlobalModulePaths" => all_options.oh_global_module_paths = parse_string_array(value),
-        "ohArkUIDeclarationDirs" => all_options.oh_ark_ui_declaration_dirs = parse_string_array(value),
+        "ohArkUIDeclarationDirs" => {
+            all_options.oh_ark_ui_declaration_dirs = parse_string_array(value)
+        }
         "ohRequestPermissions" => all_options.oh_request_permissions = parse_string_array(value),
         "ohSyscapIntersection" => all_options.oh_syscap_intersection = parse_string_array(value),
         "ohSyscapUnion" => all_options.oh_syscap_union = parse_string_array(value),
         "ohDeviceTypes" => all_options.oh_device_types = parse_string_array(value),
         "ohCardEntryFiles" => all_options.oh_card_entry_files = parse_string_array(value),
         "ohCrossplatform" => all_options.oh_crossplatform = parse_tristate(value),
-        "ohIgnoreCrossplatformCheck" => all_options.oh_ignore_crossplatform_check = parse_tristate(value),
+        "ohIgnoreCrossplatformCheck" => {
+            all_options.oh_ignore_crossplatform_check = parse_tristate(value)
+        }
         "ohCompileMode" => all_options.oh_compile_mode = parse_string(value),
         "ohBundleType" => all_options.oh_bundle_type = parse_string(value),
         "ohApiCompatibilityCheck" => all_options.oh_api_compatibility_check = parse_string(value),
-        "ohSdkCheckPlugins" => all_options.oh_sdk_check_plugins = serde_json::from_str(&crate::tsconfigparsing::stringify_json(value)).unwrap_or_default(),
-        "ohSdkClassCheckPlugins" => all_options.oh_sdk_class_check_plugins = serde_json::from_str(&crate::tsconfigparsing::stringify_json(value)).unwrap_or_default(),
-        "ohSdkPluginProjectConfig" => all_options.oh_sdk_plugin_project_config = serde_json::from_str(&crate::tsconfigparsing::stringify_json(value)).unwrap_or_default(),
-        "ets" => { if let Ok(ets) = crate::arkts::parse_ets(value) { all_options.ets = ets; } },
+        "ohSdkCheckPlugins" => {
+            all_options.oh_sdk_check_plugins =
+                serde_json::from_str(&crate::tsconfigparsing::stringify_json(value))
+                    .unwrap_or_default()
+        }
+        "ohSdkClassCheckPlugins" => {
+            all_options.oh_sdk_class_check_plugins =
+                serde_json::from_str(&crate::tsconfigparsing::stringify_json(value))
+                    .unwrap_or_default()
+        }
+        "ohSdkPluginProjectConfig" => {
+            all_options.oh_sdk_plugin_project_config =
+                serde_json::from_str(&crate::tsconfigparsing::stringify_json(value))
+                    .unwrap_or_default()
+        }
+        "ets" => {
+            if let Ok(ets) = crate::arkts::parse_ets(value) {
+                all_options.ets = ets;
+            }
+        }
         "etsAnnotationsEnable" => all_options.ets_annotations_enable = parse_tristate(value),
         "etsLoaderPath" => all_options.ets_loader_path = parse_string(value),
         "packageManagerType" => all_options.package_manager_type = parse_string(value),
-        "ohSdkConfigs" => all_options.oh_sdk_configs = serde_json::from_str(&crate::tsconfigparsing::stringify_json(value)).unwrap_or_default(),
+        "ohSdkConfigs" => {
+            all_options.oh_sdk_configs =
+                serde_json::from_str(&crate::tsconfigparsing::stringify_json(value))
+                    .unwrap_or_default()
+        }
         "ohSystemModules" => all_options.oh_system_modules = parse_string_array(value),
         "ohSdkConfigPrefixes" => all_options.oh_sdk_config_prefixes = parse_string_array(value),
         "ohFallbackModuleRoots" => all_options.oh_fallback_module_roots = parse_string_array(value),

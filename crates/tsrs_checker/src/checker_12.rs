@@ -623,13 +623,20 @@ impl Checker {
     fn get_declared_type_of_enum(&mut self, symbol: P<Symbol>) -> P<Type> {
         let links = self.declared_type_links.get(symbol);
         if links.declared_type.get().is_none() {
-            if !self.compiler_options.ets_loader_path.is_empty() && !self.is_open_harmony_literal_enum(symbol) {
+            if !self.compiler_options.ets_loader_path.is_empty()
+                && !self.is_open_harmony_literal_enum(symbol)
+            {
                 let enum_type = self.create_computed_enum_type(symbol);
                 for declaration in symbol.declarations() {
-                    if declaration.kind() != Kind::EnumDeclaration { continue; }
+                    if declaration.kind() != Kind::EnumDeclaration {
+                        continue;
+                    }
                     for &member in declaration.members() {
                         let member_symbol = self.get_symbol_of_declaration(member).unwrap();
-                        self.declared_type_links.get(member_symbol).declared_type.set(Some(enum_type));
+                        self.declared_type_links
+                            .get(member_symbol)
+                            .declared_type
+                            .set(Some(enum_type));
                     }
                 }
                 links.declared_type.set(Some(enum_type));

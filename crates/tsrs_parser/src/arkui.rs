@@ -22,21 +22,30 @@ impl Parser {
             && self.scanner.token_value() == "struct"
             && self.look_ahead(|p| {
                 p.next_token();
-                (p.is_identifier() || p.token == Kind::OpenBraceToken) && !p.has_preceding_line_break()
+                (p.is_identifier() || p.token == Kind::OpenBraceToken)
+                    && !p.has_preceding_line_break()
             })
     }
 
-    pub(crate) fn enter_ets_function(&mut self, modifiers: Option<P<ModifierList>>, method_name: &str, method: bool) -> ArkUIState {
+    pub(crate) fn enter_ets_function(
+        &mut self,
+        modifiers: Option<P<ModifierList>>,
+        method_name: &str,
+        method: bool,
+    ) -> ArkUIState {
         let saved = std::mem::take(&mut self.arkui);
         self.arkui.struct_ = saved.struct_;
         if self.script_kind != ScriptKind::ETS {
             return saved;
         }
         self.arkui.build = self.has_ets_builder(modifiers, false)
-            || method && method_name == "build" && ets_contains(self.opts.ets.render.method.as_deref(), "build");
+            || method
+                && method_name == "build"
+                && ets_contains(self.opts.ets.render.method.as_deref(), "build");
         self.arkui.ui = self.has_ets_builder(modifiers, true);
         if method {
-            self.arkui.ui = self.arkui.struct_ && (method_name == "build" || method_name == "pageTransition" || self.arkui.ui);
+            self.arkui.ui = self.arkui.struct_
+                && (method_name == "build" || method_name == "pageTransition" || self.arkui.ui);
         }
         let mut has_extend = false;
         if !method {
@@ -51,7 +60,9 @@ impl Parser {
                         continue;
                     }
                     let callee = expression.expression().unwrap();
-                    if ast::is_identifier(callee) && ets_contains(self.opts.ets.extend.decorator.as_deref(), callee.text()) {
+                    if ast::is_identifier(callee)
+                        && ets_contains(self.opts.ets.extend.decorator.as_deref(), callee.text())
+                    {
                         has_extend = true;
                         if let Some(&argument) = expression.arguments().first() {
                             if ast::is_identifier(argument) {
@@ -112,7 +123,11 @@ impl Parser {
         self.finish_ets_virtual_node(node, pos)
     }
 
-    pub(crate) fn add_ets_struct_constructor(&mut self, members: P<NodeList>, pos: u32) -> P<NodeList> {
+    pub(crate) fn add_ets_struct_constructor(
+        &mut self,
+        members: P<NodeList>,
+        pos: u32,
+    ) -> P<NodeList> {
         let mut properties = Vec::new();
         for &member in members.nodes() {
             if !ast::is_property_declaration(member) {
@@ -132,9 +147,13 @@ impl Parser {
             let typ = self.factory.deep_clone_reparse(member.type_node());
             let name = self.factory.deep_clone_reparse(member.name()).unwrap();
             let question = self.factory.new_token(Kind::QuestionToken);
-            let property = self
-                .factory
-                .new_property_signature_declaration(modifiers, name, Some(question), typ, None);
+            let property = self.factory.new_property_signature_declaration(
+                modifiers,
+                name,
+                Some(question),
+                typ,
+                None,
+            );
             properties.push(self.finish_ets_virtual_node(property, 0));
         }
         let mut parameters = Vec::new();
@@ -145,9 +164,14 @@ impl Parser {
             let typ = self.finish_ets_virtual_node(typ, 0);
             let name = self.ets_virtual_identifier("value", 0);
             let question = self.factory.new_token(Kind::QuestionToken);
-            let parameter = self
-                .factory
-                .new_parameter_declaration(None, None, name, Some(question), Some(typ), None);
+            let parameter = self.factory.new_parameter_declaration(
+                None,
+                None,
+                name,
+                Some(question),
+                Some(typ),
+                None,
+            );
             parameters.push(self.finish_ets_virtual_node(parameter, 0));
         }
         let name = self.ets_virtual_identifier("LocalStorage", 0);
@@ -155,9 +179,14 @@ impl Parser {
         let storage = self.finish_ets_virtual_node(storage, 0);
         let name = self.ets_virtual_identifier("##storage", 0);
         let question = self.factory.new_token(Kind::QuestionToken);
-        let parameter = self
-            .factory
-            .new_parameter_declaration(None, None, name, Some(question), Some(storage), None);
+        let parameter = self.factory.new_parameter_declaration(
+            None,
+            None,
+            name,
+            Some(question),
+            Some(storage),
+            None,
+        );
         parameters.push(self.finish_ets_virtual_node(parameter, 0));
         let body = self.factory.new_block(self.new_node_list(new_text_range(0, 0), &[]), false);
         let body = self.finish_ets_virtual_node(body, 0);
@@ -180,14 +209,18 @@ impl Parser {
         let name = self.ets_virtual_identifier(name, pos);
         let expression = self.factory.new_expression_with_type_arguments(name, None);
         let expression = self.finish_ets_virtual_node(expression, pos);
-        let clause = self
-            .factory
-            .new_heritage_clause(Kind::ExtendsKeyword, self.new_node_list(new_text_range(pos, pos), &[expression]));
+        let clause = self.factory.new_heritage_clause(
+            Kind::ExtendsKeyword,
+            self.new_node_list(new_text_range(pos, pos), &[expression]),
+        );
         let clause = self.finish_ets_virtual_node(clause, pos);
         self.new_node_list(new_text_range(pos, pos), &[clause])
     }
 
-    pub(crate) fn add_arkui_readonly(&mut self, modifiers: Option<P<ModifierList>>) -> Option<P<ModifierList>> {
+    pub(crate) fn add_arkui_readonly(
+        &mut self,
+        modifiers: Option<P<ModifierList>>,
+    ) -> Option<P<ModifierList>> {
         if !self.arkui.struct_ {
             return modifiers;
         }
@@ -221,7 +254,10 @@ impl Parser {
 
     pub(crate) fn is_arkui_iteration(&self, node: P<Node>) -> bool {
         if ast::is_identifier(node) {
-            return ets_contains(self.opts.ets.syntax_components.params_ui_callback.as_deref(), node.text());
+            return ets_contains(
+                self.opts.ets.syntax_components.params_ui_callback.as_deref(),
+                node.text(),
+            );
         }
         if ast::is_property_access_expression(node) {
             let mut root = node.expression().unwrap();
@@ -229,9 +265,14 @@ impl Parser {
                 root = root.expression().unwrap();
             }
             if ast::is_identifier(root) {
-                for component in self.opts.ets.syntax_components.attr_ui_callback.as_deref().unwrap_or_default() {
+                for component in
+                    self.opts.ets.syntax_components.attr_ui_callback.as_deref().unwrap_or_default()
+                {
                     if component.name == root.text() {
-                        return ets_contains(component.attributes.as_deref(), node.name().unwrap().text());
+                        return ets_contains(
+                            component.attributes.as_deref(),
+                            node.name().unwrap().text(),
+                        );
                     }
                 }
             }
@@ -244,7 +285,8 @@ impl Parser {
             return self.parse_argument_list();
         }
         let callback = self.arkui.callback;
-        let skip_first = !ast::is_property_access_expression(expression) || expression.name().unwrap().text() != "each";
+        let skip_first = !ast::is_property_access_expression(expression)
+            || expression.name().unwrap().text() != "each";
         let mut index = 0;
         self.parse_expected(Kind::OpenParenToken);
         let result = self
@@ -268,7 +310,8 @@ impl Parser {
         } else {
             None
         };
-        let result = self.factory.new_call_expression(name, None, None, arguments, body, NodeFlags::None);
+        let result =
+            self.factory.new_call_expression(name, None, None, arguments, body, NodeFlags::None);
         let result = self.finish_node(result, pos);
         result.set_flags(result.flags() | NodeFlags::EtsComponent);
         result
@@ -304,7 +347,9 @@ impl Parser {
         pos: u32,
         original: Option<P<NodeList>>,
     ) -> (Option<P<NodeList>>, bool) {
-        if (!self.arkui.build && !self.arkui.styles) || !ast::is_property_access_expression(expression) {
+        if (!self.arkui.build && !self.arkui.styles)
+            || !ast::is_property_access_expression(expression)
+        {
             return (original, false);
         }
         let attribute = expression.name().unwrap().text();
@@ -319,7 +364,9 @@ impl Parser {
             }
             if ast::is_call_expression(node) && ast::is_identifier(node.expression().unwrap()) {
                 root_name = "Common";
-                for entry in self.opts.ets.syntax_components.attr_ui_callback.as_deref().unwrap_or_default() {
+                for entry in
+                    self.opts.ets.syntax_components.attr_ui_callback.as_deref().unwrap_or_default()
+                {
                     if entry.name == node.expression().unwrap().text() {
                         root_name = node.expression().unwrap().text();
                         callback_root = true;
@@ -358,8 +405,12 @@ impl Parser {
         } else if self.arkui.styles && state_property {
             let mut node = expression;
             while ast::is_call_expression(node) || ast::is_property_access_expression(node) {
-                if ast::is_property_access_expression(node) && node.expression().unwrap().is_virtual() {
-                    self.arkui.state_root = tsrs_core::alloc_str(&node.expression().unwrap().text().replacen("Instance", "", 1));
+                if ast::is_property_access_expression(node)
+                    && node.expression().unwrap().is_virtual()
+                {
+                    self.arkui.state_root = tsrs_core::alloc_str(
+                        &node.expression().unwrap().text().replacen("Instance", "", 1),
+                    );
                     virtual_type = format!("{}Attribute", self.arkui.state_root);
                     break;
                 }

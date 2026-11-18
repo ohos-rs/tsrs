@@ -1,5 +1,5 @@
-mod arkui;
 mod annotation;
+mod arkui;
 mod jsdoc;
 mod parser_1;
 mod parser_2;

@@ -115,7 +115,9 @@ impl Checker {
             );
             return t;
         }
-        if !self.compiler_options.ets_loader_path.is_empty() { return t; }
+        if !self.compiler_options.ets_loader_path.is_empty() {
+            return t;
+        }
         let semantics = self.get_syntactic_truthy_semantics(node);
         if semantics != PredicateSemantics::Sometimes {
             self.error(
@@ -220,7 +222,9 @@ impl Checker {
                 );
             }
         }
-        if self.compiler_options.ets_loader_path.is_empty() { self.check_nullish_coalesce_operand_left(left); }
+        if self.compiler_options.ets_loader_path.is_empty() {
+            self.check_nullish_coalesce_operand_left(left);
+        }
     }
 
     // checker.go:13144
@@ -721,7 +725,13 @@ impl Checker {
                         t,
                     );
                 }
-                if is_annotation_symbol(t.symbol()) { self.error(Some(member_decl), &diagnostics::ANNOTATION_CANNOT_BE_USED_AS_A_VALUE, &[]); }
+                if is_annotation_symbol(t.symbol()) {
+                    self.error(
+                        Some(member_decl),
+                        &diagnostics::ANNOTATION_CANNOT_BE_USED_AS_A_VALUE,
+                        &[],
+                    );
+                }
             } else if member_decl.kind() == Kind::SpreadAssignment {
                 if !st.properties_array.is_empty() {
                     let object_literal_type = create_object_literal_type(self, node, &st);
@@ -1938,7 +1948,8 @@ impl Checker {
     /// Check a file without extracting diagnostics before pending SDK replies.
     pub fn check_source_file_for_diagnostics(&mut self, ctx: &Context, source_file: P<SourceFile>) {
         self.check_not_canceled();
-        let check_unused = self.compiler_options.no_unused_locals.is_true() || self.compiler_options.no_unused_parameters.is_true();
+        let check_unused = self.compiler_options.no_unused_locals.is_true()
+            || self.compiler_options.no_unused_parameters.is_true();
         self.check_source_file(ctx, source_file, check_unused);
     }
 

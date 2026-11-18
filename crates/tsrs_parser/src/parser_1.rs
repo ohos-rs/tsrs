@@ -48,10 +48,10 @@ pub enum ParsingContext {
     TupleElementTypes,        // Element types in tuple element type list
     HeritageClauses,          // Heritage clauses for a class or interface declaration.
     ImportOrExportSpecifiers, // Named import clause's import specifier list
-    ImportAttributes,        // Import attributes
-    JSDocComment,            // Parsing via JSDocParser
+    ImportAttributes,         // Import attributes
+    JSDocComment,             // Parsing via JSDocParser
     AnnotationMembers,
-    Count,                   // Number of parsing contexts
+    Count, // Number of parsing contexts
 }
 
 impl ParsingContext {
@@ -490,7 +490,11 @@ pub fn is_double_quoted_string(node: P<Node>) -> bool {
 
 impl Parser {
     // validateJsonObjectLiteral validates properties of a JSON object literal.
-    pub(crate) fn validate_json_object_literal(&mut self, source_file: P<SourceFile>, node: P<Node>) {
+    pub(crate) fn validate_json_object_literal(
+        &mut self,
+        source_file: P<SourceFile>,
+        node: P<Node>,
+    ) {
         for element in node.as_object_literal_expression().properties().nodes() {
             let element = *element;
             if element.kind() != Kind::PropertyAssignment {
@@ -577,7 +581,8 @@ impl Parser {
         self.scanner.set_text(self.source_text);
         self.scanner.set_on_error(true);
         self.scanner.set_language_variant(self.language_variant);
-        self.scanner.set_open_harmony49(self.script_kind == ScriptKind::ETS || self.opts.open_harmony49);
+        self.scanner
+            .set_open_harmony49(self.script_kind == ScriptKind::ETS || self.opts.open_harmony49);
     }
 
     pub(crate) fn scan_error(
@@ -672,7 +677,8 @@ pub struct ParserState {
 impl Parser {
     pub(crate) fn mark(&self) -> ParserState {
         ParserState {
-            arkui: self.arkui,            arena: tsrs_core::arena_checkpoint(),
+            arkui: self.arkui,
+            arena: tsrs_core::arena_checkpoint(),
             scanner_state: self.scanner.mark(),
             context_flags: self.context_flags,
             diagnostics_len: self.diagnostics.len(),
@@ -1250,7 +1256,10 @@ impl Parser {
     }
 
     // Returns true if we should abort parsing.
-    pub(crate) fn abort_parsing_list_or_move_to_next_token(&mut self, kind: ParsingContext) -> bool {
+    pub(crate) fn abort_parsing_list_or_move_to_next_token(
+        &mut self,
+        kind: ParsingContext,
+    ) -> bool {
         self.parsing_context_errors(kind);
         if self.is_in_some_parsing_context() {
             return true;
@@ -1310,7 +1319,10 @@ impl Parser {
                 );
             }
             ParsingContext::AnnotationMembers => {
-                self.parse_error_at_current_token(&diagnostics::UNEXPECTED_TOKEN_AN_ANNOTATION_PROPERTY_WAS_EXPECTED, &[]);
+                self.parse_error_at_current_token(
+                    &diagnostics::UNEXPECTED_TOKEN_AN_ANNOTATION_PROPERTY_WAS_EXPECTED,
+                    &[],
+                );
             }
             ParsingContext::ClassMembers => {
                 self.parse_error_at_current_token(&diagnostics::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED, &[]);
@@ -1434,7 +1446,9 @@ impl Parser {
             ParsingContext::SwitchClauses => {
                 self.token == Kind::CaseKeyword || self.token == Kind::DefaultKeyword
             }
-            ParsingContext::AnnotationMembers => self.look_ahead(Parser::scan_annotation_member_start),
+            ParsingContext::AnnotationMembers => {
+                self.look_ahead(Parser::scan_annotation_member_start)
+            }
             ParsingContext::TypeMembers => self.look_ahead(Parser::scan_type_member_start),
             ParsingContext::ClassMembers => {
                 // We allow semicolons as class elements (as specified by ES6) as long as we're
@@ -1696,7 +1710,9 @@ impl Parser {
             }
             return true;
         }
-        if !self.arkui.state_root.is_empty() && (self.arkui.build || self.arkui.styles) { return true; }
+        if !self.arkui.state_root.is_empty() && (self.arkui.build || self.arkui.styles) {
+            return true;
+        }
         self.report_expected(kind, message)
     }
 
@@ -2409,7 +2425,10 @@ impl Parser {
         result
     }
 
-    pub(crate) fn parse_variable_declaration_list(&mut self, in_for_statement_initializer: bool) -> P<Node> {
+    pub(crate) fn parse_variable_declaration_list(
+        &mut self,
+        in_for_statement_initializer: bool,
+    ) -> P<Node> {
         let pos = self.node_pos();
         let mut flags = NodeFlags::None;
         match self.token {
@@ -2692,7 +2711,11 @@ impl Parser {
         let is_struct = self.is_struct_declaration();
         let saved_struct = self.arkui.struct_;
         self.arkui.struct_ = is_struct;
-        if is_struct { self.next_token(); } else { self.parse_expected(Kind::ClassKeyword); }
+        if is_struct {
+            self.next_token();
+        } else {
+            self.parse_expected(Kind::ClassKeyword);
+        }
         // We don't parse the name here in await context, instead we will report a grammar error in the checker.
         let name = self.parse_name_of_class_declaration_or_expression();
         let type_parameters = self.parse_type_parameters();
@@ -2709,7 +2732,9 @@ impl Parser {
         let mut heritage_clauses = self.parse_heritage_clauses(false /*isInterface*/);
         if is_struct && heritage_clauses.is_none() {
             let ets = std::sync::Arc::clone(&self.opts.ets);
-            if let Some(base) = ets.custom_component.as_deref().filter(|base| !base.is_empty()) { heritage_clauses = Some(self.ets_struct_heritage(base)); }
+            if let Some(base) = ets.custom_component.as_deref().filter(|base| !base.is_empty()) {
+                heritage_clauses = Some(self.ets_struct_heritage(base));
+            }
         }
         let mut members: P<NodeList>;
         if self.parse_expected(Kind::OpenBraceToken) {
@@ -2865,7 +2890,10 @@ pub fn is_valid_heritage_type_reference_expression(node: P<Node>) -> bool {
 }
 
 impl Parser {
-    pub(crate) fn convert_entity_name_expression_to_entity_name(&mut self, node: P<Node>) -> P<Node> {
+    pub(crate) fn convert_entity_name_expression_to_entity_name(
+        &mut self,
+        node: P<Node>,
+    ) -> P<Node> {
         if ast::is_identifier(node) {
             return node;
         }
@@ -3570,10 +3598,14 @@ impl Parser {
                 identifier = Some(self.parse_identifier());
             }
         } else if identifier.is_some_and(|identifier| identifier.text() == "lazy")
-            && (self.token == Kind::OpenBraceToken || self.is_identifier() && self.look_ahead(|p| {
-                p.next_token();
-                p.token == Kind::FromKeyword || p.token == Kind::CommaToken && p.next_token() == Kind::OpenBraceToken
-            })) {
+            && (self.token == Kind::OpenBraceToken
+                || self.is_identifier()
+                    && self.look_ahead(|p| {
+                        p.next_token();
+                        p.token == Kind::FromKeyword
+                            || p.token == Kind::CommaToken && p.next_token() == Kind::OpenBraceToken
+                    }))
+        {
             is_lazy = true;
             identifier = if self.is_identifier() { Some(self.parse_identifier()) } else { None };
         } else if identifier.is_some()
@@ -3779,7 +3811,8 @@ impl Parser {
                 self.scanner.set_skip_jsdoc_leading_asterisks(false);
             }
         }
-        let result = self.factory.new_import_clause(phase_modifier, false, identifier, named_bindings);
+        let result =
+            self.factory.new_import_clause(phase_modifier, false, identifier, named_bindings);
         let result = self.finish_node(result, pos);
         self.statement_has_await_identifier = save_has_await_identifier;
         result

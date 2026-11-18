@@ -19263,97 +19263,445 @@ pub static JSDOC_COMMENT: Message = Message {
     reports_deprecated: false,
 };
 
-pub static SHOULD_NOT_ADD_RETURN_TYPE_TO_THE_FUNCTION_THAT_IS_ANNOTATED_BY_EXTEND: Message = Message { code: 28000, category: Category::Error, key: Key("Should_not_add_return_type_to_the_function_that_is_annotated_by_Extend_28000"), text: "Should not add return type to the function that is annotated by Extend.", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
+pub static SHOULD_NOT_ADD_RETURN_TYPE_TO_THE_FUNCTION_THAT_IS_ANNOTATED_BY_EXTEND: Message =
+    Message {
+        code: 28000,
+        category: Category::Error,
+        key: Key("Should_not_add_return_type_to_the_function_that_is_annotated_by_Extend_28000"),
+        text: "Should not add return type to the function that is annotated by Extend.",
+        reports_unnecessary: false,
+        elided_in_compatibility_pyramid: false,
+        reports_deprecated: false,
+    };
 
-pub static A_STRUCT_DECLARATION_WITHOUT_THE_DEFAULT_MODIFIER_MUST_HAVE_A_NAME: Message = Message { code: 28002, category: Category::Error, key: Key("A_struct_declaration_without_the_default_modifier_must_have_a_name_28002"), text: "A struct declaration without the 'default' modifier must have a name.", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
+pub static A_STRUCT_DECLARATION_WITHOUT_THE_DEFAULT_MODIFIER_MUST_HAVE_A_NAME: Message = Message {
+    code: 28002,
+    category: Category::Error,
+    key: Key("A_struct_declaration_without_the_default_modifier_must_have_a_name_28002"),
+    text: "A struct declaration without the 'default' modifier must have a name.",
+    reports_unnecessary: false,
+    elided_in_compatibility_pyramid: false,
+    reports_deprecated: false,
+};
 
-pub static SHOULD_NOT_ADD_RETURN_TYPE_TO_THE_FUNCTION_THAT_IS_ANNOTATED_BY_STYLES: Message = Message { code: 28003, category: Category::Error, key: Key("Should_not_add_return_type_to_the_function_that_is_annotated_by_Styles_28003"), text: "Should not add return type to the function that is annotated by Styles.", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
+pub static SHOULD_NOT_ADD_RETURN_TYPE_TO_THE_FUNCTION_THAT_IS_ANNOTATED_BY_STYLES: Message =
+    Message {
+        code: 28003,
+        category: Category::Error,
+        key: Key("Should_not_add_return_type_to_the_function_that_is_annotated_by_Styles_28003"),
+        text: "Should not add return type to the function that is annotated by Styles.",
+        reports_unnecessary: false,
+        elided_in_compatibility_pyramid: false,
+        reports_deprecated: false,
+    };
 
-pub static UNABLE_TO_RESOLVE_SIGNATURE_OF_FUNCTION_DECORATOR_WHEN_DECORATORS_ARE_NOT_VALID: Message = Message { code: 28004, category: Category::Error, key: Key("Unable_to_resolve_signature_of_function_decorator_when_decorators_are_not_valid_28004"), text: "Unable to resolve signature of function decorator when decorators are not valid.", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
+pub static UNABLE_TO_RESOLVE_SIGNATURE_OF_FUNCTION_DECORATOR_WHEN_DECORATORS_ARE_NOT_VALID:
+    Message = Message {
+    code: 28004,
+    category: Category::Error,
+    key: Key(
+        "Unable_to_resolve_signature_of_function_decorator_when_decorators_are_not_valid_28004",
+    ),
+    text: "Unable to resolve signature of function decorator when decorators are not valid.",
+    reports_unnecessary: false,
+    elided_in_compatibility_pyramid: false,
+    reports_deprecated: false,
+};
 
-pub static THE_STATEMENT_MUST_BE_WRITTEN_USE_THE_FUNCTION_0_UNDER_THE_IF_CONDITION: Message = Message { code: 28005, category: Category::Warning, key: Key("The_statement_must_be_written_use_the_function_0_under_the_if_condition_28005"), text: "The statement must be written use the function '{0}' under the if condition.", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
+pub static THE_STATEMENT_MUST_BE_WRITTEN_USE_THE_FUNCTION_0_UNDER_THE_IF_CONDITION: Message =
+    Message {
+        code: 28005,
+        category: Category::Warning,
+        key: Key("The_statement_must_be_written_use_the_function_0_under_the_if_condition_28005"),
+        text: "The statement must be written use the function '{0}' under the if condition.",
+        reports_unnecessary: false,
+        elided_in_compatibility_pyramid: false,
+        reports_deprecated: false,
+    };
 
-pub static THE_STRUCT_NAME_CANNOT_CONTAIN_RESERVED_TAG_NAME_COLON_0: Message = Message { code: 28006, category: Category::Error, key: Key("The_struct_name_cannot_contain_reserved_tag_name_Colon_0_28006"), text: "The struct name cannot contain reserved tag name: '{0}'.", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
+pub static THE_STRUCT_NAME_CANNOT_CONTAIN_RESERVED_TAG_NAME_COLON_0: Message = Message {
+    code: 28006,
+    category: Category::Error,
+    key: Key("The_struct_name_cannot_contain_reserved_tag_name_Colon_0_28006"),
+    text: "The struct name cannot contain reserved tag name: '{0}'.",
+    reports_unnecessary: false,
+    elided_in_compatibility_pyramid: false,
+    reports_deprecated: false,
+};
 
-pub static THIS_API_HAS_BEEN_SPECIAL_MARKINGS_EXERCISE_CAUTION_WHEN_USING_THIS_API: Message = Message { code: 28007, category: Category::Warning, key: Key("This_API_has_been_Special_Markings_exercise_caution_when_using_this_API_28007"), text: "This API has been Special Markings. exercise caution when using this API.", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
+pub static THIS_API_HAS_BEEN_SPECIAL_MARKINGS_EXERCISE_CAUTION_WHEN_USING_THIS_API: Message =
+    Message {
+        code: 28007,
+        category: Category::Warning,
+        key: Key("This_API_has_been_Special_Markings_exercise_caution_when_using_this_API_28007"),
+        text: "This API has been Special Markings. exercise caution when using this API.",
+        reports_unnecessary: false,
+        elided_in_compatibility_pyramid: false,
+        reports_deprecated: false,
+    };
 
-pub static LOOKING_UP_IN_OH_MODULES_FOLDER_INITIAL_LOCATION_0: Message = Message { code: 28008, category: Category::Message, key: Key("Looking_up_in_oh_modules_folder_initial_location_0_28008"), text: "Looking up in 'oh_modules' folder, initial location '{0}'.", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
+pub static LOOKING_UP_IN_OH_MODULES_FOLDER_INITIAL_LOCATION_0: Message = Message {
+    code: 28008,
+    category: Category::Message,
+    key: Key("Looking_up_in_oh_modules_folder_initial_location_0_28008"),
+    text: "Looking up in 'oh_modules' folder, initial location '{0}'.",
+    reports_unnecessary: false,
+    elided_in_compatibility_pyramid: false,
+    reports_deprecated: false,
+};
 
 pub static CONTAINING_FILE_IS_NOT_SPECIFIED_AND_ROOT_DIRECTORY_CANNOT_BE_DETERMINED_SKIPPING_LOOKUP_IN_OH_MODULES_FOLDER: Message = Message { code: 28009, category: Category::Message, key: Key("Containing_file_is_not_specified_and_root_directory_cannot_be_determined_skipping_lookup_in_oh_modul_28009"), text: "Containing file is not specified and root directory cannot be determined, skipping lookup in 'oh_modules' folder.", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
 
-pub static LOADING_MODULE_0_FROM_OH_MODULES_FOLDER_TARGET_FILE_TYPE_1: Message = Message { code: 28010, category: Category::Message, key: Key("Loading_module_0_from_oh_modules_folder_target_file_type_1_28010"), text: "Loading module '{0}' from 'oh_modules' folder, target file type '{1}'.", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
+pub static LOADING_MODULE_0_FROM_OH_MODULES_FOLDER_TARGET_FILE_TYPE_1: Message = Message {
+    code: 28010,
+    category: Category::Message,
+    key: Key("Loading_module_0_from_oh_modules_folder_target_file_type_1_28010"),
+    text: "Loading module '{0}' from 'oh_modules' folder, target file type '{1}'.",
+    reports_unnecessary: false,
+    elided_in_compatibility_pyramid: false,
+    reports_deprecated: false,
+};
 
-pub static FOUND_OH_PACKAGE_JSON5_AT_0: Message = Message { code: 28011, category: Category::Message, key: Key("Found_oh_package_json5_at_0_28011"), text: "Found 'oh-package.json5' at '{0}'.", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
+pub static FOUND_OH_PACKAGE_JSON5_AT_0: Message = Message {
+    code: 28011,
+    category: Category::Message,
+    key: Key("Found_oh_package_json5_at_0_28011"),
+    text: "Found 'oh-package.json5' at '{0}'.",
+    reports_unnecessary: false,
+    elided_in_compatibility_pyramid: false,
+    reports_deprecated: false,
+};
 
-pub static X_OH_PACKAGE_JSON5_DOES_NOT_HAVE_A_0_FIELD: Message = Message { code: 28012, category: Category::Message, key: Key("oh_package_json5_does_not_have_a_0_field_28012"), text: "'oh-package.json5' does not have a '{0}' field.", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
+pub static X_OH_PACKAGE_JSON5_DOES_NOT_HAVE_A_0_FIELD: Message = Message {
+    code: 28012,
+    category: Category::Message,
+    key: Key("oh_package_json5_does_not_have_a_0_field_28012"),
+    text: "'oh-package.json5' does not have a '{0}' field.",
+    reports_unnecessary: false,
+    elided_in_compatibility_pyramid: false,
+    reports_deprecated: false,
+};
 
-pub static X_OH_PACKAGE_JSON5_HAS_0_FIELD_1_THAT_REFERENCES_2: Message = Message { code: 28013, category: Category::Message, key: Key("oh_package_json5_has_0_field_1_that_references_2_28013"), text: "'oh-package.json5' has '{0}' field '{1}' that references '{2}'.", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
+pub static X_OH_PACKAGE_JSON5_HAS_0_FIELD_1_THAT_REFERENCES_2: Message = Message {
+    code: 28013,
+    category: Category::Message,
+    key: Key("oh_package_json5_has_0_field_1_that_references_2_28013"),
+    text: "'oh-package.json5' has '{0}' field '{1}' that references '{2}'.",
+    reports_unnecessary: false,
+    elided_in_compatibility_pyramid: false,
+    reports_deprecated: false,
+};
 
 pub static CURRENTLY_MODULE_FOR_0_IS_NOT_VERIFIED_IF_YOU_RE_IMPORTING_NAPI_ITS_VERIFICATION_WILL_BE_ENABLED_IN_LATER_SDK_VERSION_PLEASE_MAKE_SURE_THE_CORRESPONDING_D_TS_FILE_IS_PROVIDED_AND_THE_NAPIS_ARE_CORRECTLY_DECLARED: Message = Message { code: 28014, category: Category::Warning, key: Key("Currently_module_for_0_is_not_verified_If_you_re_importing_napi_its_verification_will_be_enabled_in__28014"), text: "Currently module for '{0}' is not verified. If you're importing napi, its verification will be enabled in later SDK version. Please make sure the corresponding .d.ts file is provided and the napis are correctly declared.", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
 
-pub static UI_COMPONENT_0_CANNOT_BE_USED_IN_THIS_PLACE: Message = Message { code: 28015, category: Category::Error, key: Key("UI_component_0_cannot_be_used_in_this_place_28015"), text: "UI component '{0}' cannot be used in this place.", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
+pub static UI_COMPONENT_0_CANNOT_BE_USED_IN_THIS_PLACE: Message = Message {
+    code: 28015,
+    category: Category::Error,
+    key: Key("UI_component_0_cannot_be_used_in_this_place_28015"),
+    text: "UI component '{0}' cannot be used in this place.",
+    reports_unnecessary: false,
+    elided_in_compatibility_pyramid: false,
+    reports_deprecated: false,
+};
 
-pub static IMPORTING_ARK_TS_FILES_IN_JS_AND_TS_FILES_IS_ABOUT_TO_BE_FORBIDDEN: Message = Message { code: 28016, category: Category::Warning, key: Key("Importing_ArkTS_files_in_JS_and_TS_files_is_about_to_be_forbidden_28016"), text: "Importing ArkTS files in JS and TS files is about to be forbidden.", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
+pub static IMPORTING_ARK_TS_FILES_IN_JS_AND_TS_FILES_IS_ABOUT_TO_BE_FORBIDDEN: Message = Message {
+    code: 28016,
+    category: Category::Warning,
+    key: Key("Importing_ArkTS_files_in_JS_and_TS_files_is_about_to_be_forbidden_28016"),
+    text: "Importing ArkTS files in JS and TS files is about to be forbidden.",
+    reports_unnecessary: false,
+    elided_in_compatibility_pyramid: false,
+    reports_deprecated: false,
+};
 
-pub static IMPORTING_ARK_TS_FILES_IN_JS_AND_TS_FILES_IS_FORBIDDEN: Message = Message { code: 28017, category: Category::Error, key: Key("Importing_ArkTS_files_in_JS_and_TS_files_is_forbidden_28017"), text: "Importing ArkTS files in JS and TS files is forbidden.", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
+pub static IMPORTING_ARK_TS_FILES_IN_JS_AND_TS_FILES_IS_FORBIDDEN: Message = Message {
+    code: 28017,
+    category: Category::Error,
+    key: Key("Importing_ArkTS_files_in_JS_and_TS_files_is_forbidden_28017"),
+    text: "Importing ArkTS files in JS and TS files is forbidden.",
+    reports_unnecessary: false,
+    elided_in_compatibility_pyramid: false,
+    reports_deprecated: false,
+};
 
-pub static UNEXPECTED_TOKEN_AN_ANNOTATION_PROPERTY_WAS_EXPECTED: Message = Message { code: 28018, category: Category::Error, key: Key("Unexpected_token_An_annotation_property_was_expected_28018"), text: "Unexpected token. An annotation property was expected.", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
+pub static UNEXPECTED_TOKEN_AN_ANNOTATION_PROPERTY_WAS_EXPECTED: Message = Message {
+    code: 28018,
+    category: Category::Error,
+    key: Key("Unexpected_token_An_annotation_property_was_expected_28018"),
+    text: "Unexpected token. An annotation property was expected.",
+    reports_unnecessary: false,
+    elided_in_compatibility_pyramid: false,
+    reports_deprecated: false,
+};
 
-pub static WHEN_ANNOTATION_0_IS_APPLIED_ALL_FIELDS_WITHOUT_DEFAULT_VALUES_MUST_BE_PROVIDED: Message = Message { code: 28019, category: Category::Error, key: Key("When_annotation_0_is_applied_all_fields_without_default_values_must_be_provided_28019"), text: "When annotation '{0}' is applied, all fields without default values must be provided.", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
+pub static WHEN_ANNOTATION_0_IS_APPLIED_ALL_FIELDS_WITHOUT_DEFAULT_VALUES_MUST_BE_PROVIDED:
+    Message = Message {
+    code: 28019,
+    category: Category::Error,
+    key: Key(
+        "When_annotation_0_is_applied_all_fields_without_default_values_must_be_provided_28019",
+    ),
+    text: "When annotation '{0}' is applied, all fields without default values must be provided.",
+    reports_unnecessary: false,
+    elided_in_compatibility_pyramid: false,
+    reports_deprecated: false,
+};
 
-pub static ONLY_AN_OBJECT_LITERAL_HAVE_TO_BE_PROVIDED_AS_ANNOTATION_PARAMETERS_LIST_GOT_COLON_0: Message = Message { code: 28020, category: Category::Error, key: Key("Only_an_object_literal_have_to_be_provided_as_annotation_parameters_list_got_Colon_0_28020"), text: "Only an object literal have to be provided as annotation parameters list, got: '{0}'.", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
+pub static ONLY_AN_OBJECT_LITERAL_HAVE_TO_BE_PROVIDED_AS_ANNOTATION_PARAMETERS_LIST_GOT_COLON_0:
+    Message = Message {
+    code: 28020,
+    category: Category::Error,
+    key: Key(
+        "Only_an_object_literal_have_to_be_provided_as_annotation_parameters_list_got_Colon_0_28020",
+    ),
+    text: "Only an object literal have to be provided as annotation parameters list, got: '{0}'.",
+    reports_unnecessary: false,
+    elided_in_compatibility_pyramid: false,
+    reports_deprecated: false,
+};
 
 pub static ANNOTATION_HAVE_TO_BE_APPLIED_ONLY_FOR_NON_ABSTRACT_CLASS_DECLARATIONS_AND_METHOD_DECLARATIONS_IN_NON_ABSTRACT_CLASSES_GOT_COLON_0: Message = Message { code: 28021, category: Category::Error, key: Key("Annotation_have_to_be_applied_only_for_non_abstract_class_declarations_and_method_declarations_in_no_28021"), text: "Annotation have to be applied only for non-abstract class declarations and method declarations in non-abstract classes, got: '{0}'.", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
 
-pub static ANNOTATION_HAVE_TO_BE_APPLIED_FOR_CLASSES_OR_METHODS_IN_CLASSES_ONLY_GOT_COLON_0: Message = Message { code: 28022, category: Category::Error, key: Key("Annotation_have_to_be_applied_for_classes_or_methods_in_classes_only_got_Colon_0_28022"), text: "Annotation have to be applied for classes or methods in classes only, got: '{0}'.", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
+pub static ANNOTATION_HAVE_TO_BE_APPLIED_FOR_CLASSES_OR_METHODS_IN_CLASSES_ONLY_GOT_COLON_0:
+    Message = Message {
+    code: 28022,
+    category: Category::Error,
+    key: Key(
+        "Annotation_have_to_be_applied_for_classes_or_methods_in_classes_only_got_Colon_0_28022",
+    ),
+    text: "Annotation have to be applied for classes or methods in classes only, got: '{0}'.",
+    reports_unnecessary: false,
+    elided_in_compatibility_pyramid: false,
+    reports_deprecated: false,
+};
 
-pub static REPEATABLE_ANNOTATION_ARE_NOT_SUPPORTED_GOT_COLON_0: Message = Message { code: 28023, category: Category::Error, key: Key("Repeatable_annotation_are_not_supported_got_Colon_0_28023"), text: "Repeatable annotation are not supported, got: '{0}'.", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
+pub static REPEATABLE_ANNOTATION_ARE_NOT_SUPPORTED_GOT_COLON_0: Message = Message {
+    code: 28023,
+    category: Category::Error,
+    key: Key("Repeatable_annotation_are_not_supported_got_Colon_0_28023"),
+    text: "Repeatable annotation are not supported, got: '{0}'.",
+    reports_unnecessary: false,
+    elided_in_compatibility_pyramid: false,
+    reports_deprecated: false,
+};
 
-pub static ANNOTATION_MUST_BE_DEFINED_AT_TOP_LEVEL_ONLY: Message = Message { code: 28024, category: Category::Error, key: Key("Annotation_must_be_defined_at_top_level_only_28024"), text: "Annotation must be defined at top-level only.", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
+pub static ANNOTATION_MUST_BE_DEFINED_AT_TOP_LEVEL_ONLY: Message = Message {
+    code: 28024,
+    category: Category::Error,
+    key: Key("Annotation_must_be_defined_at_top_level_only_28024"),
+    text: "Annotation must be defined at top-level only.",
+    reports_unnecessary: false,
+    elided_in_compatibility_pyramid: false,
+    reports_deprecated: false,
+};
 
-pub static ANNOTATION_NAME_CANNOT_BE_0: Message = Message { code: 28025, category: Category::Error, key: Key("Annotation_name_cannot_be_0_28025"), text: "Annotation name cannot be '{0}'.", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
+pub static ANNOTATION_NAME_CANNOT_BE_0: Message = Message {
+    code: 28025,
+    category: Category::Error,
+    key: Key("Annotation_name_cannot_be_0_28025"),
+    text: "Annotation name cannot be '{0}'.",
+    reports_unnecessary: false,
+    elided_in_compatibility_pyramid: false,
+    reports_deprecated: false,
+};
 
-pub static ANNOTATION_CANNOT_BE_APPLIED_FOR_ANNOTATION_DECLARATION: Message = Message { code: 28026, category: Category::Error, key: Key("Annotation_cannot_be_applied_for_annotation_declaration_28026"), text: "Annotation cannot be applied for annotation declaration.", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
+pub static ANNOTATION_CANNOT_BE_APPLIED_FOR_ANNOTATION_DECLARATION: Message = Message {
+    code: 28026,
+    category: Category::Error,
+    key: Key("Annotation_cannot_be_applied_for_annotation_declaration_28026"),
+    text: "Annotation cannot be applied for annotation declaration.",
+    reports_unnecessary: false,
+    elided_in_compatibility_pyramid: false,
+    reports_deprecated: false,
+};
 
-pub static ANNOTATION_CANNOT_BE_USED_AS_TYPE_OR_VARIABLE_OR_FUNCTION_OR_METHOD: Message = Message { code: 28027, category: Category::Error, key: Key("Annotation_cannot_be_used_as_type_or_variable_or_function_or_method_28027"), text: "Annotation cannot be used as type or variable or function or method.", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
+pub static ANNOTATION_CANNOT_BE_USED_AS_TYPE_OR_VARIABLE_OR_FUNCTION_OR_METHOD: Message = Message {
+    code: 28027,
+    category: Category::Error,
+    key: Key("Annotation_cannot_be_used_as_type_or_variable_or_function_or_method_28027"),
+    text: "Annotation cannot be used as type or variable or function or method.",
+    reports_unnecessary: false,
+    elided_in_compatibility_pyramid: false,
+    reports_deprecated: false,
+};
 
-pub static ANNOTATION_CANNOT_BE_USED_AS_A_TYPE: Message = Message { code: 28028, category: Category::Error, key: Key("Annotation_cannot_be_used_as_a_type_28028"), text: "Annotation cannot be used as a type.", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
+pub static ANNOTATION_CANNOT_BE_USED_AS_A_TYPE: Message = Message {
+    code: 28028,
+    category: Category::Error,
+    key: Key("Annotation_cannot_be_used_as_a_type_28028"),
+    text: "Annotation cannot be used as a type.",
+    reports_unnecessary: false,
+    elided_in_compatibility_pyramid: false,
+    reports_deprecated: false,
+};
 
-pub static ANNOTATION_CANNOT_BE_USED_AS_A_VALUE: Message = Message { code: 28029, category: Category::Error, key: Key("Annotation_cannot_be_used_as_a_value_28029"), text: "Annotation cannot be used as a value.", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
+pub static ANNOTATION_CANNOT_BE_USED_AS_A_VALUE: Message = Message {
+    code: 28029,
+    category: Category::Error,
+    key: Key("Annotation_cannot_be_used_as_a_value_28029"),
+    text: "Annotation cannot be used as a value.",
+    reports_unnecessary: false,
+    elided_in_compatibility_pyramid: false,
+    reports_deprecated: false,
+};
 
-pub static ANNOTATION_CANNOT_BE_RENAMED_IN_IMPORT_OR_EXPORT: Message = Message { code: 28030, category: Category::Error, key: Key("Annotation_cannot_be_renamed_in_import_or_export_28030"), text: "Annotation cannot be renamed in import or export.", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
+pub static ANNOTATION_CANNOT_BE_RENAMED_IN_IMPORT_OR_EXPORT: Message = Message {
+    code: 28030,
+    category: Category::Error,
+    key: Key("Annotation_cannot_be_renamed_in_import_or_export_28030"),
+    text: "Annotation cannot be renamed in import or export.",
+    reports_unnecessary: false,
+    elided_in_compatibility_pyramid: false,
+    reports_deprecated: false,
+};
 
-pub static ANNOTATION_CANNOT_BE_EXPORTED_AS_DEFAULT: Message = Message { code: 28031, category: Category::Error, key: Key("Annotation_cannot_be_exported_as_default_28031"), text: "Annotation cannot be exported as default.", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
+pub static ANNOTATION_CANNOT_BE_EXPORTED_AS_DEFAULT: Message = Message {
+    code: 28031,
+    category: Category::Error,
+    key: Key("Annotation_cannot_be_exported_as_default_28031"),
+    text: "Annotation cannot be exported as default.",
+    reports_unnecessary: false,
+    elided_in_compatibility_pyramid: false,
+    reports_deprecated: false,
+};
 
-pub static AN_ANNOTATION_PROPERTY_MUST_HAVE_A_TYPE_OR_SLASHAND_AN_INITIALIZER: Message = Message { code: 28032, category: Category::Error, key: Key("An_annotation_property_must_have_a_type_or_Slashand_an_initializer_28032"), text: "An annotation property must have a type or/and an initializer.", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
+pub static AN_ANNOTATION_PROPERTY_MUST_HAVE_A_TYPE_OR_SLASHAND_AN_INITIALIZER: Message = Message {
+    code: 28032,
+    category: Category::Error,
+    key: Key("An_annotation_property_must_have_a_type_or_Slashand_an_initializer_28032"),
+    text: "An annotation property must have a type or/and an initializer.",
+    reports_unnecessary: false,
+    elided_in_compatibility_pyramid: false,
+    reports_deprecated: false,
+};
 
 pub static A_TYPE_OF_ANNOTATION_PROPERTY_HAVE_TO_BE_NUMBER_BOOLEAN_STRING_CONST_ENUMERATION_TYPES_OR_ARRAY_OF_ABOVE_TYPES_GOT_COLON_0: Message = Message { code: 28033, category: Category::Error, key: Key("A_type_of_annotation_property_have_to_be_number_boolean_string_const_enumeration_types_or_array_of_a_28033"), text: "A type of annotation property have to be number, boolean, string, const enumeration types or array of above types, got: '{0}'.", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
 
-pub static DEFAULT_VALUE_OF_ANNOTATION_PROPERTY_CAN_BE_A_CONSTANT_EXPRESSION_GOT_COLON_0: Message = Message { code: 28034, category: Category::Error, key: Key("Default_value_of_annotation_property_can_be_a_constant_expression_got_Colon_0_28034"), text: "Default value of annotation property can be a constant expression, got: '{0}'.", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
+pub static DEFAULT_VALUE_OF_ANNOTATION_PROPERTY_CAN_BE_A_CONSTANT_EXPRESSION_GOT_COLON_0: Message =
+    Message {
+        code: 28034,
+        category: Category::Error,
+        key: Key(
+            "Default_value_of_annotation_property_can_be_a_constant_expression_got_Colon_0_28034",
+        ),
+        text: "Default value of annotation property can be a constant expression, got: '{0}'.",
+        reports_unnecessary: false,
+        elided_in_compatibility_pyramid: false,
+        reports_deprecated: false,
+    };
 
 pub static ALL_MEMBERS_OF_OBJECT_LITERAL_WHICH_IS_PROVIDED_AS_ANNOTATION_PARAMETERS_LIST_HAVE_TO_BE_CONSTANT_EXPRESSIONS_GOT_COLON_0: Message = Message { code: 28035, category: Category::Error, key: Key("All_members_of_object_literal_which_is_provided_as_annotation_parameters_list_have_to_be_constant_ex_28035"), text: "All members of object literal which is provided as annotation parameters list, have to be constant expressions, got: '{0}'.", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
 
-pub static ANNOTATION_0_USED_BEFORE_ITS_DECLARATION: Message = Message { code: 28036, category: Category::Error, key: Key("Annotation_0_used_before_its_declaration_28036"), text: "Annotation '{0}' used before its declaration.", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
+pub static ANNOTATION_0_USED_BEFORE_ITS_DECLARATION: Message = Message {
+    code: 28036,
+    category: Category::Error,
+    key: Key("Annotation_0_used_before_its_declaration_28036"),
+    text: "Annotation '{0}' used before its declaration.",
+    reports_unnecessary: false,
+    elided_in_compatibility_pyramid: false,
+    reports_deprecated: false,
+};
 
-pub static IN_ANNOTATION_DECLARATION_ANY_SYMBOLS_BETWEEN_AND_INTERFACE_ARE_FORBIDDEN: Message = Message { code: 28037, category: Category::Error, key: Key("In_annotation_declaration_any_symbols_between_and_interface_are_forbidden_28037"), text: "In annotation declaration any symbols between '@' and 'interface' are forbidden.", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
+pub static IN_ANNOTATION_DECLARATION_ANY_SYMBOLS_BETWEEN_AND_INTERFACE_ARE_FORBIDDEN: Message =
+    Message {
+        code: 28037,
+        category: Category::Error,
+        key: Key("In_annotation_declaration_any_symbols_between_and_interface_are_forbidden_28037"),
+        text: "In annotation declaration any symbols between '@' and 'interface' are forbidden.",
+        reports_unnecessary: false,
+        elided_in_compatibility_pyramid: false,
+        reports_deprecated: false,
+    };
 
-pub static ENABLE_SUPPORT_OF_ETS_ANNOTATIONS: Message = Message { code: 28038, category: Category::Message, key: Key("Enable_support_of_ETS_annotations_28038"), text: "Enable support of ETS annotations", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
+pub static ENABLE_SUPPORT_OF_ETS_ANNOTATIONS: Message = Message {
+    code: 28038,
+    category: Category::Message,
+    key: Key("Enable_support_of_ETS_annotations_28038"),
+    text: "Enable support of ETS annotations",
+    reports_unnecessary: false,
+    elided_in_compatibility_pyramid: false,
+    reports_deprecated: false,
+};
 
-pub static ANNOTATION_CAN_ONLY_BE_EXPORTED_IN_DECLARATION_STATEMENT: Message = Message { code: 28039, category: Category::Error, key: Key("Annotation_can_only_be_exported_in_declaration_statement_28039"), text: "Annotation can only be exported in declaration statement.", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
+pub static ANNOTATION_CAN_ONLY_BE_EXPORTED_IN_DECLARATION_STATEMENT: Message = Message {
+    code: 28039,
+    category: Category::Error,
+    key: Key("Annotation_can_only_be_exported_in_declaration_statement_28039"),
+    text: "Annotation can only be exported in declaration statement.",
+    reports_unnecessary: false,
+    elided_in_compatibility_pyramid: false,
+    reports_deprecated: false,
+};
 
-pub static FUNCTION_MAY_THROW_EXCEPTIONS_SPECIAL_HANDLING_IS_REQUIRED: Message = Message { code: 28040, category: Category::Warning, key: Key("Function_may_throw_exceptions_Special_handling_is_required_28040"), text: "Function may throw exceptions. Special handling is required.", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
+pub static FUNCTION_MAY_THROW_EXCEPTIONS_SPECIAL_HANDLING_IS_REQUIRED: Message = Message {
+    code: 28040,
+    category: Category::Warning,
+    key: Key("Function_may_throw_exceptions_Special_handling_is_required_28040"),
+    text: "Function may throw exceptions. Special handling is required.",
+    reports_unnecessary: false,
+    elided_in_compatibility_pyramid: false,
+    reports_deprecated: false,
+};
 
-pub static ANNOTATIONS_ARE_NOT_SUPPORTED_IN_HARS_COMPILED_TO_JAVA_SCRIPT_FILES: Message = Message { code: 28041, category: Category::Error, key: Key("Annotations_are_not_supported_in_Hars_compiled_to_JavaScript_files_28041"), text: "Annotations are not supported in Hars compiled to JavaScript files.", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
+pub static ANNOTATIONS_ARE_NOT_SUPPORTED_IN_HARS_COMPILED_TO_JAVA_SCRIPT_FILES: Message = Message {
+    code: 28041,
+    category: Category::Error,
+    key: Key("Annotations_are_not_supported_in_Hars_compiled_to_JavaScript_files_28041"),
+    text: "Annotations are not supported in Hars compiled to JavaScript files.",
+    reports_unnecessary: false,
+    elided_in_compatibility_pyramid: false,
+    reports_deprecated: false,
+};
 
-pub static ANNOTATION_CANNOT_BE_APPLIED_FOR_GETTER_OR_SETTER_GOT_COLON_0: Message = Message { code: 28042, category: Category::Error, key: Key("Annotation_cannot_be_applied_for_getter_or_setter_got_Colon_0_28042"), text: "Annotation cannot be applied for getter or setter, got: '{0}'.", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
+pub static ANNOTATION_CANNOT_BE_APPLIED_FOR_GETTER_OR_SETTER_GOT_COLON_0: Message = Message {
+    code: 28042,
+    category: Category::Error,
+    key: Key("Annotation_cannot_be_applied_for_getter_or_setter_got_Colon_0_28042"),
+    text: "Annotation cannot be applied for getter or setter, got: '{0}'.",
+    reports_unnecessary: false,
+    elided_in_compatibility_pyramid: false,
+    reports_deprecated: false,
+};
 
-pub static X_0_ANNOTATION_ARE_NOT_VALID_HERE_GOT_COLON_1: Message = Message { code: 28043, category: Category::Error, key: Key("_0_annotation_are_not_valid_here_got_Colon_1_28043"), text: "{0} annotation are not valid here, got: '{1}'.", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
+pub static X_0_ANNOTATION_ARE_NOT_VALID_HERE_GOT_COLON_1: Message = Message {
+    code: 28043,
+    category: Category::Error,
+    key: Key("_0_annotation_are_not_valid_here_got_Colon_1_28043"),
+    text: "{0} annotation are not valid here, got: '{1}'.",
+    reports_unnecessary: false,
+    elided_in_compatibility_pyramid: false,
+    reports_deprecated: false,
+};
 
-pub static ANNOTATION_CANNOT_BE_APPLIED_FOR_CONSTRUCTOR_GOT_COLON_0: Message = Message { code: 28044, category: Category::Error, key: Key("Annotation_cannot_be_applied_for_constructor_got_Colon_0_28044"), text: "Annotation cannot be applied for constructor, got: '{0}'.", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
+pub static ANNOTATION_CANNOT_BE_APPLIED_FOR_CONSTRUCTOR_GOT_COLON_0: Message = Message {
+    code: 28044,
+    category: Category::Error,
+    key: Key("Annotation_cannot_be_applied_for_constructor_got_Colon_0_28044"),
+    text: "Annotation cannot be applied for constructor, got: '{0}'.",
+    reports_unnecessary: false,
+    elided_in_compatibility_pyramid: false,
+    reports_deprecated: false,
+};
 
-pub static CANNOT_FIND_MODULE_0_THIS_MODULE_IS_NOT_EXPORTED: Message = Message { code: 28045, category: Category::Error, key: Key("Cannot_find_module_0_This_module_is_not_exported_28045"), text: "Cannot find module '{0}'. This module is not exported.", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
+pub static CANNOT_FIND_MODULE_0_THIS_MODULE_IS_NOT_EXPORTED: Message = Message {
+    code: 28045,
+    category: Category::Error,
+    key: Key("Cannot_find_module_0_This_module_is_not_exported_28045"),
+    text: "Cannot find module '{0}'. This module is not exported.",
+    reports_unnecessary: false,
+    elided_in_compatibility_pyramid: false,
+    reports_deprecated: false,
+};
 
-pub static X_0_SHOULD_ONLY_BE_APPLIED_TO_ANNOTATION_DECLARATIONS: Message = Message { code: 28046, category: Category::Error, key: Key("_0_should_only_be_applied_to_annotation_declarations_28046"), text: "{0} should only be applied to annotation declarations.", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
+pub static X_0_SHOULD_ONLY_BE_APPLIED_TO_ANNOTATION_DECLARATIONS: Message = Message {
+    code: 28046,
+    category: Category::Error,
+    key: Key("_0_should_only_be_applied_to_annotation_declarations_28046"),
+    text: "{0} should only be applied to annotation declarations.",
+    reports_unnecessary: false,
+    elided_in_compatibility_pyramid: false,
+    reports_deprecated: false,
+};
 
 pub static ARK_UI_JAVA_SCRIPT_EMIT_REQUIRES_THE_OPEN_HARMONY_SDK_COMPILER_USE_NO_EMIT_OR_EMIT_DECLARATION_ONLY: Message = Message { code: 100_069, category: Category::Error, key: Key("ArkUI_JavaScript_emit_requires_the_OpenHarmony_SDK_compiler_Use_noEmit_or_emitDeclarationOnly_100069"), text: "ArkUI JavaScript emit requires the OpenHarmony SDK compiler. Use noEmit or emitDeclarationOnly.", reports_unnecessary: false, elided_in_compatibility_pyramid: false, reports_deprecated: false };
 

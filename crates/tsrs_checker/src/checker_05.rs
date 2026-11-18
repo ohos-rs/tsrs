@@ -741,8 +741,7 @@ impl Checker {
         let args = s.args.clone();
         if s.is_single_non_generic_candidate {
             let candidate = s.candidates[0];
-            if (!s.type_arguments.is_empty()
-                && !s.type_arguments.iter().any(|n| n.is_virtual()))
+            if (!s.type_arguments.is_empty() && !s.type_arguments.iter().any(|n| n.is_virtual()))
                 || !self.has_correct_arity(node, &args, candidate, s.signature_help_trailing_comma)
             {
                 return None;
@@ -1922,7 +1921,8 @@ impl Checker {
         head_message: Option<&'static Message>,
     ) {
         let s_node = s.node.unwrap();
-        let is_ets = get_source_file_of_node(node).is_some_and(|file| file.script_kind.get() == tsrs_core::ScriptKind::ETS);
+        let is_ets = get_source_file_of_node(node)
+            .is_some_and(|file| file.script_kind.get() == tsrs_core::ScriptKind::ETS);
         if is_ets && (2..=3).contains(&s.candidates_for_argument_error.len()) {
             let mut all_diagnostics = Vec::new();
             let mut min_diagnostics = usize::MAX;
@@ -1931,7 +1931,15 @@ impl Checker {
             let args = s.args.clone();
             for (index, &candidate) in s.candidates_for_argument_error.iter().enumerate() {
                 let mut candidate_diagnostics = Vec::new();
-                self.is_signature_applicable(s_node, &args, candidate, self.assignable_relation, CheckMode::Normal, true, Some(&mut candidate_diagnostics));
+                self.is_signature_applicable(
+                    s_node,
+                    &args,
+                    candidate,
+                    self.assignable_relation,
+                    CheckMode::Normal,
+                    true,
+                    Some(&mut candidate_diagnostics),
+                );
                 if candidate_diagnostics.len() <= min_diagnostics {
                     min_diagnostics = candidate_diagnostics.len();
                     min_index = index;
@@ -1939,25 +1947,54 @@ impl Checker {
                 max_diagnostics = max_diagnostics.max(candidate_diagnostics.len());
                 all_diagnostics.push(candidate_diagnostics);
             }
-            let selected: Vec<_> = if max_diagnostics > 1 { all_diagnostics.swap_remove(min_index) } else { all_diagnostics.into_iter().flatten().collect() };
+            let selected: Vec<_> = if max_diagnostics > 1 {
+                all_diagnostics.swap_remove(min_index)
+            } else {
+                all_diagnostics.into_iter().flatten().collect()
+            };
             if let Some(&first) = selected.first() {
                 let mut chains = Vec::new();
                 let mut related = Vec::new();
                 for (index, &diagnostic) in selected.iter().enumerate() {
                     let candidate_index = if max_diagnostics > 1 { min_index } else { index };
                     let candidate = s.candidates_for_argument_error[candidate_index];
-                    chains.push(ast::new_diagnostic_chain(diagnostic, &diagnostics::OVERLOAD_0_OF_1_2_GAVE_THE_FOLLOWING_ERROR, &[&(candidate_index + 1), &signatures.len(), &self.signature_to_string(candidate)]));
+                    chains.push(ast::new_diagnostic_chain(
+                        diagnostic,
+                        &diagnostics::OVERLOAD_0_OF_1_2_GAVE_THE_FOLLOWING_ERROR,
+                        &[
+                            &(candidate_index + 1),
+                            &signatures.len(),
+                            &self.signature_to_string(candidate),
+                        ],
+                    ));
                     related.extend_from_slice(diagnostic.related_information());
                 }
-                let same_range = selected.iter().all(|diagnostic| diagnostic.file() == first.file() && diagnostic.loc() == first.loc());
+                let same_range = selected.iter().all(|diagnostic| {
+                    diagnostic.file() == first.file() && diagnostic.loc() == first.loc()
+                });
                 let mut diagnostic = if same_range {
-                    ast::new_diagnostic(first.file(), first.loc(), &diagnostics::NO_OVERLOAD_MATCHES_THIS_CALL, &[])
+                    ast::new_diagnostic(
+                        first.file(),
+                        first.loc(),
+                        &diagnostics::NO_OVERLOAD_MATCHES_THIS_CALL,
+                        &[],
+                    )
                 } else {
-                    new_diagnostic_for_node(Some(node), Some(&diagnostics::NO_OVERLOAD_MATCHES_THIS_CALL), &[])
+                    new_diagnostic_for_node(
+                        Some(node),
+                        Some(&diagnostics::NO_OVERLOAD_MATCHES_THIS_CALL),
+                        &[],
+                    )
                 };
                 diagnostic.set_message_chain(&chains).set_related_info(&related);
-                if let Some(head_message) = head_message { diagnostic = ast::new_diagnostic_chain(diagnostic, head_message, &[]); }
-                self.add_implementation_success_elaboration(s, s.candidates_for_argument_error[0], diagnostic);
+                if let Some(head_message) = head_message {
+                    diagnostic = ast::new_diagnostic_chain(diagnostic, head_message, &[]);
+                }
+                self.add_implementation_success_elaboration(
+                    s,
+                    s.candidates_for_argument_error[0],
+                    diagnostic,
+                );
                 self.add_diagnostic(diagnostic);
             }
             return;
@@ -3272,7 +3309,14 @@ impl Checker {
         self.record_potential_collision_with_weak_map_set_in_generated_code(node, name);
         self.record_potential_collision_with_reflect_in_generated_code(node, Some(name));
         if is_class_like(node) {
-            self.check_type_name_is_reserved(name, if ast::is_annotation_declaration(node) { &diagnostics::ANNOTATION_NAME_CANNOT_BE_0 } else { &diagnostics::CLASS_NAME_CANNOT_BE_0 });
+            self.check_type_name_is_reserved(
+                name,
+                if ast::is_annotation_declaration(node) {
+                    &diagnostics::ANNOTATION_NAME_CANNOT_BE_0
+                } else {
+                    &diagnostics::CLASS_NAME_CANNOT_BE_0
+                },
+            );
             if !node.flags().intersects(NodeFlags::Ambient) {
                 self.check_class_name_collision_with_object(name);
             }
@@ -3583,7 +3627,9 @@ impl Checker {
     pub(crate) fn check_expression_with_type_arguments(&mut self, node: P<Node>) -> P<Type> {
         self.check_grammar_expression_with_type_arguments(node);
         self.check_source_elements(node.type_arguments());
-        if self.compiler_options.ets_loader_path.is_empty() && is_expression_with_type_arguments(node) {
+        if self.compiler_options.ets_loader_path.is_empty()
+            && is_expression_with_type_arguments(node)
+        {
             let parent = walk_up_parenthesized_expressions(node.parent()).unwrap();
             if is_binary_expression(parent)
                 && parent.as_binary_expression().operator_token.kind() == Kind::InstanceOfKeyword

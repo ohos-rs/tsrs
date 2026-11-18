@@ -508,7 +508,8 @@ impl ForawaitTransformer {
             ),
             None,
             None,
-            f.new_node_list(vec![]), None,
+            f.new_node_list(vec![]),
+            None,
             NodeFlags::None,
         );
         let get_done = f.new_property_access_expression(

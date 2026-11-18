@@ -303,11 +303,8 @@ impl Walker for EncodeState {
         self.table.push(None);
         self.link_prev();
         let pos = self.cx.utf16(list.pos());
-        let end = if list.has_trailing_comma_marker() {
-            u32::MAX - 1
-        } else {
-            self.cx.utf16(list.end())
-        };
+        let end =
+            if list.has_trailing_comma_marker() { u32::MAX - 1 } else { self.cx.utf16(list.end()) };
         let values = [
             SYNTAX_KIND_NODE_LIST,
             pos,
@@ -490,7 +487,11 @@ fn encode_tree(
     } else {
         String::new()
     };
-    let ets_options_index = if ets_json.is_empty() { NO_STRUCTURED_DATA } else { state.cx.strs.add(&ets_json, Kind::Unknown, 0, 0) };
+    let ets_options_index = if ets_json.is_empty() {
+        NO_STRUCTURED_DATA
+    } else {
+        state.cx.strs.add(&ets_json, Kind::Unknown, 0, 0)
+    };
     let metadata = (PROTOCOL_VERSION as u32) << 24;
     let offset_string_offsets = HEADER_SIZE;
     let offset_string_data = HEADER_SIZE + state.cx.strs.offsets_len() * 4;
@@ -825,16 +826,26 @@ fn encode_string_array(strs: &[&str], buf: &mut Vec<u8>) -> u32 {
 /// Protocol 10 `ArkTS` metadata, also used by source-file descriptor identities.
 pub fn source_file_arkts_options_json(sf: &SourceFile) -> String {
     let opts = sf.parse_options();
-    if sf.script_kind() != tsrs_core::ScriptKind::ETS && !opts.ets_annotations_enable
-        && !opts.open_harmony49 && opts.ets_loader_path.is_empty()
-        && !opts.no_transformed_kit_in_parser && *opts.ets == tsrs_core::EtsOptions::default()
-    { return String::new(); }
+    if sf.script_kind() != tsrs_core::ScriptKind::ETS
+        && !opts.ets_annotations_enable
+        && !opts.open_harmony49
+        && opts.ets_loader_path.is_empty()
+        && !opts.no_transformed_kit_in_parser
+        && *opts.ets == tsrs_core::EtsOptions::default()
+    {
+        return String::new();
+    }
     let positions = PositionMap::compute(sf.text());
-    let ranges: Vec<_> = sf.marked_kit_import_ranges.get().iter().map(|range|
-        [
-            positions.utf8_to_utf16(i64::from(range.pos().source_offset().unwrap_or(0))),
-            positions.utf8_to_utf16(i64::from(range.end().source_offset().unwrap_or(0))),
-        ])
+    let ranges: Vec<_> = sf
+        .marked_kit_import_ranges
+        .get()
+        .iter()
+        .map(|range| {
+            [
+                positions.utf8_to_utf16(i64::from(range.pos().source_offset().unwrap_or(0))),
+                positions.utf8_to_utf16(i64::from(range.end().source_offset().unwrap_or(0))),
+            ]
+        })
         .collect();
     serde_json::json!({
         "ets": opts.ets,
@@ -844,11 +855,16 @@ pub fn source_file_arkts_options_json(sf: &SourceFile) -> String {
         "noTransformedKitInParser": opts.no_transformed_kit_in_parser,
         "kitConfigKey": opts.kit_config_key,
         "markedKitImportRanges": ranges,
-    }).to_string()
+    })
+    .to_string()
 }
 
 pub fn source_file_parse_options_key(sf: &SourceFile) -> String {
-    format!("{}:{}", encode_parse_options(sf.parse_options().external_module_indicator_options), source_file_arkts_options_json(sf))
+    format!(
+        "{}:{}",
+        encode_parse_options(sf.parse_options().external_module_indicator_options),
+        source_file_arkts_options_json(sf)
+    )
 }
 
 // encoder.go:817

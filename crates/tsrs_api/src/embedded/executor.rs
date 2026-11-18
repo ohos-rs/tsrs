@@ -22,20 +22,13 @@ impl Executor {
                 }
             })
             .map_err(|e| ApiError::internal(format!("cannot start compiler worker: {e}")))?;
-        Ok(Self {
-            sender: Mutex::new(Some(sender)),
-            worker: Some(worker),
-        })
+        Ok(Self { sender: Mutex::new(Some(sender)), worker: Some(worker) })
     }
     pub(super) fn run<T: Send + 'static>(
         &self,
         f: impl FnOnce() -> ApiResult<T> + Send + 'static,
     ) -> ApiResult<T> {
-        if self
-            .worker
-            .as_ref()
-            .is_some_and(|w| w.thread().id() == thread::current().id())
-        {
+        if self.worker.as_ref().is_some_and(|w| w.thread().id() == thread::current().id()) {
             return Err(ApiError::client(
                 "reentrant embedded compiler request from a host callback",
             ));
@@ -51,9 +44,7 @@ impl Executor {
             .ok_or_else(|| ApiError::client("compiler worker is closed"))?
             .send(work)
             .map_err(|e| ApiError::internal(format!("compiler worker stopped: {e}")))?;
-        receiver
-            .recv()
-            .map_err(|e| ApiError::internal(format!("compiler worker stopped: {e}")))?
+        receiver.recv().map_err(|e| ApiError::internal(format!("compiler worker stopped: {e}")))?
     }
 }
 impl Drop for Executor {

@@ -302,17 +302,18 @@ pub struct CheckerScope {
     _scope: CheckerScopeKind,
 }
 
-#[expect(
-    dead_code,
-    reason = "the payloads keep the arena scope alive until the guard drops"
-)]
+#[expect(dead_code, reason = "the payloads keep the arena scope alive until the guard drops")]
 enum CheckerScopeKind {
     Scratch(tsrs_core::arena::ScratchScope),
     Snapshot(tsrs_core::arena::RegionScope),
 }
 
 impl SlotChecker {
-    fn new(program: &'static Program, in_region: bool, factory: fn(&'static Program) -> Box<Checker>) -> SlotChecker {
+    fn new(
+        program: &'static Program,
+        in_region: bool,
+        factory: fn(&'static Program) -> Box<Checker>,
+    ) -> SlotChecker {
         // API/LSP programs have an external project pool and are freed with their
         // snapshots. Their additional ArkTS build/linter pools must own allocations
         // too: strict options retain SDK hosts, which can keep Node's event loop alive.
@@ -354,15 +355,20 @@ impl SlotChecker {
             let fork = crate::sharedgraph::fresh_fork();
             fork.unwrap_or_else(|| factory(program))
         };
-        SlotChecker { checker: Some(checker), region: Some(region), snapshot_owned: false, diagnostics }
+        SlotChecker {
+            checker: Some(checker),
+            region: Some(region),
+            snapshot_owned: false,
+            diagnostics,
+        }
     }
 
     // Snapshot checkers use the same registered-region ownership as the project
     // pool. CLI recycling uses scratch regions so shared data survives retirement.
     fn enter(&self) -> Option<CheckerScope> {
-        self.region
-            .as_ref()
-            .map(|region| Self::enter_region(region, self.snapshot_owned, self.diagnostics.as_ref()))
+        self.region.as_ref().map(|region| {
+            Self::enter_region(region, self.snapshot_owned, self.diagnostics.as_ref())
+        })
     }
 
     fn enter_region(
@@ -398,7 +404,9 @@ impl SlotChecker {
 }
 
 impl Drop for SlotChecker {
-    fn drop(&mut self) { self.retire(); }
+    fn drop(&mut self) {
+        self.retire();
+    }
 }
 
 impl std::ops::Deref for SlotChecker {
@@ -923,7 +931,11 @@ impl CheckerPoolImpl {
     fn lock_checker(&self, state: &PoolState, index: usize) -> MutexGuard<'static, SlotChecker> {
         let mut slot = state.checkers[index].0.lock().unwrap();
         if slot.checker.is_none() {
-            *slot = SlotChecker::new(self.program, state.recycle || self.program.checker_regions, self.factory);
+            *slot = SlotChecker::new(
+                self.program,
+                state.recycle || self.program.checker_regions,
+                self.factory,
+            );
         }
         slot
     }
@@ -970,7 +982,8 @@ impl CheckerPoolImpl {
                 // With the shared graph (sharedgraph.rs) the pool's checkers are plain until the type-check pass makes
                 // them forks of the seed.
                 run_work_group(self.single_threaded, self.checker_count, |i| {
-                    let c = SlotChecker::new(program, recycle || program.checker_regions, self.factory);
+                    let c =
+                        SlotChecker::new(program, recycle || program.checker_regions, self.factory);
                     if shared && i == 0 {
                         crate::sharedgraph::note_fresh_checker(&c);
                     }
@@ -1082,16 +1095,28 @@ impl CheckerPoolImpl {
     /// Keep submission and final diagnostic collection within the same locked
     /// checker and region. No stealing/retirement occurs in this build pass.
     pub(crate) fn for_each_checker_group_do_syscap(
-        &self, files: &[P<SourceFile>], single_threaded: bool,
+        &self,
+        files: &[P<SourceFile>],
+        single_threaded: bool,
         check: impl Fn(&mut Checker, P<SourceFile>) + Sync,
         collect: impl Fn(&mut Checker, usize, P<SourceFile>) + Sync,
     ) {
-        self.for_each_checker_group_do_ex(files, single_threaded, false, None,
-            |checker, _, file| { checker.begin_oh_syscap_pipeline(); check(checker, file); },
+        self.for_each_checker_group_do_ex(
+            files,
+            single_threaded,
+            false,
+            None,
+            |checker, _, file| {
+                checker.begin_oh_syscap_pipeline();
+                check(checker, file);
+            },
             Some(&|checker, visited| {
                 checker.finish_oh_syscap_pipeline();
-                for &index in visited { collect(checker, index, files[index]); }
-            }));
+                for &index in visited {
+                    collect(checker, index, files[index]);
+                }
+            }),
+        );
     }
 
     // `allow_steal`: the pass may move files between checkers (stealing_enabled). Only the type-check pass does: later
@@ -1265,7 +1290,9 @@ impl CheckerPoolImpl {
                     split_file.run_owner(&mut guard, split_ctx.unwrap());
                 }
                 cb(&mut guard, i, file);
-                if finish.is_some() { visited.push(i); }
+                if finish.is_some() {
+                    visited.push(i);
+                }
                 if let Some(split_file) = split_file.filter(|f| f.is_shadow()) {
                     let whole = guard.file_diagnostics_so_far(file);
                     split_file.shadow_compare(&whole);
@@ -1308,7 +1335,9 @@ impl CheckerPoolImpl {
                     crate::sharedgraph::enter_checker(&guard);
                 }
             }
-            if let Some(finish) = finish { finish(&mut guard, &visited); }
+            if let Some(finish) = finish {
+                finish(&mut guard, &visited);
+            }
             drop(scope);
             if cost_cache {
                 state.file_cpu.lock().unwrap().extend(file_cpu);

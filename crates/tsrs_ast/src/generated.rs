@@ -2005,8 +2005,8 @@ pub struct CallExpression {
 
 /// The rare tail of `CallExpression` (`NodeAllocRare`): allocated only when one of these is set.
 pub(crate) struct CallExpressionRare {
-    pub question_dot_token: Option<P<Node>>,
-    pub type_arguments: Option<P<NodeList>>,
+    question_dot_token: Option<P<Node>>,
+    type_arguments: Option<P<NodeList>>,
     pub ets_body: Option<P<Node>>,
 }
 
@@ -3718,10 +3718,6 @@ impl ImportClause {
     #[inline]
     pub fn phase_modifier(&self) -> Kind {
         self.phase_modifier.get()
-    }
-    #[inline]
-    pub fn set_phase_modifier(&self, value: Kind) {
-        self.phase_modifier.set(value);
     }
     #[inline]
     pub fn is_lazy(&self) -> bool {
@@ -11763,7 +11759,8 @@ impl NodeFactory {
         ets_body: Option<P<Node>>,
         flags: NodeFlags,
     ) -> P<Node> {
-        let node = if question_dot_token.is_some() || type_arguments.is_some() || ets_body.is_some() {
+        let node = if question_dot_token.is_some() || type_arguments.is_some() || ets_body.is_some()
+        {
             self.new_node_with_rare(
                 Kind::CallExpression,
                 CallExpression {
@@ -19302,7 +19299,13 @@ impl ImportClause {
     fn visit_each_child(&self, node: P<Node>, v: &mut NodeVisitor) -> P<Node> {
         let name_ = v.visit_node_hooked(self.name());
         let named_bindings_ = v.visit_node_hooked(self.named_bindings());
-        v.factory.update_import_clause(node, self.phase_modifier(), self.is_lazy(), name_, named_bindings_)
+        v.factory.update_import_clause(
+            node,
+            self.phase_modifier(),
+            self.is_lazy(),
+            name_,
+            named_bindings_,
+        )
     }
 }
 

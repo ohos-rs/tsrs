@@ -14,13 +14,9 @@ fn oh49_numeric_enum_equality_keeps_the_remaining_numeric_domain() {
     let dir = TempDir::new("oh49-enum-flow");
     let file = dir.write("input.ets", "enum Channel { None = 0, Custom = 1 << 18, All = ~0 }\nfunction label(channel: Channel): string { if (channel == Channel.Custom) { return 'custom'; } else { return channel.toString(); } }\nfunction strictLabel(channel: Channel): string { if (channel !== Channel.Custom) { return channel.toString(); } return 'custom'; }");
     let fs: Arc<dyn FS> = Arc::new(bundled::wrap_fs(osvfs::fs()));
-    let service = Compiler::new(SessionOptions::new(
-        dir.dir(),
-        bundled::lib_path(),
-        Arc::clone(&fs),
-        false,
-    ))
-    .unwrap();
+    let service =
+        Compiler::new(SessionOptions::new(dir.dir(), bundled::lib_path(), Arc::clone(&fs), false))
+            .unwrap();
     let program = service
         .create_program(
             &[file],
@@ -41,18 +37,12 @@ fn oh49_numeric_enum_equality_keeps_the_remaining_numeric_domain() {
 fn oh49_regexp_scanning_keeps_legacy_syntax_and_still_rejects_unterminated_literals() {
     // OH scanner.ts::reScanSlashToken never invokes the modern RegExp parser.
     let dir = TempDir::new("oh49-regexp");
-    let file = dir.write(
-        "input.ts",
-        r"const ansi = /\033\[/; const flags = /a/gg; const escaped = /[\/]/;",
-    );
+    let file = dir
+        .write("input.ts", r"const ansi = /\033\[/; const flags = /a/gg; const escaped = /[\/]/;");
     let fs: Arc<dyn FS> = Arc::new(bundled::wrap_fs(osvfs::fs()));
-    let service = Compiler::new(SessionOptions::new(
-        dir.dir(),
-        bundled::lib_path(),
-        Arc::clone(&fs),
-        false,
-    ))
-    .unwrap();
+    let service =
+        Compiler::new(SessionOptions::new(dir.dir(), bundled::lib_path(), Arc::clone(&fs), false))
+            .unwrap();
     let create = |roots: &[String], harmony: bool| {
         service
             .create_program(
@@ -74,13 +64,9 @@ fn oh49_regexp_scanning_keeps_legacy_syntax_and_still_rejects_unterminated_liter
     let harmony = create(&[file.clone()], true);
     assert!(harmony.syntactic_diagnostics().unwrap().is_empty());
     assert!(harmony.semantic_diagnostics().unwrap().is_empty());
-    let modern_service = Compiler::new(SessionOptions::new(
-        dir.dir(),
-        bundled::lib_path(),
-        Arc::clone(&fs),
-        false,
-    ))
-    .unwrap();
+    let modern_service =
+        Compiler::new(SessionOptions::new(dir.dir(), bundled::lib_path(), Arc::clone(&fs), false))
+            .unwrap();
     let modern = modern_service
         .create_program(
             &[file],
@@ -93,11 +79,7 @@ fn oh49_regexp_scanning_keeps_legacy_syntax_and_still_rejects_unterminated_liter
         )
         .unwrap();
     assert!(
-        modern
-            .semantic_diagnostics()
-            .unwrap()
-            .iter()
-            .any(|diagnostic| diagnostic.code == 1487)
+        modern.semantic_diagnostics().unwrap().iter().any(|diagnostic| diagnostic.code == 1487)
     );
     let unterminated = dir.write("broken.ets", "const broken = /unterminated\n");
     let broken = create(&[unterminated], true);

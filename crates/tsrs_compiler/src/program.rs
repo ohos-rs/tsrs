@@ -2715,14 +2715,28 @@ impl Program {
     // caller-provided checker, including bind diagnostics, checker diagnostics, and handling
     // of @ts-ignore/@ts-expect-error directives.
     // program.go:1498
-    fn filter_oh_check_diagnostics(&self, file: P<SourceFile>, mut diagnostics: Vec<P<Diagnostic>>) -> Vec<P<Diagnostic>> {
+    fn filter_oh_check_diagnostics(
+        &self,
+        file: P<SourceFile>,
+        mut diagnostics: Vec<P<Diagnostic>>,
+    ) -> Vec<P<Diagnostic>> {
         let options = self.options();
-        if options.need_do_ark_ts_linter != tsrs_core::Tristate::True { return diagnostics; }
+        if options.need_do_ark_ts_linter != tsrs_core::Tristate::True {
+            return diagnostics;
+        }
         let oh_module = tspath::normalize_path(file.file_name()).contains("/oh_modules/");
-        let forbidden_import_code = if options.is_compatible_version == tsrs_core::Tristate::True { 28016 } else { 28017 };
+        let forbidden_import_code =
+            if options.is_compatible_version == tsrs_core::Tristate::True { 28016 } else { 28017 };
         diagnostics.retain(|d| {
-            if oh_module { return options.skip_tsc_oh_module_check != tsrs_core::Tristate::True && !file.is_declaration_file() && d.code() != forbidden_import_code; }
-            if file.script_kind() == tsrs_core::ScriptKind::TS && file.is_declaration_file() { return !tspath::get_base_file_name(file.file_name()).starts_with("@kit.") && d.code() == forbidden_import_code; }
+            if oh_module {
+                return options.skip_tsc_oh_module_check != tsrs_core::Tristate::True
+                    && !file.is_declaration_file()
+                    && d.code() != forbidden_import_code;
+            }
+            if file.script_kind() == tsrs_core::ScriptKind::TS && file.is_declaration_file() {
+                return !tspath::get_base_file_name(file.file_name()).starts_with("@kit.")
+                    && d.code() == forbidden_import_code;
+            }
             true
         });
         diagnostics
@@ -2746,7 +2760,10 @@ impl Program {
 
         // Checker creation forces binding, so bind diagnostics will be populated.
         let mut diags: Vec<P<Diagnostic>> = source_file.bind_diagnostics().to_vec();
-        diags.extend(self.filter_oh_check_diagnostics(source_file, file_checker.get_diagnostics_exported(ctx, source_file)));
+        diags.extend(self.filter_oh_check_diagnostics(
+            source_file,
+            file_checker.get_diagnostics_exported(ctx, source_file),
+        ));
 
         if include_deferred_globals {
             if file_checker.was_canceled() {

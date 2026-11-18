@@ -62,7 +62,12 @@ fn script_kind_from(n: u64) -> Option<ScriptKind> {
 fn is_valid_create_script_kind(k: ScriptKind) -> bool {
     matches!(
         k,
-        ScriptKind::JS | ScriptKind::JSX | ScriptKind::TS | ScriptKind::TSX | ScriptKind::JSON | ScriptKind::ETS
+        ScriptKind::JS
+            | ScriptKind::JSX
+            | ScriptKind::TS
+            | ScriptKind::TSX
+            | ScriptKind::JSON
+            | ScriptKind::ETS
     )
 }
 
@@ -156,7 +161,9 @@ fn parse_cache_key(d: &Value) -> Result<tsrs_project::ParseCacheKey, String> {
         },
         ..Default::default()
     };
-    if !arkts.is_empty() { codec::decoder::apply_arkts_parse_options(&mut options, arkts)?; }
+    if !arkts.is_empty() {
+        codec::decoder::apply_arkts_parse_options(&mut options, arkts)?;
+    }
     Ok(tsrs_project::new_parse_cache_key(options, ((hi as u128) << 64) | lo as u128, sk))
 }
 

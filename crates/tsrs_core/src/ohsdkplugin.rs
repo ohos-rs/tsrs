@@ -1,7 +1,7 @@
 //! OH build-host SDK plugin descriptors (`core/ohsdkplugin.go`).
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::{Arc, OnceLock, mpsc};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -73,15 +73,26 @@ impl OhSdkPendingSyscap {
 /// Function callbacks remain synchronous. Syscap submission copies all borrowed
 /// input before returning; completion owns only transport values, not AST nodes.
 pub trait OhSdkPluginExecutor: std::fmt::Debug + Send + Sync {
-    fn call(&self, plugin: &OhSdkCheckPlugin, operation: &str, args: Vec<serde_json::Value>) -> Result<OhSdkPluginResponse, String>;
-    fn check_syscap_batch(&self, plugins: &[OhSdkClassCheckPlugin],
+    fn call(
+        &self,
+        plugin: &OhSdkCheckPlugin,
+        operation: &str,
+        args: Vec<serde_json::Value>,
+    ) -> Result<OhSdkPluginResponse, String>;
+    fn check_syscap_batch(
+        &self,
+        plugins: &[OhSdkClassCheckPlugin],
         nodes: Vec<(OhSdkPluginNodeSnapshot, OhSdkPluginNodeSnapshot)>,
-        config: Arc<serde_json::Map<String, serde_json::Value>>) -> OhSdkSyscapResults {
+        config: Arc<serde_json::Map<String, serde_json::Value>>,
+    ) -> OhSdkSyscapResults {
         self.submit_syscap_batch(plugins, nodes, config).wait()
     }
-    fn submit_syscap_batch(&self, plugins: &[OhSdkClassCheckPlugin],
+    fn submit_syscap_batch(
+        &self,
+        plugins: &[OhSdkClassCheckPlugin],
         nodes: Vec<(OhSdkPluginNodeSnapshot, OhSdkPluginNodeSnapshot)>,
-        config: Arc<serde_json::Map<String, serde_json::Value>>) -> OhSdkPendingSyscap;
+        config: Arc<serde_json::Map<String, serde_json::Value>>,
+    ) -> OhSdkPendingSyscap;
 }
 
 /// Identity for `CompilerOptions` equality: executors are runtime handles, so the same handle compares equal
@@ -99,7 +110,9 @@ impl PartialEq for dyn OhSdkPluginExecutor {
 #[derive(Debug, Default)]
 pub struct OhSdkPluginConfigCache(OnceLock<Arc<serde_json::Map<String, Value>>>);
 impl Clone for OhSdkPluginConfigCache {
-    fn clone(&self) -> Self { Self::default() }
+    fn clone(&self) -> Self {
+        Self::default()
+    }
 }
 /// The cache is derived data: compare what it holds (nothing before first use, so fresh options are equal).
 impl PartialEq for OhSdkPluginConfigCache {
@@ -110,7 +123,9 @@ impl PartialEq for OhSdkPluginConfigCache {
 }
 impl OhSdkPluginConfigCache {
     pub fn get(&self, o: &crate::CompilerOptions) -> Arc<serde_json::Map<String, Value>> {
-        if let Some(source) = &o.oh_sdk_plugin_project_config { return Arc::clone(source); }
+        if let Some(source) = &o.oh_sdk_plugin_project_config {
+            return Arc::clone(source);
+        }
         Arc::clone(self.0.get_or_init(|| {
             let Value::Object(value) = json!({
                 "runtimeOS": if o.oh_runtime_os.is_empty() { "OpenHarmony" } else { &o.oh_runtime_os }, "originCompatibleSdkVersion": o.oh_origin_compatible_sdk_version,

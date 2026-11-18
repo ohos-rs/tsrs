@@ -20,7 +20,8 @@ impl crate::links::LinkCopy for AnnotationLinks {
 
 fn is_retention_annotation_declaration(node: P<Node>) -> bool {
     node.name().unwrap().text() == "Retention"
-        && tspath::get_base_file_name(ast::get_source_file_of_node(node).unwrap().file_name()).eq_ignore_ascii_case("@arkts.lang.d.ets")
+        && tspath::get_base_file_name(ast::get_source_file_of_node(node).unwrap().file_name())
+            .eq_ignore_ascii_case("@arkts.lang.d.ets")
 }
 
 impl Checker {
@@ -46,7 +47,9 @@ impl Checker {
                 continue;
             }
             for &prop in expression.arguments()[0].properties() {
-                if !ast::is_property_assignment(prop) || tsrs_scanner::get_text_of_node(prop.name().unwrap()) != "policy" {
+                if !ast::is_property_assignment(prop)
+                    || tsrs_scanner::get_text_of_node(prop.name().unwrap()) != "policy"
+                {
                     continue;
                 }
                 let value = prop.initializer().unwrap();
@@ -56,10 +59,13 @@ impl Checker {
                 if !ast::is_property_access_expression(value) {
                     continue;
                 }
-                if let Some(symbol) = self.resolve_entity_name(value, SymbolFlags::Value, true, false, None) {
+                if let Some(symbol) =
+                    self.resolve_entity_name(value, SymbolFlags::Value, true, false, None)
+                {
                     if symbol.flags().intersects(SymbolFlags::EnumMember)
                         && ast::is_enum_const(symbol.value_declaration().unwrap().parent().unwrap())
-                        && self.get_constant_value(symbol.value_declaration().unwrap()) == Some(LiteralValue::String("source"))
+                        && self.get_constant_value(symbol.value_declaration().unwrap())
+                            == Some(LiteralValue::String("source"))
                     {
                         return true;
                     }
@@ -75,7 +81,8 @@ impl Checker {
             links.source_retention.set(Tristate::False);
             let name = node.name().unwrap().text();
             let sdk_source_annotation = matches!(name, "Available" | "SuppressWarnings")
-                && tspath::normalize_path(ast::get_source_file_of_node(node).unwrap().file_name()).ends_with("@ohos.annotation.d.ets");
+                && tspath::normalize_path(ast::get_source_file_of_node(node).unwrap().file_name())
+                    .ends_with("@ohos.annotation.d.ets");
             if sdk_source_annotation || self.has_source_retention_policy(node) {
                 links.source_retention.set(Tristate::True);
             }
@@ -86,7 +93,11 @@ impl Checker {
     pub(crate) fn check_annotation_declaration(&mut self, node: P<Node>) {
         self.check_annotation_js_har(node);
         if !ast::is_source_file(node.parent().unwrap()) {
-            self.grammar_error_on_node(node, &diagnostics::ANNOTATION_MUST_BE_DEFINED_AT_TOP_LEVEL_ONLY, &[]);
+            self.grammar_error_on_node(
+                node,
+                &diagnostics::ANNOTATION_MUST_BE_DEFINED_AT_TOP_LEVEL_ONLY,
+                &[],
+            );
         }
         self.check_grammar_modifiers(node);
         if ast::has_syntactic_modifier(node, ModifierFlags::Default) {
@@ -97,7 +108,11 @@ impl Checker {
                 if let Some(declaration) = self.annotation_for_decorator(modifier) {
                     self.check_annotation_use(modifier, declaration);
                 } else {
-                    self.grammar_error_on_node(modifier, &diagnostics::DECORATORS_ARE_NOT_VALID_HERE, &[]);
+                    self.grammar_error_on_node(
+                        modifier,
+                        &diagnostics::DECORATORS_ARE_NOT_VALID_HERE,
+                        &[],
+                    );
                 }
             }
         }
@@ -134,7 +149,9 @@ impl Checker {
         if links.checked.replace(true) {
             return;
         }
-        if !self.is_source_retention_annotation_declaration(declaration) { self.check_annotation_js_har(node); }
+        if !self.is_source_retention_annotation_declaration(declaration) {
+            self.check_annotation_js_har(node);
+        }
         let expression = node.expression().unwrap();
         if node.parent() != Some(declaration) {
             if !ast::is_call_expression(expression) {
@@ -145,7 +162,9 @@ impl Checker {
         }
         let mut argument = None;
         if ast::is_call_expression(expression) && !expression.arguments().is_empty() {
-            if expression.arguments().len() != 1 || !ast::is_object_literal_expression(expression.arguments()[0]) {
+            if expression.arguments().len() != 1
+                || !ast::is_object_literal_expression(expression.arguments()[0])
+            {
                 self.error(
                     Some(node),
                     &diagnostics::ONLY_AN_OBJECT_LITERAL_HAVE_TO_BE_PROVIDED_AS_ANNOTATION_PARAMETERS_LIST_GOT_COLON_0,
@@ -177,7 +196,10 @@ impl Checker {
                     return;
                 }
                 if self
-                    .evaluate_annotation_constant(prop.initializer().unwrap(), &mut FxHashSet::default())
+                    .evaluate_annotation_constant(
+                        prop.initializer().unwrap(),
+                        &mut FxHashSet::default(),
+                    )
                     .is_none()
                 {
                     self.error(Some(node), &diagnostics::ALL_MEMBERS_OF_OBJECT_LITERAL_WHICH_IS_PROVIDED_AS_ANNOTATION_PARAMETERS_LIST_HAVE_TO_BE_CONSTANT_EXPRESSIONS_GOT_COLON_0, &[&tsrs_scanner::get_text_of_node(prop.initializer().unwrap())]);
@@ -212,8 +234,14 @@ impl Checker {
                 return;
             }
         } else {
-            let class = |n| ast::is_class_declaration(n) && !ast::is_annotation_declaration(n) && !ast::is_struct_declaration(n);
-            if !(class(parent) || ast::is_method_declaration(parent) && class(parent.parent().unwrap())) {
+            let class = |n| {
+                ast::is_class_declaration(n)
+                    && !ast::is_annotation_declaration(n)
+                    && !ast::is_struct_declaration(n)
+            };
+            if !(class(parent)
+                || ast::is_method_declaration(parent) && class(parent.parent().unwrap()))
+            {
                 let message = match parent.kind() {
                     Kind::Constructor => &diagnostics::ANNOTATION_CANNOT_BE_APPLIED_FOR_CONSTRUCTOR_GOT_COLON_0,
                     Kind::GetAccessor | Kind::SetAccessor => &diagnostics::ANNOTATION_CANNOT_BE_APPLIED_FOR_GETTER_OR_SETTER_GOT_COLON_0,
@@ -224,7 +252,11 @@ impl Checker {
                 return;
             }
             if ast::has_syntactic_modifier(parent, ModifierFlags::Abstract)
-                || ast::is_method_declaration(parent) && ast::has_syntactic_modifier(parent.parent().unwrap(), ModifierFlags::Abstract)
+                || ast::is_method_declaration(parent)
+                    && ast::has_syntactic_modifier(
+                        parent.parent().unwrap(),
+                        ModifierFlags::Abstract,
+                    )
             {
                 self.error(Some(node), &diagnostics::ANNOTATION_HAVE_TO_BE_APPLIED_ONLY_FOR_NON_ABSTRACT_CLASS_DECLARATIONS_AND_METHOD_DECLARATIONS_IN_NON_ABSTRACT_CLASSES_GOT_COLON_0, &[&tsrs_scanner::get_text_of_node(parent)]);
                 return;
@@ -234,7 +266,9 @@ impl Checker {
             if previous == node {
                 break;
             }
-            if ast::is_decorator(previous) && self.annotation_for_decorator(previous) == Some(declaration) {
+            if ast::is_decorator(previous)
+                && self.annotation_for_decorator(previous) == Some(declaration)
+            {
                 self.error(
                     Some(node),
                     &diagnostics::REPEATABLE_ANNOTATION_ARE_NOT_SUPPORTED_GOT_COLON_0,
@@ -243,13 +277,22 @@ impl Checker {
                 return;
             }
         }
-        if self.is_source_retention_annotation_declaration(declaration) { self.check_source_retention_annotation_content(node, declaration); }
+        if self.is_source_retention_annotation_declaration(declaration) {
+            self.check_source_retention_annotation_content(node, declaration);
+        }
     }
 
     fn check_annotation_js_har(&mut self, node: P<Node>) {
-        if self.compiler_options.is_compile_js_har == Tristate::True && !self.compiler_options.module_root_path.is_empty()
-            && tspath::normalize_path(ast::get_source_file_of_node(node).unwrap().file_name()).starts_with(&tspath::normalize_path(&self.compiler_options.module_root_path)) {
-            self.grammar_error_on_node(node, &diagnostics::ANNOTATIONS_ARE_NOT_SUPPORTED_IN_HARS_COMPILED_TO_JAVA_SCRIPT_FILES, &[]);
+        if self.compiler_options.is_compile_js_har == Tristate::True
+            && !self.compiler_options.module_root_path.is_empty()
+            && tspath::normalize_path(ast::get_source_file_of_node(node).unwrap().file_name())
+                .starts_with(&tspath::normalize_path(&self.compiler_options.module_root_path))
+        {
+            self.grammar_error_on_node(
+                node,
+                &diagnostics::ANNOTATIONS_ARE_NOT_SUPPORTED_IN_HARS_COMPILED_TO_JAVA_SCRIPT_FILES,
+                &[],
+            );
         }
     }
 
@@ -317,12 +360,18 @@ fn is_source_retention_annotation_target(node: P<Node>) -> bool {
         | Kind::InterfaceDeclaration
         | Kind::EnumDeclaration
         | Kind::ModuleDeclaration => true,
-        Kind::GetAccessor | Kind::SetAccessor | Kind::MethodDeclaration | Kind::PropertyDeclaration => {
+        Kind::GetAccessor
+        | Kind::SetAccessor
+        | Kind::MethodDeclaration
+        | Kind::PropertyDeclaration => {
             !ast::is_annotation_property_declaration(node)
-                && (ast::is_class_declaration(node.parent().unwrap()) && !ast::is_annotation_declaration(node.parent().unwrap())
+                && (ast::is_class_declaration(node.parent().unwrap())
+                    && !ast::is_annotation_declaration(node.parent().unwrap())
                     || ast::is_interface_declaration(node.parent().unwrap()))
         }
-        Kind::PropertySignature | Kind::MethodSignature => ast::is_interface_declaration(node.parent().unwrap()),
+        Kind::PropertySignature | Kind::MethodSignature => {
+            ast::is_interface_declaration(node.parent().unwrap())
+        }
         _ => false,
     }
 }
@@ -335,7 +384,9 @@ pub enum AnnotationConstant {
 impl AnnotationConstant {
     fn same_kind(&self, other: &Self) -> bool {
         match (self, other) {
-            (Self::Scalar(a), Self::Scalar(b)) => std::mem::discriminant(a) == std::mem::discriminant(b),
+            (Self::Scalar(a), Self::Scalar(b)) => {
+                std::mem::discriminant(a) == std::mem::discriminant(b)
+            }
             (Self::Array(_), Self::Array(_)) => true,
             _ => false,
         }
@@ -349,7 +400,11 @@ impl AnnotationConstant {
 }
 
 impl Checker {
-    fn evaluate_annotation_constant(&mut self, node: P<Node>, active: &mut FxHashSet<P<Node>>) -> Option<AnnotationConstant> {
+    fn evaluate_annotation_constant(
+        &mut self,
+        node: P<Node>,
+        active: &mut FxHashSet<P<Node>>,
+    ) -> Option<AnnotationConstant> {
         if !active.insert(node) {
             return None;
         }
@@ -357,15 +412,23 @@ impl Checker {
         active.remove(&node);
         value
     }
-    fn evaluate_annotation_constant_worker(&mut self, node: P<Node>, active: &mut FxHashSet<P<Node>>) -> Option<AnnotationConstant> {
+    fn evaluate_annotation_constant_worker(
+        &mut self,
+        node: P<Node>,
+        active: &mut FxHashSet<P<Node>>,
+    ) -> Option<AnnotationConstant> {
         use AnnotationConstant::{Array, Scalar};
         use LiteralValue::{Boolean, Number, String};
         match node.kind() {
             Kind::TrueKeyword => Some(Scalar(Boolean(true))),
             Kind::FalseKeyword => Some(Scalar(Boolean(false))),
             Kind::NumericLiteral => Some(Scalar(Number(jsnum::from_string(node.text())))),
-            Kind::StringLiteral | Kind::NoSubstitutionTemplateLiteral => Some(Scalar(String(node.text()))),
-            Kind::ParenthesizedExpression => self.evaluate_annotation_constant(node.expression().unwrap(), active),
+            Kind::StringLiteral | Kind::NoSubstitutionTemplateLiteral => {
+                Some(Scalar(String(node.text())))
+            }
+            Kind::ParenthesizedExpression => {
+                self.evaluate_annotation_constant(node.expression().unwrap(), active)
+            }
             Kind::Identifier => {
                 if matches!(node.text(), "Infinity" | "NaN") {
                     return Some(Scalar(Number(jsnum::from_string(node.text()))));
@@ -373,7 +436,8 @@ impl Checker {
                 let resolved = self.get_resolved_symbol(node);
                 let symbol = self.get_export_symbol_of_value_symbol_if_exported(Some(resolved))?;
                 let declaration = symbol.value_declaration()?;
-                if ast::is_variable_declaration(declaration) && self.is_var_const_like(declaration) {
+                if ast::is_variable_declaration(declaration) && self.is_var_const_like(declaration)
+                {
                     self.evaluate_annotation_constant(declaration.initializer()?, active)
                 } else {
                     None
@@ -424,12 +488,18 @@ impl Checker {
     clippy::float_cmp,
     reason = "annotation constant values are compared exactly, as in the Go source"
 )]
-fn annotation_binary(operator: Kind, left: AnnotationConstant, right: AnnotationConstant) -> Option<AnnotationConstant> {
+fn annotation_binary(
+    operator: Kind,
+    left: AnnotationConstant,
+    right: AnnotationConstant,
+) -> Option<AnnotationConstant> {
     use AnnotationConstant::{Array, Scalar};
     use LiteralValue::{Boolean, Number, String};
     if let (Scalar(l), Scalar(_)) = (&left, &right) {
         match operator {
-            Kind::AmpersandAmpersandToken => return Some(if evaluator::is_truthy(*l) { right } else { left }),
+            Kind::AmpersandAmpersandToken => {
+                return Some(if evaluator::is_truthy(*l) { right } else { left });
+            }
             Kind::BarBarToken => return Some(if evaluator::is_truthy(*l) { left } else { right }),
             _ => {}
         }
@@ -439,7 +509,10 @@ fn annotation_binary(operator: Kind, left: AnnotationConstant, right: Annotation
             match operator {
                 Kind::AmpersandAmpersandToken => return Some(right),
                 Kind::BarBarToken => return Some(left),
-                Kind::LessThanToken | Kind::LessThanEqualsToken | Kind::GreaterThanToken | Kind::GreaterThanEqualsToken => {
+                Kind::LessThanToken
+                | Kind::LessThanEqualsToken
+                | Kind::GreaterThanToken
+                | Kind::GreaterThanEqualsToken => {
                     return annotation_binary(
                         operator,
                         Scalar(String(alloc_str(&left.string()))),
@@ -455,8 +528,12 @@ fn annotation_binary(operator: Kind, left: AnnotationConstant, right: Annotation
             _ => false,
         };
         match operator {
-            Kind::EqualsEqualsToken | Kind::EqualsEqualsEqualsToken => return Some(Scalar(Boolean(equal))),
-            Kind::ExclamationEqualsToken | Kind::ExclamationEqualsEqualsToken => return Some(Scalar(Boolean(!equal))),
+            Kind::EqualsEqualsToken | Kind::EqualsEqualsEqualsToken => {
+                return Some(Scalar(Boolean(equal)));
+            }
+            Kind::ExclamationEqualsToken | Kind::ExclamationEqualsEqualsToken => {
+                return Some(Scalar(Boolean(!equal)));
+            }
             _ => {}
         }
     }
@@ -530,46 +607,72 @@ impl Checker {
             self.check_annotation_use(node, declaration);
             let expression = node.expression().unwrap();
             if ast::is_call_expression(expression) && !expression.arguments().is_empty() {
-                if expression.arguments().len() != 1 || !ast::is_object_literal_expression(expression.arguments()[0]) {
+                if expression.arguments().len() != 1
+                    || !ast::is_object_literal_expression(expression.arguments()[0])
+                {
                     return None;
                 }
                 for &property in expression.arguments()[0].properties() {
-                    if !ast::is_property_assignment(property) { return None; }
-                    let value = self.evaluate_annotation_constant(property.initializer()?, &mut FxHashSet::default())?;
+                    if !ast::is_property_assignment(property) {
+                        return None;
+                    }
+                    let value = self.evaluate_annotation_constant(
+                        property.initializer()?,
+                        &mut FxHashSet::default(),
+                    )?;
                     let name = ast::try_get_text_of_property_name(property.name()?)?;
                     arguments.insert(name, value);
                 }
             }
         }
-        if !ast::is_annotation_declaration(declaration) { return None; }
+        if !ast::is_annotation_declaration(declaration) {
+            return None;
+        }
         let mut info = AnnotationInfo {
             declaration,
             source_retention: self.is_source_retention_annotation_declaration(declaration),
             properties: Vec::new(),
         };
         for &member in declaration.members() {
-            if !ast::is_annotation_property_declaration(member) { return None; }
+            if !ast::is_annotation_property_declaration(member) {
+                return None;
+            }
             let typ = self.get_type_of_node(member);
-            if !self.is_allowed_annotation_property_type(typ) { return None; }
+            if !self.is_allowed_annotation_property_type(typ) {
+                return None;
+            }
             let initializer = match member.initializer() {
-                Some(node) => Some(self.evaluate_annotation_constant(node, &mut FxHashSet::default())?),
+                Some(node) => {
+                    Some(self.evaluate_annotation_constant(node, &mut FxHashSet::default())?)
+                }
                 None => None,
             };
             let name = ast::try_get_text_of_property_name(member.name()?)?;
             let mut property = AnnotationPropertyInfo {
-                declaration: member, typ, initializer, argument: arguments.get(&name).cloned(),
-                array_depth: 0, element_type: typ, enum_declaration: None, enum_first_value: None,
+                declaration: member,
+                typ,
+                initializer,
+                argument: arguments.get(&name).cloned(),
+                array_depth: 0,
+                element_type: typ,
+                enum_declaration: None,
+                enum_first_value: None,
             };
             while let Some(element) = self.get_element_type_of_array_type(property.element_type) {
                 property.array_depth += 1;
                 property.element_type = element;
             }
-            if let Some(symbol) = property.element_type.symbol().filter(|s| s.flags().intersects(SymbolFlags::ConstEnum)) {
+            if let Some(symbol) = property
+                .element_type
+                .symbol()
+                .filter(|s| s.flags().intersects(SymbolFlags::ConstEnum))
+            {
                 for &decl in symbol.declarations() {
                     if ast::is_enum_declaration(decl) {
                         property.enum_declaration = Some(decl);
                         if let Some(&first) = decl.members().first() {
-                            property.enum_first_value = self.get_constant_value(first).map(AnnotationConstant::Scalar);
+                            property.enum_first_value =
+                                self.get_constant_value(first).map(AnnotationConstant::Scalar);
                         }
                         break;
                     }
@@ -582,21 +685,46 @@ impl Checker {
 
     // OH checker/annotation_info.go::GetAnnotationImportDisposition.
     pub fn get_annotation_import_disposition(&mut self, node: P<Node>) -> &'static str {
-        if !ast::is_import_specifier(node) || ast::is_type_only_import_or_export_declaration(node) { return "unchanged"; }
-        let Some(symbol) = self.get_symbol_of_declaration(node) else { return "unchanged"; };
+        if !ast::is_import_specifier(node) || ast::is_type_only_import_or_export_declaration(node) {
+            return "unchanged";
+        }
+        let Some(symbol) = self.get_symbol_of_declaration(node) else {
+            return "unchanged";
+        };
         let target = self.resolve_alias(symbol);
-        if target == self.unknown_symbol { return "unchanged"; }
+        if target == self.unknown_symbol {
+            return "unchanged";
+        }
         if target.flags().intersects(SymbolFlags::ConstEnum) {
             for &declaration in target.declarations() {
-                if ast::is_enum_declaration(declaration) && declaration.name().unwrap().text() == "RetentionPolicy"
-                    && tspath::get_base_file_name(ast::get_source_file_of_node(declaration).unwrap().file_name()).eq_ignore_ascii_case("@arkts.lang.d.ets") {
+                if ast::is_enum_declaration(declaration)
+                    && declaration.name().unwrap().text() == "RetentionPolicy"
+                    && tspath::get_base_file_name(
+                        ast::get_source_file_of_node(declaration).unwrap().file_name(),
+                    )
+                    .eq_ignore_ascii_case("@arkts.lang.d.ets")
+                {
                     return "remove";
                 }
             }
         }
-        if !is_annotation_symbol(Some(target)) { return "unchanged"; }
-        let Some(declaration) = target.value_declaration().or_else(|| target.declarations().first().copied()) else { return "unchanged"; };
-        if !ast::is_annotation_declaration(declaration) { return "unchanged"; }
-        if is_retention_annotation_declaration(declaration) || self.is_source_retention_annotation_declaration(declaration) { "remove" } else { "rename" }
+        if !is_annotation_symbol(Some(target)) {
+            return "unchanged";
+        }
+        let Some(declaration) =
+            target.value_declaration().or_else(|| target.declarations().first().copied())
+        else {
+            return "unchanged";
+        };
+        if !ast::is_annotation_declaration(declaration) {
+            return "unchanged";
+        }
+        if is_retention_annotation_declaration(declaration)
+            || self.is_source_retention_annotation_declaration(declaration)
+        {
+            "remove"
+        } else {
+            "rename"
+        }
     }
 }

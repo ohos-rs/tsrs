@@ -733,7 +733,9 @@ impl Scanner {
         self.comment_directives.clear();
     }
 
-    pub fn set_open_harmony49(&mut self, enabled: bool) { self.open_harmony49 = enabled; }
+    pub fn set_open_harmony49(&mut self, enabled: bool) {
+        self.open_harmony49 = enabled;
+    }
 
     pub fn set_language_variant(&mut self, language_variant: LanguageVariant) {
         self.language_variant = language_variant;
@@ -1988,7 +1990,9 @@ impl Scanner {
         }
         while pos < self.end {
             let (ch, size) = decode_rune(&text[pos as usize..]);
-            if !is_identifier_part(ch) { break; }
+            if !is_identifier_part(ch) {
+                break;
+            }
             pos += size as u32;
         }
         self.state.pos = pos;

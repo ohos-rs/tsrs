@@ -638,7 +638,10 @@ pub(crate) fn decode_node_common_data_synthetic_expression(
 
 /// Decode parser identity without allocating any AST nodes. Used by descriptor
 /// cache lookup and createSourceFile as well as the binary decoder.
-pub fn apply_arkts_parse_options(opts: &mut SourceFileParseOptions, json: &str) -> Result<Vec<TextRange>, String> {
+pub fn apply_arkts_parse_options(
+    opts: &mut SourceFileParseOptions,
+    json: &str,
+) -> Result<Vec<TextRange>, String> {
     #[derive(serde::Deserialize, Default)]
     #[serde(default, rename_all = "camelCase")]
     struct Options {
@@ -657,5 +660,9 @@ pub fn apply_arkts_parse_options(opts: &mut SourceFileParseOptions, json: &str) 
     opts.ets_loader_path = data.ets_loader_path;
     opts.no_transformed_kit_in_parser = data.no_transformed_kit_in_parser;
     opts.kit_config_key = data.kit_config_key;
-    Ok(data.marked_kit_import_ranges.into_iter().map(|[pos, end]| TextRange::new(pos, end)).collect())
+    Ok(data
+        .marked_kit_import_ranges
+        .into_iter()
+        .map(|[pos, end]| TextRange::new(pos, end))
+        .collect())
 }

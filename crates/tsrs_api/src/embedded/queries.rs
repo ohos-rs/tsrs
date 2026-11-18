@@ -26,12 +26,7 @@ impl ProgramSnapshot {
     }
 
     fn type_handle(&self, typ: P<tsrs_checker::Type>) -> TypeHandle {
-        TypeHandle {
-            id: typ.id().0,
-            flags: typ.flags().bits(),
-            typ,
-            snapshot: self.clone(),
-        }
+        TypeHandle { id: typ.id().0, flags: typ.flags().bits(), typ, snapshot: self.clone() }
     }
     fn validate_type(&self, typ: &TypeHandle) -> ApiResult<()> {
         if !Arc::ptr_eq(&self.data, &typ.snapshot.data) {
@@ -51,9 +46,7 @@ impl ProgramSnapshot {
                 Ok(positions
                     .iter()
                     .map(|&position| {
-                        let offset = file
-                            .get_position_map()
-                            .utf16_to_utf8(position);
+                        let offset = file.get_position_map().utf16_to_utf8(position);
                         let node = tsrs_astnav::get_touching_property_name(file, offset);
                         this.type_handle(checker.get_type_at_location(node))
                     })
@@ -75,9 +68,7 @@ impl ProgramSnapshot {
         let typ = typ.clone();
         self.run(move |this| {
             this.with_checker(|_| {
-                Ok(typ.typ.symbol().map(|s| Symbol {
-                    name: s.name().to_string(),
-                }))
+                Ok(typ.typ.symbol().map(|s| Symbol { name: s.name().to_string() }))
             })
         })
     }
@@ -123,10 +114,7 @@ impl ProgramSnapshot {
             }
             type_reference_files.sort_unstable();
             type_reference_files.dedup();
-            Ok(ProgramSourceGraph {
-                files,
-                type_reference_files,
-            })
+            Ok(ProgramSourceGraph { files, type_reference_files })
         })
     }
 
@@ -156,12 +144,7 @@ impl ProgramSnapshot {
         let queries = queries.to_vec();
         let sdk_files = sdk_files.to_vec();
         self.run(move |this| {
-            transform_type_facts(
-                this.program()?,
-                &queries,
-                &sdk_files,
-                &Context::background(),
-            )
+            transform_type_facts(this.program()?, &queries, &sdk_files, &Context::background())
         })
     }
 }
@@ -171,10 +154,7 @@ pub(crate) fn annotation_constant(value: Option<&Constant>) -> Option<Annotation
         Constant::Array(values) => Some(AnnotationConstant {
             kind: "array".into(),
             value: String::new(),
-            items: values
-                .iter()
-                .filter_map(|v| annotation_constant(Some(v)))
-                .collect(),
+            items: values.iter().filter_map(|v| annotation_constant(Some(v))).collect(),
         }),
         Constant::Scalar(value) => {
             let (kind, value) = match value {
@@ -192,11 +172,7 @@ pub(crate) fn annotation_constant(value: Option<&Constant>) -> Option<Annotation
                 ),
                 LiteralValue::BigInt(_) => return None,
             };
-            Some(AnnotationConstant {
-                kind: kind.into(),
-                value,
-                items: Vec::new(),
-            })
+            Some(AnnotationConstant { kind: kind.into(), value, items: Vec::new() })
         }
     }
 }
@@ -340,10 +316,8 @@ pub(crate) fn transform_type_facts(
 ) -> ApiResult<Vec<ArktsTransformTypeFacts>> {
     let mut result = Vec::new();
     for query in queries {
-        let name = query
-            .file
-            .to_str()
-            .ok_or_else(|| ApiError::client("query path is not UTF-8"))?;
+        let name =
+            query.file.to_str().ok_or_else(|| ApiError::client("query path is not UTF-8"))?;
         let Some(file) = program.get_source_file(name) else {
             continue;
         };
@@ -376,22 +350,26 @@ pub(crate) fn transform_type_facts(
             for node in nodes {
                 if ast::is_property_declaration(node)
                     && !node.parent().is_some_and(ast::is_annotation_declaration)
-                    && node
-                        .name()
-                        .is_some_and(|name| property_ends.contains(&name.end().source_offset().unwrap_or(0)))
+                    && node.name().is_some_and(|name| {
+                        property_ends.contains(&name.end().source_offset().unwrap_or(0))
+                    })
                 {
                     let name = node.name().unwrap();
                     facts.properties.push(ArktsPropertyTypeFacts {
-                        name_pos: positions.utf8_to_utf16(name.pos().source_offset().unwrap_or(0)) as usize,
-                        name_end: positions.utf8_to_utf16(name.end().source_offset().unwrap_or(0)) as usize,
+                        name_pos: positions.utf8_to_utf16(name.pos().source_offset().unwrap_or(0))
+                            as usize,
+                        name_end: positions.utf8_to_utf16(name.end().source_offset().unwrap_or(0))
+                            as usize,
                         r#type: node.type_node().map(|node| {
                             type_identity(checker.get_type_from_type_node_exported(node))
                         }),
                     });
                 }
                 if ast::is_property_access_expression(node) {
-                    let pos = positions.utf8_to_utf16(node.pos().source_offset().unwrap_or(0)) as usize;
-                    let end = positions.utf8_to_utf16(node.end().source_offset().unwrap_or(0)) as usize;
+                    let pos =
+                        positions.utf8_to_utf16(node.pos().source_offset().unwrap_or(0)) as usize;
+                    let end =
+                        positions.utf8_to_utf16(node.end().source_offset().unwrap_or(0)) as usize;
                     if builder_ends.contains(&node.end().source_offset().unwrap_or(0))
                         && node.name().unwrap().text() == "builder"
                     {
@@ -442,10 +420,7 @@ pub(crate) fn transform_type_facts(
             });
         result[index].sdk_api_uses = facts
             .into_iter()
-            .map(|f| SdkApiUse {
-                api_module: f.api_module,
-                function: f.function,
-            })
+            .map(|f| SdkApiUse { api_module: f.api_module, function: f.function })
             .collect();
     }
     Ok(result)

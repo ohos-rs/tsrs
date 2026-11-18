@@ -388,7 +388,7 @@ pub fn create_external_helpers_import_declaration_if_needed(
                     Some(f.new_import_clause(
                         Kind::Unknown, /*phaseModifier*/
                         false,
-                        None,          /*name*/
+                        None, /*name*/
                         Some(named_bindings),
                     )),
                     f.new_string_literal(EXTERNAL_HELPERS_MODULE_NAME_TEXT, TokenFlags::None),

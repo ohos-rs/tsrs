@@ -5,7 +5,9 @@ mod executor;
 mod facts;
 pub(crate) mod queries;
 
-pub use crate::ohsdkplugin::{SdkPluginCompletion, SdkPluginExecutor, SdkPluginHost, SdkPluginRequest};
+pub use crate::ohsdkplugin::{
+    SdkPluginCompletion, SdkPluginExecutor, SdkPluginHost, SdkPluginRequest,
+};
 pub use diagnostics::{
     ArktsBuildDiagnostics, ArktsNormalDiagnostics, Diagnostic, DiagnosticPosition,
 };
@@ -43,10 +45,7 @@ pub struct FileChanges {
 
 impl Compiler {
     pub fn new(options: SessionOptions) -> ApiResult<Self> {
-        Ok(Self {
-            session: Session::new(options),
-            executor: Arc::new(executor::Executor::new()?),
-        })
+        Ok(Self { session: Session::new(options), executor: Arc::new(executor::Executor::new()?) })
     }
 
     pub fn create_program(
@@ -103,10 +102,7 @@ impl Compiler {
                 module_resolver_factory: None,
                 module_resolver_id: 0,
             };
-            let mut req = APISnapshotRequest {
-                file_system: Some(fs),
-                ..Default::default()
-            };
+            let mut req = APISnapshotRequest { file_system: Some(fs), ..Default::default() };
             if let Some(previous) = previous {
                 req.reconfigure_programs.push(APIReconfigureProgramRequest {
                     program_id: previous
@@ -139,10 +135,7 @@ impl Compiler {
             let root = previous
                 .is_none()
                 .then(|| SnapshotReference(session.snapshot_host.new_root_snapshot()));
-            let base = previous.map_or_else(
-                || &*root.as_ref().unwrap().0,
-                |p| &*p.data.snapshot,
-            );
+            let base = previous.map_or_else(|| &*root.as_ref().unwrap().0, |p| &*p.data.snapshot);
             let result = session.snapshot_host.clone_snapshot(
                 &Context::background(),
                 base,
@@ -157,9 +150,8 @@ impl Compiler {
                 }
             };
             for project in snapshot.0.project_collection.projects() {
-                if let Some(error) = project
-                    .get_program()
-                    .and_then(Program::module_resolution_error)
+                if let Some(error) =
+                    project.get_program().and_then(Program::module_resolution_error)
                 {
                     return Err(ApiError::internal(error.to_string()));
                 }
@@ -184,9 +176,8 @@ impl Compiler {
                     if let Some(owner) = Region::containing(command_line.addr()) {
                         regions.push(owner);
                     }
-                    if let Some(owner) = command_line
-                        .compiler_options()
-                        .and_then(|o| Region::containing(o.addr()))
+                    if let Some(owner) =
+                        command_line.compiler_options().and_then(|o| Region::containing(o.addr()))
                     {
                         regions.push(owner);
                     }

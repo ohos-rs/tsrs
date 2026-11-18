@@ -83,7 +83,13 @@ impl ImportElisionTransformer {
                     // all import bindings were elided
                     return None;
                 }
-                Some(f.update_import_clause(node, n.phase_modifier(), node.as_import_clause().is_lazy, name, named_bindings))
+                Some(f.update_import_clause(
+                    node,
+                    n.phase_modifier(),
+                    node.as_import_clause().is_lazy,
+                    name,
+                    named_bindings,
+                ))
             }
             Kind::NamespaceImport | Kind::ImportSpecifier => {
                 if !self.should_emit_alias_declaration(node) {

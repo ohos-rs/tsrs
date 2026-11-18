@@ -19,61 +19,33 @@ fn options() -> CompilerOptions {
     }
 }
 fn compiler(cwd: &str, fs: Arc<dyn FS>) -> Compiler {
-    Compiler::new(SessionOptions::new(
-        cwd.into(),
-        bundled::lib_path(),
-        fs,
-        false,
-    ))
-    .unwrap()
+    Compiler::new(SessionOptions::new(cwd.into(), bundled::lib_path(), fs, false)).unwrap()
 }
 
 #[test]
 fn snapshots_and_types_own_their_memory_and_reject_foreign_handles() {
     let dir = TempDir::new("embedded-ownership");
-    let a = dir.write(
-        "a.ets",
-        "export class A { value = 1 }; let x: A | undefined;",
-    );
+    let a = dir.write("a.ets", "export class A { value = 1 }; let x: A | undefined;");
     let fs: Arc<dyn FS> = Arc::new(bundled::wrap_fs(osvfs::fs()));
     let weak = Arc::downgrade(&fs);
     let service = compiler(&dir.dir(), Arc::clone(&fs));
-    let old = service
-        .create_program(&[a.clone()], options(), Arc::clone(&fs))
-        .unwrap();
+    let old = service.create_program(&[a.clone()], options(), Arc::clone(&fs)).unwrap();
     let types = old.types_at_positions(&a, &[45]).unwrap();
-    let source = dir.write(
-        "a.ets",
-        "export class A { value = 'new' }; let x: A | undefined;",
-    );
+    let source = dir.write("a.ets", "export class A { value = 'new' }; let x: A | undefined;");
     let next = service
         .update_program(
             &old,
             &[a.clone()],
             options(),
             Arc::clone(&fs),
-            &FileChanges {
-                changed: vec![source],
-                ..Default::default()
-            },
+            &FileChanges { changed: vec![source], ..Default::default() },
         )
         .unwrap();
-    assert!(
-        next.non_nullable_type(&types[0])
-            .unwrap_err()
-            .to_string()
-            .contains("another program")
-    );
+    assert!(next.non_nullable_type(&types[0]).unwrap_err().to_string().contains("another program"));
     let other = compiler(&dir.dir(), Arc::clone(&fs));
     assert!(
         other
-            .update_program(
-                &old,
-                &[a],
-                options(),
-                Arc::clone(&fs),
-                &FileChanges::default()
-            )
+            .update_program(&old, &[a], options(), Arc::clone(&fs), &FileChanges::default())
             .unwrap_err()
             .to_string()
             .contains("another compiler")
@@ -83,32 +55,18 @@ fn snapshots_and_types_own_their_memory_and_reject_foreign_handles() {
     drop(fs);
     drop(next);
     drop(old);
-    assert!(
-        weak.upgrade().is_some(),
-        "type lease must keep its compiler alive"
-    );
+    assert!(weak.upgrade().is_some(), "type lease must keep its compiler alive");
     drop(types);
-    assert!(
-        weak.upgrade().is_none(),
-        "last type lease must free the compiler and its filesystem"
-    );
+    assert!(weak.upgrade().is_none(), "last type lease must free the compiler and its filesystem");
 }
 
 #[test]
 fn incremental_kit_changes_preserve_old_snapshots() {
     let dir = TempDir::new("embedded-kit");
-    let a = dir.write(
-        "a.ets",
-        "import { Foo } from '@kit.Test'; const x: number = new Foo().value;",
-    );
-    dir.write(
-        "sdk/api/@ohos.foo.d.ts",
-        "export class Foo { value: number }",
-    );
-    dir.write(
-        "sdk/api/@ohos.bar.d.ts",
-        "export class Foo { value: string }",
-    );
+    let a =
+        dir.write("a.ets", "import { Foo } from '@kit.Test'; const x: number = new Foo().value;");
+    dir.write("sdk/api/@ohos.foo.d.ts", "export class Foo { value: number }");
+    dir.write("sdk/api/@ohos.bar.d.ts", "export class Foo { value: string }");
     let kit = dir.write(
         "sdk/openharmony/ets/build-tools/ets-loader/kit_configs/@kit.Test.json",
         r#"{"symbols":{"Foo":{"source":"@ohos.foo.d.ts","bindings":"Foo"}}}"#,
@@ -119,15 +77,11 @@ fn incremental_kit_changes_preserve_old_snapshots() {
         module: tsrs_core::ModuleKind::ES_NEXT,
         module_resolution: tsrs_core::ModuleResolutionKind::BUNDLER,
         ets_loader_path: dir.path("sdk/openharmony/ets/build-tools/ets-loader"),
-        oh_sdk_configs: Some(vec![tsrs_core::OhSdkConfig {
-            api_paths: vec![dir.path("sdk/api")],
-        }]),
+        oh_sdk_configs: Some(vec![tsrs_core::OhSdkConfig { api_paths: vec![dir.path("sdk/api")] }]),
         oh_system_modules: Some(vec!["@ohos.foo.d.ts".into(), "@ohos.bar.d.ts".into()]),
         ..options()
     };
-    let old = service
-        .create_program(&[a.clone()], opts.clone(), Arc::clone(&fs))
-        .unwrap();
+    let old = service.create_program(&[a.clone()], opts.clone(), Arc::clone(&fs)).unwrap();
     assert!(
         old.semantic_diagnostics().unwrap().is_empty(),
         "{:?}",
@@ -143,18 +97,10 @@ fn incremental_kit_changes_preserve_old_snapshots() {
             &[a],
             opts,
             fs,
-            &FileChanges {
-                changed: vec![kit],
-                ..Default::default()
-            },
+            &FileChanges { changed: vec![kit], ..Default::default() },
         )
         .unwrap();
-    assert!(
-        new.semantic_diagnostics()
-            .unwrap()
-            .iter()
-            .any(|d| d.code == 2322)
-    );
+    assert!(new.semantic_diagnostics().unwrap().iter().any(|d| d.code == 2322));
     assert!(
         old.semantic_diagnostics().unwrap().is_empty(),
         "{:?}",
@@ -205,10 +151,7 @@ impl tsrs_api::embedded::SdkPluginHost for EmptyPluginHost {
         &self,
         requests: Vec<tsrs_api::embedded::SdkPluginRequest>,
     ) -> Result<Vec<tsrs_core::OhSdkPluginResponse>, String> {
-        Ok(requests
-            .iter()
-            .map(|_| tsrs_core::OhSdkPluginResponse::default())
-            .collect())
+        Ok(requests.iter().map(|_| tsrs_core::OhSdkPluginResponse::default()).collect())
     }
 }
 
@@ -236,9 +179,8 @@ fn repeated_compilers_release_options_plugins_and_filesystems() {
         let host: Arc<dyn tsrs_api::embedded::SdkPluginHost> = Arc::new(EmptyPluginHost);
         let weak_host = Arc::downgrade(&host);
         let service = compiler(&dir.dir(), Arc::clone(&fs));
-        let mut program = service
-            .create_program(&[a.clone()], plugin_options(host), Arc::clone(&fs))
-            .unwrap();
+        let mut program =
+            service.create_program(&[a.clone()], plugin_options(host), Arc::clone(&fs)).unwrap();
         program.arkts_build_diagnostics().unwrap();
         for index in 0..4 {
             dir.write("a.ets", &format!("export const value = {index};"));
@@ -248,10 +190,7 @@ fn repeated_compilers_release_options_plugins_and_filesystems() {
                     &[a.clone()],
                     options(),
                     Arc::clone(&fs),
-                    &FileChanges {
-                        changed: vec![a.clone()],
-                        ..Default::default()
-                    },
+                    &FileChanges { changed: vec![a.clone()], ..Default::default() },
                 )
                 .unwrap();
             program.semantic_diagnostics().unwrap();
@@ -260,39 +199,22 @@ fn repeated_compilers_release_options_plugins_and_filesystems() {
         drop(service);
         drop(fs);
         assert!(weak.upgrade().is_none());
-        assert!(
-            weak_host.upgrade().is_none(),
-            "options must release their SDK host"
-        );
+        assert!(weak_host.upgrade().is_none(), "options must release their SDK host");
     }
 }
 
 #[test]
 fn config_requests_do_not_leak_the_session_host() {
     let dir = TempDir::new("embedded-config-host");
-    let config = dir.write(
-        "tsconfig.json",
-        r#"{"compilerOptions":{"noEmit":true},"files":["a.ts"]}"#,
-    );
+    let config =
+        dir.write("tsconfig.json", r#"{"compilerOptions":{"noEmit":true},"files":["a.ts"]}"#);
     dir.write("a.ts", "export {};");
     let fs: Arc<dyn FS> = Arc::new(bundled::wrap_fs(osvfs::fs()));
     let weak = Arc::downgrade(&fs);
-    let s = Session::new(SessionOptions::new(
-        dir.dir(),
-        bundled::lib_path(),
-        fs,
-        false,
-    ));
-    call(
-        &s,
-        "parseConfigFile",
-        &format!(r#"{{"file":{}}}"#, quote(&config)),
-    );
+    let s = Session::new(SessionOptions::new(dir.dir(), bundled::lib_path(), fs, false));
+    call(&s, "parseConfigFile", &format!(r#"{{"file":{}}}"#, quote(&config)));
     drop(s);
-    assert!(
-        weak.upgrade().is_none(),
-        "configuration parsing retained its filesystem"
-    );
+    assert!(weak.upgrade().is_none(), "configuration parsing retained its filesystem");
 }
 
 #[test]
@@ -329,9 +251,7 @@ fn failed_host_request_releases_inputs_and_keeps_the_compiler_usable() {
     let a = dir.write("a.ets", "const value: number = 'error';");
     let fs: Arc<dyn FS> = Arc::new(bundled::wrap_fs(osvfs::fs()));
     let service = compiler(&dir.dir(), Arc::clone(&fs));
-    let old = service
-        .create_program(&[a.clone()], options(), Arc::clone(&fs))
-        .unwrap();
+    let old = service.create_program(&[a.clone()], options(), Arc::clone(&fs)).unwrap();
     let host: Arc<dyn tsrs_api::embedded::SdkPluginHost> = Arc::new(PanicHost);
     let weak = Arc::downgrade(&host);
     let error = service
@@ -345,21 +265,9 @@ fn failed_host_request_releases_inputs_and_keeps_the_compiler_usable() {
         .unwrap_err();
     assert!(error.to_string().contains("host failure regression"));
     assert!(weak.upgrade().is_none());
-    assert!(
-        old.semantic_diagnostics()
-            .unwrap()
-            .iter()
-            .any(|d| d.code == 2322)
-    );
-    let new = service
-        .update_program(&old, &[a], options(), fs, &FileChanges::default())
-        .unwrap();
-    assert!(
-        new.semantic_diagnostics()
-            .unwrap()
-            .iter()
-            .any(|d| d.code == 2322)
-    );
+    assert!(old.semantic_diagnostics().unwrap().iter().any(|d| d.code == 2322));
+    let new = service.update_program(&old, &[a], options(), fs, &FileChanges::default()).unwrap();
+    assert!(new.semantic_diagnostics().unwrap().iter().any(|d| d.code == 2322));
 }
 
 // R4a: the strict linter consumes owned normal keys after its regions are retired.
@@ -383,10 +291,7 @@ const shape: Shape = { name: 123 };
     let property = source.find("property").unwrap();
     let query = ArktsTransformTypeQuery {
         file: a.clone().into(),
-        properties: vec![TypeQueryRange {
-            pos: property,
-            end: property + "property".len(),
-        }],
+        properties: vec![TypeQueryRange { pos: property, end: property + "property".len() }],
         builder_accesses: Vec::new(),
         member_accesses: Vec::new(),
     };
@@ -394,23 +299,13 @@ const shape: Shape = { name: 123 };
     let service = compiler(&dir.dir(), Arc::clone(&fs));
     for (linter, strict_only) in [(true, false), (true, true), (false, false)] {
         let opts = CompilerOptions {
-            need_do_ark_ts_linter: if linter {
-                Tristate::True
-            } else {
-                Tristate::False
-            },
-            strict_checker_only: if strict_only {
-                Tristate::True
-            } else {
-                Tristate::False
-            },
+            need_do_ark_ts_linter: if linter { Tristate::True } else { Tristate::False },
+            strict_checker_only: if strict_only { Tristate::True } else { Tristate::False },
             checkers: Some(2),
             ets_annotations_enable: Tristate::True,
             ..options()
         };
-        let reference = service
-            .create_program(&roots, opts.clone(), Arc::clone(&fs))
-            .unwrap();
+        let reference = service.create_program(&roots, opts.clone(), Arc::clone(&fs)).unwrap();
         let expected = reference.arkts_build_diagnostics().unwrap();
         assert!(!expected.semantic_diagnostics.is_empty());
         if linter {
@@ -418,23 +313,18 @@ const shape: Shape = { name: 123 };
         }
         let annotations = reference.annotation_transform_infos(&roots).unwrap();
         assert!(!annotations[0].declarations.is_empty());
-        let facts = reference
-            .arkts_transform_type_facts(std::slice::from_ref(&query), &[])
-            .unwrap();
+        let facts =
+            reference.arkts_transform_type_facts(std::slice::from_ref(&query), &[]).unwrap();
         assert_eq!(facts[0].properties.len(), 1);
-        let program = service
-            .create_program(&roots, opts, Arc::clone(&fs))
-            .unwrap();
-        let types = program
-            .types_at_positions(&a, &[source.find("maybe").unwrap() as u32])
-            .unwrap();
+        let program = service.create_program(&roots, opts, Arc::clone(&fs)).unwrap();
+        let types =
+            program.types_at_positions(&a, &[source.find("maybe").unwrap() as u32]).unwrap();
         // Reacquisition after retirement must create a live checker, not reuse freed links.
         for _ in 0..2 {
             let normal = program.arkts_normal_diagnostics().unwrap();
             let actual_annotations = program.annotation_transform_infos(&roots).unwrap();
-            let actual_facts = program
-                .arkts_transform_type_facts(std::slice::from_ref(&query), &[])
-                .unwrap();
+            let actual_facts =
+                program.arkts_transform_type_facts(std::slice::from_ref(&query), &[]).unwrap();
             let actual = program.arkts_strict_diagnostics(normal).unwrap();
             assert_eq!(
                 actual, expected,
@@ -449,10 +339,7 @@ const shape: Shape = { name: 123 };
                 serde_json::to_value(&facts).unwrap()
             );
             let non_null = program.non_nullable_type(&types[0]).unwrap();
-            assert_eq!(
-                program.type_symbol(&non_null).unwrap().unwrap().name,
-                "Value"
-            );
+            assert_eq!(program.type_symbol(&non_null).unwrap().unwrap().name, "Value");
         }
         let foreign = reference.arkts_normal_diagnostics().unwrap();
         assert!(

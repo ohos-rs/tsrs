@@ -17,14 +17,7 @@ fn valid(text: &str) -> P<ast::SourceFile> {
     let errors: Vec<_> = file
         .diagnostics()
         .iter()
-        .map(|d| {
-            format!(
-                "{} at {}: {}",
-                d.code(),
-                d.pos().unwrap_or(0),
-                d.localize()
-            )
-        })
+        .map(|d| format!("{} at {}: {}", d.code(), d.pos().unwrap_or(0), d.localize()))
         .collect();
     assert!(errors.is_empty(), "{errors:?}\n{text}");
     file
@@ -49,7 +42,8 @@ fn arkts_reference_syntax() {
 
 #[test]
 fn preserves_struct_and_ui_children() {
-    let file = valid("struct Page { value: string = ''; build() { Column() { Text(this.value) } } }");
+    let file =
+        valid("struct Page { value: string = ''; build() { Column() { Text(this.value) } } }");
     let node = file.statements().nodes()[0];
     assert!(ast::is_struct_declaration(node));
     assert!(node.members()[0].is_virtual());
@@ -96,9 +90,7 @@ fn annotation_diagnostics_and_typescript_isolation() {
     assert!(file.diagnostics().iter().any(|d| d.code() == 28037));
     assert!(!parse("@interface Bad {}", ScriptKind::TS).diagnostics().is_empty());
     assert!(
-        !parse("struct Page { build() { Column() {} } }", ScriptKind::TS)
-            .diagnostics()
-            .is_empty()
+        !parse("struct Page { build() { Column() {} } }", ScriptKind::TS).diagnostics().is_empty()
     );
     for source in [
         "@interface Bad { public value: number }",

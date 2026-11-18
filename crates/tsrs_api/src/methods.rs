@@ -368,9 +368,17 @@ pub const ARKTS_METHODS: &[MethodInfo] = &[
     MethodInfo { name: "getArkTSLinterDiagnostics", owner: Owner::Core, status: Status::Partial },
     MethodInfo { name: "getArkTSBuildDiagnostics", owner: Owner::Core, status: Status::Partial },
     MethodInfo { name: "getProgramSourceGraph", owner: Owner::Core, status: Status::Partial },
-    MethodInfo { name: "getArkTSTransformTypeFacts", owner: Owner::Checker, status: Status::Partial },
+    MethodInfo {
+        name: "getArkTSTransformTypeFacts",
+        owner: Owner::Checker,
+        status: Status::Partial,
+    },
     MethodInfo { name: "getAnnotationInfo", owner: Owner::Checker, status: Status::Partial },
-    MethodInfo { name: "getAnnotationTransformInfos", owner: Owner::Checker, status: Status::Partial },
+    MethodInfo {
+        name: "getAnnotationTransformInfos",
+        owner: Owner::Checker,
+        status: Status::Partial,
+    },
 ];
 // Go `unmarshalers` (proto.go): the params type each method decodes into, for Go's error text
 // `failed to unmarshal *api.<Type>`. `None` = `noParams`.

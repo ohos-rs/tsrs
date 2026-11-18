@@ -21,9 +21,9 @@ pub fn has_arkui_bare_decorator(modifiers: Option<P<ModifierList>>, names: &[&st
     modifiers.is_some_and(|list| {
         list.nodes().iter().any(|node| {
             ast::is_decorator(*node)
-                && node
-                    .expression()
-                    .is_some_and(|expression| ast::is_identifier(expression) && names.contains(&expression.text()))
+                && node.expression().is_some_and(|expression| {
+                    ast::is_identifier(expression) && names.contains(&expression.text())
+                })
         })
     })
 }
@@ -36,7 +36,8 @@ pub fn has_ets_decorator(node: P<Node>, options: &EtsOptions) -> bool {
         let expression = modifier.expression().unwrap();
         if ast::is_call_expression(expression) {
             let callee = expression.expression().unwrap();
-            return ast::is_identifier(callee) && ets_contains(options.extend.decorator.as_deref(), callee.text());
+            return ast::is_identifier(callee)
+                && ets_contains(options.extend.decorator.as_deref(), callee.text());
         }
         ast::is_identifier(expression)
             && (ets_contains(options.render.decorator.as_deref(), expression.text())

@@ -132,7 +132,9 @@ impl Checker {
                     None => return self.error_type,
                 }
                 if !self.compiler_options.ets_loader_path.is_empty() {
-                    tsrs_core::goslices::sort_stable_func(&mut type_set, |&a, &b| compare_types(self, Some(a), Some(b)));
+                    tsrs_core::goslices::sort_stable_func(&mut type_set, |&a, &b| {
+                        compare_types(self, Some(a), Some(b))
+                    });
                 }
             }
             if type_set.is_empty() {

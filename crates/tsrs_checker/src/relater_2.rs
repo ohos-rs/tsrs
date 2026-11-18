@@ -4093,7 +4093,9 @@ impl Relater {
     ) -> Ternary {
         let mut check_mode = SignatureCheckMode::None;
         if !c.compiler_options.ets_loader_path.is_empty() {
-            if self.rel() == c.strict_subtype_relation { check_mode = SignatureCheckMode::StrictArity; }
+            if self.rel() == c.strict_subtype_relation {
+                check_mode = SignatureCheckMode::StrictArity;
+            }
         } else if self.rel() == c.subtype_relation {
             check_mode = SignatureCheckMode::StrictTopSignature;
         } else if self.rel() == c.strict_subtype_relation {
