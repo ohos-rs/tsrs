@@ -1415,8 +1415,8 @@ fn core_session_hook_maps_errors_and_encodings() {
     assert_eq!(tsrs_api::checker::base64_encode(b"foobar"), "Zm9vYmFy");
 }
 
-/// Differential check against the pinned Go API session (microsoft/TypeScript b85298b6, tsc/internal/api).
-/// `testdata/go_probe/go_probe_b85298b6.jsonl` is produced by `testdata/go_probe/regen.sh`, which runs
+/// Differential check against the pinned Go API session (microsoft/TypeScript 3e923636, tsc/internal/api).
+/// `testdata/go_probe/go_probe_3e923636.jsonl` is produced by `testdata/go_probe/regen.sh`, which runs
 /// `testdata/go_probe/zz_tsrs_probe_test.go` inside the pinned reference checkout against Go's
 /// `Session.HandleRequest` with the same fixture (`testdata/go_probe/fixture`) and needles; `probe_lines`
 /// issues the same request sequence through the tsrs handlers. Results are compared as JSON values (not
@@ -1440,7 +1440,7 @@ fn pinned_go_differential() {
     }
     let golden = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/src/checker/testdata/go_probe/go_probe_b85298b6.jsonl"
+        "/src/checker/testdata/go_probe/go_probe_3e923636.jsonl"
     ));
     // Returns (query, result with objectFlags masked, raw objectFlags).
     let parse = |l: &str| -> (String, Value, Option<u64>) {

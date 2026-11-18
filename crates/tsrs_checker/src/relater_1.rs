@@ -451,9 +451,7 @@ impl Checker {
                     || t.intersects(TypeFlags::NumberLiteral)
                         && t.intersects(TypeFlags::EnumLiteral)
                         && (!self.compiler_options.ets_loader_path.is_empty()
-                            || source
-                                .as_literal_type()
-                                .value_equals(target.as_literal_type())))
+                            || source.as_literal_type().value_equals(target.as_literal_type())))
             {
                 return true;
             }

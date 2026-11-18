@@ -122,7 +122,7 @@ fn normalize(v: &Value, ids: &mut Ids, in_symbol: bool) -> Value {
                     // the pinned plain-TS oracle has only the module bitmask.
                     ("parseOptionsKey", Value::String(s)) if s.ends_with(':') => {
                         Value::String(s.trim_end_matches(':').to_string())
-                    },
+                    }
                     ("file" | "nodeId", Value::String(s)) => ids.str(s),
                     // Escaped names of well-known-symbol members embed the unique ES symbol's
                     // process-wide symbol id: `__@iterator@1360`.
@@ -1045,7 +1045,7 @@ fn uint64_handles_above_2_pow_53_are_looked_up_exactly() {
 }
 
 /// Full type responses (objectFlags included) for the cases in `testdata/go_probe/flags/cases.txt`, compared
-/// with `go_flags_b85298b6.jsonl` recorded by `TestTsrsCheckerFlags` (same fixtures, same request order).
+/// with `go_flags_3e923636.jsonl` recorded by `TestTsrsCheckerFlags` (same fixtures, same request order).
 #[test]
 fn type_flags_and_tuple_targets_match_pinned_go() {
     const CASES: &str = include_str!(concat!(
@@ -1054,7 +1054,7 @@ fn type_flags_and_tuple_targets_match_pinned_go() {
     ));
     const GOLDEN: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/src/checker/testdata/go_probe/go_flags_b85298b6.jsonl"
+        "/src/checker/testdata/go_probe/go_flags_3e923636.jsonl"
     ));
     let files = [
         (
@@ -1208,24 +1208,58 @@ fn type_flags_and_tuple_targets_match_pinned_go() {
 // The ordinary TS oracle predates OH's ESObject alias. Keep its library input
 // identical, rather than weakening node-handle or content-hash comparisons.
 fn pinned_oracle_fs(files: &[(&str, &str)]) -> Arc<dyn FS> {
-    let inner = bundled::wrap_fs(vfstest::from_map(files.iter().map(|(path, text)| (path.to_string(), text.to_string())), false));
+    let inner = bundled::wrap_fs(vfstest::from_map(
+        files.iter().map(|(path, text)| (path.to_string(), text.to_string())),
+        false,
+    ));
     Arc::new(PinnedOracleFS { inner: Box::new(inner) })
 }
 
-struct PinnedOracleFS { inner: Box<dyn FS> }
+struct PinnedOracleFS {
+    inner: Box<dyn FS>,
+}
 impl FS for PinnedOracleFS {
     fn read_file(&self, path: &str) -> Option<String> {
         let text = self.inner.read_file(path)?;
-        Some(if path == "bundled:///libs/lib.es5.d.ts" { text.replace("type ESObject = any;\n\n", "") } else { text })
+        Some(if path == "bundled:///libs/lib.es5.d.ts" {
+            text.replace("type ESObject = any;\n\n", "")
+        } else {
+            text
+        })
     }
-    fn use_case_sensitive_file_names(&self) -> bool { self.inner.use_case_sensitive_file_names() }
-    fn file_exists(&self, path: &str) -> bool { self.inner.file_exists(path) }
-    fn write_file(&self, path: &str, text: &str) -> Result<(), String> { self.inner.write_file(path, text) }
-    fn append_file(&self, path: &str, text: &str) -> Result<(), String> { self.inner.append_file(path, text) }
-    fn remove(&self, path: &str) -> Result<(), String> { self.inner.remove(path) }
-    fn chtimes(&self, path: &str, a: std::time::SystemTime, m: std::time::SystemTime) -> Result<(), String> { self.inner.chtimes(path, a, m) }
-    fn directory_exists(&self, path: &str) -> bool { self.inner.directory_exists(path) }
-    fn get_accessible_entries(&self, path: &str) -> tsrs_vfs::Entries { self.inner.get_accessible_entries(path) }
-    fn stat(&self, path: &str) -> Option<tsrs_vfs::FileInfo> { self.inner.stat(path) }
-    fn realpath(&self, path: &str) -> String { self.inner.realpath(path) }
+    fn use_case_sensitive_file_names(&self) -> bool {
+        self.inner.use_case_sensitive_file_names()
+    }
+    fn file_exists(&self, path: &str) -> bool {
+        self.inner.file_exists(path)
+    }
+    fn write_file(&self, path: &str, text: &str) -> Result<(), String> {
+        self.inner.write_file(path, text)
+    }
+    fn append_file(&self, path: &str, text: &str) -> Result<(), String> {
+        self.inner.append_file(path, text)
+    }
+    fn remove(&self, path: &str) -> Result<(), String> {
+        self.inner.remove(path)
+    }
+    fn chtimes(
+        &self,
+        path: &str,
+        a: std::time::SystemTime,
+        m: std::time::SystemTime,
+    ) -> Result<(), String> {
+        self.inner.chtimes(path, a, m)
+    }
+    fn directory_exists(&self, path: &str) -> bool {
+        self.inner.directory_exists(path)
+    }
+    fn get_accessible_entries(&self, path: &str) -> tsrs_vfs::Entries {
+        self.inner.get_accessible_entries(path)
+    }
+    fn stat(&self, path: &str) -> Option<tsrs_vfs::FileInfo> {
+        self.inner.stat(path)
+    }
+    fn realpath(&self, path: &str) -> String {
+        self.inner.realpath(path)
+    }
 }

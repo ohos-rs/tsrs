@@ -184,7 +184,8 @@ impl Session {
             .iter()
             .map(|d| d.to_absolute_file_name(cwd))
             .collect();
-        let mut options = crate::raw_options::compiler_options_from_raw(p.get("compilerOptions"), cwd)?;
+        let mut options =
+            crate::raw_options::compiler_options_from_raw(p.get("compilerOptions"), cwd)?;
         options.oh_sdk_plugin_executor = self.oh_sdk_plugin_executor.get().cloned();
         crate::ohsdkplugin::prepare_class_plugins(&mut options)?;
         let mut request = APICreateProgramRequest {

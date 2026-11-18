@@ -185,21 +185,30 @@ impl CompilerHost for CompilerHostImpl {
         let (cache, journal) = self.builder_parse_cache_journal();
         let file = journal.acquire(&cache, key.clone(), Arc::clone(&fh).into());
         let mut hash = xxhash_rust::xxh3::Xxh3::new();
-        let needs_transform = tsrs_compiler::KitImportProcessor::configuration_inputs(file, self.fs(), |path, text| {
-            hash.update(&(path.len() as u64).to_le_bytes());
-            hash.update(path.as_bytes());
-            hash.update(&[u8::from(text.is_some())]);
-            if let Some(text) = text {
-                hash.update(&(text.len() as u64).to_le_bytes());
-                hash.update(text.as_bytes());
-            }
-        });
-        if !needs_transform { return Some(file); }
+        let needs_transform = tsrs_compiler::KitImportProcessor::configuration_inputs(
+            file,
+            self.fs(),
+            |path, text| {
+                hash.update(&(path.len() as u64).to_le_bytes());
+                hash.update(path.as_bytes());
+                hash.update(&[u8::from(text.is_some())]);
+                if let Some(text) = text {
+                    hash.update(&(text.len() as u64).to_le_bytes());
+                    hash.update(text.as_bytes());
+                }
+            },
+        );
+        if !needs_transform {
+            return Some(file);
+        }
         let mut transformed_key = key.clone();
         transformed_key.set_kit_config_key(format!("{:032x}", hash.digest128()));
         let input = crate::parsecache::ParseCacheInput {
             file: fh,
-            kit_imports: Some((Arc::clone(&self.kit_imports), Arc::clone(&self.source_fs) as Arc<dyn FS>)),
+            kit_imports: Some((
+                Arc::clone(&self.kit_imports),
+                Arc::clone(&self.source_fs) as Arc<dyn FS>,
+            )),
         };
         let transformed = journal.acquire(&cache, transformed_key, input);
         journal.deref(&cache, &key);

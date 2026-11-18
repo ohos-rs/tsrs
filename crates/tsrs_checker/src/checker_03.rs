@@ -2304,8 +2304,11 @@ impl Checker {
         // export assignment is misplaced (grammar error), keeping diagnostics stable
         // regardless of traversal order.
         let expr_type = self.check_expression_cached(node.expression().unwrap());
-        let symbol = self.get_symbol_of_name_or_property_access_expression(node.expression().unwrap());
-        if !is_export_equals && is_annotation_symbol(symbol) { self.error(Some(node), &diagnostics::ANNOTATION_CANNOT_BE_EXPORTED_AS_DEFAULT, &[]); }
+        let symbol =
+            self.get_symbol_of_name_or_property_access_expression(node.expression().unwrap());
+        if !is_export_equals && is_annotation_symbol(symbol) {
+            self.error(Some(node), &diagnostics::ANNOTATION_CANNOT_BE_EXPORTED_AS_DEFAULT, &[]);
+        }
         let illegal_context_message = if is_export_equals {
             &diagnostics::AN_EXPORT_ASSIGNMENT_MUST_BE_AT_THE_TOP_LEVEL_OF_A_FILE_OR_MODULE_DECLARATION
         } else {
@@ -3081,7 +3084,10 @@ impl Checker {
     pub(crate) fn check_decorators(&mut self, node: P<Node>) {
         if ast::get_source_file_of_node(node).unwrap().script_kind() == tsrs_core::ScriptKind::ETS {
             for &modifier in node.modifier_nodes() {
-                if ast::is_decorator(modifier) && ast::is_identifier(modifier.expression().unwrap()) && self.annotation_for_decorator(modifier).is_none() {
+                if ast::is_decorator(modifier)
+                    && ast::is_identifier(modifier.expression().unwrap())
+                    && self.annotation_for_decorator(modifier).is_none()
+                {
                     self.get_resolved_symbol(modifier.expression().unwrap());
                 }
             }
@@ -3152,7 +3158,10 @@ impl Checker {
 
     // checker.go:6231
     pub(crate) fn check_decorator(&mut self, node: P<Node>) {
-        if let Some(declaration) = self.annotation_for_decorator(node) { self.check_annotation_use(node, declaration); return; }
+        if let Some(declaration) = self.annotation_for_decorator(node) {
+            self.check_annotation_use(node, declaration);
+            return;
+        }
         self.check_grammar_decorator(node);
         let signature = self.get_resolved_signature(node, None, CheckMode::Normal);
         self.check_deprecated_signature(signature, node);

@@ -82,15 +82,15 @@ pub(crate) use direct_bitflags;
 
 mod oh_sdk_jsdoc;
 pub use oh_sdk_jsdoc::OhSdkUseFact;
+mod annotation;
+mod arkts_linter;
+mod ets_libs;
+mod oh_imports;
 mod oh_sdk_api;
 mod oh_sdk_plugin;
 mod throws;
-mod ets_libs;
-mod arkts_linter;
-mod oh_imports;
-mod annotation;
 pub use annotation::{AnnotationConstant, AnnotationInfo, AnnotationPropertyInfo};
-use annotation::{is_annotation_symbol, AnnotationLinks};
+use annotation::{AnnotationLinks, is_annotation_symbol};
 mod arkui;
 mod ets_styles;
 

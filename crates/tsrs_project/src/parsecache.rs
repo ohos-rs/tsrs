@@ -95,7 +95,9 @@ pub struct ParseCacheInput {
     pub kit_imports: Option<(Arc<tsrs_compiler::KitImportProcessor>, Arc<dyn tsrs_vfs::FS>)>,
 }
 impl From<Arc<dyn FileHandle>> for ParseCacheInput {
-    fn from(file: Arc<dyn FileHandle>) -> Self { Self { file, kit_imports: None } }
+    fn from(file: Arc<dyn FileHandle>) -> Self {
+        Self { file, kit_imports: None }
+    }
 }
 pub type ParseCache = RefCountCache<ParseCacheKey, P<SourceFile>, ParseCacheInput>;
 

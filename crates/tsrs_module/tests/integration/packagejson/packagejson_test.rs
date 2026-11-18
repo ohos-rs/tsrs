@@ -232,9 +232,14 @@ fn test_parse_errors_and_dependencies() {
 
 #[test]
 fn json5_preserves_exports_and_validates_syntax() {
-    let value = parse_json5("{ name: 'pkg', exports: {default: './a.d.ets', types: './b.d.ets'}, }").unwrap();
+    let value =
+        parse_json5("{ name: 'pkg', exports: {default: './a.d.ets', types: './b.d.ets'}, }")
+            .unwrap();
     assert_eq!(value.name.value, "pkg");
-    assert_eq!(value.exports.as_object().keys().map(String::as_str).collect::<Vec<_>>(), ["default", "types"]);
+    assert_eq!(
+        value.exports.as_object().keys().map(String::as_str).collect::<Vec<_>>(),
+        ["default", "types"]
+    );
     for text in ["{name: '", "{name: Infinity}"] {
         assert!(parse_json5(text).is_err(), "{text}");
     }

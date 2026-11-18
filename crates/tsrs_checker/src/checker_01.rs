@@ -654,17 +654,26 @@ impl Checker {
             get_requires_scope_change_cache: Some(
                 super::checker::Checker::get_requires_scope_change_cache,
             ),
-            on_property_with_invalid_initializer: Some(|c, error_location, name, property_with_invalid_initializer, result| {
-                c.check_and_report_error_for_invalid_initializer(
-                    error_location,
-                    name,
-                    property_with_invalid_initializer,
-                    result,
-                )
-            }),
-            on_failed_to_resolve_symbol: Some(|c, error_location, name, meaning, name_not_found_message| {
-                c.on_failed_to_resolve_symbol(error_location, name, meaning, name_not_found_message);
-            }),
+            on_property_with_invalid_initializer: Some(
+                |c, error_location, name, property_with_invalid_initializer, result| {
+                    c.check_and_report_error_for_invalid_initializer(
+                        error_location,
+                        name,
+                        property_with_invalid_initializer,
+                        result,
+                    )
+                },
+            ),
+            on_failed_to_resolve_symbol: Some(
+                |c, error_location, name, meaning, name_not_found_message| {
+                    c.on_failed_to_resolve_symbol(
+                        error_location,
+                        name,
+                        meaning,
+                        name_not_found_message,
+                    );
+                },
+            ),
             on_successfully_resolved_symbol: Some(
                 |c,
                  error_location,

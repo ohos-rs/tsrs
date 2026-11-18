@@ -89,9 +89,11 @@ impl Session {
     pub(crate) fn handle_get_arkts_build_diagnostics(&self, p: Params) -> ApiResult<Value> {
         let (_sd, program) = self.program_of(p)?;
         let diagnostics = program.get_arkts_build_diagnostics(&Context::background());
-        Ok(Obj::new().set("linterDiagnostics", diagnostic_responses(&diagnostics.linter))
+        Ok(Obj::new()
+            .set("linterDiagnostics", diagnostic_responses(&diagnostics.linter))
             .set("syntacticDiagnostics", diagnostic_responses(&diagnostics.syntactic))
-            .set("semanticDiagnostics", diagnostic_responses(&diagnostics.semantic)).build())
+            .set("semanticDiagnostics", diagnostic_responses(&diagnostics.semantic))
+            .build())
     }
 
     pub(crate) fn handle_get_config_file_parsing_diagnostics(&self, p: Params) -> ApiResult<Value> {
@@ -289,7 +291,10 @@ impl Session {
 impl Session {
     /// OH `handleGetProgramSourceGraph`: resolved .ts/.ets edges (including
     /// declaration files), sorted and deduplicated; JavaScript is a leaf.
-    #[expect(clippy::iter_over_hash_type, reason = "dependency and type reference lists are sorted before serialization")]
+    #[expect(
+        clippy::iter_over_hash_type,
+        reason = "dependency and type reference lists are sorted before serialization"
+    )]
     #[expect(
         clippy::case_sensitive_file_extension_comparisons,
         reason = "compiler paths are already normalized, so an exact suffix matches the Go check"
@@ -301,23 +306,36 @@ impl Session {
             let mut dependencies = Vec::new();
             if let Some(resolutions) = program.get_resolved_modules().get(file.path()) {
                 for resolution in resolutions.values() {
-                    if resolution.is_resolved() && (resolution.resolved_file_name.ends_with(".ets") || resolution.resolved_file_name.ends_with(".ts")) {
+                    if resolution.is_resolved()
+                        && (resolution.resolved_file_name.ends_with(".ets")
+                            || resolution.resolved_file_name.ends_with(".ts"))
+                    {
                         dependencies.push(resolution.resolved_file_name);
                     }
                 }
             }
             dependencies.sort_unstable();
             dependencies.dedup();
-            files.push(Obj::new().set("fileName", s(file.file_name())).set("dependencies", strings(dependencies)).build());
+            files.push(
+                Obj::new()
+                    .set("fileName", s(file.file_name()))
+                    .set("dependencies", strings(dependencies))
+                    .build(),
+            );
         }
         let mut references = Vec::new();
         for resolutions in program.get_resolved_type_reference_directives().values() {
             for resolution in resolutions.values() {
-                if resolution.is_resolved() { references.push(resolution.resolved_file_name); }
+                if resolution.is_resolved() {
+                    references.push(resolution.resolved_file_name);
+                }
             }
         }
         references.sort_unstable();
         references.dedup();
-        Ok(Obj::new().set("files", Value::Array(files)).set("typeReferenceFiles", strings(references)).build())
+        Ok(Obj::new()
+            .set("files", Value::Array(files))
+            .set("typeReferenceFiles", strings(references))
+            .build())
     }
 }

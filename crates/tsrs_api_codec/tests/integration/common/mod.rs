@@ -29,11 +29,16 @@ pub fn fixtures() -> Vec<(String, String)> {
 }
 
 pub fn golden(name: &str) -> Vec<u8> {
-    upgrade_reference(&std::fs::read(crate_dir().join("tests/golden").join(format!("{name}.bin"))).unwrap())
+    upgrade_reference(
+        &std::fs::read(crate_dir().join("tests/golden").join(format!("{name}.bin"))).unwrap(),
+    )
 }
 
 pub fn client_golden(name: &str) -> Vec<u8> {
-    upgrade_reference(&std::fs::read(crate_dir().join("tests/golden").join(format!("{name}.client.bin"))).unwrap())
+    upgrade_reference(
+        &std::fs::read(crate_dir().join("tests/golden").join(format!("{name}.client.bin")))
+            .unwrap(),
+    )
 }
 
 /// Parses and binds `text` the way the pinned server's `createSourceFile` does

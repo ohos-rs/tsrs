@@ -1046,10 +1046,15 @@ impl FileHandleSource for RequestFileSystem {
             if let FsRef::Layered(layered) = &self.base_ref {
                 return layered.get_file(&l.path);
             }
-            return self.base.read_file_shared(&l.path).map(|c| tsrs_project::new_cached_file_handle(file_name, c));
+            return self
+                .base
+                .read_file_shared(&l.path)
+                .map(|c| tsrs_project::new_cached_file_handle(file_name, c));
         }
         match l.entry.as_deref() {
-            Some(Entry::File { content, .. }) => Some(tsrs_project::new_cached_file_handle(file_name, Arc::clone(content))),
+            Some(Entry::File { content, .. }) => {
+                Some(tsrs_project::new_cached_file_handle(file_name, Arc::clone(content)))
+            }
             _ => None,
         }
     }

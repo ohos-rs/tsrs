@@ -56,7 +56,8 @@ pub struct CompilerOptions {
     pub oh_api_compatibility_check: String,
     pub oh_sdk_check_plugins: Option<Vec<crate::OhSdkCheckPlugin>>,
     pub oh_sdk_class_check_plugins: Option<Vec<crate::OhSdkClassCheckPlugin>>,
-    pub oh_sdk_plugin_project_config: Option<std::sync::Arc<serde_json::Map<String, serde_json::Value>>>,
+    pub oh_sdk_plugin_project_config:
+        Option<std::sync::Arc<serde_json::Map<String, serde_json::Value>>>,
     pub oh_sdk_plugin_config_cache: crate::OhSdkPluginConfigCache,
     pub oh_sdk_plugin_executor: Option<std::sync::Arc<dyn crate::OhSdkPluginExecutor>>,
     pub ets: std::sync::Arc<crate::EtsOptions>,
@@ -71,7 +72,6 @@ pub struct CompilerOptions {
     pub oh_project_path: String,
     pub oh_external_api_paths: Option<Vec<String>>,
     pub oh_package_exports: Option<OrderedMap<String, Vec<String>>>,
-
 
     /// API only (`gojson`): `moduleDetection` and `newLine` numbers decoded from the wire with no Rust variant (Go
     /// keeps any int32), by JSON name. The typed field stays at its default (which behaves like Go's fallback) and
@@ -330,7 +330,9 @@ impl CompilerOptions {
     }
 
     pub fn allow_importing_ts_extensions_from(&self, file_name: &str) -> bool {
-        self.uses_oh_module_resolution() || self.get_allow_importing_ts_extensions() || tspath::is_declaration_file_name(file_name)
+        self.uses_oh_module_resolution()
+            || self.get_allow_importing_ts_extensions()
+            || tspath::is_declaration_file_name(file_name)
     }
 
     pub fn get_resolve_json_module(&self) -> bool {
@@ -386,7 +388,10 @@ impl CompilerOptions {
 
         let mut type_roots = Vec::with_capacity(base_dir.matches('/').count());
         tspath::for_each_ancestor_directory(&base_dir, |dir| -> Option<()> {
-            type_roots.push(tspath::combine_paths(dir, &[self.package_manager_modules_directory(), "@types"]));
+            type_roots.push(tspath::combine_paths(
+                dir,
+                &[self.package_manager_modules_directory(), "@types"],
+            ));
             None
         });
         (type_roots, false)
@@ -823,7 +828,9 @@ impl fmt::Display for JsxEmit {
 
 impl CompilerOptions {
     pub fn uses_oh_module_resolution(&self) -> bool {
-        self.ets_annotations_enable.is_true() || !self.ets_loader_path.is_empty() || self.package_manager_type == "ohpm"
+        self.ets_annotations_enable.is_true()
+            || !self.ets_loader_path.is_empty()
+            || self.package_manager_type == "ohpm"
             || self.oh_sdk_configs.as_ref().is_some_and(|v| !v.is_empty())
             || self.oh_fallback_module_roots.as_ref().is_some_and(|v| !v.is_empty())
             || !self.oh_loader_module_root.is_empty()
@@ -841,10 +848,15 @@ impl CompilerOptions {
 
 impl CompilerOptions {
     pub fn is_oh_sdk_module_specifier(&self, module_name: &str) -> bool {
-        let Some((prefix, _)) = module_name.strip_prefix('@').and_then(|n| n.split_once('.')) else { return false; };
+        let Some((prefix, _)) = module_name.strip_prefix('@').and_then(|n| n.split_once('.'))
+        else {
+            return false;
+        };
         match self.oh_sdk_config_prefixes.as_deref().filter(|p| !p.is_empty()) {
             Some(prefixes) => prefixes.iter().any(|p| p.eq_ignore_ascii_case(prefix)),
-            None => ["ohos", "system", "kit", "arkts"].iter().any(|p| p.eq_ignore_ascii_case(prefix)),
+            None => {
+                ["ohos", "system", "kit", "arkts"].iter().any(|p| p.eq_ignore_ascii_case(prefix))
+            }
         }
     }
 }

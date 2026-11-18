@@ -684,7 +684,8 @@ impl Node {
 
     pub fn set_virtual(&self, value: bool) {
         let mut header = self.header.get();
-        header.0 = (header.0 & !NodeHeaderWord::VIRTUAL_BIT) | if value { NodeHeaderWord::VIRTUAL_BIT } else { 0 };
+        header.0 = (header.0 & !NodeHeaderWord::VIRTUAL_BIT)
+            | if value { NodeHeaderWord::VIRTUAL_BIT } else { 0 };
         self.header.set(header);
     }
 
@@ -1949,7 +1950,7 @@ pub struct SourceFile {
     // Written once by the file loader (SetContentMapperInfo) before the file is published.
     content_mapper_info: OwnedCell<Option<P<ContentMapperSourceFileInfo>>>,
     pub statements: OwnedCell<P<NodeList>>, // Replaced by OH Kit expansion before binding.
-    pub end_of_file_token: P<Node>, // TokenNode[*EndOfFileToken]
+    pub end_of_file_token: P<Node>,         // TokenNode[*EndOfFileToken]
 
     // Fields set by parser
     diagnostics: OwnedCell<&'static [P<Diagnostic>]>,

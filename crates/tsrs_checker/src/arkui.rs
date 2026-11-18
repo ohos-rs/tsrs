@@ -4,7 +4,10 @@ impl Checker {
     // OH checker/arkui.go: SDK system components and configured render contexts.
     pub(crate) fn is_system_ets_component(&mut self, node: P<Node>) -> bool {
         if !ast::is_identifier(node)
-            || !tsrs_core::ets_contains(self.compiler_options.ets.components.as_deref(), node.text())
+            || !tsrs_core::ets_contains(
+                self.compiler_options.ets.components.as_deref(),
+                node.text(),
+            )
             || self.compiler_options.ets_loader_path.is_empty()
         {
             return false;
@@ -12,25 +15,38 @@ impl Checker {
         let Some(symbol) = self.get_symbol_at_location(node, false) else { return false };
         let symbol = self.resolve_symbol(symbol);
         let declarations = symbol.declarations();
-        if declarations.len() != 1 { return false; }
+        if declarations.len() != 1 {
+            return false;
+        }
         let Some(file) = ast::get_source_file_of_node(declarations[0]) else { return false };
-        let path = tsrs_core::tspath::get_normalized_absolute_path("declarations", &self.compiler_options.ets_loader_path);
+        let path = tsrs_core::tspath::get_normalized_absolute_path(
+            "declarations",
+            &self.compiler_options.ets_loader_path,
+        );
         tsrs_core::tspath::normalize_path(file.file_name()).starts_with(&path)
     }
 
     pub(crate) fn is_in_build_or_page_transition_context(&self, node: P<Node>) -> bool {
         let options = &self.compiler_options.ets.render;
-        if options.method.is_none() && options.decorator.is_none() { return false; }
+        if options.method.is_none() && options.decorator.is_none() {
+            return false;
+        }
         let mut container = ast::get_containing_function(node);
         while let Some(current) = container {
             if ast::is_method_declaration(current)
                 && ast::get_containing_class(current).is_some_and(ast::is_struct_declaration)
-                && current.name().is_some_and(|name| tsrs_core::ets_contains(options.method.as_deref(), name.text()))
+                && current.name().is_some_and(|name| {
+                    tsrs_core::ets_contains(options.method.as_deref(), name.text())
+                })
             {
                 return true;
             }
             if (ast::is_method_declaration(current) || ast::is_function_declaration(current))
-                && options.decorator.as_ref().is_some_and(|names| names.iter().any(|name| ast::has_arkui_bare_decorator(current.modifiers(), &[name])))
+                && options.decorator.as_ref().is_some_and(|names| {
+                    names
+                        .iter()
+                        .any(|name| ast::has_arkui_bare_decorator(current.modifiers(), &[name]))
+                })
             {
                 return true;
             }
@@ -49,7 +65,12 @@ impl Checker {
         }
         self.check_class_like_declaration(node);
         if let Some(name) = node.name() {
-            if ast::is_identifier(name) && tsrs_core::ets_contains(self.compiler_options.ets.components.as_deref(), name.text()) {
+            if ast::is_identifier(name)
+                && tsrs_core::ets_contains(
+                    self.compiler_options.ets.components.as_deref(),
+                    name.text(),
+                )
+            {
                 self.error(
                     Some(name),
                     &diagnostics::THE_STRUCT_NAME_CANNOT_CONTAIN_RESERVED_TAG_NAME_COLON_0,
@@ -61,7 +82,12 @@ impl Checker {
         self.register_for_unused_identifiers_check(node);
     }
 
-    pub(crate) fn get_arkui_style_property(&self, node: P<Node>, left: P<Node>, right: P<Node>) -> Option<P<Symbol>> {
+    pub(crate) fn get_arkui_style_property(
+        &self,
+        node: P<Node>,
+        left: P<Node>,
+        right: P<Node>,
+    ) -> Option<P<Symbol>> {
         let mut root = ets_component_root(left);
         if root.is_none() {
             let mut ancestor = Some(node);
@@ -95,7 +121,9 @@ impl Checker {
         {
             if let Some(declaration) = local.value_declaration() {
                 for &decorator in declaration.modifier_nodes() {
-                    if !ast::is_decorator(decorator) || !ast::is_call_expression(decorator.expression().unwrap()) {
+                    if !ast::is_decorator(decorator)
+                        || !ast::is_call_expression(decorator.expression().unwrap())
+                    {
                         continue;
                     }
                     let call = decorator.expression().unwrap();

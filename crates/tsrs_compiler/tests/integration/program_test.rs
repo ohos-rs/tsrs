@@ -398,7 +398,9 @@ fn arkts_linter_qualified_names_cache_only_outer_results_and_preserve_normal_che
     let program = new_program(ProgramOptions::new(config_for(&files), host_for(&files)));
     let file = program.get_source_file("/src/index.ts").unwrap();
     fn identifiers(node: P<tsrs_ast::Node>, result: &mut Vec<P<tsrs_ast::Node>>) -> bool {
-        if node.kind() == tsrs_ast::Kind::Identifier { result.push(node); }
+        if node.kind() == tsrs_ast::Kind::Identifier {
+            result.push(node);
+        }
         node.for_each_child(&mut |child| identifiers(child, result));
         false
     }
@@ -407,17 +409,34 @@ fn arkts_linter_qualified_names_cache_only_outer_results_and_preserve_normal_che
     let normal_region = tsrs_core::arena::Region::new(64 << 10);
     let normal_scope = normal_region.enter();
     let mut normal = tsrs_checker::new_checker(program);
-    let expected: Vec<_> = names.iter().map(|&node| {
-        let symbol = normal.get_symbol_at_location_exported(node).unwrap();
-        normal.get_fully_qualified_name_exported(symbol)
-    }).collect();
-    assert_eq!(expected, ["Outer", "Outer.Merged", "Outer", "Outer.Merged", "Outer.Merged.Nested", "Other", "Other.Nested"]);
+    let expected: Vec<_> = names
+        .iter()
+        .map(|&node| {
+            let symbol = normal.get_symbol_at_location_exported(node).unwrap();
+            normal.get_fully_qualified_name_exported(symbol)
+        })
+        .collect();
+    assert_eq!(
+        expected,
+        [
+            "Outer",
+            "Outer.Merged",
+            "Outer",
+            "Outer.Merged",
+            "Outer.Merged.Nested",
+            "Other",
+            "Other.Nested"
+        ]
+    );
     let before = normal_region.used_bytes();
     for (&node, expected) in names.iter().zip(&expected) {
         let symbol = normal.get_symbol_at_location_exported(node).unwrap();
         assert_eq!(&normal.get_fully_qualified_name_exported(symbol), expected);
     }
-    assert!(normal_region.used_bytes() > before, "normal checker must still run the uncached node builder");
+    assert!(
+        normal_region.used_bytes() > before,
+        "normal checker must still run the uncached node builder"
+    );
     drop(normal_scope);
 
     let linter_region = tsrs_core::arena::Region::new(64 << 10);
@@ -439,7 +458,11 @@ fn arkts_linter_qualified_names_cache_only_outer_results_and_preserve_normal_che
         let symbol = linter.get_symbol_at_location_exported(node).unwrap();
         assert_eq!(&linter.get_fully_qualified_name_exported(symbol), expected);
     }
-    assert_eq!(linter_region.used_bytes(), before, "cache hits must not allocate node-builder contexts");
+    assert_eq!(
+        linter_region.used_bytes(),
+        before,
+        "cache hits must not allocate node-builder contexts"
+    );
     drop(linter);
     drop(linter_scope);
     drop(normal);

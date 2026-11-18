@@ -1,7 +1,7 @@
 // Go internal/vfs/wrapvfs.
 
-use std::time::SystemTime;
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use crate::{Entries, FS, FileInfo};
 

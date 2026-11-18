@@ -16,8 +16,10 @@ fn arkui_reference_programs() {
     let dir = scratch("arkui");
     let options = include_str!("../../../testdata/arkts/arkui/ets.json");
     std::fs::write(dir.join("tsconfig.json"), format!(r#"{{"compilerOptions":{{"noEmit":true,"lib":["es2020"],"strict":true,"module":"esnext","moduleResolution":"bundler","allowImportingTsExtensions":true,"experimentalDecorators":true,"ets":{options}}},"include":["**/*"]}}"#)).unwrap();
-    std::fs::write(dir.join("sdk.d.ets"), include_str!("../../../testdata/arkts/arkui/sdk.d.ets")).unwrap();
-    std::fs::write(dir.join("Card.ets"), include_str!("../../../testdata/arkts/arkui/Card.ets")).unwrap();
+    std::fs::write(dir.join("sdk.d.ets"), include_str!("../../../testdata/arkts/arkui/sdk.d.ets"))
+        .unwrap();
+    std::fs::write(dir.join("Card.ets"), include_str!("../../../testdata/arkts/arkui/Card.ets"))
+        .unwrap();
     for (name, expression, want_errors) in [
         ("valid", r#"Card({ title: "hello" })"#, false),
         ("wrong property type", r#"Card({ title: 42 })"#, true),
@@ -73,15 +75,13 @@ fn arkui_reference_programs() {
 fn annotation_reference_programs() {
     let dir = scratch("annotations");
     std::fs::write(dir.join("tsconfig.json"), r#"{"compilerOptions":{"etsAnnotationsEnable":true,"noEmit":true,"lib":["es2020"],"strict":false,"module":"esnext","moduleResolution":"bundler"},"include":["**/*"]}"#).unwrap();
-    std::fs::write(dir.join("sdk.d.ets"), "declare const enum RetentionPolicy { SOURCE, RUNTIME }").unwrap();
+    std::fs::write(dir.join("sdk.d.ets"), "declare const enum RetentionPolicy { SOURCE, RUNTIME }")
+        .unwrap();
     std::fs::write(dir.join("imported.d.ets"), "export declare @interface Imported {}").unwrap();
     for (source, code) in [
         (r#"export @interface Retention { policy: RetentionPolicy; }"#, 0),
         (r#"@interface A { value: number = 1 } @A class C { @A() method() {} }"#, 0),
-        (
-            r#"@interface A { value: number; other: string = "ok" } @A({ value: 2 }) class C {}"#,
-            0,
-        ),
+        (r#"@interface A { value: number; other: string = "ok" } @A({ value: 2 }) class C {}"#, 0),
         (r#"@interface A { value: number } @A class C {}"#, 28019),
         (r#"@interface A { value: number } @A(1) class C {}"#, 28020),
         (r#"@interface A { value: number } @A({ value:"bad" }) class C {}"#, 2322),
@@ -313,7 +313,11 @@ fn ohpm_project_resolution_and_exports() {
             .unwrap();
         let text = String::from_utf8_lossy(&output.stdout);
         match expected {
-            None => assert!(output.status.success(), "{text}\n{}", String::from_utf8_lossy(&output.stderr)),
+            None => assert!(
+                output.status.success(),
+                "{text}\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            ),
             Some(code) => assert!(
                 text.contains(&format!("TS{code}")),
                 "{text}\n{}",

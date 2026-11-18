@@ -720,8 +720,15 @@ impl Checker {
     pub(crate) fn check_alias_symbol(&mut self, node: P<Node>) {
         let mut symbol = self.get_symbol_of_declaration(node).unwrap();
         let target = self.resolve_alias(symbol);
-        if is_annotation_symbol(Some(target)) && (is_import_specifier(node) || is_export_specifier(node)) && node.property_name().is_some() {
-            self.error(Some(node), &diagnostics::ANNOTATION_CANNOT_BE_RENAMED_IN_IMPORT_OR_EXPORT, &[]);
+        if is_annotation_symbol(Some(target))
+            && (is_import_specifier(node) || is_export_specifier(node))
+            && node.property_name().is_some()
+        {
+            self.error(
+                Some(node),
+                &diagnostics::ANNOTATION_CANNOT_BE_RENAMED_IN_IMPORT_OR_EXPORT,
+                &[],
+            );
         }
         if target == self.unknown_symbol {
             return;
@@ -3259,14 +3266,19 @@ impl Checker {
         }
         self.check_oh_sdk_overload_use(node, signature.declaration());
         self.check_deprecated_signature(signature, node);
-        if get_source_file_of_node(node).is_some_and(|file| file.script_kind() == tsrs_core::ScriptKind::ETS)
+        if get_source_file_of_node(node)
+            .is_some_and(|file| file.script_kind() == tsrs_core::ScriptKind::ETS)
             && node.expression().is_some_and(is_identifier)
             && !is_new_expression(node)
             && self.is_system_ets_component(node.expression().unwrap())
             && !self.is_in_build_or_page_transition_context(node)
         {
             let expression = node.expression().unwrap();
-            self.error(Some(expression), &diagnostics::UI_COMPONENT_0_CANNOT_BE_USED_IN_THIS_PLACE, &[&expression.text()]);
+            self.error(
+                Some(expression),
+                &diagnostics::UI_COMPONENT_0_CANNOT_BE_USED_IN_THIS_PLACE,
+                &[&expression.text()],
+            );
         }
         self.check_throws_call(node, signature.declaration());
         if node.expression().unwrap().kind() == Kind::SuperKeyword {
@@ -3585,9 +3597,19 @@ impl Checker {
         // with multiple call signatures.
         if call_signatures.is_empty() {
             if num_construct_signatures != 0 {
-                if apparent_type.symbol().is_some_and(|symbol| symbol.declarations().iter().any(|node| is_struct_declaration(*node))) {
-                    let signatures = self.get_signatures_of_type(apparent_type, SignatureKind::Construct);
-                    return self.resolve_call(node, signatures, candidates_out_array, check_mode, SignatureFlags::None, None);
+                if apparent_type.symbol().is_some_and(|symbol| {
+                    symbol.declarations().iter().any(|node| is_struct_declaration(*node))
+                }) {
+                    let signatures =
+                        self.get_signatures_of_type(apparent_type, SignatureKind::Construct);
+                    return self.resolve_call(
+                        node,
+                        signatures,
+                        candidates_out_array,
+                        check_mode,
+                        SignatureFlags::None,
+                        None,
+                    );
                 }
                 let type_string = self.type_to_string(func_type, None);
                 self.error(

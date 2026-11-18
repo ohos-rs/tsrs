@@ -97,7 +97,9 @@ impl Checker {
             let symbol =
                 symbols.and_then(|symbols| symbols.lookup(name)).map(|s| self.get_merged_symbol(s));
             if let Some(symbol) = symbol {
-                if location.is_some_and(|node| !self.is_valid_from_ets_libs(symbol, node)) { return None; }
+                if location.is_some_and(|node| !self.is_valid_from_ets_libs(symbol, node)) {
+                    return None;
+                }
                 if symbol.flags().intersects(meaning) {
                     return Some(symbol);
                 }
@@ -845,7 +847,10 @@ impl Checker {
 
     // checker.go:2744
     pub(crate) fn check_property_declaration(&mut self, node: P<Node>) {
-        if ast::is_annotation_property_declaration(node) { self.check_annotation_property_declaration(node); return; }
+        if ast::is_annotation_property_declaration(node) {
+            self.check_annotation_property_declaration(node);
+            return;
+        }
         // Grammar checking
         if !self.check_grammar_modifiers(node) && !self.check_grammar_property(node) {
             self.check_grammar_computed_property_name(node.name().unwrap());
@@ -1047,7 +1052,9 @@ impl Checker {
 
     // checker.go:2870
     pub(crate) fn check_constructor_declaration(&mut self, node: P<Node>) {
-        if node.is_virtual() { return; }
+        if node.is_virtual() {
+            return;
+        }
         // Grammar check on signature of constructor and modifier of the constructor is done in checkSignatureDeclaration function.
         self.check_signature_declaration(node);
         // Grammar check for checking only related to constructorDeclaration
@@ -1300,7 +1307,9 @@ impl Checker {
     // checker.go:3046
     fn check_type_reference_or_import(&mut self, node: P<Node>) {
         let t = self.get_type_from_type_node(node);
-        if is_annotation_symbol(t.symbol()) { self.error(Some(node), &diagnostics::ANNOTATION_CANNOT_BE_USED_AS_A_TYPE, &[]); }
+        if is_annotation_symbol(t.symbol()) {
+            self.error(Some(node), &diagnostics::ANNOTATION_CANNOT_BE_USED_AS_A_TYPE, &[]);
+        }
         if !self.is_error_type(t) {
             if !node.type_arguments().is_empty() && !self.defer_type_argument_constraints(node) {
                 let type_parameters = self.get_type_parameters_for_type_reference_or_import(node);
@@ -2463,8 +2472,12 @@ impl Checker {
         {
             return;
         }
-        if self.check_ets_style_return_type(fn_, return_type) { return; }
-        if t.is_some_and(|t| t.flags().intersects(TypeFlags::Undefined)) { return; }
+        if self.check_ets_style_return_type(fn_, return_type) {
+            return;
+        }
+        if t.is_some_and(|t| t.flags().intersects(TypeFlags::Undefined)) {
+            return;
+        }
         // If all we have is a function signature, or an arrow function with an expression body, then there is nothing to check.
         // also if HasImplicitReturn flag is not set this means that all codepaths in function body end with return or throw
         if ast::is_method_signature_declaration(fn_)
@@ -3311,7 +3324,10 @@ impl Checker {
 
     // checker.go:4306
     pub(crate) fn check_class_declaration(&mut self, node: P<Node>) {
-        if ast::is_annotation_declaration(node) { self.check_annotation_declaration(node); return; }
+        if ast::is_annotation_declaration(node) {
+            self.check_annotation_declaration(node);
+            return;
+        }
         if ast::is_struct_declaration(node) {
             self.check_struct_declaration(node);
             return;

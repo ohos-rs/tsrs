@@ -347,7 +347,8 @@ impl CommonJSModuleTransformer {
                     )]),
                     false, /*multiLine*/
                 ),
-            ]), None,
+            ]),
+            None,
             NodeFlags::None,
         ));
         self.emit_context().set_emit_flags(statement, EmitFlags::CustomPrologue);

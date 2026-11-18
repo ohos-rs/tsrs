@@ -248,7 +248,8 @@ impl crate::NodeFactory {
                 self.new_property_access_expression(object, None, method_name, NodeFlags::None),
                 None,
                 None,
-                self.new_node_list(arguments_list), None,
+                self.new_node_list(arguments_list),
+                None,
                 NodeFlags::OptionalChain,
             );
         }
@@ -256,7 +257,8 @@ impl crate::NodeFactory {
             self.new_property_access_expression(object, None, method_name, NodeFlags::None),
             None,
             None,
-            self.new_node_list(arguments_list), None,
+            self.new_node_list(arguments_list),
+            None,
             NodeFlags::None,
         )
     }
@@ -600,7 +602,8 @@ impl crate::NodeFactory {
             self.new_unscoped_helper_name(name),
             None, /*questionDotToken*/
             None, /*typeArguments*/
-            self.new_node_list(arguments), None,
+            self.new_node_list(arguments),
+            None,
             NodeFlags::None,
         )
     }
@@ -766,7 +769,8 @@ impl crate::NodeFactory {
             ),
             None, /*questionDotToken*/
             None, /*typeArguments*/
-            self.new_node_list(arguments), None,
+            self.new_node_list(arguments),
+            None,
             NodeFlags::None,
         )
     }
@@ -835,7 +839,8 @@ impl crate::NodeFactory {
             self.new_parenthesized_expression(arrow),
             None, /*questionDotToken*/
             None, /*typeArguments*/
-            self.new_node_list(vec![]), None,
+            self.new_node_list(vec![]),
+            None,
             NodeFlags::None,
         )
     }
@@ -871,7 +876,8 @@ impl crate::NodeFactory {
             ),
             None,
             None,
-            self.new_node_list(attributes_segments), None,
+            self.new_node_list(attributes_segments),
+            None,
             NodeFlags::None,
         )
     }

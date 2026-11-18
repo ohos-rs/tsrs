@@ -28,9 +28,9 @@ impl DocumentUri {
                 panic!("invalid file URI: {uri}");
             };
             if !host.is_empty() {
-                return format!("//{host}{path}");
+                return tspath::rooted_directory_path_from_absolute(&format!("//{host}{path}"));
             }
-            return fix_windows_uri_path(&path).to_string();
+            return tspath::rooted_directory_path_from_absolute(fix_windows_uri_path(&path));
         }
 
         // Leave all other URIs escaped so we can round-trip them.

@@ -25,30 +25,25 @@
         "test/async/astnav.test.ts"
     ],
     "patchedFiles": {
+        "src/api/async/api.ts": {
+            "upstreamSha256": "d20b7c55f5c3570a82fc664cae32fcea2d7f41d8dd07b10cf814926970045e27",
+            "patch": "npm/sdk/patches/arkts-src-api-async-api.ts.patch",
+            "patchSha256": "7700d1c97f07fe8ab20f0d449a54cac3ab6bca1ddcc8e0ad780723129971eda2"
+        },
         "src/api/async/client.ts": {
             "upstreamSha256": "978d956bdedb8de2aa43908267b1cc4ccbd993b3ff1271af0e0f885b22ef85df",
             "patch": "npm/sdk/patches/async-client-connection-loss.patch",
             "patchSha256": "3587f236e3ebd9775376774c5418fd1fb12b4a0e72cea22a9eca50d730b577f5"
         },
-        "vendor/vscode-jsonrpc/lib/common/connection.js": {
-            "upstreamSha256": "0a3a46fad254b78fc2ee371d8438037c860b9bc73124fddb038bf3bb5a3c94f4",
-            "patch": "npm/sdk/patches/vscode-jsonrpc-send-request-write-error.patch",
-            "patchSha256": "17f5c65f76c6c496fc18ac4a49ae93d5ff2d9378066ec3f9903044d34887d32d"
-        },
-        "vendor/vscode-jsonrpc/package.json": {
-            "upstreamSha256": "c90ae8c111f36e2ffa492d26458a77251aa0e56191c1855f979e7631cf987954",
-            "patch": "npm/sdk/patches/vscode-jsonrpc-msgpack-version.patch",
-            "patchSha256": "f65bd351a10d72cbb15dead85bf4812a45603e1897c46a818f8f12d26b6b4511"
-        },
-        "src/api/async/api.ts": {
-            "upstreamSha256": "6a5e81be4398407f697665e0c52a4320b12de3aa5a0093506f0dbd7b2d3427d0",
-            "patch": "npm/sdk/patches/arkts-src-api-async-api.ts.patch",
-            "patchSha256": "3a242c875f2adf09cbd9396cf7778f117abe757fb5d94211e578bc973abfbcc5"
+        "src/api/compilerOptions.generated.ts": {
+            "upstreamSha256": "6a94efc2d1c6d5faca655ba953733770d35e578f8db5c0039ac4d0b72c387c18",
+            "patch": "npm/sdk/patches/arkts-src-api-compilerOptions.generated.ts.patch",
+            "patchSha256": "35f621043d20953d9066116e88e5c1e8f71604ea718c5a842d3b9f4cf21b7224"
         },
         "src/api/node/encoder.generated.ts": {
-            "upstreamSha256": "490bc54545102b62eb4c6aae5f1c16c7a069f759fb05918d25f9671ce97fda28",
+            "upstreamSha256": "a44a93d4b2e4184c13948c461131dea96916a92df347d2264e97a12bef66d008",
             "patch": "npm/sdk/patches/arkts-src-api-node-encoder.generated.ts.patch",
-            "patchSha256": "379ffa773f3afcc3c3df65ff336b674116ed03310723a09681deb4a8270ea8e6"
+            "patchSha256": "c8d9dfba72cf401e1da51368118d5a4ffc7026fbfde399f4b36620c9438537f3"
         },
         "src/api/node/encoder.ts": {
             "upstreamSha256": "e6765d0941d929f01697065676cd7b002d875f0fe5ec6ba53fcb7245bb3a2eb9",
@@ -56,19 +51,19 @@
             "patchSha256": "925f41f1fcc4ddfb71367af59ae90fa07b7ae916c00b2c976a78f121a33a20fa"
         },
         "src/api/node/node.generated.ts": {
-            "upstreamSha256": "e1a57579e83cbad2115349489b2cae7ba048d97ab5fcd3774c947873b865d42a",
+            "upstreamSha256": "9b5ef72878921bacbdd6a12b2d32e1d4c9b6c106a5ed6281acea5e2123db52d1",
             "patch": "npm/sdk/patches/arkts-src-api-node-node.generated.ts.patch",
-            "patchSha256": "0bc8e996c998ab087a0a217c7300a158ed4aeebdc0f4d9444b8ea33c6e7d1645"
+            "patchSha256": "ff0eea30e4d2b9cf995fa22a220438309d5fe469a761c9d8c2408b83ad745bea"
         },
         "src/api/node/node.infrastructure.ts": {
-            "upstreamSha256": "a443ef6ff6761ec647c64d989f1f85c3bebbc0f53f087d72c4c308ce284aecf3",
+            "upstreamSha256": "5caf58922412f800756c91daf4d9dc31d14f7b87c6b7006a50190ac3c3b9a361",
             "patch": "npm/sdk/patches/arkts-src-api-node-node.infrastructure.ts.patch",
-            "patchSha256": "86cb9e9cc7775cad7aa916170265c22e618071fdb073c1ee1dfac1731f0f5809"
+            "patchSha256": "5a162e413a9864c800389229c0bcdc3f26d89dc4ce3a86f98495f39fe7cdae64"
         },
         "src/api/node/node.ts": {
-            "upstreamSha256": "aeab3668336b3d322833d90da8115aeb92c757cbe97b60c1f981c4e5da76192d",
+            "upstreamSha256": "23b34a896b0ed3167d8ca8a313c8abab882b27c92f604845b0e735213bca19eb",
             "patch": "npm/sdk/patches/arkts-src-api-node-node.ts.patch",
-            "patchSha256": "4fb118b337c76e29706fcc1ba301b229313dfedf17235b1b404fea45d01822b3"
+            "patchSha256": "a20e9fe760bdd48a08a84a4ab34deea435f1824cd00bb9f8a0d30d33980a5914"
         },
         "src/api/node/protocol.generated.ts": {
             "upstreamSha256": "e0403d84525d4f548aa01a6dd816e62c80aed7e89a7c6c24abb01f526f825d0d",
@@ -81,29 +76,29 @@
             "patchSha256": "877d31e1d0c0c4edd6bcd8a287a179c9fcc1b96a0928b477b9ab125ac84af3fe"
         },
         "src/api/proto.generated.ts": {
-            "upstreamSha256": "7eccc6a55b04e124aa45e7eacd0fed0d96fa4ecbfab21b9ba48801faa10576e1",
+            "upstreamSha256": "9975181dc6fdafac86644db1b7594404f262165a353fd9e03f80b5c62f059010",
             "patch": "npm/sdk/patches/arkts-src-api-proto.generated.ts.patch",
-            "patchSha256": "9545de11ab23246536af6075954844ff9fa4628cd0a1101401eff3da1fc359dd"
+            "patchSha256": "ee932d817e9ec447bc3fedf23e32f2a3f7593a968158a3c32274f370042967ef"
         },
         "src/api/sync/api.ts": {
-            "upstreamSha256": "c28196ee9b5cceabf535c8d13eafaf9d2b6f02c47a25ef588e9a192dc15748ce",
+            "upstreamSha256": "341097b031f913e7cb82f65080b0be657dad8b892e491e63cb272e662ee2173d",
             "patch": "npm/sdk/patches/arkts-src-api-sync-api.ts.patch",
-            "patchSha256": "b74e5aa82632d92d26cdd352387834f8d9f25b5bf35809dde0a3cad55b247167"
+            "patchSha256": "a84d4b1299bf9616e0057249a079c3ef7e524861fadbce5cfb8215864e93e492"
         },
         "src/ast/ast.generated.ts": {
-            "upstreamSha256": "98888b0dacecc1045b8da1a14ef207a896f8e446c0fe74b5e1e4670441829020",
+            "upstreamSha256": "a372aa5cec0bd445496353fe0c0cc00371f205f3af73af5f1ec015620a752bcd",
             "patch": "npm/sdk/patches/arkts-src-ast-ast.generated.ts.patch",
-            "patchSha256": "a6b387818370d372c5e3d71996302477623481a44b112783615226c708a70a48"
+            "patchSha256": "b570121d2b31019e781aef3d2f2a767535f59895921cf7f61cc9574dab4addb7"
         },
         "src/ast/ast.ts": {
-            "upstreamSha256": "92bec23a8eb66f2e21306d5ac35263b2c48a5bece64be7a364aa783b109ba8d6",
+            "upstreamSha256": "2667cea7873471f3c4b97ce57c5a0fcd2bd0b3280aecaf4a81d5277dc08e5581",
             "patch": "npm/sdk/patches/arkts-src-ast-ast.ts.patch",
-            "patchSha256": "9ce05bdc6a173e1a14bc20d04ea31ec0fc287bb1cdcbf8f24f4efb6487881904"
+            "patchSha256": "5059cfb4edb6c33269ed6d9763779003ed4c88d87157d2b3f6458759fcdfbfa3"
         },
         "src/ast/factory.generated.ts": {
-            "upstreamSha256": "38d903fa180dc8904c442259d0199bb79ad9fc76297870c45b18ecc2b706f5a1",
+            "upstreamSha256": "a7ed983bbf6a7289a752b783695f07616f10db98318e203cf8e102073c55ae17",
             "patch": "npm/sdk/patches/arkts-src-ast-factory.generated.ts.patch",
-            "patchSha256": "2b849d8e1606ea4f5344324276efec3429dea31ba1ff4fe133064c501d8664e2"
+            "patchSha256": "bbb36931f774e8e278c79afb2b9f455fe47f097635d1ab1ce15e7b23aaa6fbd3"
         },
         "src/ast/is.ts": {
             "upstreamSha256": "0571926eba86e1c26e1711ed71b7ef7aa6e62e3ab9f5a4b7849a3d628bc5eba3",
@@ -139,20 +134,30 @@
             "upstreamSha256": "c080c3cc7e2180e75ddea4431ba92f8e91d575f1e1d6a4ba8b31bfc771e78070",
             "patch": "npm/sdk/patches/arkts-src-enums-scriptKind.ts.patch",
             "patchSha256": "17d37f2f7995c1998611e8139c1634e355f2151b26d23f8218043d104b1ef379"
+        },
+        "vendor/vscode-jsonrpc/lib/common/connection.js": {
+            "upstreamSha256": "0a3a46fad254b78fc2ee371d8438037c860b9bc73124fddb038bf3bb5a3c94f4",
+            "patch": "npm/sdk/patches/vscode-jsonrpc-send-request-write-error.patch",
+            "patchSha256": "17f5c65f76c6c496fc18ac4a49ae93d5ff2d9378066ec3f9903044d34887d32d"
+        },
+        "vendor/vscode-jsonrpc/package.json": {
+            "upstreamSha256": "c90ae8c111f36e2ffa492d26458a77251aa0e56191c1855f979e7631cf987954",
+            "patch": "npm/sdk/patches/vscode-jsonrpc-msgpack-version.patch",
+            "patchSha256": "f65bd351a10d72cbb15dead85bf4812a45603e1897c46a818f8f12d26b6b4511"
         }
     },
     "files": {
         "lib/getExePath.d.ts": "e6110f9086cf143dd2dde7530c89cda637b2ce3ea4731c14b0a75434ab68573f",
         "schemas/jsconfig.schema.json": "d08929daca0eca2051ea199af2ec6a232b1a1fe0d580a8f5c37d6d4e4e1edcfa",
         "schemas/tsconfig.schema.json": "bd09d4918310176dd3e121a48baa92ff8823d44d7f43f433ad5e8f4b8074d020",
-        "src/api/async/api.ts": "9d097f881e6f4d5ffe956745efda277b44286f1847b980196e60c922c908b0b5",
+        "src/api/async/api.ts": "d0ce6df2eafa7578d90a6f81f37d0c3c482e6ab3400ff6e8a436b9db1a843f26",
         "src/api/async/client.ts": "c93e76b44b5716d5bcaa211159cba2121df5fe17e3479246056ee960c34d1087",
         "src/api/async/types.ts": "d012d3ebab050cebb522cce9a5b2c6978a3bcbe6ab379e66b98555120c5af338",
-        "src/api/compilerOptions.generated.ts": "7d5bf1d09039e91b6ace422ab8274d8d637c16593c16a14d9af34bcf49876776",
+        "src/api/compilerOptions.generated.ts": "65ef4cb317e376d9359350ab1ba386309e8614dbc26101cd85b507fcab432ad1",
         "src/api/diagnosticFormatter.ts": "967c080f681bf0979a8a2a9ae7e5d778701f62a0ac8a682ca33b3d29a69bf7c3",
         "src/api/fs.ts": "de14c4374d4aba6e6996b9189fafc50aa8bcc159d79b273e76cc04dae17c7147",
         "src/api/fsCallbacks.ts": "34e7f3da58c66e53676b320aa8ca3afff6518eb3a09e8fe01e9a89c26cbafdf3",
-        "src/api/node/encoder.generated.ts": "6bd94d90275deb187e37db44f6ba88787329de88772481b2e1d97cbe1f3dda48",
+        "src/api/node/encoder.generated.ts": "1fe3ce105b1daf75217306e24cf0a74eef30550ac67779372f430e94c4385f4d",
         "src/api/node/encoder.ts": "34368996da1bd504c668a097f12933c5e1e808cb3563abcb54f53116c9257ec7",
         "src/api/node/msgpack.ts": "00cbde4018687ad5faa894e5d53ec1c1d6fc8c854e74b38cd3f8c7e38b486ea7",
         "src/api/node/node.generated.ts": "f1928dac06ccee9b6028b601ce31d3eb3580e23e08632784a41ad758697a9e96",
@@ -164,7 +169,7 @@
         "src/api/options.ts": "5f724a051ee151c20205b03a117b191931317fa4d8528400f0dbab7f6a53a66b",
         "src/api/path.ts": "98d104aa3127697b77c8b898b8a880da9ede39f11f99c1d80fc140500d12b89a",
         "src/api/prepareCompilerOptions.generated.ts": "4cb265810176d948173885e37e41d089a0569138348051b72fcbd895ee9380f1",
-        "src/api/proto.generated.ts": "b73c269c5306f51015482c7cdff546c42428fb2dd3aa6fcfdcde61441dbda55a",
+        "src/api/proto.generated.ts": "9c6e3d30fec62c9d2cea24a44e275ddd89b76d5d7d055539b0a06cf051598b3b",
         "src/api/proto.ts": "ccfcc846c60ebb874b822c56d894b724c68dd9669b1d8e259c3643b8790b38cd",
         "src/api/sourceFileCache.ts": "acad2db9a36a8f23e78824dc413a7c7e1a171b29f5474f055ea9a227f62c8865",
         "src/api/sync/api.ts": "a299403ce33d6f25b4bf7861f4329eb7994978d43145bb42135ba9c14b4e4c33",

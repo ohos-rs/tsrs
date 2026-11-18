@@ -43,10 +43,7 @@ impl Diagnostic {
             let position = |p| {
                 let (line, character) =
                     tsrs_scanner::get_ecma_line_and_utf16_character_of_position(&*file, p);
-                DiagnosticPosition {
-                    line: line as u32,
-                    character,
-                }
+                DiagnosticPosition { line: line as u32, character }
             };
             start_position = Some(position(pos));
             end_position = Some(position(end));
@@ -64,11 +61,7 @@ impl Diagnostic {
             text: d.localize(),
             start_position,
             end_position,
-            message_chain: d
-                .message_chain()
-                .iter()
-                .map(|d| Self::from_compiler(d))
-                .collect(),
+            message_chain: d.message_chain().iter().map(|d| Self::from_compiler(d)).collect(),
             related_information: d
                 .related_information()
                 .iter()
@@ -101,9 +94,7 @@ pub struct ArktsNormalDiagnostics {
 impl ProgramSnapshot {
     pub fn arkts_normal_diagnostics(&self) -> ApiResult<ArktsNormalDiagnostics> {
         self.run(|this| {
-            let diagnostics = this
-                .program()?
-                .get_arkts_normal_diagnostics(&Context::background());
+            let diagnostics = this.program()?.get_arkts_normal_diagnostics(&Context::background());
             Ok(ArktsNormalDiagnostics {
                 snapshot: this.clone(),
                 keys: diagnostics.keys,
@@ -118,9 +109,7 @@ impl ProgramSnapshot {
         normal: ArktsNormalDiagnostics,
     ) -> ApiResult<ArktsBuildDiagnostics> {
         if !Arc::ptr_eq(&self.data, &normal.snapshot.data) {
-            return Err(ApiError::client(
-                "normal diagnostics belong to another program snapshot",
-            ));
+            return Err(ApiError::client("normal diagnostics belong to another program snapshot"));
         }
         self.run(move |this| {
             let program = this.program()?;
@@ -153,9 +142,7 @@ impl ProgramSnapshot {
 
     pub fn arkts_build_diagnostics(&self) -> ApiResult<ArktsBuildDiagnostics> {
         self.run(|this| {
-            let diagnostics = this
-                .program()?
-                .get_arkts_build_diagnostics(&Context::background());
+            let diagnostics = this.program()?.get_arkts_build_diagnostics(&Context::background());
             Ok(ArktsBuildDiagnostics {
                 linter_diagnostics: owned(&diagnostics.linter),
                 syntactic_diagnostics: owned(&diagnostics.syntactic),
@@ -165,29 +152,17 @@ impl ProgramSnapshot {
     }
     pub fn syntactic_diagnostics(&self) -> ApiResult<Vec<Diagnostic>> {
         self.run(|this| {
-            Ok(owned(
-                &this
-                    .program()?
-                    .get_syntactic_diagnostics(&diagnostic_context(), None),
-            ))
+            Ok(owned(&this.program()?.get_syntactic_diagnostics(&diagnostic_context(), None)))
         })
     }
     pub fn semantic_diagnostics(&self) -> ApiResult<Vec<Diagnostic>> {
         self.run(|this| {
-            Ok(owned(
-                &this
-                    .program()?
-                    .get_semantic_diagnostics(&diagnostic_context(), None),
-            ))
+            Ok(owned(&this.program()?.get_semantic_diagnostics(&diagnostic_context(), None)))
         })
     }
     pub fn arkts_linter_diagnostics(&self) -> ApiResult<Vec<Diagnostic>> {
         self.run(|this| {
-            Ok(owned(
-                &this
-                    .program()?
-                    .get_arkts_linter_diagnostics(&diagnostic_context(), None),
-            ))
+            Ok(owned(&this.program()?.get_arkts_linter_diagnostics(&diagnostic_context(), None)))
         })
     }
     pub fn declaration_diagnostics(&self, files: &[String]) -> ApiResult<Vec<Diagnostic>> {
@@ -212,8 +187,5 @@ fn diagnostic_context() -> Context {
     with_checker_lifetime(&Context::background(), CheckerLifetime::Diagnostics)
 }
 fn owned(values: &[P<CompilerDiagnostic>]) -> Vec<Diagnostic> {
-    values
-        .iter()
-        .map(|d| Diagnostic::from_compiler(d))
-        .collect()
+    values.iter().map(|d| Diagnostic::from_compiler(d)).collect()
 }

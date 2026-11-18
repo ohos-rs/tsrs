@@ -345,8 +345,7 @@ impl Checker {
         let resolved_module =
             self.program.get_resolved_module(importing_source_file, module_reference, mode);
         if resolved_module.is_some_and(|r| r.is_not_oh_export)
-            && !tspath::normalize_path(importing_source_file.file_name())
-                .contains("/oh_modules/")
+            && !tspath::normalize_path(importing_source_file.file_name()).contains("/oh_modules/")
         {
             self.error(
                 error_node,
@@ -356,7 +355,9 @@ impl Checker {
             return None;
         }
         let is_resolved = resolved_module.is_some_and(|r| r.is_resolved());
-        if resolved_module.is_some_and(|r| r.is_resolved() && matches!(r.extension, tspath::EXTENSION_ETS | tspath::EXTENSION_DETS)) {
+        if resolved_module.is_some_and(|r| {
+            r.is_resolved() && matches!(r.extension, tspath::EXTENSION_ETS | tspath::EXTENSION_DETS)
+        }) {
             self.check_ts_import_ets(importing_source_file, context_specifier, error_node);
         }
 

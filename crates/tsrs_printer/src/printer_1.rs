@@ -1649,8 +1649,18 @@ impl Printer {
             return parent_node.pos();
         };
         // OH printer::emitModifierList preserves source annotations on these ETS declarations.
-        if !allow_decorators && self.current_source_file().is_some_and(|file| file.script_kind() == ScriptKind::ETS)
-            && matches!(parent_node.kind(), Kind::InterfaceDeclaration | Kind::TypeAliasDeclaration | Kind::PropertySignature | Kind::MethodSignature | Kind::VariableStatement | Kind::EnumDeclaration | Kind::ModuleDeclaration)
+        if !allow_decorators
+            && self.current_source_file().is_some_and(|file| file.script_kind() == ScriptKind::ETS)
+            && matches!(
+                parent_node.kind(),
+                Kind::InterfaceDeclaration
+                    | Kind::TypeAliasDeclaration
+                    | Kind::PropertySignature
+                    | Kind::MethodSignature
+                    | Kind::VariableStatement
+                    | Kind::EnumDeclaration
+                    | Kind::ModuleDeclaration
+            )
         {
             allow_decorators = true;
         }

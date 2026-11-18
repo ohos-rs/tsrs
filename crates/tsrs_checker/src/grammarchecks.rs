@@ -317,7 +317,9 @@ impl Checker {
         }
         for &modifier in node.modifier_nodes() {
             if ast::is_decorator(modifier) {
-                if let Some(declaration) = self.annotation_for_decorator(modifier) { self.check_annotation_use(modifier, declaration); }
+                if let Some(declaration) = self.annotation_for_decorator(modifier) {
+                    self.check_annotation_use(modifier, declaration);
+                }
             }
         }
         if self.report_obvious_decorator_errors(node) || self.report_obvious_modifier_errors(node) {
@@ -353,15 +355,11 @@ impl Checker {
                 if self.annotation_for_decorator(modifier).is_some() {
                     continue;
                 }
-                let ets_grammar_target =
-                    ast::get_source_file_of_node(node).unwrap().script_kind()
-                        == tsrs_core::ScriptKind::ETS
-                        && !ast::is_constructor_declaration(node)
-                        && (ast::is_ets_builder(node, &self.compiler_options.ets)
-                            || ast::has_ets_styles_decorator(
-                                node,
-                                &self.compiler_options.ets,
-                            ));
+                let ets_grammar_target = ast::get_source_file_of_node(node).unwrap().script_kind()
+                    == tsrs_core::ScriptKind::ETS
+                    && !ast::is_constructor_declaration(node)
+                    && (ast::is_ets_builder(node, &self.compiler_options.ets)
+                        || ast::has_ets_styles_decorator(node, &self.compiler_options.ets));
                 let ets_function = ast::is_function_declaration(node)
                     && ast::has_ets_decorator(node, &self.compiler_options.ets);
                 if !ets_grammar_target

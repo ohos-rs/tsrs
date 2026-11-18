@@ -4,8 +4,12 @@ use tsrs_core::{P, TextRange};
 
 fn attach(node: P<Node>, text: &'static str) -> P<Node> {
     let factory = NodeFactory::default();
-    let file = factory.new_source_file(SourceFileParseOptions { file_name: "/sdk.ets".into(), ..Default::default() },
-        text, factory.new_node_list(vec![]), factory.new_token(Kind::EndOfFile));
+    let file = factory.new_source_file(
+        SourceFileParseOptions { file_name: "/sdk.ets".into(), ..Default::default() },
+        text,
+        factory.new_node_list(vec![]),
+        factory.new_token(Kind::EndOfFile),
+    );
     node.set_parent(Some(file));
     node
 }
@@ -13,10 +17,12 @@ fn verify(node: P<Node>, fallback: bool) {
     let snapshot = Checker::oh_sdk_node_snapshot(node);
     let old = tsrs_scanner::get_text_of_node(node);
     assert_eq!(snapshot.text.is_some(), fallback);
-    if let Some(text) = snapshot.text { assert_eq!(text.as_bytes(), old.as_bytes()); }
-    else {
+    if let Some(text) = snapshot.text {
+        assert_eq!(text.as_bytes(), old.as_bytes());
+    } else {
         let utf16: Vec<_> = snapshot.source.encode_utf16().collect();
-        let slice = String::from_utf16(&utf16[snapshot.start as usize..snapshot.end as usize]).unwrap();
+        let slice =
+            String::from_utf16(&utf16[snapshot.start as usize..snapshot.end as usize]).unwrap();
         assert_eq!(slice.as_bytes(), old.as_bytes());
     }
 }
@@ -50,7 +56,9 @@ fn oh_sdk_snapshot_slice_or_legacy_text_matches_scanner_including_jsdoc_types() 
     attach(expression, text);
     type_node.set_parent(Some(expression));
     child.set_parent(Some(type_node));
-    for node in [expression, type_node, child] { verify(node, true); }
+    for node in [expression, type_node, child] {
+        verify(node, true);
+    }
     // A JSDoc flag by itself does not require normalization (a non-type child).
     let identifier = factory.new_identifier("name");
     identifier.set_flags(NodeFlags::JSDoc);

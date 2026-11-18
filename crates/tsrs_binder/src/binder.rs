@@ -1183,7 +1183,8 @@ impl Binder {
 
     fn bind_property_worker(&mut self, node: P<Node>) {
         let is_auto_accessor = ast::is_auto_accessor_property_declaration(node);
-        let mut includes = if is_auto_accessor { SymbolFlags::Accessor } else { SymbolFlags::Property };
+        let mut includes =
+            if is_auto_accessor { SymbolFlags::Accessor } else { SymbolFlags::Property };
         if ast::is_annotation_property_declaration(node) && node.initializer().is_some() {
             includes |= SymbolFlags::Optional;
         }

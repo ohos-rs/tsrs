@@ -263,7 +263,9 @@ impl Session {
 
     pub fn set_connection(&self, conn: Arc<dyn ClientConn>) {
         if self.sdk_plugin_callbacks {
-            let _ = self.oh_sdk_plugin_executor.set(Arc::new(crate::ohsdkplugin::SdkPluginExecutor::from_connection(Arc::clone(&conn))));
+            let _ = self.oh_sdk_plugin_executor.set(Arc::new(
+                crate::ohsdkplugin::SdkPluginExecutor::from_connection(Arc::clone(&conn)),
+            ));
         }
         *self.conn.lock().unwrap() = Some(conn);
     }
@@ -555,7 +557,9 @@ impl Session {
                 self.handle_get_diagnostics(p, DiagnosticKind::Syntactic)?
             }
             "getBindDiagnostics" => self.handle_get_diagnostics(p, DiagnosticKind::Bind)?,
-            "getArkTSLinterDiagnostics" => self.handle_get_diagnostics(p, DiagnosticKind::ArkTsLinter)?,
+            "getArkTSLinterDiagnostics" => {
+                self.handle_get_diagnostics(p, DiagnosticKind::ArkTsLinter)?
+            }
             "getArkTSBuildDiagnostics" => self.handle_get_arkts_build_diagnostics(p)?,
             "getSemanticDiagnostics" => self.handle_get_diagnostics(p, DiagnosticKind::Semantic)?,
             "getSuggestionDiagnostics" => {

@@ -1,0 +1,82 @@
+# tsrs ArkTS/OpenHarmony compiler options (OhSdk* fields).
+--- a/src/api/compilerOptions.generated.ts
++++ b/src/api/compilerOptions.generated.ts
+@@ -7,10 +7,17 @@
+ import type { NewLineKind } from "#enums/newLineKind";
+ import type { ScriptTarget } from "#enums/scriptTarget";
+ import type {
++    EtsOptions,
+     RootedDirectoryPath,
+     RootedFilePath,
+     RootedPath,
+ } from "../ast/index.ts";
++
++import type {
++    OhSdkCheckPlugin,
++    OhSdkClassCheckPlugin,
++    OhSdkConfig,
++} from "./proto.generated.ts";
+ 
+ export { JsxEmit } from "#enums/jsxEmit";
+ export { ModuleDetectionKind } from "#enums/moduleDetectionKind";
+@@ -127,6 +134,60 @@
+     // Internal fields
+ 
+     configFilePath?: RootedFilePath | undefined;
++    isCompileJsHar?: boolean;
++    moduleRootPath?: string;
++    maxFlowDepth?: number;
++    etsAnnotationsEnable?: boolean;
++    ets?: EtsOptions;
++    compileSdkVersion?: number;
++    etsLoaderPath?: string;
++    noTransformedKitInParser?: boolean;
++    tsImportSoCheck?: boolean;
++    needDoArkTsLinter?: boolean;
++    isCompatibleVersion?: boolean;
++    tsImportSendableEnable?: boolean;
++    packageManagerType?: string;
++    emitNodeModulesFiles?: boolean;
++    skipTscOhModuleCheck?: boolean;
++    skipArkTSStaticBlocksCheck?: boolean;
++    skipPathsInKeyForCompilationSettings?: boolean;
++    skipBaseUrlInKeyForCompilationSettings?: boolean;
++    compatibleSdkVersion?: number;
++    compatibleSdkVersionStage?: string;
++    skipOhModulesLint?: boolean;
++    enableStrictCheckOHModule?: boolean;
++    disableStrictCheckPaths?: string[];
++    disableSendableCheckRules?: string[];
++    mixCompile?: boolean;
++    strictCheckerOnly?: boolean;
++    ohSdkConfigs?: OhSdkConfig[];
++    ohSystemModules?: string[];
++    ohSdkConfigPrefixes?: string[];
++    ohFallbackModuleRoots?: string[];
++    ohLoaderModuleRoot?: string;
++    ohProjectPath?: string;
++    ohExternalApiPaths?: string[];
++    ohPackageExports?: Record<string, string[] | null>;
++    ohRuntimeOS?: string;
++    ohOriginCompatibleSdkVersion?: string;
++    ohProjectRootPath?: string;
++    ohModulePath?: string;
++    ohAllModulePaths?: string[];
++    ohGlobalModulePaths?: string[];
++    ohArkUIDeclarationDirs?: string[];
++    ohRequestPermissions?: string[];
++    ohSyscapIntersection?: string[];
++    ohSyscapUnion?: string[];
++    ohDeviceTypes?: string[];
++    ohCardEntryFiles?: string[];
++    ohCrossplatform?: boolean;
++    ohIgnoreCrossplatformCheck?: boolean;
++    ohCompileMode?: string;
++    ohBundleType?: string;
++    ohApiCompatibilityCheck?: string;
++    ohSdkCheckPlugins?: OhSdkCheckPlugin[];
++    ohSdkClassCheckPlugins?: OhSdkClassCheckPlugin[];
++    ohSdkPluginProjectConfig?: Record<string, unknown>;
+ }
+ 
+ export interface PluginImport {

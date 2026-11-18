@@ -43,15 +43,19 @@ port of Go's `NodeVisitor.VisitEachChild` with the encoder's `VisitNodes`/`Visit
 
 ## Verification
 
-The checked-in goldens were recorded with `ts-ref` at source commit `2f9fd09a104ef14268944a0aeb9cdc4d80abb6a6`,
-the Go server built from that revision with Go 1.27.0, and the `npm/tsrs` JavaScript client compiled
-from source-24 SDK files. `tests/golden/manifest.json` records the source SHA, Go version, executable
-sha256 and client package. To refresh them, verify and build the current Cargo-pinned Go reference using
-[the reference workflow](../../CONTRIBUTING.md#reference-compiler), build the matching local SDK, then run
-from the repository root:
+The checked-in goldens were recorded with `ts-ref` at source commit `3e9236361fa97a9e6c685f4833ac457ae2d8c50a`,
+the Go server built from that revision with Go 1.27.0, and the upstream protocol-9 JavaScript client
+(`typescript@7.1.0-beta`, whose `gitHead` is the pin). `tests/golden/manifest.json` records the source SHA, Go
+version, executable sha256 and client package. The owned `npm/tsrs` client speaks the fork's protocol 10 and
+cannot decode protocol-9 server bytes; the test helpers' `upgrade_reference` adds protocol 10's empty ArkTS
+header slot and virtual-node word to the goldens at test time. To refresh them, verify and build the current
+Cargo-pinned Go reference using [the reference workflow](../../CONTRIBUTING.md#reference-compiler), install the
+matching upstream client, then run from the repository root:
 
 ```sh
-TSRS_CODEC_TSC="$PWD/target/reference/tsgo" TSRS_CODEC_ORACLE=npm/tsrs vp run gen:codec-oracle
+pnpm --dir /tmp/tsoracle add typescript@7.1.0-beta
+TSRS_CODEC_TSC="$PWD/target/reference/tsgo" \
+  TSRS_CODEC_ORACLE=/tmp/tsoracle/node_modules/typescript vp run gen:codec-oracle
 vp run gen:codec-probe
 ```
 

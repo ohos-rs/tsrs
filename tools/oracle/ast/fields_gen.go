@@ -108,7 +108,7 @@ var nodeFields = map[string][]fieldSpec{
 	"ImportEqualsDeclaration": {{"modifiers", "modlist"}, {"IsTypeOnly", "bool"}},
 	"ExportDeclaration": {{"modifiers", "modlist"}, {"IsTypeOnly", "bool"}},
 	"ImportTypeNode": {{"IsTypeOf", "bool"}, {"TypeArguments", "list"}},
-	"ImportClause": {{"PhaseModifier", "kind"}},
+	"ImportClause": {{"PhaseModifier", "kind"}, {"IsLazy", "bool"}},
 	"ImportSpecifier": {{"IsTypeOnly", "bool"}},
 	"JSDocText": {{"text", "rawstrings"}},
 	"JSDocLink": {{"text", "rawstrings"}},

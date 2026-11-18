@@ -6,27 +6,47 @@ impl DeclarationTransformer {
         self.preserve_annotations(node, self.ensure_modifiers_worker(node))
     }
 
-    fn preserve_annotations(&self, node: P<Node>, modifiers: Option<P<ModifierList>>) -> Option<P<ModifierList>> {
+    fn preserve_annotations(
+        &self,
+        node: P<Node>,
+        modifiers: Option<P<ModifierList>>,
+    ) -> Option<P<ModifierList>> {
         let mut annotations = Vec::new();
         for &modifier in node.modifier_nodes() {
-            if !ast::is_decorator(modifier) || !self.resolver.is_ets_annotation(modifier) { continue; }
+            if !ast::is_decorator(modifier) || !self.resolver.is_ets_annotation(modifier) {
+                continue;
+            }
             annotations.push(modifier);
             let expr = modifier.expression().unwrap();
             if ast::is_call_expression(expr) {
-                self.check_entity_name_visibility(expr.expression().unwrap(), self.enclosing_declaration.get());
+                self.check_entity_name_visibility(
+                    expr.expression().unwrap(),
+                    self.enclosing_declaration.get(),
+                );
                 if let Some(&argument) = expr.arguments().first() {
                     if ast::is_object_literal_expression(argument) {
                         for &prop in argument.properties() {
-                            if ast::is_property_assignment(prop) && ast::is_property_access_expression(prop.initializer().unwrap()) {
-                                self.check_entity_name_visibility(prop.initializer().unwrap(), self.enclosing_declaration.get());
+                            if ast::is_property_assignment(prop)
+                                && ast::is_property_access_expression(prop.initializer().unwrap())
+                            {
+                                self.check_entity_name_visibility(
+                                    prop.initializer().unwrap(),
+                                    self.enclosing_declaration.get(),
+                                );
                             }
                         }
                     }
                 }
-            } else if ast::is_identifier(expr) { self.check_entity_name_visibility(expr, self.enclosing_declaration.get()); }
+            } else if ast::is_identifier(expr) {
+                self.check_entity_name_visibility(expr, self.enclosing_declaration.get());
+            }
         }
-        if annotations.is_empty() { return modifiers; }
-        if let Some(modifiers) = modifiers { annotations.extend_from_slice(modifiers.nodes()); }
+        if annotations.is_empty() {
+            return modifiers;
+        }
+        if let Some(modifiers) = modifiers {
+            annotations.extend_from_slice(modifiers.nodes());
+        }
         Some(self.factory().new_modifier_list(annotations))
     }
 
@@ -286,7 +306,7 @@ impl DeclarationTransformer {
                     phase_modifier,
                     import_clause.as_import_clause().is_lazy,
                     visible_default_binding,
-                    None /*namedBindings*/,
+                    None, /*namedBindings*/
                 )),
                 self.rewrite_module_specifier(decl, Some(import_decl.module_specifier)).unwrap(),
                 import_decl.attributes(),

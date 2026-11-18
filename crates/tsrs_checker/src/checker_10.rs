@@ -2202,7 +2202,16 @@ impl Checker {
             if is_annotation_symbol(Some(symbol)) {
                 let symbol_type = self.get_type_of_symbol(symbol);
                 let parameter = self.get_property_of_type(symbol_type, "prototype").unwrap();
-                let signature = self.new_signature(SignatureFlags::None, None, &[], None, &[parameter], Some(self.void_type), None, 1);
+                let signature = self.new_signature(
+                    SignatureFlags::None,
+                    None,
+                    &[],
+                    None,
+                    &[parameter],
+                    Some(self.void_type),
+                    None,
+                    1,
+                );
                 d.set_signatures(alloc_slice(&[signature]));
                 d.set_call_signature_count(1);
                 return;

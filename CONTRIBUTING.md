@@ -69,7 +69,8 @@ Reproductions, fixes, tests and generators use a checkout of microsoft/TypeScrip
 commit=$(node npm/build.mjs --print-typescript-commit)
 git clone --filter=blob:none --sparse https://github.com/microsoft/TypeScript ts-ref
 git -C ts-ref sparse-checkout set tsc packages/typescript/src \
-  packages/typescript/lib packages/typescript/vendor tools/scripts/tsc
+  packages/typescript/lib packages/typescript/vendor \
+  packages/typescript/schemas packages/typescript/test tools/scripts/tsc
 git -C ts-ref checkout --detach "$commit"
 ```
 

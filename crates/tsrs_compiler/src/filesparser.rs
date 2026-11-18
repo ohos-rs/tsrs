@@ -1117,20 +1117,15 @@ impl FilesParser {
         let mut redirect_files_by_path: FxHashMap<Path, RedirectsFile> = FxHashMap::default();
         let mut package_id_to_source_file: FxHashMap<PackageId, P<SourceFile>> =
             FxHashMap::default();
-        let force_consistent_casing = loader
-            .opts
-            .config
-            .compiler_options()
-            .unwrap()
-            .ets_loader_path
-            .is_empty()
-            && !loader
-                .opts
-                .config
-                .compiler_options()
-                .unwrap()
-                .force_consistent_casing_in_file_names
-                .is_false();
+        let force_consistent_casing =
+            loader.opts.config.compiler_options().unwrap().ets_loader_path.is_empty()
+                && !loader
+                    .opts
+                    .config
+                    .compiler_options()
+                    .unwrap()
+                    .force_consistent_casing_in_file_names
+                    .is_false();
 
         // recordedDuplicates tracks, per task data, the set of file-name casings that
         // have already been recorded in duplicateSourceFiles. A file that is reached

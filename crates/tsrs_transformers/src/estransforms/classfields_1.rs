@@ -1801,7 +1801,8 @@ impl ClassFieldsTransformer {
                     ),
                     None, /*questionDotToken*/
                     None, /*typeArguments*/
-                    self.factory().new_node_list(all_args), node.as_call_expression().ets_body(),
+                    self.factory().new_node_list(all_args),
+                    node.as_call_expression().ets_body(),
                     node.flags(),
                 ));
             }
@@ -1815,7 +1816,8 @@ impl ClassFieldsTransformer {
                 ),
                 None, /*questionDotToken*/
                 None, /*typeArguments*/
-                self.factory().new_node_list(all_args), node.as_call_expression().ets_body(),
+                self.factory().new_node_list(all_args),
+                node.as_call_expression().ets_body(),
                 node.flags(),
             ));
         }
@@ -1870,7 +1872,7 @@ impl ClassFieldsTransformer {
                 None, /*typeArguments*/
                 self.factory()
                     .new_node_list(vec![self.visitor().visit_node(Some(this_arg)).unwrap()]),
-                    None,
+                None,
                 NodeFlags::None,
             );
             return Some(self.factory().update_tagged_template_expression(

@@ -19,7 +19,7 @@ fn setup<'h>(host: &'h dyn CheckerHost, p: &Params) -> CheckerResult<Setup<'h>> 
 
 // Wrong-kind requests: pinned Go does not validate these; the handler panics and the ipc connection
 // (or batchRequests) recovers it as `panic: <value>\n<stack>`. The checks below reproduce the same
-// failure class and first line (recorded in testdata/go_probe/go_shapes_b85298b6.jsonl) without
+// failure class and first line (recorded in testdata/go_probe/go_shapes_3e923636.jsonl) without
 // actually panicking (no stack is attached).
 fn go_panic(message: impl std::fmt::Display) -> CheckerError {
     CheckerError { kind: CheckerErrorKind::Internal, message: format!("panic: {message}") }

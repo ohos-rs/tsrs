@@ -37,6 +37,7 @@ const PATCHES = {
     "src/api/node/node.ts": "arkts-src-api-node-node.ts.patch",
     "src/api/node/protocol.generated.ts": "arkts-src-api-node-protocol.generated.ts.patch",
     "src/api/node/protocol.ts": "arkts-src-api-node-protocol.ts.patch",
+    "src/api/compilerOptions.generated.ts": "arkts-src-api-compilerOptions.generated.ts.patch",
     "src/api/proto.generated.ts": "arkts-src-api-proto.generated.ts.patch",
     "src/api/sync/api.ts": "arkts-src-api-sync-api.ts.patch",
     "src/ast/ast.generated.ts": "arkts-src-ast-ast.generated.ts.patch",

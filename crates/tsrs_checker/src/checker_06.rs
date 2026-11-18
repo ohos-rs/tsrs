@@ -691,10 +691,21 @@ impl Checker {
             self.get_export_symbol_of_value_symbol_if_exported(Some(symbol)).unwrap();
         let target_symbol = self.resolve_alias_with_deprecation_check(local_or_export_symbol, node);
         self.check_oh_sdk_identifier_use(node, target_symbol);
-        if is_annotation_symbol(Some(local_or_export_symbol)) && ast::find_ancestor(Some(node), |n| {
-            ast::is_annotation_declaration(n) || ast::is_decorator(n) || ast::is_import_declaration(n) || ast::is_export_declaration(n) || ast::is_export_assignment(n)
-        }).is_none() {
-            self.error(Some(node), &diagnostics::ANNOTATION_CANNOT_BE_USED_AS_TYPE_OR_VARIABLE_OR_FUNCTION_OR_METHOD, &[]);
+        if is_annotation_symbol(Some(local_or_export_symbol))
+            && ast::find_ancestor(Some(node), |n| {
+                ast::is_annotation_declaration(n)
+                    || ast::is_decorator(n)
+                    || ast::is_import_declaration(n)
+                    || ast::is_export_declaration(n)
+                    || ast::is_export_assignment(n)
+            })
+            .is_none()
+        {
+            self.error(
+                Some(node),
+                &diagnostics::ANNOTATION_CANNOT_BE_USED_AS_TYPE_OR_VARIABLE_OR_FUNCTION_OR_METHOD,
+                &[],
+            );
             return self.error_type;
         }
         let has_declarations = !target_symbol.declarations().is_empty();
@@ -1895,14 +1906,12 @@ impl Checker {
                             &[&property.name],
                         )
                 });
-            let required_before_use = ast::has_arkui_bare_decorator(
-                value_declaration.modifiers(),
-                &["Require"],
-            )
-                && value_declaration.pos() < node.pos()
-                && value_declaration.parent().is_some_and(|parent| {
-                    ast::is_struct_declaration(parent) && parent.end() > node.end()
-                });
+            let required_before_use =
+                ast::has_arkui_bare_decorator(value_declaration.modifiers(), &["Require"])
+                    && value_declaration.pos() < node.pos()
+                    && value_declaration.parent().is_some_and(|parent| {
+                        ast::is_struct_declaration(parent) && parent.end() > node.end()
+                    });
             if !allow_uninitialized && !required_before_use {
                 diagnostic = Some(self.error(
                     Some(right),
@@ -3101,7 +3110,11 @@ impl Checker {
                     left, right, left_type, right_type, operator,
                 ) {
                     let non_null_left = self.check_non_null_type(left_type, left);
-                    left_type = if self.compiler_options.ets_loader_path.is_empty() { self.get_base_type_of_literal_type_for_comparison(non_null_left) } else { self.get_base_type_of_literal_type(non_null_left) };
+                    left_type = if self.compiler_options.ets_loader_path.is_empty() {
+                        self.get_base_type_of_literal_type_for_comparison(non_null_left)
+                    } else {
+                        self.get_base_type_of_literal_type(non_null_left)
+                    };
                     let non_null_right = self.check_non_null_type(right_type, right);
                     right_type = if self.compiler_options.ets_loader_path.is_empty() {
                         self.get_base_type_of_literal_type_for_comparison(non_null_right)
@@ -3117,7 +3130,10 @@ impl Checker {
                             if !c.compiler_options.ets_loader_path.is_empty() {
                                 return c.are_types_comparable(left, right)
                                     || c.is_type_assignable_to(left, c.number_or_big_int_type)
-                                        && c.is_type_assignable_to(right, c.number_or_big_int_type);
+                                        && c.is_type_assignable_to(
+                                            right,
+                                            c.number_or_big_int_type,
+                                        );
                             }
                             if is_type_any(Some(left)) || is_type_any(Some(right)) {
                                 return true;

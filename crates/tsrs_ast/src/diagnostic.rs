@@ -108,8 +108,12 @@ impl Diagnostic {
     pub fn reports_deprecated(&self) -> bool {
         self.reports_deprecated
     }
-    pub fn filter_flag(&self) -> bool { self.filter_flag.get() }
-    pub fn set_filter_flag(&self) { self.filter_flag.set(true); }
+    pub fn filter_flag(&self) -> bool {
+        self.filter_flag.get()
+    }
+    pub fn set_filter_flag(&self) {
+        self.filter_flag.set(true);
+    }
     pub fn skipped_on_no_emit(&self) -> bool {
         self.skipped_on_no_emit.get()
     }

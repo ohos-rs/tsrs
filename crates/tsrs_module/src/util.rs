@@ -209,7 +209,10 @@ pub fn get_resolution_diagnostic(
 pub fn try_get_js_extension_for_file(file_name: &str, options: &CompilerOptions) -> &'static str {
     let ext = tspath::try_get_extension_from_path(file_name);
     match ext {
-        tspath::EXTENSION_ETS | tspath::EXTENSION_DETS | tspath::EXTENSION_TS | tspath::EXTENSION_DTS => tspath::EXTENSION_JS,
+        tspath::EXTENSION_ETS
+        | tspath::EXTENSION_DETS
+        | tspath::EXTENSION_TS
+        | tspath::EXTENSION_DTS => tspath::EXTENSION_JS,
         tspath::EXTENSION_TSX => {
             if options.jsx == JsxEmit::PRESERVE {
                 return tspath::EXTENSION_JSX;

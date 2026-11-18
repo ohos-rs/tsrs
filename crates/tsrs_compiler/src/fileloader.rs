@@ -239,10 +239,21 @@ pub(crate) fn process_all_program_files(
         Some(create) => create(resolver_options),
         None => Box::new(module::new_resolver(resolver_options)),
     };
-    let mut default_library_path = tspath::get_normalized_absolute_path(host.default_library_path(), host.get_current_directory());
+    let mut default_library_path = tspath::get_normalized_absolute_path(
+        host.default_library_path(),
+        host.get_current_directory(),
+    );
     if !compiler_options.ets_loader_path.is_empty() {
-        let sdk_lib = tspath::get_normalized_absolute_path(&tspath::combine_paths(&compiler_options.ets_loader_path, &["node_modules/typescript/lib"]), host.get_current_directory());
-        if host.fs().file_exists(&tspath::combine_paths(&sdk_lib, &["lib.d.ts"])) { default_library_path = sdk_lib; }
+        let sdk_lib = tspath::get_normalized_absolute_path(
+            &tspath::combine_paths(
+                &compiler_options.ets_loader_path,
+                &["node_modules/typescript/lib"],
+            ),
+            host.get_current_directory(),
+        );
+        if host.fs().file_exists(&tspath::combine_paths(&sdk_lib, &["lib.d.ts"])) {
+            default_library_path = sdk_lib;
+        }
     }
     let mut loader = FileLoader {
         opts: opts.program_config(),
@@ -341,8 +352,13 @@ pub(crate) fn process_all_program_files(
                 // !!! error on unknown name
             }
             for name in compiler_options.ets.libs.as_deref().unwrap_or_default() {
-                let lib_file = P::new(LibFile { name: name.clone(), path: name.clone(), replaced: false });
-                loader.add_root_task(name, Some(lib_file), P::new(FileIncludeReason::new(FileIncludeKind::LibFile)));
+                let lib_file =
+                    P::new(LibFile { name: name.clone(), path: name.clone(), replaced: false });
+                loader.add_root_task(
+                    name,
+                    Some(lib_file),
+                    P::new(FileIncludeReason::new(FileIncludeKind::LibFile)),
+                );
             }
         }
     }
@@ -1687,7 +1703,10 @@ impl FileLoader {
                 );
                 resolutions_trace.extend(trace);
 
-                if !resolved_module.is_resolved() || (resolved_module.is_not_oh_export && !tspath::normalize_path(file.file_name()).contains("/oh_modules/")) {
+                if !resolved_module.is_resolved()
+                    || (resolved_module.is_not_oh_export
+                        && !tspath::normalize_path(file.file_name()).contains("/oh_modules/"))
+                {
                     continue;
                 }
 
@@ -1897,7 +1916,9 @@ fn resolved_import_sub_task(
     import_index: Option<usize>,
     resolved_module: &ResolvedModule,
 ) -> (bool, bool) {
-    if resolved_module.is_not_oh_export && !tspath::normalize_path(file.file_name()).contains("/oh_modules/") {
+    if resolved_module.is_not_oh_export
+        && !tspath::normalize_path(file.file_name()).contains("/oh_modules/")
+    {
         return (false, false);
     }
     let imports = file.imports();
@@ -2042,7 +2063,14 @@ fn source_file_from_reference(
         String::new(),
         Some(SourceFileFromReferenceDiagnostic {
             message: &diagnostics::COULD_NOT_RESOLVE_THE_PATH_0_WITH_THE_EXTENSIONS_COLON_1,
-            args: vec![diagnostic_file_name, supported_extensions_display(supported_extensions, options.uses_oh_module_resolution() || containing_file.ends_with(tspath::EXTENSION_ETS))],
+            args: vec![
+                diagnostic_file_name,
+                supported_extensions_display(
+                    supported_extensions,
+                    options.uses_oh_module_resolution()
+                        || containing_file.ends_with(tspath::EXTENSION_ETS),
+                ),
+            ],
         }),
     )
 }
@@ -2061,9 +2089,7 @@ fn supported_extensions_display(supported_extensions: &[Vec<String>], arkts: boo
         .iter()
         .flatten()
         .map(std::string::String::as_str)
-        .filter(|s| {
-            arkts || !matches!(*s, tspath::EXTENSION_ETS | tspath::EXTENSION_DETS)
-        })
+        .filter(|s| arkts || !matches!(*s, tspath::EXTENSION_ETS | tspath::EXTENSION_DETS))
         .collect();
     format!("'{}'", flat.join("', '"))
 }

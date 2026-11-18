@@ -277,8 +277,9 @@ impl ESModuleTransformer {
         let import_decl = f.new_import_declaration(
             None, /*modifiers*/
             Some(f.new_import_clause(
-                Kind::Unknown, false, /*phaseModifier*/
-                None,          /*name*/
+                Kind::Unknown,
+                false, /*phaseModifier*/
+                None,  /*name*/
                 Some(f.new_namespace_import(synth_name)),
             )),
             updated_module_specifier.unwrap(),
@@ -424,8 +425,9 @@ impl ESModuleTransformer {
             let import_statement = f.new_import_declaration(
                 None, /*modifiers*/
                 Some(f.new_import_clause(
-                    Kind::Unknown, false, /*phaseModifier*/
-                    None,          /*name*/
+                    Kind::Unknown,
+                    false, /*phaseModifier*/
+                    None,  /*name*/
                     Some(f.new_named_imports(f.new_node_list(vec![f.new_import_specifier(
                         false, /*isTypeOnly*/
                         Some(f.new_identifier("createRequire")),
@@ -461,7 +463,8 @@ impl ESModuleTransformer {
                                 None, /*questionDotToken*/
                                 f.new_identifier("url"),
                                 NodeFlags::None,
-                            )]), None,
+                            )]),
+                            None,
                             NodeFlags::None,
                         )),
                     )]),

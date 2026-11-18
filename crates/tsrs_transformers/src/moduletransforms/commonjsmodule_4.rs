@@ -778,7 +778,8 @@ impl CommonJSModuleTransformer {
             ),
             None, /*questionDotToken*/
             None, /*typeArguments*/
-            f.new_node_list(promise_resolve_arguments), None,
+            f.new_node_list(promise_resolve_arguments),
+            None,
             NodeFlags::None,
         );
 
@@ -829,7 +830,8 @@ impl CommonJSModuleTransformer {
             ),
             None, /*questionDotToken*/
             None, /*typeArguments*/
-            f.new_node_list(vec![function]), None,
+            f.new_node_list(vec![function]),
+            None,
             NodeFlags::None,
         )
     }

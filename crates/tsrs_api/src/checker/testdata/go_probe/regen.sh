@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regenerates go_probe_b85298b6.jsonl from the pinned Go API session.
+# Regenerates go_probe_<pin>.jsonl (and the shapes/flags companions) from the pinned Go API session.
 #
 # Requirements: a clean microsoft/TypeScript checkout at the commit in the workspace Cargo.toml
 # ([workspace.metadata.typescript] commit), or TSRS_API_COMMIT during an in-progress source upgrade,

@@ -4,7 +4,7 @@
 set -euo pipefail
 crate="$(cd "$(dirname "$0")/.." && pwd)"
 ref="$crate/../../ts-ref"
-pin="${TSRS_CODEC_COMMIT:-$(sed -n 's/^commit = "\([0-9a-f]\{40\}\)"/\1/p' "$crate/../../Cargo.toml")}"
+pin="${TSRS_CODEC_COMMIT:-$(sed -n 's/^commit = "\([0-9a-f]\{40\}\)"/\1/p' "$crate/../../Cargo.toml" | head -n1)}"
 [ "$(git -C "$ref" rev-parse HEAD)" = "$pin" ] || { echo "ts-ref is not at the pin $pin" >&2; exit 2; }
 probe="$ref/tsc/cmd/codecprobe"
 trap 'rm -rf "$probe"' EXIT

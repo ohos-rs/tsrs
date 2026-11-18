@@ -753,7 +753,8 @@ fn create_const_equals_require_declaration(
                     f.new_identifier("require"),
                     None, /*questionDotToken*/
                     None, /*typeArguments*/
-                    f.new_node_list(vec![quoted_module_specifier]), None,
+                    f.new_node_list(vec![quoted_module_specifier]),
+                    None,
                     NodeFlags::None,
                 )),
             )]),
@@ -1233,18 +1234,20 @@ fn get_import_kind(
                 return lsproto::ImportKind::NAMED;
             }
             // !!! cache this?
-            if let Some(result) = importing_file.statements().nodes().iter().find_map(|&statement| {
-                // `import foo` parses as an ImportEqualsDeclaration even though it could be an ImportDeclaration
-                if ast::is_import_equals_declaration(statement)
-                    && !ast::node_is_missing(Some(
-                        statement.as_import_equals_declaration().module_reference,
-                    ))
-                {
-                    return Some(lsproto::ImportKind::COMMON_JS);
-                }
+            if let Some(result) =
+                importing_file.statements().nodes().iter().find_map(|&statement| {
+                    // `import foo` parses as an ImportEqualsDeclaration even though it could be an ImportDeclaration
+                    if ast::is_import_equals_declaration(statement)
+                        && !ast::node_is_missing(Some(
+                            statement.as_import_equals_declaration().module_reference,
+                        ))
+                    {
+                        return Some(lsproto::ImportKind::COMMON_JS);
+                    }
 
-                None
-            }) {
+                    None
+                })
+            {
                 return result;
             }
             // !!! this logic feels weird; we're basically trying to predict if shouldUseRequire is going to

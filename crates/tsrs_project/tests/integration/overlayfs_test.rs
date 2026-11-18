@@ -311,4 +311,3 @@ fn overlay_fs_file_system() {
     assert!(root_entries.directories.contains(&"virtual".to_string()));
     assert!(!root_entries.files.contains(&"virtual".to_string()));
 }
-

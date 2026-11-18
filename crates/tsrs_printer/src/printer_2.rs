@@ -1510,7 +1510,11 @@ impl Printer {
         let state = self.enter_node(node);
         let n = node.as_function_declaration();
         self.generate_name_if_needed(n.name());
-        self.emit_modifier_list(node, node.modifiers(), self.current_source_file().is_some_and(|file| file.script_kind() == ScriptKind::ETS));
+        self.emit_modifier_list(
+            node,
+            node.modifiers(),
+            self.current_source_file().is_some_and(|file| file.script_kind() == ScriptKind::ETS),
+        );
         self.write_keyword("function");
         self.emit_token_node(n.asterisk_token());
         self.write_space();
@@ -2589,14 +2593,16 @@ impl Printer {
         let mut index = 0;
         let state;
         if file.script_kind() == ScriptKind::JSON {
-            state = self.emit_detached_comments_before_statement_list(node, file.statements().loc());
+            state =
+                self.emit_detached_comments_before_statement_list(node, file.statements().loc());
         } else {
             self.emit_shebang_if_needed(file);
             index = self.emit_prologue_directives(file.statements());
             if !self.writer().is_at_start_of_line() {
                 self.write_line();
             }
-            state = self.emit_detached_comments_before_statement_list(node, file.statements().loc());
+            state =
+                self.emit_detached_comments_before_statement_list(node, file.statements().loc());
             self.emit_helpers(node);
             if file.is_declaration_file() {
                 self.emit_triple_slash_directives(file);

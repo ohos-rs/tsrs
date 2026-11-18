@@ -52,7 +52,7 @@ func fileNameOrPanic(uri lsproto.DocumentUri) (out string) {
 			out = fmt.Sprintf("PANIC %v", r)
 		}
 	}()
-	return uri.FileName()
+	return string(uri.FileName())
 }
 
 func check() {

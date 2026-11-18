@@ -2221,7 +2221,9 @@ impl Checker {
     pub(crate) fn get_inferred_type(&mut self, n: P<InferenceContext>, index: usize) -> P<Type> {
         let inference = n.inferences.get()[index];
         if inference.inferred_type.get().is_none() {
-            if !self.compiler_options.ets_loader_path.is_empty() { return self.get_open_harmony_inferred_type(n, index); }
+            if !self.compiler_options.ets_loader_path.is_empty() {
+                return self.get_open_harmony_inferred_type(n, index);
+            }
             if inference.type_parameter.get() == Some(self.error_type) {
                 return inference.type_parameter.get().unwrap();
             }
@@ -2477,7 +2479,10 @@ impl Checker {
     }
 
     // inference.go:1463
-    pub(crate) fn get_contravariant_inference(&mut self, inference: P<InferenceInfo>) -> Option<P<Type>> {
+    pub(crate) fn get_contravariant_inference(
+        &mut self,
+        inference: P<InferenceInfo>,
+    ) -> Option<P<Type>> {
         let contra_candidates = inference.contra_candidates.to_vec();
         if inference.priority.get().intersects(InferencePriority::PRIORITY_IMPLIES_COMBINATION) {
             return Some(self.get_intersection_type(&contra_candidates));
@@ -2567,7 +2572,10 @@ impl Checker {
     }
 
     // inference.go:1509
-    pub(crate) fn get_type_from_inference(&mut self, inference: P<InferenceInfo>) -> Option<P<Type>> {
+    pub(crate) fn get_type_from_inference(
+        &mut self,
+        inference: P<InferenceInfo>,
+    ) -> Option<P<Type>> {
         if !inference.candidates.is_empty() {
             let candidates = inference.candidates.to_vec();
             return Some(self.get_union_type_ex(
