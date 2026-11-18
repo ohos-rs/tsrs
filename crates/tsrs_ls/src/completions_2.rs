@@ -49,7 +49,7 @@ impl LanguageService {
         type_checker: &mut Checker,
         file: P<SourceFile>,
         compiler_options: P<CompilerOptions>,
-        data: &mut completionDataData,
+        data: &mut CompletionDataData,
         position: u32,
         optional_replacement_span: Option<lsproto::Range>,
         include_symbols: bool,
@@ -82,14 +82,14 @@ impl LanguageService {
                 );
                 literals.retain(|literal| !tracker.has_value(&tracker_value(literal)));
                 data.symbols.retain(|&symbol| {
-                    if let Some(value_declaration) = symbol.value_declaration() {
-                        if ast::is_enum_member(value_declaration) {
-                            let value = type_checker.get_constant_value(value_declaration);
-                            if let Some(value) = value {
-                                if tracker.has_value(&tracker_value(&value)) {
-                                    return false;
-                                }
-                            }
+                    if let Some(value_declaration) = symbol.value_declaration()
+                        && ast::is_enum_member(value_declaration)
+                    {
+                        let value = type_checker.get_constant_value(value_declaration);
+                        if let Some(value) = value
+                            && tracker.has_value(&tracker_value(&value))
+                        {
+                            return false;
                         }
                     }
                     true
@@ -144,11 +144,11 @@ impl LanguageService {
         sorted_entries.extend(
             get_contextual_keywords(file, context_token, position).into_iter().filter_map(
                 |keyword_entry| {
-                    if !unique_names.contains(&keyword_entry.label) {
+                    if unique_names.contains(&keyword_entry.label) {
+                        None
+                    } else {
                         unique_names.insert(keyword_entry.label.clone());
                         Some(CompletionItem::new(keyword_entry))
-                    } else {
-                        None
                     }
                 },
             ),
@@ -170,22 +170,22 @@ impl LanguageService {
             );
         }
 
-        if let Some(context_token) = context_token {
-            if !data.is_right_of_open_tag && !data.is_right_of_dot_or_question_dot {
-                if let Some(case_block) = ast::find_ancestor_kind(context_token, Kind::CaseBlock) {
-                    let cases_item = self.get_exhaustive_case_snippets(
-                        ctx,
-                        case_block,
-                        file,
-                        position,
-                        compiler_options,
-                        self.get_program(),
-                        type_checker,
-                    )?;
-                    if let Some(cases_item) = cases_item {
-                        sorted_entries.push(CompletionItem::new(cases_item));
-                    }
-                }
+        if let Some(context_token) = context_token
+            && !data.is_right_of_open_tag
+            && !data.is_right_of_dot_or_question_dot
+            && let Some(case_block) = ast::find_ancestor_kind(context_token, Kind::CaseBlock)
+        {
+            let cases_item = self.get_exhaustive_case_snippets(
+                ctx,
+                case_block,
+                file,
+                position,
+                compiler_options,
+                self.get_program(),
+                type_checker,
+            )?;
+            if let Some(cases_item) = cases_item {
+                sorted_entries.push(CompletionItem::new(cases_item));
             }
         }
 
@@ -211,7 +211,7 @@ impl LanguageService {
         &self,
         ctx: &Context,
         type_checker: &mut Checker,
-        data: &completionDataData,
+        data: &CompletionDataData,
         replacement_token: Option<P<Node>>,
         position: u32,
         file: P<SourceFile>,
@@ -229,7 +229,7 @@ impl LanguageService {
         // Value is set to false for global variables or completions from external module exports, because we can have multiple of those;
         // true otherwise. Based on the order we add things we will always see locals first, then globals, then module exports.
         // So adding a completion for a local will prevent us from adding completions for external module exports sharing the same name.
-        let mut uniques = uniqueNamesMap::default();
+        let mut uniques = UniqueNamesMap::default();
         for (index, &symbol) in data.symbols.iter().enumerate() {
             let origin = data.symbol_to_origin_info_map.get(&index);
             let (name, needs_convert_property_access) =
@@ -430,14 +430,17 @@ pub(crate) fn completion_name_for_literal(
 fn get_insert_text_and_replacement_span_for_import_completion(
     fix: &autoimport::Fix,
     import_kind: lsproto::ImportKind,
-    import_statement_completion: &importStatementCompletionInfo,
+    import_statement_completion: &ImportStatementCompletionInfo,
     use_semicolons: bool,
     file: P<SourceFile>,
     preferences: &UserPreferences,
     is_snippet: bool,
 ) -> (String, Option<lsproto::Range>) {
-    let quoted_module_specifier =
-        escape_snippet_text(&quote(file, preferences, &fix.module_specifier));
+    let mut quoted_module_specifier = quote(file, preferences, &fix.module_specifier);
+    if is_snippet {
+        quoted_module_specifier =
+            escape_snippet_text(&quoted_module_specifier.replace('\\', "\\\\"));
+    }
     let tab_stop = if is_snippet { "$1" } else { "" };
     let suffix = if use_semicolons { ";" } else { "" };
     let top_level_type_only_text = if import_statement_completion.is_top_level_type_only {
@@ -449,25 +452,25 @@ fn get_insert_text_and_replacement_span_for_import_completion(
     let replacement_span = import_statement_completion.replacement_span;
 
     match import_kind {
-        lsproto::ImportKind::CommonJS => (
+        lsproto::ImportKind::COMMON_JS => (
             format!(
                 "import{top_level_type_only_text}{name}{tab_stop} = require({quoted_module_specifier}){suffix}"
             ),
             replacement_span,
         ),
-        lsproto::ImportKind::Default => (
+        lsproto::ImportKind::DEFAULT => (
             format!(
                 "import{top_level_type_only_text}{name}{tab_stop} from {quoted_module_specifier}{suffix}"
             ),
             replacement_span,
         ),
-        lsproto::ImportKind::Namespace => (
+        lsproto::ImportKind::NAMESPACE => (
             format!(
                 "import{top_level_type_only_text}* as {name} from {quoted_module_specifier}{suffix}"
             ),
             replacement_span,
         ),
-        lsproto::ImportKind::Named => (
+        lsproto::ImportKind::NAMED => (
             format!(
                 "import{}{{ {}{}{} }} from {}{}",
                 top_level_type_only_text,
@@ -495,7 +498,7 @@ fn create_completion_item_for_literal(
 ) -> lsproto::CompletionItem {
     lsproto::CompletionItem {
         label: completion_name_for_literal(file, preferences, literal),
-        kind: Some(lsproto::CompletionItemKind::Constant),
+        kind: Some(lsproto::CompletionItemKind::CONSTANT),
         sort_text: Some(SORT_TEXT_LOCATION_PRIORITY.to_string()),
         commit_characters: Some(Vec::new()),
         ..Default::default()
@@ -504,19 +507,19 @@ fn create_completion_item_for_literal(
 
 impl LanguageService {
     // completions.go:2178
-    pub(crate) fn create_completion_item(
+    fn create_completion_item(
         &self,
         ctx: &Context,
         type_checker: &mut Checker,
         symbol: P<Symbol>,
         mut sort_text: SortText,
         replacement_token: Option<P<Node>>,
-        data: &completionDataData,
+        data: &CompletionDataData,
         position: u32,
         file: P<SourceFile>,
         mut name: String,
         needs_convert_property_access: bool,
-        origin: Option<&symbolOriginInfo>,
+        origin: Option<&SymbolOriginInfo>,
         _use_semicolons: bool,
         _compiler_options: P<CompilerOptions>,
         is_member_completion: bool,
@@ -621,14 +624,14 @@ impl LanguageService {
                     .expect_source("parsed nodes have source positions"),
             );
             let mut await_text = String::new();
-            if let Some(preceding_token) = preceding_token {
-                if lsutil::position_is_asi_candidate(
+            if let Some(preceding_token) = preceding_token
+                && lsutil::position_is_asi_candidate(
                     preceding_token.end().expect_source("parsed tokens have source positions"),
                     preceding_token.parent().unwrap(),
                     file,
-                ) {
-                    await_text = ";".to_string();
-                }
+                )
+            {
+                await_text = ";".to_string();
             }
 
             let _ = write!(
@@ -677,38 +680,35 @@ impl LanguageService {
         //     const cc: I = { a: "red" | }
         //
         // Completion should add a comma after "red" and provide completions for b
-        if data.completion_kind == CompletionKind::ObjectPropertyDeclaration {
-            if let Some(context_token) = context_token {
-                if !ast::node_has_kind(
-                    astnav::find_preceding_token_ex(
+        if data.completion_kind == CompletionKind::ObjectPropertyDeclaration
+            && let Some(context_token) = context_token
+            && !ast::node_has_kind(
+                astnav::find_preceding_token_ex(
+                    file,
+                    context_token.pos().expect_source("parsed tokens have source positions"),
+                    Some(context_token),
+                    false, /*excludeJSDoc*/
+                ),
+                Kind::CommaToken,
+            )
+        {
+            let ct_parent = context_token.parent().unwrap();
+            if ast::is_method_declaration(ct_parent.parent().unwrap())
+                || ast::is_get_accessor_declaration(ct_parent.parent().unwrap())
+                || ast::is_set_accessor_declaration(ct_parent.parent().unwrap())
+                || ast::is_spread_assignment(ct_parent)
+                || lsutil::get_last_token(
+                    ast::find_ancestor(ct_parent, ast::is_property_assignment),
+                    file,
+                ) == Some(context_token)
+                || ast::is_shorthand_property_assignment(ct_parent)
+                    && get_line_of_position(
                         file,
-                        context_token.pos().expect_source("parsed tokens have source positions"),
-                        Some(context_token),
-                        false, /*excludeJSDoc*/
-                    ),
-                    Kind::CommaToken,
-                ) {
-                    let ct_parent = context_token.parent().unwrap();
-                    if ast::is_method_declaration(ct_parent.parent().unwrap())
-                        || ast::is_get_accessor_declaration(ct_parent.parent().unwrap())
-                        || ast::is_set_accessor_declaration(ct_parent.parent().unwrap())
-                        || ast::is_spread_assignment(ct_parent)
-                        || lsutil::get_last_token(
-                            ast::find_ancestor(ct_parent, ast::is_property_assignment),
-                            file,
-                        ) == Some(context_token)
-                        || ast::is_shorthand_property_assignment(ct_parent)
-                            && get_line_of_position(
-                                file,
-                                context_token
-                                    .end()
-                                    .expect_source("parsed tokens have source positions"),
-                            ) != get_line_of_position(file, position)
-                    {
-                        source = COMPLETION_SOURCE_OBJECT_LITERAL_MEMBER_WITH_COMMA.to_string();
-                        has_action = true;
-                    }
-                }
+                        context_token.end().expect_source("parsed tokens have source positions"),
+                    ) != get_line_of_position(file, position)
+            {
+                source = COMPLETION_SOURCE_OBJECT_LITERAL_MEMBER_WITH_COMMA.to_string();
+                has_action = true;
             }
         }
 
@@ -876,7 +876,7 @@ impl LanguageService {
 }
 
 // completions.go:2467
-pub(crate) struct memberCompletionEntry {
+struct MemberCompletionEntry {
     insert_text: String,
     filter_text: String,
     is_snippet: bool,
@@ -892,7 +892,7 @@ impl LanguageService {
         symbol: P<Symbol>,
         enclosing_declaration: P<Node>,
         file: P<SourceFile>,
-    ) -> Option<symbolOriginInfoObjectLiteralMethod> {
+    ) -> Option<SymbolOriginInfoObjectLiteralMethod> {
         let mut snippet_printer = create_snippet_printer(
             printer::PrinterOptions {
                 remove_comments: true,
@@ -921,7 +921,7 @@ impl LanguageService {
         );
         insert_text += ",";
 
-        Some(symbolOriginInfoObjectLiteralMethod {
+        Some(SymbolOriginInfoObjectLiteralMethod {
             insert_text,
             label_details: Some(lsproto::CompletionItemLabelDetails {
                 detail: Some(self.print_object_literal_method_label_detail(
@@ -938,7 +938,7 @@ impl LanguageService {
     // completions.go:2499
     fn create_object_literal_method(
         &self,
-        snippet_printer: &snippetPrinter,
+        snippet_printer: &SnippetPrinter,
         type_checker: &mut Checker,
         symbol: P<Symbol>,
         enclosing_declaration: P<Node>,
@@ -1048,9 +1048,9 @@ fn is_object_literal_method_completion_candidate_declaration(declaration: Option
 }
 
 // completions.go:2585
-pub(crate) struct objectLiteralMethodSymbol {
+pub(crate) struct ObjectLiteralMethodSymbol {
     pub(crate) symbol: P<Symbol>,
-    pub(crate) origin: symbolOriginInfo,
+    pub(crate) origin: SymbolOriginInfo,
 }
 
 impl LanguageService {
@@ -1062,7 +1062,7 @@ impl LanguageService {
         members: &[P<Symbol>],
         enclosing_declaration: P<Node>,
         file: P<SourceFile>,
-    ) -> Vec<objectLiteralMethodSymbol> {
+    ) -> Vec<ObjectLiteralMethodSymbol> {
         if ast::is_source_file_js(file) {
             return Vec::new();
         }
@@ -1091,11 +1091,11 @@ impl LanguageService {
                 enclosing_declaration,
                 file,
             )?;
-            Some(objectLiteralMethodSymbol {
+            Some(ObjectLiteralMethodSymbol {
                 symbol: member,
-                origin: symbolOriginInfo {
+                origin: SymbolOriginInfo {
                     kind: symbolOriginInfoKind::ObjectLiteralMethod,
-                    data: symbolOriginData::ObjectLiteralMethod(entry),
+                    data: SymbolOriginData::ObjectLiteralMethod(entry),
                 },
             })
         }));
@@ -1149,7 +1149,7 @@ impl LanguageService {
         position: u32,
         context_token: Option<P<Node>>,
         file: P<SourceFile>,
-    ) -> Result<Option<memberCompletionEntry>, lsproto::Error> {
+    ) -> Result<Option<MemberCompletionEntry>, lsproto::Error> {
         let Some(class_like_declaration) = ast::find_ancestor(location, ast::is_class_like) else {
             return Ok(None);
         };
@@ -1197,10 +1197,10 @@ impl LanguageService {
             )
         };
         let mut additional_text_edits: Vec<lsproto::TextEdit> = Vec::new();
-        if let Some(import_adder) = import_adder.as_mut() {
-            if import_adder.has_fixes() {
-                additional_text_edits = import_adder.edits();
-            }
+        if let Some(import_adder) = import_adder.as_mut()
+            && import_adder.has_fixes()
+        {
+            additional_text_edits = import_adder.edits();
         }
         if let Some(erase_range) = present_modifiers.erase_range {
             additional_text_edits
@@ -1229,7 +1229,7 @@ impl LanguageService {
         }
 
         if completion_nodes.is_empty() {
-            return Ok(Some(memberCompletionEntry {
+            return Ok(Some(MemberCompletionEntry {
                 insert_text: name.to_string(),
                 filter_text: name.to_string(),
                 is_snippet,
@@ -1304,7 +1304,7 @@ impl LanguageService {
             return Ok(None);
         }
 
-        Ok(Some(memberCompletionEntry {
+        Ok(Some(MemberCompletionEntry {
             insert_text,
             filter_text: name.to_string(),
             is_snippet,
@@ -1315,7 +1315,7 @@ impl LanguageService {
 
 // completions.go:2760
 #[derive(Default)]
-pub(crate) struct presentMemberModifiers {
+pub struct PresentMemberModifiers {
     modifiers: ModifierFlags,
     decorators: Vec<P<Node>>,
     erase_range: Option<lsproto::Range>,
@@ -1328,9 +1328,9 @@ impl LanguageService {
         context_token: Option<P<Node>>,
         file: P<SourceFile>,
         position: u32,
-    ) -> presentMemberModifiers {
+    ) -> PresentMemberModifiers {
         let Some(context_token) = context_token else {
-            return presentMemberModifiers::default();
+            return PresentMemberModifiers::default();
         };
         if get_line_of_position(file, position)
             > get_line_of_position(
@@ -1338,7 +1338,7 @@ impl LanguageService {
                 context_token.end().expect_source("parsed tokens have source positions"),
             )
         {
-            return presentMemberModifiers::default();
+            return PresentMemberModifiers::default();
         }
 
         let mut modifiers = ModifierFlags::None;
@@ -1350,7 +1350,7 @@ impl LanguageService {
         if ast::is_property_declaration(ct_parent) {
             let context_modifier_kind = modifier_like_kind(Some(context_token));
             if context_modifier_kind == Kind::Unknown {
-                return presentMemberModifiers::default();
+                return PresentMemberModifiers::default();
             }
 
             let modifier_nodes = ct_parent.modifier_nodes();
@@ -1394,7 +1394,7 @@ impl LanguageService {
             }
         }
 
-        presentMemberModifiers { modifiers, decorators, erase_range }
+        PresentMemberModifiers { modifiers, decorators, erase_range }
     }
 }
 
@@ -1431,10 +1431,7 @@ fn create_modifier_list(
 }
 
 // completions.go:2847
-pub(crate) fn create_snippet_tab_stop_body(
-    factory: &NodeFactory,
-    emit_context: P<EmitContext>,
-) -> P<Node> {
+fn create_snippet_tab_stop_body(factory: &NodeFactory, emit_context: P<EmitContext>) -> P<Node> {
     let empty_statement = factory.new_empty_statement();
     emit_context.set_snippet_element(
         empty_statement,
@@ -1732,7 +1729,7 @@ fn symbol_appears_to_be_type_only(symbol: P<Symbol>, type_checker: &mut Checker)
 // completions.go:3066
 fn should_include_symbol(
     symbol: P<Symbol>,
-    data: &completionDataData,
+    data: &CompletionDataData,
     closest_symbol_declaration: Option<P<Node>>,
     file: P<SourceFile>,
     type_checker: &mut Checker,
@@ -1747,12 +1744,11 @@ fn should_include_symbol(
 
     // Filter out variables from their own initializers
     // `const a = /* no 'a' here */`
-    if let Some(closest_symbol_declaration) = closest_symbol_declaration {
-        if ast::is_variable_declaration(closest_symbol_declaration)
-            && symbol.value_declaration() == Some(closest_symbol_declaration)
-        {
-            return false;
-        }
+    if let Some(closest_symbol_declaration) = closest_symbol_declaration
+        && ast::is_variable_declaration(closest_symbol_declaration)
+        && symbol.value_declaration() == Some(closest_symbol_declaration)
+    {
+        return false;
     }
 
     // Filter out current and latter parameters from defaults
@@ -1858,7 +1854,7 @@ pub(crate) fn get_completion_entry_display_name_for_symbol(
     file: P<SourceFile>,
     preferences: &UserPreferences,
     symbol: P<Symbol>,
-    origin: Option<&symbolOriginInfo>,
+    origin: Option<&SymbolOriginInfo>,
     completion_kind: CompletionKind,
     is_jsx_identifier_expected: bool,
 ) -> (String, bool) {
@@ -1920,52 +1916,52 @@ pub(crate) fn get_completion_entry_display_name_for_symbol(
 
 // !!! refactor symbolOriginInfo so that we can tell the difference between flags and the kind of data it has
 // completions.go:3220
-pub(crate) fn origin_is_ignore(origin: Option<&symbolOriginInfo>) -> bool {
+fn origin_is_ignore(origin: Option<&SymbolOriginInfo>) -> bool {
     origin.is_some_and(|o| o.kind.intersects(symbolOriginInfoKind::Ignore))
 }
 
 // completions.go:3224
-pub(crate) fn origin_includes_symbol_name(origin: Option<&symbolOriginInfo>) -> bool {
+fn origin_includes_symbol_name(origin: Option<&SymbolOriginInfo>) -> bool {
     origin_is_computed_property_name(origin)
 }
 
 // completions.go:3228
-pub(crate) fn origin_is_computed_property_name(origin: Option<&symbolOriginInfo>) -> bool {
+fn origin_is_computed_property_name(origin: Option<&SymbolOriginInfo>) -> bool {
     origin.is_some_and(|o| o.kind.intersects(symbolOriginInfoKind::ComputedPropertyName))
 }
 
 // completions.go:3232
-pub(crate) fn origin_is_object_literal_method(origin: Option<&symbolOriginInfo>) -> bool {
+fn origin_is_object_literal_method(origin: Option<&SymbolOriginInfo>) -> bool {
     origin.is_some_and(|o| o.kind.intersects(symbolOriginInfoKind::ObjectLiteralMethod))
 }
 
 // completions.go:3236
-pub(crate) fn origin_is_this_type_node(origin: Option<&symbolOriginInfo>) -> bool {
+fn origin_is_this_type_node(origin: Option<&SymbolOriginInfo>) -> bool {
     origin.is_some_and(|o| o.kind.intersects(symbolOriginInfoKind::ThisType))
 }
 
 // completions.go:3240
-pub(crate) fn origin_is_type_only_alias(origin: Option<&symbolOriginInfo>) -> bool {
+fn origin_is_type_only_alias(origin: Option<&SymbolOriginInfo>) -> bool {
     origin.is_some_and(|o| o.kind.intersects(symbolOriginInfoKind::TypeOnlyAlias))
 }
 
 // completions.go:3244
-pub(crate) fn origin_is_symbol_member(origin: Option<&symbolOriginInfo>) -> bool {
+fn origin_is_symbol_member(origin: Option<&SymbolOriginInfo>) -> bool {
     origin.is_some_and(|o| o.kind.intersects(symbolOriginInfoKind::SymbolMember))
 }
 
 // completions.go:3248
-pub(crate) fn origin_is_nullable_member(origin: Option<&symbolOriginInfo>) -> bool {
+fn origin_is_nullable_member(origin: Option<&SymbolOriginInfo>) -> bool {
     origin.is_some_and(|o| o.kind.intersects(symbolOriginInfoKind::Nullable))
 }
 
 // completions.go:3252
-pub(crate) fn origin_is_promise(origin: Option<&symbolOriginInfo>) -> bool {
+fn origin_is_promise(origin: Option<&SymbolOriginInfo>) -> bool {
     origin.is_some_and(|o| o.kind.intersects(symbolOriginInfoKind::Promise))
 }
 
 // completions.go:3256
-pub(crate) fn get_source_from_origin(origin: Option<&symbolOriginInfo>) -> &'static str {
+pub(crate) fn get_source_from_origin(origin: Option<&SymbolOriginInfo>) -> &'static str {
     if origin_is_this_type_node(origin) {
         return COMPLETION_SOURCE_THIS_PROPERTY;
     }
@@ -1986,23 +1982,22 @@ pub(crate) fn get_relevant_tokens(
     file: P<SourceFile>,
 ) -> (Option<P<Node>>, Option<P<Node>>) {
     let previous_token = astnav::find_preceding_token(file, position);
-    if let Some(previous_token) = previous_token {
-        if position <= previous_token.end().expect_source("parsed tokens have source positions")
-            && (ast::is_member_name(previous_token) || ast::is_keyword_kind(previous_token.kind()))
-        {
-            let context_token = astnav::find_preceding_token(
-                file,
-                previous_token.pos().expect_source("parsed tokens have source positions"),
-            );
-            return (context_token, Some(previous_token));
-        }
+    if let Some(previous_token) = previous_token
+        && position <= previous_token.end().expect_source("parsed tokens have source positions")
+        && (ast::is_member_name(previous_token) || ast::is_keyword_kind(previous_token.kind()))
+    {
+        let context_token = astnav::find_preceding_token(
+            file,
+            previous_token.pos().expect_source("parsed tokens have source positions"),
+        );
+        return (context_token, Some(previous_token));
     }
     (previous_token, previous_token)
 }
 
 // "." | '"' | "'" | "`" | "/" | "@" | "<" | "#" | " " | "*"
 // completions.go:3281
-pub type CompletionsTriggerCharacter = str;
+pub(crate) type CompletionsTriggerCharacter = str;
 
 // completions.go:3283
 pub(crate) fn is_valid_trigger(
@@ -2163,12 +2158,11 @@ fn non_alias_can_be_referenced_at_type_location(
     }
     if symbol.flags().intersects(SymbolFlags::Module)
         && seen_modules_add_if_absent(&mut seen_modules, ast::get_symbol_id(symbol))
-    {
-        if type_checker.get_exports_of_module_exported(symbol).into_iter().any(|e| {
+        && type_checker.get_exports_of_module_exported(symbol).into_iter().any(|e| {
             symbol_can_be_referenced_at_type_location(e, type_checker, seen_modules.clone())
-        }) {
-            return true;
-        }
+        })
+    {
+        return true;
     }
     false
 }

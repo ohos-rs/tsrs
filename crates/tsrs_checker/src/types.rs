@@ -4,7 +4,7 @@ use std::num::NonZeroU32;
 
 use crate::direct_bitflags as bitflags;
 use tsrs_core::sharedgraph::{OvCell, OvExact, OvOptionThinSliceCell, RawWord};
-use tsrs_core::{TextPos, ThinSliceCell};
+use tsrs_core::{OptionThinSliceCell, TextPos, ThinSliceCell};
 
 use crate::*;
 
@@ -13,12 +13,12 @@ pub struct CountCell(Cell<u32>);
 
 impl CountCell {
     #[inline]
-    pub fn get(&self) -> usize {
+    pub(crate) fn get(&self) -> usize {
         self.0.get() as usize
     }
 
     #[inline]
-    pub fn set(&self, value: usize) {
+    pub(crate) fn set(&self, value: usize) {
         self.0.set(u32::try_from(value).expect("count exceeds u32 storage"));
     }
 }
@@ -33,12 +33,12 @@ impl Default for OptionalCountCell {
 
 impl OptionalCountCell {
     #[inline]
-    pub fn get(&self) -> Option<usize> {
+    pub(crate) fn get(&self) -> Option<usize> {
         self.0.get().map(|value| value.get() as usize - 1)
     }
 
     #[inline]
-    pub fn set(&self, value: Option<usize>) {
+    pub(crate) fn set(&self, value: Option<usize>) {
         let value = value.map(|value| {
             let value = u32::try_from(value).expect("count exceeds u32 storage");
             NonZeroU32::new(value.checked_add(1).expect("count exceeds optional u32 storage"))
@@ -60,15 +60,9 @@ impl<K: 'static, V: 'static> Default for GoMap<K, V> {
 }
 
 impl<K: Eq + Hash + Clone + 'static, V: Clone + 'static> GoMap<K, V> {
-    #[inline]
-    pub fn new_empty() -> Self {
-        let m = GoMap::default();
-        m.make();
-        m
-    }
     /// Go `m = make(map[K]V)`.
     #[inline]
-    pub fn make(&self) {
+    pub(crate) fn make(&self) {
         // The table lives where the map field does: a field in an emit scratch region (a node builder request's
         // links, notes/mem-emit-regions.md) must not leave a table outside it that refers into it.
         let scratch = tsrs_core::arena::scratch_contains(std::ptr::from_ref::<Self>(self) as usize);
@@ -86,25 +80,22 @@ impl<K: Eq + Hash + Clone + 'static, V: Clone + 'static> GoMap<K, V> {
         Some(copy)
     }
     #[inline]
-    pub fn is_nil(&self) -> bool {
+    pub(crate) fn is_nil(&self) -> bool {
         self.0.get().is_none()
     }
     /// Go `v, ok := m[k]` (reading a nil map is allowed).
     #[inline]
-    pub fn get<Q: ?Sized + Hash + Eq>(&self, key: &Q) -> Option<V>
+    pub(crate) fn get<Q: ?Sized + Hash + Eq>(&self, key: &Q) -> Option<V>
     where
         K: std::borrow::Borrow<Q>,
     {
         let m = self.0.get()?;
         tsrs_core::sharedgraph::with_ref(&m, |m| m.get(key).cloned())
     }
-    #[inline]
-    pub fn has(&self, key: &K) -> bool {
-        self.0.get().is_some_and(|m| tsrs_core::sharedgraph::with_ref(&m, |m| m.contains_key(key)))
-    }
+
     /// Go `m[k] = v`. Creates the map if it is nil (Go would panic; faithful code always `make`s first).
     #[inline]
-    pub fn set(&self, key: K, value: V) {
+    pub(crate) fn set(&self, key: K, value: V) {
         let m = if let Some(m) = self.for_write() {
             m
         } else {
@@ -113,64 +104,16 @@ impl<K: Eq + Hash + Clone + 'static, V: Clone + 'static> GoMap<K, V> {
         };
         m.borrow_mut().insert(key, value);
     }
-    #[inline]
-    pub fn delete(&self, key: &K) {
-        if let Some(m) = self.for_write() {
-            m.borrow_mut().remove(key);
-        }
-    }
-    #[inline]
-    pub fn len(&self) -> usize {
-        self.0.get().map_or(0, |m| tsrs_core::sharedgraph::with_ref(&m, FxHashMap::len))
-    }
 
-    pub fn is_empty(&self) -> bool {
-        self.0.get().is_none_or(|m| tsrs_core::sharedgraph::with_ref(&m, FxHashMap::is_empty))
-    }
     #[inline]
-    pub fn clear(&self) {
-        if let Some(m) = self.for_write() {
-            m.borrow_mut().clear();
-        }
-    }
-    /// Go `clear(m)` for a map that is cleared after every use (a pooled scratch map). Clearing touches every
-    /// bucket, so a table that one large use grew would make every later small use pay for its capacity; such
-    /// a table is reallocated at the size of its last use instead. Unobservable: the map is empty either way.
-    #[inline]
-    pub fn clear_scratch(&self) {
-        if let Some(m) = self.for_write() {
-            let mut m = m.borrow_mut();
-            let len = m.len();
-            if m.capacity() > 64 && m.capacity() > 4 * len {
-                *m = FxHashMap::with_capacity_and_hasher(len, rustc_hash::FxBuildHasher);
-            } else {
-                m.clear();
-            }
-        }
-    }
-    /// The shared table (Go map value), for aliasing assignments `a.m = b.m`.
-    #[inline]
-    pub fn get_ref(&self) -> Option<P<RefCell<FxHashMap<K, V>>>> {
-        self.0.get()
-    }
-    #[inline]
-    pub fn set_ref(&self, m: Option<P<RefCell<FxHashMap<K, V>>>>) {
+    pub(crate) fn set_ref(&self, m: Option<P<RefCell<FxHashMap<K, V>>>>) {
         self.0.set(m);
     }
     /// Go `a.m = someFreshlyBuiltMap`.
     #[inline]
-    pub fn assign(&self, m: FxHashMap<K, V>) {
+    pub(crate) fn assign(&self, m: FxHashMap<K, V>) {
         let scratch = tsrs_core::arena::scratch_contains(std::ptr::from_ref::<Self>(self) as usize);
         self.0.set(Some(P::new_in(scratch, RefCell::new(m))));
-    }
-    /// Snapshot of the entries (Go `for k, v := range m`).
-    #[inline]
-    pub fn entries(&self) -> Vec<(K, V)> {
-        self.0.get().map_or_else(Vec::new, |m| {
-            tsrs_core::sharedgraph::with_ref(&m, |m| {
-                m.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
-            })
-        })
     }
 }
 
@@ -313,7 +256,7 @@ bitflags! {
     }
 }
 
-pub const externalHelpersModuleNameText: &str = "tslib";
+pub(crate) const EXTERNAL_HELPERS_MODULE_NAME_TEXT: &str = "tslib";
 
 // Ids
 
@@ -328,23 +271,22 @@ pub struct SignatureId(pub u32);
 
 // Links for value symbols
 //
-// Go's `ValueSymbolLinks` holds seven fields inline (56 bytes). Here a record is three fields (`resolved_type`,
-// `first`, `second`): 16 bytes with compressed pointers (two 4-byte handles and a usize), 24 with plain pointers on
-// 64-bit targets, 12 on 32-bit. `resolved_type` and two fields whose meaning depends on the record's mode, kept in
-// the low two bits of `second` (every stored pointer is 8-aligned):
+// Go's `ValueSymbolLinks` holds four pointers inline (32 bytes on 64-bit): `resolvedType`, `target`, `mapper`,
+// and lazy `valueSymbolExtra` for `writeType`, `nameType`, `containingType`. Rust stores (`resolved_type`, `first`,
+// `second`) in 16 bytes with compressed pointers (two 4-byte handles and a usize), 24 with plain pointers on
+// 64-bit targets, 12 on 32-bit. The mode is in low two bits of `second` (every stored pointer is 8-aligned):
 //
 // - plain (the common case: instantiated symbols and most others): `target`, `mapper`;
 // - synthetic: `containing_type`, `name_type`, for records that set those but never `target` / `mapper` (union and
-//   intersection properties, mapped type members: 2.15M of the 2.5M records on the private monorepo that set any of the four
-//   rare fields);
-// - tail: a pointer to `ValueSymbolLinksTail`, which holds all six other fields, for the remaining records (0.35M).
+//   intersection properties and mapped type members);
+// - tail: a pointer to `ValueSymbolLinksTail`, which holds all five other fields for the remaining records.
 //
 // A record starts plain and moves to synthetic or tail mode on the first write that its mode cannot hold; it never
 // moves back. Every getter returns what was last set (the zero value if never set), whatever the mode.
 
 #[derive(Default)]
 pub struct ValueSymbolLinks {
-    pub resolved_type: Cell<Option<P<Type>>>, // Type of value symbol
+    pub(crate) resolved_type: Cell<Option<P<Type>>>, // Type of value symbol
     first: Cell<Option<P<()>>>, // plain: target (P<Symbol>); synthetic: containing_type (P<Type>); tail: P<ValueSymbolLinksTail>
     second: Cell<usize>, // `P::to_bits` of: plain: mapper (P<TypeMapper>); synthetic: name_type (P<Type>) | SYNTHETIC; tail: TAIL
 }
@@ -356,15 +298,20 @@ struct ValueSymbolLinksTail {
     write_type: Cell<Option<P<Type>>>,
     name_type: Cell<Option<P<Type>>>,
     containing_type: Cell<Option<P<Type>>>, // Mapped type for mapped type property, containing union or intersection type for synthetic property
-    function_or_constructor_checked: Cell<bool>,
 }
 
 #[cfg(target_pointer_width = "64")]
 const _: () = assert!(
     std::mem::size_of::<ValueSymbolLinks>() == if tsrs_core::COMPRESSED_PTRS { 16 } else { 24 }
 );
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(
+    std::mem::size_of::<ValueSymbolLinksTail>() == if tsrs_core::COMPRESSED_PTRS { 20 } else { 40 }
+);
 #[cfg(target_pointer_width = "32")]
 const _: () = assert!(std::mem::size_of::<ValueSymbolLinks>() == 12);
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(std::mem::size_of::<ValueSymbolLinksTail>() == 20);
 
 const MODE_MASK: usize = 3;
 const SYNTHETIC: usize = 1;
@@ -539,95 +486,84 @@ impl ValueSymbolLinks {
             self.tail_for_write().write_type.set(t);
         }
     }
-    #[inline]
-    pub fn function_or_constructor_checked(&self) -> bool {
-        self.mode() == LinksMode::Tail && self.tail().function_or_constructor_checked.get()
-    }
-    #[inline]
-    pub fn set_function_or_constructor_checked(&self, v: bool) {
-        if v || self.mode() == LinksMode::Tail {
-            self.tail_for_write().function_or_constructor_checked.set(v);
-        }
-    }
 }
 
 // Additional links for mapped symbols
 
 #[derive(Default)]
 pub struct MappedSymbolLinks {
-    pub key_type: Cell<Option<P<Type>>>, // Key type for mapped type member
-    pub synthetic_origin: Cell<Option<P<Symbol>>>, // For a property on a mapped or spread type, points back to the original property
+    pub(crate) key_type: Cell<Option<P<Type>>>, // Key type for mapped type member
+    pub(crate) synthetic_origin: Cell<Option<P<Symbol>>>, // For a property on a mapped or spread type, points back to the original property
 }
 
 // Additional links for deferred type symbols
 
 #[derive(Default)]
 pub struct DeferredSymbolLinks {
-    pub parent: Cell<Option<P<Type>>>, // Source union/intersection of a deferred type
-    pub constituents: Cell<&'static [P<Type>]>, // Calculated list of constituents for a deferred type
-    pub write_constituents: Cell<&'static [P<Type>]>, // Constituents of a deferred `writeType`
+    pub(crate) parent: Cell<Option<P<Type>>>, // Source union/intersection of a deferred type
+    pub(crate) constituents: Cell<&'static [P<Type>]>, // Calculated list of constituents for a deferred type
+    pub(crate) write_constituents: Cell<&'static [P<Type>]>, // Constituents of a deferred `writeType`
 }
 
 // Links for alias symbols
 
 #[derive(Default)]
 pub struct AliasSymbolLinks {
-    pub immediate_target: Cell<Option<P<Symbol>>>, // Immediate target of an alias. May be another alias. Do not access directly, use `checker.getImmediateAliasedSymbol` instead.
-    pub alias_target: Cell<Option<P<Symbol>>>,     // Resolved (non-alias) target of an alias
-    pub referenced: Cell<bool>, // True if alias symbol has been referenced as a value that can be emitted
-    pub type_only_declaration: Cell<Option<P<Node>>>, // First resolved alias declaration that makes the symbol only usable in type constructs
+    pub(crate) immediate_target: Cell<Option<P<Symbol>>>, // Immediate target of an alias. May be another alias. Do not access directly, use `checker.getImmediateAliasedSymbol` instead.
+    pub(crate) alias_target: Cell<Option<P<Symbol>>>,     // Resolved (non-alias) target of an alias
+    pub(crate) referenced: Cell<bool>, // True if alias symbol has been referenced as a value that can be emitted
+    pub(crate) type_only_declaration: Cell<Option<P<Node>>>, // First resolved alias declaration that makes the symbol only usable in type constructs
 }
 
 // Links for module symbols
 
 #[derive(Default)]
 pub struct ModuleSymbolLinks {
-    pub resolved_exports: Cell<Option<P<SymbolTable>>>, // Resolved exports of module or combined early- and late-bound static members of a class.
-    pub type_only_export_star_map: GoMap<String, P<Node>>, // Set on a module symbol when some of its exports were resolved through a 'export type * from "mod"' declaration
-    pub exports_checked: Cell<bool>,
+    pub(crate) resolved_exports: Cell<Option<P<SymbolTable>>>, // Resolved exports of module or combined early- and late-bound static members of a class.
+    pub(crate) type_only_export_star_map: GoMap<String, P<Node>>, // Set on a module symbol when some of its exports were resolved through a 'export type * from "mod"' declaration
+    pub(crate) exports_checked: Cell<bool>,
 }
 
 #[derive(Default)]
 pub struct ReverseMappedSymbolLinks {
-    pub property_type: Cell<Option<P<Type>>>,
-    pub mapped_type: Cell<Option<P<Type>>>, // References a mapped type
-    pub constraint_type: Cell<Option<P<Type>>>, // References an index type
+    pub(crate) property_type: Cell<Option<P<Type>>>,
+    pub(crate) mapped_type: Cell<Option<P<Type>>>, // References a mapped type
+    pub(crate) constraint_type: Cell<Option<P<Type>>>, // References an index type
 }
 
 // Links for late-bound symbols
 
 #[derive(Default)]
 pub struct LateBoundLinks {
-    pub late_symbol: Cell<Option<P<Symbol>>>,
+    pub(crate) late_symbol: Cell<Option<P<Symbol>>>,
 }
 
 // Links for export type symbols
 
 #[derive(Default)]
 pub struct ExportTypeLinks {
-    pub target: Cell<Option<P<Symbol>>>,           // Target symbol
-    pub originating_import: Cell<Option<P<Node>>>, // Import declaration which produced the symbol, present if the symbol is marked as uncallable but had call signatures in `resolveESModuleSymbol`
+    pub(crate) target: Cell<Option<P<Symbol>>>, // Target symbol
+    pub(crate) originating_import: Cell<Option<P<Node>>>, // Import declaration which produced the symbol, present if the symbol is marked as uncallable but had call signatures in `resolveESModuleSymbol`
 }
 
 // Links for type aliases
 
 #[derive(Default)]
 pub struct TypeAliasLinks {
-    pub declared_type: Cell<Option<P<Type>>>,
-    pub type_parameters: Cell<&'static [P<Type>]>, // Type parameters of type alias (undefined if non-generic)
-    pub instantiations: GoPackedMap<CacheHashKey, P<Type>>, // Instantiations of generic type alias (undefined if non-generic)
-    pub is_constructor_declared_property: Cell<bool>,
+    pub(crate) declared_type: Cell<Option<P<Type>>>,
+    pub(crate) type_parameters: Cell<&'static [P<Type>]>, // Type parameters of type alias (undefined if non-generic)
+    pub(crate) instantiations: GoPackedMap<CacheHashKey, P<Type>>, // Instantiations of generic type alias (undefined if non-generic)
 }
 
 // Links for declared types (type parameters, class types, interface types, enums)
 
 #[derive(Default)]
 pub struct DeclaredTypeLinks {
-    pub declared_type: Cell<Option<P<Type>>>,
-    pub interface_checked: Cell<bool>,
-    pub index_signatures_checked: Cell<bool>,
-    pub type_parameters_checked: Cell<bool>,
-    pub enum_checked: Cell<bool>,
+    pub(crate) declared_type: Cell<Option<P<Type>>>,
+    pub(crate) interface_checked: Cell<bool>,
+    pub(crate) index_signatures_checked: Cell<bool>,
+    pub(crate) type_parameters_checked: Cell<bool>,
+    pub(crate) enum_checked: Cell<bool>,
 }
 
 // Links for switch clauses
@@ -644,18 +580,18 @@ pub enum ExhaustiveState {
 
 #[derive(Default)]
 pub struct SwitchStatementLinks {
-    pub exhaustive_state: Cell<ExhaustiveState>, // Switch statement exhaustiveness
-    pub switch_types_computed: Cell<bool>,
-    pub witnesses_computed: Cell<bool>,
-    pub switch_types: Cell<&'static [P<Type>]>,
-    pub witnesses: Cell<Option<&'static [&'static str]>>, // Go nil (non-literal case) vs empty
+    pub(crate) exhaustive_state: Cell<ExhaustiveState>, // Switch statement exhaustiveness
+    pub(crate) switch_types_computed: Cell<bool>,
+    pub(crate) witnesses_computed: Cell<bool>,
+    pub(crate) switch_types: Cell<&'static [P<Type>]>,
+    pub(crate) witnesses: Cell<Option<&'static [&'static str]>>, // Go nil (non-literal case) vs empty
 }
 
 #[derive(Default)]
 pub struct ArrayLiteralLinks {
-    pub indices_computed: Cell<bool>,
-    pub first_spread_index: OptionalCountCell,
-    pub last_spread_index: OptionalCountCell,
+    pub(crate) indices_computed: Cell<bool>,
+    pub(crate) first_spread_index: OptionalCountCell,
+    pub(crate) last_spread_index: OptionalCountCell,
 }
 
 // Links for late-binding containers
@@ -670,7 +606,7 @@ pub enum MembersOrExportsResolutionKind {
 
 /// Go `[2]ast.SymbolTable`, indexed by `MembersOrExportsResolutionKind as usize`.
 #[derive(Default)]
-pub struct MembersAndExportsLinks(pub [Cell<Option<P<SymbolTable>>>; 2]);
+pub struct MembersAndExportsLinks([Cell<Option<P<SymbolTable>>>; 2]);
 
 impl std::ops::Deref for MembersAndExportsLinks {
     type Target = [Cell<Option<P<SymbolTable>>>; 2];
@@ -684,15 +620,15 @@ impl std::ops::Deref for MembersAndExportsLinks {
 
 #[derive(Default)]
 pub struct SpreadLinks {
-    pub left_spread: Cell<Option<P<Symbol>>>, // Left source for synthetic spread property
-    pub right_spread: Cell<Option<P<Symbol>>>, // Right source for synthetic spread property
+    pub(crate) left_spread: Cell<Option<P<Symbol>>>, // Left source for synthetic spread property
+    pub(crate) right_spread: Cell<Option<P<Symbol>>>, // Right source for synthetic spread property
 }
 
 // Links for variances of type aliases and interface types
 
 #[derive(Default)]
 pub struct VarianceLinks {
-    pub variances: Cell<Option<&'static [VarianceFlags]>>, // nil = not computed (Go distinguishes nil from empty)
+    pub(crate) variances: Cell<Option<&'static [VarianceFlags]>>, // nil = not computed (Go distinguishes nil from empty)
 }
 
 bitflags! {
@@ -720,22 +656,23 @@ pub enum LastAssignmentPosition {
 
 #[derive(Default)]
 pub struct MarkedAssignmentSymbolLinks {
-    pub last_assignment_pos: Cell<LastAssignmentPosition>,
-    pub has_definite_assignment: Cell<bool>, // Symbol is definitely assigned somewhere
+    pub(crate) last_assignment_pos: Cell<LastAssignmentPosition>,
+    pub(crate) has_definite_assignment: Cell<bool>, // Symbol is definitely assigned somewhere
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct accessibleChainCacheKey {
-    pub use_only_external_aliasing: bool,
-    pub location: Option<P<Node>>,
-    pub meaning: SymbolFlags,
+pub struct AccessibleChainCacheKey {
+    pub(crate) use_only_external_aliasing: bool,
+    pub(crate) location: Option<P<Node>>,
+    pub(crate) meaning: SymbolFlags,
 }
 
 #[derive(Default)]
 pub struct ContainingSymbolLinks {
-    pub extended_containers_by_file: RefCell<FxHashMap<NodeId, &'static [P<Symbol>]>>, // Symbols of nodes which which logically contain this one, cached by file the request is made within
-    pub extended_containers: Cell<Option<&'static [P<Symbol>]>>, // Containers (other than the parent) which this symbol is aliased in
-    pub accessible_chain_cache: RefCell<FxHashMap<accessibleChainCacheKey, &'static [P<Symbol>]>>,
+    pub(crate) extended_containers_by_file: RefCell<FxHashMap<NodeId, &'static [P<Symbol>]>>, // Symbols of nodes which which logically contain this one, cached by file the request is made within
+    pub(crate) extended_containers: Cell<Option<&'static [P<Symbol>]>>, // Containers (other than the parent) which this symbol is aliased in
+    pub(crate) accessible_chain_cache:
+        RefCell<FxHashMap<AccessibleChainCacheKey, &'static [P<Symbol>]>>,
 }
 
 bitflags! {
@@ -775,73 +712,86 @@ bitflags! {
 
 #[derive(Default)]
 pub struct NodeLinks {
-    pub flags: Cell<NodeCheckFlags>, // Set of flags specific to Node
-    pub declaration_requires_scope_change: Cell<Tristate>, // Set by `useOuterVariableScopeInParameter` in checker when downlevel emit would change the name resolution scope inside of a parameter.
-    pub has_reported_statement_in_ambient_context: Cell<bool>, // Cache boolean if we report statements in ambient context
+    pub(crate) flags: Cell<NodeCheckFlags>, // Set of flags specific to Node
+    pub(crate) declaration_requires_scope_change: Cell<Tristate>, // Set by `useOuterVariableScopeInParameter` in checker when downlevel emit would change the name resolution scope inside of a parameter.
+    pub(crate) has_reported_statement_in_ambient_context: Cell<bool>, // Cache boolean if we report statements in ambient context
 }
 
 #[derive(Default)]
 pub struct SymbolNodeLinks {
-    pub resolved_symbol: Cell<Option<P<Symbol>>>, // Resolved symbol associated with node
+    pub(crate) resolved_symbol: Cell<Option<P<Symbol>>>, // Resolved symbol associated with node
 }
 
 #[derive(Default)]
 pub struct TypeNodeLinks {
     pub resolved_type: Cell<Option<P<Type>>>, // Resolved type associated with node
-    pub outer_type_parameters: Cell<Option<&'static [P<Type>]>>, // Outer type parameters of anonymous object type (Go distinguishes nil = not computed)
-    link_key: Cell<tsrs_core::PKey>, // tsrs: the node this record is filed under (`KeyedLinkStore`), in what was padding
+    pub outer_type_parameters: Cell<Option<P<ThinSliceCell<P<Type>>>>>, // Outer type parameters of anonymous object type; nil means not computed
 }
 
-impl crate::links::KeyedLinks for TypeNodeLinks {
+impl TypeNodeLinks {
     #[inline]
-    fn link_key(&self) -> &Cell<tsrs_core::PKey> {
-        &self.link_key
+    pub fn outer_type_parameters(&self) -> Option<&'static [P<Type>]> {
+        self.outer_type_parameters.get().map(|types| types.get().get())
+    }
+
+    #[inline]
+    pub fn set_outer_type_parameters(&self, types: Option<&'static [P<Type>]>) {
+        match types {
+            Some(types) => {
+                if let Some(stored) = self.outer_type_parameters.get() {
+                    stored.set(types);
+                } else {
+                    self.outer_type_parameters.set(Some(P::new(ThinSliceCell::new(types))));
+                }
+            }
+            None => self.outer_type_parameters.set(None),
+        }
     }
 }
 
-// The key fills padding with compressed pointers (20 -> 24 bytes); plain pointers: 24 -> 32.
+// The optional outer list stays in one handle, alongside the resolved type.
 #[cfg(target_pointer_width = "64")]
 const _: () = assert!(
-    std::mem::size_of::<TypeNodeLinks>() == if tsrs_core::COMPRESSED_PTRS { 24 } else { 32 }
+    std::mem::size_of::<TypeNodeLinks>() == if tsrs_core::COMPRESSED_PTRS { 8 } else { 16 }
 );
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(std::mem::size_of::<TypeNodeLinks>() == 16);
+const _: () = assert!(std::mem::size_of::<TypeNodeLinks>() == 8);
 
 #[derive(Default)]
 pub struct ComputedNameNodeLinks {
-    pub has_name: Cell<Option<bool>>, // If the node has a computable name (Go *bool: nil = not computed)
-    pub name: Cell<&'static str>,     // Resolved name associated with the type of the node
+    pub(crate) has_name: Cell<Option<bool>>, // If the node has a computable name (Go *bool: nil = not computed)
+    pub(crate) name: Cell<&'static str>,     // Resolved name associated with the type of the node
 }
 
 // Links for enum members
 
 #[derive(Default)]
 pub struct EnumMemberLinks {
-    pub value: Cell<evaluator::Result>, // Constant value of enum member
+    pub(crate) value: Cell<evaluator::Result>, // Constant value of enum member
 }
 
 // Links for assertion expressions
 
 #[derive(Default)]
 pub struct AssertionLinks {
-    pub expr_type: Cell<Option<P<Type>>>, // Assertion expression type
+    pub(crate) expr_type: Cell<Option<P<Type>>>, // Assertion expression type
 }
 
 // SourceFile links
 
 #[derive(Default)]
 pub struct SourceFileLinks {
-    pub type_checked: Cell<bool>,
-    pub unused_checked: Cell<bool>,
-    pub external_helpers_module: Cell<Option<P<Symbol>>>,
-    pub requested_external_emit_helpers: Cell<ExternalEmitHelpers>,
-    pub deferred_nodes: RefCell<OrderedSet<P<Node>>>,
-    pub identifier_check_nodes: RefCell<Vec<P<Node>>>,
-    pub local_jsx_namespace: Cell<&'static str>,
-    pub local_jsx_fragment_namespace: Cell<&'static str>,
-    pub local_jsx_factory: Cell<Option<P<Node>>>,
-    pub local_jsx_fragment_factory: Cell<Option<P<Node>>>,
-    pub jsx_fragment_type: Cell<Option<P<Type>>>,
+    pub(crate) type_checked: Cell<bool>,
+    pub(crate) unused_checked: Cell<bool>,
+    pub(crate) external_helpers_module: Cell<Option<P<Symbol>>>,
+    pub(crate) requested_external_emit_helpers: Cell<ExternalEmitHelpers>,
+    pub(crate) deferred_nodes: RefCell<OrderedSet<P<Node>>>,
+    pub(crate) identifier_check_nodes: RefCell<Vec<P<Node>>>,
+    pub(crate) local_jsx_namespace: Cell<&'static str>,
+    pub(crate) local_jsx_fragment_namespace: Cell<&'static str>,
+    pub(crate) local_jsx_factory: Cell<Option<P<Node>>>,
+    pub(crate) local_jsx_fragment_factory: Cell<Option<P<Node>>>,
+    pub(crate) jsx_fragment_type: Cell<Option<P<Type>>>,
 }
 
 // Signature specific links
@@ -849,25 +799,33 @@ pub struct SourceFileLinks {
 #[derive(Default)]
 pub struct SignatureLinks {
     pub resolved_signature: Cell<Option<P<Signature>>>, // Cached signature of signature node or call expression
-    pub effects_signature: Cell<Option<P<Signature>>>, // Signature with possible control flow effects
-    pub decorator_signature: Cell<Option<P<Signature>>>, // Signature for decorator as if invoked by the runtime
-    link_key: Cell<tsrs_core::PKey>, // tsrs: the node this record is filed under (`KeyedLinkStore`), in what was padding
+    // Go keeps these in separate fields: effects belong to call/binary expressions, while decorator signatures
+    // belong to the decorated declarations. Their node kinds never overlap, so they can share one handle.
+    effects_or_decorator_signature: Cell<Option<P<Signature>>>,
 }
 
-impl crate::links::KeyedLinks for SignatureLinks {
+impl SignatureLinks {
     #[inline]
-    fn link_key(&self) -> &Cell<tsrs_core::PKey> {
-        &self.link_key
+    pub(crate) fn effects_signature(&self, node: P<Node>) -> &Cell<Option<P<Signature>>> {
+        debug_assert!(ast::is_call_expression(node) || ast::is_binary_expression(node));
+        &self.effects_or_decorator_signature
+    }
+
+    #[inline]
+    pub(crate) fn decorator_signature(&self, node: P<Node>) -> &Cell<Option<P<Signature>>> {
+        // Invalid decorator parents still cache the `any_signature` sentinel before returning no signature.
+        debug_assert!(!ast::is_call_expression(node) && !ast::is_binary_expression(node));
+        &self.effects_or_decorator_signature
     }
 }
 
-// 12 -> 16 bytes, which a `PSlot` (8-aligned with compressed pointers) took anyway; plain pointers: 24 -> 32.
+// Two optional handles fit in one compressed arena slot, rather than rounding three handles up to 16 bytes.
 #[cfg(target_pointer_width = "64")]
 const _: () = assert!(
-    std::mem::size_of::<SignatureLinks>() == if tsrs_core::COMPRESSED_PTRS { 16 } else { 32 }
+    std::mem::size_of::<SignatureLinks>() == if tsrs_core::COMPRESSED_PTRS { 8 } else { 16 }
 );
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(std::mem::size_of::<SignatureLinks>() == 16);
+const _: () = assert!(std::mem::size_of::<SignatureLinks>() == 8);
 
 // Note that for types of different kinds, the numeric values of TypeFlags determine the order
 // computed by the CompareTypes function and therefore the order of constituent types in union types.
@@ -959,7 +917,7 @@ bitflags! {
     }
 }
 
-static typeFlagNames: [(TypeFlags, &str); 29] = [
+static TYPE_FLAG_NAMES: [(TypeFlags, &str); 29] = [
     (TypeFlags::Any, "Any"),
     (TypeFlags::Unknown, "Unknown"),
     (TypeFlags::Undefined, "Undefined"),
@@ -992,10 +950,10 @@ static typeFlagNames: [(TypeFlags, &str); 29] = [
 ];
 
 /// `FormatTypeFlags` returns the individual flag names as a slice of strings.
-pub fn format_type_flags(flags: TypeFlags) -> Vec<&'static str> {
+fn format_type_flags(flags: TypeFlags) -> Vec<&'static str> {
     let mut result = Vec::with_capacity(flags.bits().count_ones() as usize);
     result.extend(
-        typeFlagNames.iter().filter_map(
+        TYPE_FLAG_NAMES.iter().filter_map(
             |(flag, name)| {
                 if flags.intersects(*flag) { Some(*name) } else { None }
             },
@@ -1084,7 +1042,7 @@ bitflags! {
         const IsClassInstanceClone = 1 << 26; // Type is a clone of a class instance type
         // Flags that require TypeFlags.Object and ObjectFlags.Reference
         const IdenticalBaseTypeCalculated = 1 << 27; // has had `getSingleBaseForNonAugmentingSubtype` invoked on it already
-        const IdenticalBaseTypeExists = 1 << 28; // has a defined cachedEquivalentBaseType member
+        const IdenticalBaseTypeExists = 1 << 28; // has a defined cachedEquivalentBaseType member (tsrs: the `EquivalentBaseType` entry in `cached_types`; read before the map is probed)
         const FromTypeNode = 1 << 29; // Originates in resolution of AST type node
         // Flags that require TypeFlags.UnionOrIntersection or TypeFlags.Substitution
         const IsGenericTypeComputed = 1 << 22; // IsGenericObjectType flag has been computed
@@ -1104,10 +1062,15 @@ bitflags! {
         // tsrs-only, intersections: shouldNormalizeIntersection memoized (its answer depends only on the constituents).
         const ShouldNormalizeComputed = 1 << 30;
         const ShouldNormalize = 1 << 31;
+        // tsrs-only, unions: every constituent is a string, number, bigint, boolean, enum, symbol, object or
+        // non-primitive kind (no nullable, void, intersection or instantiable constituent), so the union has no
+        // nullability type fact and `get_type_facts_worker` answers those without the walk. Set by
+        // `get_union_type_from_sorted_list` from the constituents (`new_type` drops the bit, see `WeakTypeMemo`).
+        const NonNullableUnion = 1 << 30;
         // tsrs-only, object types: isWeakType memoized; cleared with MembersResolved (`WeakTypeMemo`).
         const IsWeakTypeComputed = 1 << 30;
         const IsWeakType = 1 << 31;
-        const WeakTypeMemo = Self::IsWeakTypeComputed.bits() | Self::IsWeakType.bits(); // also the intersection memo bits: new_type drops them
+        const WeakTypeMemo = Self::IsWeakTypeComputed.bits() | Self::IsWeakType.bits(); // also the intersection memo and union summary bits: new_type drops them
     }
 }
 
@@ -1115,8 +1078,8 @@ bitflags! {
 
 #[derive(Default)]
 pub struct TypeAlias {
-    pub symbol: Cell<Option<P<Symbol>>>,
-    pub type_arguments: ThinSliceCell<P<Type>>,
+    pub(crate) symbol: Cell<Option<P<Symbol>>>,
+    pub(crate) type_arguments: ThinSliceCell<P<Type>>,
 }
 
 impl TypeAlias {
@@ -1153,7 +1116,7 @@ pub struct PendingTypeAlias {
 
 impl PendingTypeAlias {
     #[inline]
-    pub fn new(symbol: Option<P<Symbol>>, type_arguments: Vec<P<Type>>) -> PendingTypeAlias {
+    pub(crate) fn new(symbol: Option<P<Symbol>>, type_arguments: Vec<P<Type>>) -> PendingTypeAlias {
         PendingTypeAlias { symbol, type_arguments, alias: Cell::new(None) }
     }
 }
@@ -1168,7 +1131,7 @@ impl From<Option<P<TypeAlias>>> for AliasArg<'_> {
 impl<'a> AliasArg<'a> {
     /// `alias` if given, else the pending one (Go: `if alias == nil { alias = c.instantiateTypeAlias(...) }`).
     #[inline]
-    pub fn given_or_pending(
+    pub(crate) fn given_or_pending(
         alias: Option<P<TypeAlias>>,
         pending: Option<&'a PendingTypeAlias>,
     ) -> AliasArg<'a> {
@@ -1180,13 +1143,13 @@ impl<'a> AliasArg<'a> {
     }
 
     #[inline]
-    pub fn is_none(self) -> bool {
+    pub(crate) fn is_none(self) -> bool {
         matches!(self, AliasArg::None)
     }
 
     /// The alias to store in a created type: a pending alias is allocated on the first call.
     #[inline]
-    pub fn alias(self) -> Option<P<TypeAlias>> {
+    pub(crate) fn alias(self) -> Option<P<TypeAlias>> {
         match self {
             AliasArg::None => None,
             AliasArg::Some(a) => Some(a),
@@ -1229,7 +1192,7 @@ impl TypeAliasOptExt for Option<P<TypeAlias>> {
 
 pub struct Type {
     pub flags: Cell<TypeFlags>,
-    pub object_flags: ObjectFlagsCell,
+    pub(crate) object_flags: ObjectFlagsCell,
     pub id: TypeId,
     data_tag: TypeDataTag,
     symbol_or_alias: Cell<TypeSymbolWord>,
@@ -1242,7 +1205,7 @@ pub struct ObjectFlagsCell(Cell<ObjectFlags>);
 
 impl ObjectFlagsCell {
     #[inline]
-    pub const fn new(f: ObjectFlags) -> Self {
+    const fn new(f: ObjectFlags) -> Self {
         ObjectFlagsCell(Cell::new(f))
     }
     #[inline]
@@ -1260,12 +1223,12 @@ impl ObjectFlagsCell {
     /// never intersection, constrained type variable, identical base type) read as the seed left them: their readers
     /// use `get_lazy`.
     #[inline]
-    pub fn get(&self) -> ObjectFlags {
+    fn get(&self) -> ObjectFlags {
         self.0.get()
     }
     /// `get` that also sees this checker's lazily computed bits on a frozen type (shared graph).
     #[inline]
-    pub fn get_lazy(&self) -> ObjectFlags {
+    pub(crate) fn get_lazy(&self) -> ObjectFlags {
         let v = self.0.get();
         if !tsrs_core::sharedgraph::dirty(std::ptr::from_ref(self).addr()) {
             return v;
@@ -1283,7 +1246,7 @@ impl ObjectFlagsCell {
         }
     }
     #[inline]
-    pub fn set(&self, f: ObjectFlags) {
+    pub(crate) fn set(&self, f: ObjectFlags) {
         if tsrs_core::sharedgraph::any_frozen() && tsrs_core::sharedgraph::frozen(self) {
             tsrs_core::sharedgraph::set_id_word_frozen(
                 std::ptr::from_ref(self).addr(),
@@ -1335,9 +1298,9 @@ impl TypeSymbolWord {
 
 /// One arena allocation per type: the header, then the data struct (`repr(C)`: header at offset 0).
 #[repr(C)]
-struct TypeAlloc<T> {
+pub struct TypeAlloc<T> {
     header: Type,
-    data: T,
+    pub data: T,
 }
 
 /// A type data struct, stored after the header of types tagged `TAG`.
@@ -1435,7 +1398,7 @@ impl TypePayload for ConditionalType {
 impl Type {
     /// Allocates a type whose data struct is `data` (only `Checker::new_type` and the checker's placeholder type).
     #[inline]
-    pub(crate) fn alloc<T: TypePayload>(
+    pub fn alloc<T: TypePayload>(
         flags: TypeFlags,
         object_flags: ObjectFlags,
         id: TypeId,
@@ -1516,7 +1479,7 @@ impl Type {
 
     /// `object_flags` for the lazily computed bits (`ObjectFlagsCell::get_lazy`).
     #[inline]
-    pub fn object_flags_lazy(&self) -> ObjectFlags {
+    pub(crate) fn object_flags_lazy(&self) -> ObjectFlags {
         self.object_flags.get_lazy()
     }
 
@@ -1638,10 +1601,6 @@ impl Type {
     // Casts for embedded struct types. `as_*` panics where Go would return nil; `try_as_*` mirrors Go's nil result.
 
     #[inline]
-    pub fn as_constrained_type(&self) -> &'static ConstrainedType {
-        self.data().as_constrained_type().expect("as_constrained_type: wrong type data")
-    }
-    #[inline]
     pub fn as_structured_type(&self) -> &'static StructuredType {
         self.data().as_structured_type().expect("as_structured_type: wrong type data")
     }
@@ -1658,7 +1617,7 @@ impl Type {
         self.data().as_interface_type().expect("as_interface_type: wrong type data")
     }
     #[inline]
-    pub fn as_union_or_intersection_type(&self) -> &'static UnionOrIntersectionType {
+    pub(crate) fn as_union_or_intersection_type(&self) -> &'static UnionOrIntersectionType {
         self.data()
             .as_union_or_intersection_type()
             .expect("as_union_or_intersection_type: wrong type data")
@@ -1710,12 +1669,12 @@ impl Type {
 
     /// `target()` of an object type, without the flag dispatch (`target()` is out of line at most call sites).
     #[inline]
-    pub fn object_target(&self) -> Option<P<Type>> {
+    pub(crate) fn object_target(&self) -> Option<P<Type>> {
         self.as_object_type().target.get()
     }
 
     #[inline]
-    pub fn mapper(&self) -> Option<P<TypeMapper>> {
+    pub(crate) fn mapper(&self) -> Option<P<TypeMapper>> {
         let flags = self.flags.get();
         if flags.intersects(TypeFlags::Object) {
             return self.as_object_type().mapper.get();
@@ -1742,12 +1701,12 @@ impl Type {
     }
 
     #[inline]
-    pub fn target_interface_type(&self) -> &'static InterfaceType {
+    pub(crate) fn target_interface_type(&self) -> &'static InterfaceType {
         self.as_type_reference().target.get().unwrap().as_interface_type()
     }
 
     #[inline]
-    pub fn target_tuple_type(&self) -> &'static TupleType {
+    pub(crate) fn target_tuple_type(&self) -> &'static TupleType {
         self.as_type_reference().target.get().unwrap().as_tuple_type()
     }
 
@@ -1757,7 +1716,7 @@ impl Type {
     }
 
     #[inline]
-    pub fn set_symbol(&self, symbol: Option<P<Symbol>>) {
+    pub(crate) fn set_symbol(&self, symbol: Option<P<Symbol>>) {
         let word = self.symbol_or_alias.get();
         match word.record() {
             Some(r) => r.symbol.set(symbol),
@@ -1771,7 +1730,7 @@ impl Type {
     }
 
     #[inline]
-    pub fn set_alias(&self, alias: Option<P<TypeAlias>>) {
+    pub(crate) fn set_alias(&self, alias: Option<P<TypeAlias>>) {
         let word = self.symbol_or_alias.get();
         match word.record() {
             Some(r) => r.alias.set(alias),
@@ -1842,7 +1801,7 @@ impl Type {
     }
 
     #[inline]
-    pub fn is_index(&self) -> bool {
+    pub(crate) fn is_index(&self) -> bool {
         self.flags.get().intersects(TypeFlags::Index)
     }
 
@@ -1936,7 +1895,7 @@ pub enum TypeData {
 }
 
 impl TypeData {
-    pub fn as_constrained_type(&self) -> Option<&'static ConstrainedType> {
+    fn as_constrained_type(&self) -> Option<&'static ConstrainedType> {
         Some(match *self {
             TypeData::Intrinsic(_) | TypeData::Literal(_) | TypeData::UniqueESSymbol(_) => {
                 return None;
@@ -1962,7 +1921,7 @@ impl TypeData {
         })
     }
 
-    pub fn as_structured_type(&self) -> Option<&'static StructuredType> {
+    fn as_structured_type(&self) -> Option<&'static StructuredType> {
         Some(match *self {
             TypeData::Object(d) => d,
             TypeData::TypeReference(d) => d,
@@ -1994,7 +1953,7 @@ impl TypeData {
     }
 
     #[inline]
-    pub fn as_type_reference(&self) -> Option<&'static TypeReference> {
+    fn as_type_reference(&self) -> Option<&'static TypeReference> {
         Some(match *self {
             TypeData::TypeReference(d) => d,
             TypeData::Interface(d) => d,
@@ -2004,7 +1963,7 @@ impl TypeData {
     }
 
     #[inline]
-    pub fn as_interface_type(&self) -> Option<&'static InterfaceType> {
+    fn as_interface_type(&self) -> Option<&'static InterfaceType> {
         Some(match *self {
             TypeData::Interface(d) => d,
             TypeData::Tuple(d) => d,
@@ -2013,7 +1972,7 @@ impl TypeData {
     }
 
     #[inline]
-    pub fn as_union_or_intersection_type(&self) -> Option<&'static UnionOrIntersectionType> {
+    fn as_union_or_intersection_type(&self) -> Option<&'static UnionOrIntersectionType> {
         Some(match *self {
             TypeData::Union(d) => d,
             TypeData::Intersection(d) => d,
@@ -2038,7 +1997,7 @@ macro_rules! embeds {
 
 #[derive(Default)]
 pub struct IntrinsicType {
-    pub intrinsic_name: Cell<&'static str>,
+    pub(crate) intrinsic_name: Cell<&'static str>,
 }
 
 impl IntrinsicType {
@@ -2062,9 +2021,9 @@ pub enum LiteralValue {
 
 #[derive(Default)]
 pub struct LiteralType {
-    pub value: Cell<Option<LiteralValue>>, // string | jsnum.Number | bool | PseudoBigInt | nil (computed enum)
-    pub fresh_type: OvCell<Option<P<Type>>>, // Fresh version of type
-    pub regular_type: Cell<Option<P<Type>>>, // Regular version of type
+    pub(crate) value: Cell<Option<LiteralValue>>, // string | jsnum.Number | bool | PseudoBigInt | nil (computed enum)
+    pub(crate) fresh_type: OvCell<Option<P<Type>>>, // Fresh version of type
+    pub(crate) regular_type: Cell<Option<P<Type>>>, // Regular version of type
 }
 
 impl LiteralType {
@@ -2096,25 +2055,25 @@ impl LiteralType {
 
 #[derive(Default)]
 pub struct UniqueESSymbolType {
-    pub name: Cell<&'static str>,
+    pub(crate) name: Cell<&'static str>,
 }
 
 // ConstrainedType (type with computed base constraint)
 
 #[derive(Default)]
 pub struct ConstrainedType {
-    pub resolved_base_constraint: OvCell<Option<P<Type>>>,
+    pub(crate) resolved_base_constraint: OvCell<Option<P<Type>>>,
 }
 
 // StructuredType (base of all types with members)
 
-// Go's StructuredType embeds ConstrainedType; here the base constraint of a structured type (set for 4% of the 7.6M
-// on the private monorepo) is kept in `Checker::structured_type_base_constraints` (`resolved_base_constraint_of`), and
+// Go's StructuredType embeds ConstrainedType; here the base constraint of a structured type is kept in
+// `Checker::structured_type_base_constraints` (`resolved_base_constraint_of`), and
 // `try_as_constrained_type()` is None for structured types.
 //
-// The resolved members (Go's five fields) live in a `StructuredMembers` record allocated on the first write: most
-// structured types are never resolved (on the private monorepo 4.9M of 7.6M: type references answered by lazy member tables,
-// unions and intersections whose members nobody asks for), and those now carry one pointer instead of 48 bytes.
+// Go now keeps members and properties inline, with optional signatures, index infos, and abstract-construct cache
+// in a cold extra record. Rust keeps all resolved members in one `StructuredMembers` record allocated on first write.
+// Many remain unresolved through lazy tables or unqueried union/intersection members, carrying one pointer instead of 48 bytes.
 // Reads of an absent record return the zero values (nil members, empty slices, count 0), exactly like reading the
 // unset fields; once allocated, every getter returns exactly what was last set (except that an empty index info
 // list reads as `&[]` until a non-empty one is set, see `CountOrIndexInfos`).
@@ -2214,11 +2173,11 @@ impl StructuredType {
     }
 
     #[inline]
-    pub fn members(&self) -> Option<P<SymbolTable>> {
+    pub(crate) fn members(&self) -> Option<P<SymbolTable>> {
         self.resolved.get()?.members.get()
     }
     #[inline]
-    pub fn set_members(&self, members: Option<P<SymbolTable>>) {
+    pub(crate) fn set_members(&self, members: Option<P<SymbolTable>>) {
         self.resolved_for_write().members.set(members);
     }
     #[inline]
@@ -2226,40 +2185,40 @@ impl StructuredType {
         self.resolved.get().map_or(&[], |r| r.properties.get())
     }
     #[inline]
-    pub fn set_properties(&self, properties: &'static [P<Symbol>]) {
+    pub(crate) fn set_properties(&self, properties: &'static [P<Symbol>]) {
         self.resolved_for_write().properties.set(properties);
     }
     /// Call signatures followed by construct signatures.
     #[inline]
-    pub fn signatures(&self) -> &'static [P<Signature>] {
+    pub(crate) fn signatures(&self) -> &'static [P<Signature>] {
         self.resolved.get().map_or(&[], |r| r.signatures.get())
     }
     #[inline]
-    pub fn set_signatures(&self, signatures: &'static [P<Signature>]) {
+    pub(crate) fn set_signatures(&self, signatures: &'static [P<Signature>]) {
         self.resolved_for_write().signatures.set(signatures);
     }
     #[inline]
-    pub fn call_signature_count(&self) -> usize {
+    fn call_signature_count(&self) -> usize {
         self.resolved.get().map_or(0, |r| r.count_or_index_infos.call_signature_count())
     }
     #[inline]
-    pub fn set_call_signature_count(&self, count: usize) {
+    pub(crate) fn set_call_signature_count(&self, count: usize) {
         self.resolved_for_write().count_or_index_infos.set_call_signature_count(count);
     }
     #[inline]
-    pub fn index_infos(&self) -> &'static [P<IndexInfo>] {
+    pub(crate) fn index_infos(&self) -> &'static [P<IndexInfo>] {
         self.resolved.get().map_or(&[], |r| r.count_or_index_infos.index_infos())
     }
     #[inline]
-    pub fn set_index_infos(&self, index_infos: &'static [P<IndexInfo>]) {
+    pub(crate) fn set_index_infos(&self, index_infos: &'static [P<IndexInfo>]) {
         self.resolved_for_write().count_or_index_infos.set_index_infos(index_infos);
     }
     #[inline]
-    pub fn call_signatures(&self) -> &'static [P<Signature>] {
+    pub(crate) fn call_signatures(&self) -> &'static [P<Signature>] {
         &self.signatures()[..self.call_signature_count()]
     }
     #[inline]
-    pub fn construct_signatures(&self) -> &'static [P<Signature>] {
+    pub(crate) fn construct_signatures(&self) -> &'static [P<Signature>] {
         &self.signatures()[self.call_signature_count()..]
     }
 }
@@ -2306,13 +2265,13 @@ impl StructuredType {
 #[derive(Default)]
 #[repr(C)]
 pub struct ObjectType {
-    pub structured_type: StructuredType,
-    pub target: Cell<Option<P<Type>>>, // Target of instantiated type
-    pub mapper: MapperCell,            // Type mapper for instantiated type
-                                       // Go's `instantiations` map is used only by the targets of instantiations: generic interfaces and tuples keep
-                                       // it in `InterfaceType`, other object types (declared anonymous and mapped types, deferred type references) in
-                                       // `Checker::object_type_instantiations`, so the millions of instantiated object types and references do not
-                                       // carry it.
+    structured_type: StructuredType,
+    pub(crate) target: Cell<Option<P<Type>>>, // Target of instantiated type
+    pub(crate) mapper: MapperCell,            // Type mapper for instantiated type
+                                              // Go's `instantiations` map is used only by the targets of instantiations: generic interfaces and tuples keep
+                                              // it in `InterfaceType`, other object types (declared anonymous and mapped types, deferred type references) in
+                                              // `Checker::object_type_instantiations`, so the millions of instantiated object types and references do not
+                                              // carry it.
 }
 embeds!(ObjectType, structured_type, StructuredType);
 
@@ -2321,9 +2280,9 @@ embeds!(ObjectType, structured_type, StructuredType);
 #[derive(Default)]
 #[repr(C)]
 pub struct TypeReference {
-    pub object_type: ObjectType,
-    pub node: Cell<Option<P<Node>>>, // TypeReferenceNode | ArrayTypeNode | TupleTypeNode when deferred, else nil
-    pub resolved_type_arguments: OvOptionThinSliceCell<P<Type>>, // nil = not computed (Go tests against nil)
+    object_type: ObjectType,
+    pub(crate) node: Cell<Option<P<Node>>>, // TypeReferenceNode | ArrayTypeNode | TupleTypeNode when deferred, else nil
+    pub(crate) resolved_type_arguments: OvOptionThinSliceCell<P<Type>>, // nil = not computed (Go tests against nil)
 }
 embeds!(TypeReference, object_type, ObjectType);
 
@@ -2359,13 +2318,13 @@ impl ReferenceInstantiations {
 
     /// Go `m = make(map[CacheHashKey]*Type)`.
     #[inline]
-    pub fn make(&self) {
+    pub(crate) fn make(&self) {
         self.0.set(Some(P::new(RefCell::new(hashbrown::HashTable::new()))));
     }
 
     /// Go `m[getTypeListKey(typeArguments)]`.
     #[inline]
-    pub fn get(&self, type_arguments: &[P<Type>]) -> Option<P<Type>> {
+    pub(crate) fn get(&self, type_arguments: &[P<Type>]) -> Option<P<Type>> {
         let cell = self.0.get()?;
         tsrs_core::sharedgraph::with_ref(&cell, |table| {
             table
@@ -2375,7 +2334,7 @@ impl ReferenceInstantiations {
     }
 
     /// Go `m[getTypeListKey(reference's type arguments)] = reference` for a key that is not present yet.
-    pub fn add(&self, reference: P<Type>) {
+    pub(crate) fn add(&self, reference: P<Type>) {
         if self.0.get().is_none() {
             self.make();
         }
@@ -2399,19 +2358,19 @@ impl ReferenceInstantiations {
 #[derive(Default)]
 #[repr(C)]
 pub struct InterfaceType {
-    pub type_reference: TypeReference,
-    pub all_type_parameters: Cell<&'static [P<Type>]>, // Type parameters (outer + local + thisType)
-    pub resolved_base_types: OvCell<&'static [P<Type>]>,
-    pub declared_call_signatures: OvCell<&'static [P<Signature>]>, // Declared call signatures
-    pub declared_construct_signatures: OvCell<&'static [P<Signature>]>, // Declared construct signatures
-    pub declared_index_infos: OvCell<&'static [P<IndexInfo>]>,          // Declared index signatures
-    pub outer_type_parameter_count: CountCell, // Count of outer type parameters
-    pub this_type: Cell<Option<P<Type>>>,      // The "this" type (nil if none)
-    pub resolved_base_constructor_type: OvCell<Option<P<Type>>>,
-    pub declared_members: OvCell<Option<P<SymbolTable>>>, // Declared members
-    pub instantiations: ReferenceInstantiations, // Map of type instantiations (Go: in ObjectType)
-    pub base_types_resolved: OvCell<bool>,
-    pub declared_members_resolved: OvCell<bool>,
+    type_reference: TypeReference,
+    pub(crate) all_type_parameters: Cell<&'static [P<Type>]>, // Type parameters (outer + local + thisType)
+    pub(crate) resolved_base_types: OvCell<&'static [P<Type>]>,
+    pub(crate) declared_call_signatures: OvCell<&'static [P<Signature>]>, // Declared call signatures
+    pub(crate) declared_construct_signatures: OvCell<&'static [P<Signature>]>, // Declared construct signatures
+    pub(crate) declared_index_infos: OvCell<&'static [P<IndexInfo>]>, // Declared index signatures
+    pub(crate) outer_type_parameter_count: CountCell, // Count of outer type parameters
+    pub(crate) this_type: Cell<Option<P<Type>>>,      // The "this" type (nil if none)
+    pub(crate) resolved_base_constructor_type: OvCell<Option<P<Type>>>,
+    pub(crate) declared_members: OvCell<Option<P<SymbolTable>>>, // Declared members
+    pub(crate) instantiations: ReferenceInstantiations, // Map of type instantiations (Go: in ObjectType)
+    pub(crate) base_types_resolved: OvCell<bool>,
+    pub(crate) declared_members_resolved: OvCell<bool>,
 }
 embeds!(InterfaceType, type_reference, TypeReference);
 
@@ -2468,8 +2427,8 @@ bitflags! {
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub struct TupleElementInfo {
-    pub flags: ElementFlags,
-    pub labeled_declaration: Option<P<Node>>, // NamedTupleMember | ParameterDeclaration | nil
+    pub(crate) flags: ElementFlags,
+    pub(crate) labeled_declaration: Option<P<Node>>, // NamedTupleMember | ParameterDeclaration | nil
 }
 
 impl TupleElementInfo {
@@ -2486,19 +2445,27 @@ impl TupleElementInfo {
 #[derive(Default)]
 #[repr(C)]
 pub struct TupleType {
-    pub interface_type: InterfaceType,
-    pub element_infos: Cell<&'static [TupleElementInfo]>,
-    pub min_length: CountCell,   // Number of required or variadic elements
-    pub fixed_length: CountCell, // Number of initial required or optional elements
-    pub combined_flags: Cell<ElementFlags>,
-    pub readonly: Cell<bool>,
+    interface_type: InterfaceType,
+    pub(crate) element_infos: Cell<&'static [TupleElementInfo]>,
+    pub(crate) min_length: CountCell, // Number of required or variadic elements
+    pub(crate) fixed_length: CountCell, // Number of initial required or optional elements
+    pub(crate) combined_flags: Cell<ElementFlags>,
+    pub(crate) readonly: Cell<bool>,
 }
 embeds!(TupleType, interface_type, InterfaceType);
 
 impl TupleType {
     #[inline]
+    pub fn min_length(&self) -> usize {
+        self.min_length.get()
+    }
+    #[inline]
     pub fn fixed_length(&self) -> usize {
         self.fixed_length.get()
+    }
+    #[inline]
+    pub fn combined_flags(&self) -> ElementFlags {
+        self.combined_flags.get()
     }
     #[inline]
     pub fn is_readonly(&self) -> bool {
@@ -2519,8 +2486,8 @@ impl TupleType {
 #[derive(Default)]
 #[repr(C)]
 pub struct InstantiationExpressionType {
-    pub object_type: ObjectType,
-    pub node: Cell<Option<P<Node>>>,
+    object_type: ObjectType,
+    pub(crate) node: Cell<Option<P<Node>>>,
 }
 embeds!(InstantiationExpressionType, object_type, ObjectType);
 
@@ -2529,15 +2496,15 @@ embeds!(InstantiationExpressionType, object_type, ObjectType);
 #[derive(Default)]
 #[repr(C)]
 pub struct MappedType {
-    pub object_type: ObjectType,
-    pub declaration: Cell<Option<P<Node>>>, // MappedTypeNode
-    pub type_parameter: Cell<Option<P<Type>>>,
-    pub constraint_type: OvCell<Option<P<Type>>>,
-    pub name_type: OvCell<Option<P<Type>>>,
-    pub template_type: OvCell<Option<P<Type>>>,
-    pub modifiers_type: OvCell<Option<P<Type>>>,
-    pub resolved_apparent_type: OvCell<Option<P<Type>>>,
-    pub contains_error: Cell<bool>,
+    object_type: ObjectType,
+    pub(crate) declaration: Cell<Option<P<Node>>>, // MappedTypeNode
+    pub(crate) type_parameter: Cell<Option<P<Type>>>,
+    pub(crate) constraint_type: OvCell<Option<P<Type>>>,
+    pub(crate) name_type: OvCell<Option<P<Type>>>,
+    pub(crate) template_type: OvCell<Option<P<Type>>>,
+    pub(crate) modifiers_type: OvCell<Option<P<Type>>>,
+    pub(crate) resolved_apparent_type: OvCell<Option<P<Type>>>,
+    pub(crate) contains_error: Cell<bool>,
 }
 embeds!(MappedType, object_type, ObjectType);
 
@@ -2572,10 +2539,10 @@ impl MappedType {
 #[derive(Default)]
 #[repr(C)]
 pub struct ReverseMappedType {
-    pub object_type: ObjectType,
-    pub source: Cell<Option<P<Type>>>,
-    pub mapped_type: Cell<Option<P<Type>>>,
-    pub constraint_type: Cell<Option<P<Type>>>,
+    object_type: ObjectType,
+    pub(crate) source: Cell<Option<P<Type>>>,
+    pub(crate) mapped_type: Cell<Option<P<Type>>>,
+    pub(crate) constraint_type: Cell<Option<P<Type>>>,
 }
 embeds!(ReverseMappedType, object_type, ObjectType);
 
@@ -2584,9 +2551,9 @@ embeds!(ReverseMappedType, object_type, ObjectType);
 #[derive(Default)]
 #[repr(C)]
 pub struct EvolvingArrayType {
-    pub object_type: ObjectType,
-    pub element_type: Cell<Option<P<Type>>>,
-    pub final_array_type: OvCell<Option<P<Type>>>,
+    object_type: ObjectType,
+    pub(crate) element_type: Cell<Option<P<Type>>>,
+    pub(crate) final_array_type: OvCell<Option<P<Type>>>,
 }
 embeds!(EvolvingArrayType, object_type, ObjectType);
 
@@ -2606,8 +2573,8 @@ embeds!(EvolvingArrayType, object_type, ObjectType);
 #[derive(Default)]
 #[repr(C)]
 pub struct UnionOrIntersectionType {
-    pub structured_type: StructuredType,
-    pub types: ThinSliceCell<P<Type>>,
+    structured_type: StructuredType,
+    pub(crate) types: ThinSliceCell<P<Type>>,
     rare: UnionOrIntersectionRareWord,
 }
 embeds!(UnionOrIntersectionType, structured_type, StructuredType);
@@ -2682,11 +2649,11 @@ impl UnionOrIntersectionType {
         unsafe { &*p }
     }
     #[inline]
-    pub fn resolved_properties(&self) -> Option<&'static [P<Symbol>]> {
+    pub(crate) fn resolved_properties(&self) -> Option<&'static [P<Symbol>]> {
         self.rare()?.resolved_properties.get()
     }
     #[inline]
-    pub fn set_resolved_properties(&self, properties: Option<&'static [P<Symbol>]>) {
+    pub(crate) fn set_resolved_properties(&self, properties: Option<&'static [P<Symbol>]>) {
         if properties.is_some() || self.rare().is_some() {
             self.rare_for_write().resolved_properties.set(properties);
         }
@@ -2694,7 +2661,7 @@ impl UnionOrIntersectionType {
     /// Go `t.propertyCacheWithoutObjectFunctionPropertyAugment` when `skip_object_function_property_augment`, else
     /// `t.propertyCache`.
     #[inline]
-    pub fn property_cache(
+    pub(crate) fn property_cache(
         &self,
         skip_object_function_property_augment: bool,
     ) -> Option<P<SymbolTable>> {
@@ -2707,7 +2674,7 @@ impl UnionOrIntersectionType {
     }
     /// `property_cache`, created empty if it is nil (Go `getSymbolTable(&cache)`).
     #[inline]
-    pub fn property_cache_for_write(
+    pub(crate) fn property_cache_for_write(
         &self,
         skip_object_function_property_augment: bool,
     ) -> P<SymbolTable> {
@@ -2726,7 +2693,7 @@ impl UnionOrIntersectionType {
 #[derive(Default)]
 #[repr(C)]
 pub struct UnionType {
-    pub union_or_intersection_type: UnionOrIntersectionType,
+    union_or_intersection_type: UnionOrIntersectionType,
 }
 embeds!(UnionType, union_or_intersection_type, UnionOrIntersectionType);
 
@@ -2751,53 +2718,53 @@ impl UnionType {
         unsafe { tsrs_core::ptr::arena_neighbor::<_, UnionRare>(r, 0) }
     }
     #[inline]
-    pub fn resolved_reduced_type(&self) -> Option<P<Type>> {
+    pub(crate) fn resolved_reduced_type(&self) -> Option<P<Type>> {
         self.union_rare()?.resolved_reduced_type.get()
     }
     #[inline]
-    pub fn set_resolved_reduced_type(&self, t: Option<P<Type>>) {
+    pub(crate) fn set_resolved_reduced_type(&self, t: Option<P<Type>>) {
         if t.is_some() || self.union_rare().is_some() {
             self.union_rare_for_write().resolved_reduced_type.set(t);
         }
     }
     #[inline]
-    pub fn regular_type(&self) -> Option<P<Type>> {
+    pub(crate) fn regular_type(&self) -> Option<P<Type>> {
         self.union_rare()?.regular_type.get()
     }
     #[inline]
-    pub fn set_regular_type(&self, t: Option<P<Type>>) {
+    pub(crate) fn set_regular_type(&self, t: Option<P<Type>>) {
         if t.is_some() || self.union_rare().is_some() {
             self.union_rare_for_write().regular_type.set(t);
         }
     }
     #[inline]
-    pub fn origin(&self) -> Option<P<Type>> {
+    pub(crate) fn origin(&self) -> Option<P<Type>> {
         self.union_rare()?.origin.get()
     }
     #[inline]
-    pub fn set_origin(&self, t: Option<P<Type>>) {
+    pub(crate) fn set_origin(&self, t: Option<P<Type>>) {
         if t.is_some() || self.union_rare().is_some() {
             self.union_rare_for_write().origin.set(t);
         }
     }
     #[inline]
-    pub fn key_property_name(&self) -> &'static str {
+    pub(crate) fn key_property_name(&self) -> &'static str {
         self.union_rare().map_or("", |r| r.key_property_name.get())
     }
     #[inline]
-    pub fn set_key_property_name(&self, name: &'static str) {
+    pub(crate) fn set_key_property_name(&self, name: &'static str) {
         if !name.is_empty() || self.union_rare().is_some() {
             self.union_rare_for_write().key_property_name.set(name);
         }
     }
     /// Go `t.constituentMap` for reading (nil while there is no tail).
     #[inline]
-    pub fn constituent_map(&self) -> Option<&'static GoMap<P<Type>, P<Type>>> {
+    pub(crate) fn constituent_map(&self) -> Option<&'static GoMap<P<Type>, P<Type>>> {
         self.union_rare().map(|r| &r.constituent_map)
     }
     /// Go `t.constituentMap` for writing.
     #[inline]
-    pub fn constituent_map_for_write(&self) -> &'static GoMap<P<Type>, P<Type>> {
+    pub(crate) fn constituent_map_for_write(&self) -> &'static GoMap<P<Type>, P<Type>> {
         &self.union_rare_for_write().constituent_map
     }
 }
@@ -2806,7 +2773,7 @@ impl UnionType {
 
 #[repr(C)]
 pub struct IntersectionType {
-    pub union_or_intersection_type: UnionOrIntersectionType,
+    union_or_intersection_type: UnionOrIntersectionType,
 }
 embeds!(IntersectionType, union_or_intersection_type, UnionOrIntersectionType);
 
@@ -2840,21 +2807,21 @@ impl IntersectionType {
         unsafe { tsrs_core::ptr::arena_neighbor::<_, IntersectionRare>(r, 0) }
     }
     #[inline]
-    pub fn resolved_apparent_type(&self) -> Option<P<Type>> {
+    pub(crate) fn resolved_apparent_type(&self) -> Option<P<Type>> {
         self.intersection_rare()?.resolved_apparent_type.get()
     }
     #[inline]
-    pub fn set_resolved_apparent_type(&self, t: Option<P<Type>>) {
+    pub(crate) fn set_resolved_apparent_type(&self, t: Option<P<Type>>) {
         if t.is_some() || self.intersection_rare().is_some() {
             self.intersection_rare_for_write().resolved_apparent_type.set(t);
         }
     }
     #[inline]
-    pub fn unique_literal_filled_instantiation(&self) -> Option<P<Type>> {
+    pub(crate) fn unique_literal_filled_instantiation(&self) -> Option<P<Type>> {
         self.intersection_rare()?.unique_literal_filled_instantiation.get()
     }
     #[inline]
-    pub fn set_unique_literal_filled_instantiation(&self, t: Option<P<Type>>) {
+    pub(crate) fn set_unique_literal_filled_instantiation(&self, t: Option<P<Type>>) {
         if t.is_some() || self.intersection_rare().is_some() {
             self.intersection_rare_for_write().unique_literal_filled_instantiation.set(t);
         }
@@ -2865,14 +2832,14 @@ impl IntersectionType {
 
 #[derive(Default)]
 pub struct TypeParameter {
-    pub constrained_type: ConstrainedType,
-    pub constraint: OvCell<Option<P<Type>>>,
-    pub target: Cell<Option<P<Type>>>,
-    pub mapper: MapperCell,
+    constrained_type: ConstrainedType,
+    pub(crate) constraint: OvCell<Option<P<Type>>>,
+    pub(crate) target: Cell<Option<P<Type>>>,
+    pub(crate) mapper: MapperCell,
     pub is_this_type: Cell<bool>,
-    pub is_distributed: Cell<bool>,
-    pub resolved_default_type: OvCell<Option<P<Type>>>,
-    pub distributed_type: OvCell<Option<P<Type>>>,
+    pub(crate) is_distributed: Cell<bool>,
+    pub(crate) resolved_default_type: OvCell<Option<P<Type>>>,
+    pub(crate) distributed_type: OvCell<Option<P<Type>>>,
 }
 embeds!(TypeParameter, constrained_type, ConstrainedType);
 
@@ -2899,9 +2866,9 @@ bitflags! {
 
 #[derive(Default)]
 pub struct IndexType {
-    pub constrained_type: ConstrainedType,
-    pub target: Cell<Option<P<Type>>>,
-    pub index_flags: Cell<IndexFlags>,
+    constrained_type: ConstrainedType,
+    pub(crate) target: Cell<Option<P<Type>>>,
+    pub(crate) index_flags: Cell<IndexFlags>,
 }
 embeds!(IndexType, constrained_type, ConstrainedType);
 
@@ -2916,10 +2883,10 @@ impl IndexType {
 
 #[derive(Default)]
 pub struct IndexedAccessType {
-    pub constrained_type: ConstrainedType,
-    pub object_type: Cell<Option<P<Type>>>,
-    pub index_type: Cell<Option<P<Type>>>,
-    pub access_flags: Cell<AccessFlags>, // Only includes AccessFlags.Persistent
+    constrained_type: ConstrainedType,
+    pub(crate) object_type: Cell<Option<P<Type>>>,
+    pub(crate) index_type: Cell<Option<P<Type>>>,
+    pub(crate) access_flags: Cell<AccessFlags>, // Only includes AccessFlags.Persistent
 }
 embeds!(IndexedAccessType, constrained_type, ConstrainedType);
 
@@ -2936,9 +2903,9 @@ impl IndexedAccessType {
 
 #[derive(Default)]
 pub struct TemplateLiteralType {
-    pub constrained_type: ConstrainedType,
-    pub texts: Cell<&'static [&'static str]>, // Always one element longer than types
-    pub types: Cell<&'static [P<Type>]>,      // Always at least one element
+    constrained_type: ConstrainedType,
+    pub(crate) texts: Cell<&'static [&'static str]>, // Always one element longer than types
+    pub(crate) types: Cell<&'static [P<Type>]>,      // Always at least one element
 }
 embeds!(TemplateLiteralType, constrained_type, ConstrainedType);
 
@@ -2948,15 +2915,15 @@ impl TemplateLiteralType {
         self.texts.get()
     }
     #[inline]
-    pub fn types(&self) -> &'static [P<Type>] {
+    pub(crate) fn types(&self) -> &'static [P<Type>] {
         self.types.get()
     }
 }
 
 #[derive(Default)]
 pub struct StringMappingType {
-    pub constrained_type: ConstrainedType,
-    pub target: Cell<Option<P<Type>>>,
+    constrained_type: ConstrainedType,
+    pub(crate) target: Cell<Option<P<Type>>>,
 }
 embeds!(StringMappingType, constrained_type, ConstrainedType);
 
@@ -2969,9 +2936,9 @@ impl StringMappingType {
 
 #[derive(Default)]
 pub struct SubstitutionType {
-    pub constrained_type: ConstrainedType,
-    pub base_type: Cell<Option<P<Type>>>,  // Target type
-    pub constraint: Cell<Option<P<Type>>>, // Constraint that target type is known to satisfy
+    constrained_type: ConstrainedType,
+    pub(crate) base_type: Cell<Option<P<Type>>>, // Target type
+    pub(crate) constraint: Cell<Option<P<Type>>>, // Constraint that target type is known to satisfy
 }
 embeds!(SubstitutionType, constrained_type, ConstrainedType);
 
@@ -2988,29 +2955,29 @@ impl SubstitutionType {
 
 #[derive(Default)]
 pub struct ConditionalRoot {
-    pub node: Cell<Option<P<Node>>>, // ConditionalTypeNode
-    pub check_type: Cell<Option<P<Type>>>,
-    pub extends_type: Cell<Option<P<Type>>>,
-    pub is_distributive: Cell<bool>,
-    pub infer_type_parameters: Cell<&'static [P<Type>]>,
-    pub outer_type_parameters: Cell<&'static [P<Type>]>,
-    pub instantiations: GoPackedMap<CacheHashKey, P<Type>>,
-    pub alias: Cell<Option<P<TypeAlias>>>,
+    pub(crate) node: Cell<Option<P<Node>>>, // ConditionalTypeNode
+    pub(crate) check_type: Cell<Option<P<Type>>>,
+    pub(crate) extends_type: Cell<Option<P<Type>>>,
+    pub(crate) is_distributive: Cell<bool>,
+    pub(crate) infer_type_parameters: Cell<&'static [P<Type>]>,
+    pub(crate) outer_type_parameters: Cell<&'static [P<Type>]>,
+    pub(crate) instantiations: GoPackedMap<CacheHashKey, P<Type>>,
+    pub(crate) alias: Cell<Option<P<TypeAlias>>>,
 }
 
 #[derive(Default)]
 pub struct ConditionalType {
-    pub constrained_type: ConstrainedType,
-    pub root: Cell<Option<P<ConditionalRoot>>>,
-    pub check_type: Cell<Option<P<Type>>>,
-    pub extends_type: Cell<Option<P<Type>>>,
-    pub resolved_true_type: OvCell<Option<P<Type>>>,
-    pub resolved_false_type: OvCell<Option<P<Type>>>,
-    pub resolved_inferred_true_type: OvCell<Option<P<Type>>>, // The `trueType` instantiated with the `combinedMapper`, if present
-    pub resolved_default_constraint: OvCell<Option<P<Type>>>,
-    pub resolved_constraint_of_distributive: OvCell<Option<P<Type>>>,
-    pub mapper: MapperCell,
-    pub combined_mapper: MapperCell,
+    constrained_type: ConstrainedType,
+    pub(crate) root: Cell<Option<P<ConditionalRoot>>>,
+    pub(crate) check_type: Cell<Option<P<Type>>>,
+    pub(crate) extends_type: Cell<Option<P<Type>>>,
+    pub(crate) resolved_true_type: OvCell<Option<P<Type>>>,
+    pub(crate) resolved_false_type: OvCell<Option<P<Type>>>,
+    pub(crate) resolved_inferred_true_type: OvCell<Option<P<Type>>>, // The `trueType` instantiated with the `combinedMapper`, if present
+    pub(crate) resolved_default_constraint: OvCell<Option<P<Type>>>,
+    pub(crate) resolved_constraint_of_distributive: OvCell<Option<P<Type>>>,
+    pub(crate) mapper: MapperCell,
+    pub(crate) combined_mapper: MapperCell,
 }
 embeds!(ConditionalType, constrained_type, ConstrainedType);
 
@@ -3056,37 +3023,44 @@ bitflags! {
 pub struct Signature {
     pub id: Cell<SignatureId>,
     pub flags: Cell<SignatureFlags>,
-    pub min_argument_count: CountCell,
-    pub resolved_min_argument_count: OptionalCountCell,
-    pub declaration: Cell<Option<P<Node>>>,
-    pub type_parameters: ThinSliceCell<P<Type>>, // one word each (`tsrs_core::ThinSlice`)
-    pub parameters: ThinSliceCell<P<Symbol>>,
+    pub(crate) min_argument_count: CountCell,
+    pub(crate) resolved_min_argument_count: OptionalCountCell,
+    pub(crate) declaration: Cell<Option<P<Node>>>,
+    pub(crate) parameters: ThinSliceCell<P<Symbol>>,
     pub resolved_return_type: OvCell<Option<P<Type>>>,
-    pub target: Cell<Option<P<Signature>>>,
-    pub mapper: MapperCell,
-    // `thisParameter`, `isolatedSignatureType`, `composite` and a resolved type predicate other than the checker's
-    // `noTypePredicate` (few signatures have any) live in a tail allocated on the first non-nil write;
+    pub(crate) target: Cell<Option<P<Signature>>>,
+    pub(crate) mapper: MapperCell,
+    // Type parameters, `thisParameter`, `isolatedSignatureType`, `composite` and a resolved type predicate other
+    // than the checker's `noTypePredicate` live in a tail allocated on the first non-nil write.
     // `this_parameter()` / `set_this_parameter()` & co. read nil when it is absent. `resolvedTypePredicate ==
     // c.noTypePredicate` (every resolved signature without a predicate) is bit 0 of the same word.
-    rare: SignatureRareWord,
+    pub rare: SignatureRareWord,
 }
 
 #[cfg(target_pointer_width = "64")]
 const _: () =
-    assert!(std::mem::size_of::<Signature>() == if tsrs_core::COMPRESSED_PTRS { 56 } else { 72 });
+    assert!(std::mem::size_of::<Signature>() == if tsrs_core::COMPRESSED_PTRS { 48 } else { 64 });
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(std::mem::size_of::<Signature>() == 52);
+const _: () = assert!(std::mem::size_of::<Signature>() == 44);
 
 #[derive(Default)]
-struct SignatureRare {
+pub struct SignatureRare {
+    type_parameters: OptionThinSliceCell<P<Type>>,
     this_parameter: Cell<Option<P<Symbol>>>,
     isolated_signature_type: OvCell<Option<P<Type>>>,
     composite: Cell<Option<P<CompositeSignature>>>,
     resolved_type_predicate: OvCell<Option<P<TypePredicate>>>, // never the checker's `noTypePredicate` (that is the bit)
 }
 
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(
+    std::mem::size_of::<SignatureRare>() == if tsrs_core::COMPRESSED_PTRS { 24 } else { 40 }
+);
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(std::mem::size_of::<SignatureRare>() == 24);
+
 /// `Signature`'s tail pointer (8-aligned, null when absent) with the "no type predicate" bit in bit 0.
-struct SignatureRareWord(OvExact<RawWord>);
+pub struct SignatureRareWord(OvExact<RawWord>);
 
 const SIGNATURE_NO_TYPE_PREDICATE: usize = 1;
 
@@ -3099,7 +3073,7 @@ impl Default for SignatureRareWord {
 
 impl SignatureRareWord {
     #[inline]
-    fn tail(&self) -> Option<P<SignatureRare>> {
+    pub fn tail(&self) -> Option<P<SignatureRare>> {
         let p: *const SignatureRare =
             self.0.get().ptr::<SignatureRare>().map_addr(|a| a & !SIGNATURE_NO_TYPE_PREDICATE);
         // SAFETY: a non-null address is a `P<SignatureRare>` stored by `set_tail`.
@@ -3138,7 +3112,17 @@ impl Signature {
     }
     #[inline]
     pub fn type_parameters(&self) -> &'static [P<Type>] {
-        self.type_parameters.get()
+        self.type_parameters_option().unwrap_or(&[])
+    }
+    #[inline]
+    pub fn type_parameters_option(&self) -> Option<&'static [P<Type>]> {
+        self.rare.tail()?.type_parameters.get()
+    }
+    #[inline]
+    pub fn set_type_parameters(&self, types: Option<&'static [P<Type>]>) {
+        if types.is_some() || self.rare.tail().is_some() {
+            self.rare_for_write().type_parameters.set(types);
+        }
     }
     #[inline]
     pub fn declaration(&self) -> Option<P<Node>> {
@@ -3229,8 +3213,8 @@ impl Signature {
 
 #[derive(Default)]
 pub struct CompositeSignature {
-    pub is_union: Cell<bool>, // True for union, false for intersection
-    pub signatures: Cell<&'static [P<Signature>]>, // Individual signatures
+    pub(crate) is_union: Cell<bool>, // True for union, false for intersection
+    pub(crate) signatures: Cell<&'static [P<Signature>]>, // Individual signatures
 }
 
 #[repr(u32)]
@@ -3245,10 +3229,10 @@ pub enum TypePredicateKind {
 
 #[derive(Default)]
 pub struct TypePredicate {
-    pub kind: Cell<TypePredicateKind>,
-    pub parameter_index: Cell<Option<usize>>,
-    pub parameter_name: Cell<&'static str>,
-    pub t: Cell<Option<P<Type>>>,
+    pub(crate) kind: Cell<TypePredicateKind>,
+    pub(crate) parameter_index: Cell<Option<usize>>,
+    pub(crate) parameter_name: Cell<&'static str>,
+    pub(crate) t: Cell<Option<P<Type>>>,
 }
 
 impl TypePredicate {
@@ -3274,12 +3258,12 @@ impl TypePredicate {
 
 #[derive(Default)]
 pub struct IndexInfo {
-    pub key_type: Cell<Option<P<Type>>>,
+    pub(crate) key_type: Cell<Option<P<Type>>>,
     pub value_type: Cell<Option<P<Type>>>,
-    pub is_readonly: Cell<bool>,
-    pub declaration: Cell<Option<P<Node>>>, // IndexSignatureDeclaration
-    pub index_symbol: Cell<Option<P<Symbol>>>, // Synthetic property symbol for this index signature
-    pub components: Cell<&'static [P<Node>]>, // ElementWithComputedPropertyName
+    pub(crate) is_readonly: Cell<bool>,
+    pub(crate) declaration: Cell<Option<P<Node>>>, // IndexSignatureDeclaration
+    pub(crate) index_symbol: Cell<Option<P<Symbol>>>, // Synthetic property symbol for this index signature
+    pub(crate) components: Cell<&'static [P<Node>]>,  // ElementWithComputedPropertyName
 }
 
 impl IndexInfo {
@@ -3308,13 +3292,13 @@ impl IndexInfo {
 /// is used as the result of a variance check that depends on itself. We make a distinction because we don't
 /// want to cache circular variance check results.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Default)]
-pub struct Ternary(pub i8);
+pub struct Ternary(i8);
 
 impl Ternary {
-    pub const False: Ternary = Ternary(0);
-    pub const Unknown: Ternary = Ternary(1);
-    pub const Maybe: Ternary = Ternary(3);
-    pub const True: Ternary = Ternary(-1);
+    pub(crate) const FALSE: Ternary = Ternary(0);
+    pub(crate) const UNKNOWN: Ternary = Ternary(1);
+    pub(crate) const MAYBE: Ternary = Ternary(3);
+    pub const TRUE: Ternary = Ternary(-1);
 }
 
 impl std::ops::BitAnd for Ternary {
@@ -3348,7 +3332,7 @@ impl std::ops::BitOrAssign for Ternary {
 /// checker, so it is a `Copy` handle; build one with `type_comparer(|c, s, t, report_errors| ...)`.
 pub type TypeComparer = &'static dyn Fn(&mut Checker, P<Type>, P<Type>, bool) -> Ternary;
 
-pub fn type_comparer(
+pub(crate) fn type_comparer(
     f: impl Fn(&mut Checker, P<Type>, P<Type>, bool) -> Ternary + 'static,
 ) -> TypeComparer {
     alloc(f)
@@ -3356,104 +3340,27 @@ pub fn type_comparer(
 
 #[derive(Clone, Copy, Debug)]
 pub struct LanguageFeatureMinimumTargetMap {
-    pub exponentiation: ScriptTarget,
-    pub async_functions: ScriptTarget,
-    pub for_await_of: ScriptTarget,
-    pub async_generators: ScriptTarget,
-    pub async_iteration: ScriptTarget,
-    pub object_spread_rest: ScriptTarget,
-    pub regular_expression_flags_dot_all: ScriptTarget,
-    pub bindingless_catch: ScriptTarget,
-    pub big_int: ScriptTarget,
-    pub nullish_coalesce: ScriptTarget,
-    pub optional_chaining: ScriptTarget,
-    pub logical_assignment: ScriptTarget,
-    pub top_level_await: ScriptTarget,
-    pub class_fields: ScriptTarget,
-    pub private_names_and_class_static_blocks: ScriptTarget,
-    pub regular_expression_flags_has_indices: ScriptTarget,
-    pub shebang_comments: ScriptTarget,
-    pub using_and_await_using: ScriptTarget,
-    pub class_and_class_element_decorators: ScriptTarget,
-    pub regular_expression_flags_unicode_sets: ScriptTarget,
+    pub(crate) async_functions: ScriptTarget,
+    pub(crate) for_await_of: ScriptTarget,
+    pub(crate) async_generators: ScriptTarget,
+    pub(crate) object_spread_rest: ScriptTarget,
+    pub(crate) private_names_and_class_static_blocks: ScriptTarget,
+    pub(crate) using_and_await_using: ScriptTarget,
+    pub(crate) class_and_class_element_decorators: ScriptTarget,
 }
 
-pub static LanguageFeatureMinimumTarget: LanguageFeatureMinimumTargetMap =
+pub(crate) static LANGUAGE_FEATURE_MINIMUM_TARGET: LanguageFeatureMinimumTargetMap =
     LanguageFeatureMinimumTargetMap {
-        exponentiation: ScriptTarget::ES2016,
         async_functions: ScriptTarget::ES2017,
         for_await_of: ScriptTarget::ES2018,
         async_generators: ScriptTarget::ES2018,
-        async_iteration: ScriptTarget::ES2018,
         object_spread_rest: ScriptTarget::ES2018,
-        regular_expression_flags_dot_all: ScriptTarget::ES2018,
-        bindingless_catch: ScriptTarget::ES2019,
-        big_int: ScriptTarget::ES2020,
-        nullish_coalesce: ScriptTarget::ES2020,
-        optional_chaining: ScriptTarget::ES2020,
-        logical_assignment: ScriptTarget::ES2021,
-        top_level_await: ScriptTarget::ES2022,
-        class_fields: ScriptTarget::ES2022,
         private_names_and_class_static_blocks: ScriptTarget::ES2022,
-        regular_expression_flags_has_indices: ScriptTarget::ES2022,
-        shebang_comments: ScriptTarget::ESNext,
-        using_and_await_using: ScriptTarget::ESNext,
-        class_and_class_element_decorators: ScriptTarget::ESNext,
-        regular_expression_flags_unicode_sets: ScriptTarget::ESNext,
+        using_and_await_using: ScriptTarget::ES_NEXT,
+        class_and_class_element_decorators: ScriptTarget::ES_NEXT,
     };
 
 // Aliases for types
-pub type StringLiteralType = Type;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn value_symbol_links_synthetic_mode_keeps_every_field() {
-        let t1 =
-            Type::alloc(TypeFlags::Any, ObjectFlags::None, TypeId(1), IntrinsicType::default());
-        let t2 =
-            Type::alloc(TypeFlags::Any, ObjectFlags::None, TypeId(2), IntrinsicType::default());
-        let s = Symbol::new(SymbolFlags::Property, "p");
-        let m = new_simple_type_mapper(t1, t2);
-        let fields = |l: &ValueSymbolLinks| {
-            (
-                l.target(),
-                l.mapper(),
-                l.containing_type(),
-                l.name_type(),
-                l.write_type(),
-                l.function_or_constructor_checked(),
-            )
-        };
-
-        // A synthetic property: containing and name type in the words of target and mapper, then a target moves them.
-        let l = ValueSymbolLinks::default();
-        l.set_containing_type(Some(t1));
-        l.set_name_type(Some(t2));
-        l.set_target(None);
-        assert_eq!(fields(&l), (None, None, Some(t1), Some(t2), None, false));
-        l.set_write_type(Some(t1));
-        l.set_function_or_constructor_checked(true);
-        assert_eq!(fields(&l), (None, None, Some(t1), Some(t2), Some(t1), true));
-        l.set_mapper(Some(m));
-        assert_eq!(fields(&l), (None, Some(m), Some(t1), Some(t2), Some(t1), true));
-        l.set_target(Some(s));
-        l.set_containing_type(None);
-        assert_eq!(fields(&l), (Some(s), Some(m), None, Some(t2), Some(t1), true));
-
-        // An instantiated symbol keeps containing/name types in the tail.
-        let l = ValueSymbolLinks::default();
-        l.set_target(Some(s));
-        l.set_name_type(Some(t2));
-        l.set_target(None);
-        l.set_containing_type(Some(t1));
-        assert_eq!(fields(&l), (None, None, Some(t1), Some(t2), None, false));
-        l.set_mapper(Some(m));
-        assert_eq!(fields(&l), (None, Some(m), Some(t1), Some(t2), None, false));
-    }
-}
 
 // Shared graph: how a fork copies the frozen seed's link records (links.rs `LinkCopy`).
 crate::bitwise_link_copy!(
@@ -3497,7 +3404,6 @@ impl crate::links::LinkCopy for ValueSymbolLinks {
             tail.write_type.set(src.write_type.get());
             tail.name_type.set(src.name_type.get());
             tail.containing_type.set(src.containing_type.get());
-            tail.function_or_constructor_checked.set(src.function_or_constructor_checked.get());
             self.first.set(erase(Some(tail)));
         }
     }
@@ -3544,7 +3450,7 @@ impl crate::links::LinkCopy for SourceFileLinks {
 
 /// Go `getSymbolTable(&cell)` for an overlay cell. Shared graph: a frozen table is copied to the checker's
 /// own arena before it is written (the copy replaces it in the overlay).
-pub fn ov_symbol_table(cell: &OvExact<Option<P<SymbolTable>>>) -> P<SymbolTable> {
+fn ov_symbol_table(cell: &OvExact<Option<P<SymbolTable>>>) -> P<SymbolTable> {
     if let Some(table) = cell.get() {
         if !tsrs_core::sharedgraph::frozen(table.get()) {
             return table;

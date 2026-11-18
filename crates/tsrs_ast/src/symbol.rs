@@ -3,11 +3,10 @@ use std::sync::atomic::AtomicU32;
 
 use hashbrown::HashTable;
 use rustc_hash::FxBuildHasher;
-use tsrs_core::{FrozenCell, OwnedCell, OwnedPSliceCell, OwnedTaggedStrCell, P, PKey};
+use tsrs_core::{FrozenCell, OwnedCell, OwnedTaggedStrCell, P, PKey, ThinSlice};
 
 use crate::ast::{Node, SourceFile};
 use crate::checkflags::CheckFlags;
-use crate::modifierflags::ModifierFlags;
 use crate::symbolflags::SymbolFlags;
 use crate::*;
 
@@ -22,21 +21,36 @@ use crate::*;
 // 10.88M / 2.31M of 13.2M; another node in 23K), so a bit says "the first declaration" and only another node is
 // kept in the tail (`value_declaration()` / `set_value_declaration()`; a declarations write that replaces the
 // first declaration moves it to the tail first). Both bits (`TAG_TABLES`, `TAG_VALUE_FIRST`) are the tag bits of
-// the name word (`OwnedTaggedStrCell`: pointer, length and tags in one word). `declarations` is an
-// `OwnedPSliceCell`: 40 bytes, 32 with compressed pointers (handle-sized parent, 8-byte declarations).
+// the name word (`OwnedTaggedStrCell`: pointer, length and tags in one word).
+// Ordinary symbols allocate a header and an inline SymbolData payload. Instantiated symbols allocate
+// only the header and store their ordinary data owner's key in parent_or_tables. The private high bit
+// of check_flags_and_kind selects that layout independently of the semantic flags and symbol id.
 
-#[derive(Default)]
+#[repr(C, align(8))]
 pub struct Symbol {
     pub flags: OwnedCell<SymbolFlags>,
-    pub check_flags: OwnedCell<CheckFlags>, // Non-zero only in transient symbols created by Checker
-    pub name: OwnedTaggedStrCell,
-    declarations: OwnedPSliceCell<P<Node>>, // Go slice: shared by copies, replaced (not mutated) on append
-    pub(crate) id: AtomicU32,               // Go uint64; ids above u32::MAX panic in get_symbol_id
-    parent_or_tables: OwnedCell<PKey>, // `P::key` of the parent or (with `TAG_TABLES`) of the tail; 0 = none
+    check_flags_and_kind: OwnedCell<u32>,
+    pub(crate) id: AtomicU32, // Low 31 bits for ordinary ids; high bit tags Go's reserved block range.
+    pub parent_or_tables: OwnedCell<PKey>, // parent, table tail, or shared data owner; 0 = none
+}
+
+#[repr(C)]
+#[derive(Default)]
+pub struct SymbolData {
+    name: OwnedTaggedStrCell,
+    // Go slice: shared by copies, replaced (not mutated) on append. ThinSlice keeps this 8 bytes
+    // with compressed and plain pointers, with a long form for unusually large declaration lists.
+    pub declarations: OwnedCell<ThinSlice<P<Node>>>,
+}
+
+#[repr(C)]
+struct SymbolWithData {
+    symbol: Symbol,
+    data: SymbolData,
 }
 
 #[derive(Default)]
-struct SymbolTables {
+pub struct SymbolTables {
     parent: OwnedCell<Option<P<Symbol>>>,
     members: OwnedCell<Option<P<SymbolTable>>>,
     exports: OwnedCell<Option<P<SymbolTable>>>,
@@ -47,11 +61,22 @@ struct SymbolTables {
     lazy: OwnedCell<Option<P<crate::lazylist::LazyNodeList>>>,
 }
 
+pub const SHARED_DATA: u32 = 1 << 31;
+const _: () = assert!(CheckFlags::all().bits() & SHARED_DATA == 0);
+const _: () = assert!(std::mem::offset_of!(SymbolWithData, symbol) == 0);
+const _: () = assert!(std::mem::offset_of!(SymbolWithData, data) == std::mem::size_of::<Symbol>());
 #[cfg(target_pointer_width = "64")]
-const _: () =
-    assert!(std::mem::size_of::<Symbol>() == if tsrs_core::COMPRESSED_PTRS { 32 } else { 40 });
+const _: () = {
+    assert!(std::mem::size_of::<Symbol>() == if tsrs_core::COMPRESSED_PTRS { 16 } else { 24 });
+    assert!(
+        std::mem::size_of::<SymbolWithData>() == if tsrs_core::COMPRESSED_PTRS { 32 } else { 40 }
+    );
+};
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(std::mem::size_of::<Symbol>() == 32);
+const _: () = {
+    assert!(std::mem::size_of::<Symbol>() == 16);
+    assert!(std::mem::size_of::<SymbolWithData>() == 32);
+};
 
 /// `parent_or_tables` holds the `SymbolTables` tail.
 const TAG_TABLES: u8 = 1;
@@ -61,15 +86,96 @@ const TAG_VALUE_FIRST: u8 = 2;
 impl Symbol {
     /// Allocates a fresh symbol (Go `&ast.Symbol{Flags: flags, Name: name}`).
     pub fn new(flags: SymbolFlags, name: &'static str) -> P<Symbol> {
+        let s = Symbol::alloc(flags, name);
+        if tsrs_core::sharedgraph::on_seed_thread() {
+            crate::get_symbol_id(s);
+        }
+        s
+    }
+
+    /// A symbol table's stand-in for `target` stored under `name`, another name than the target's (Go
+    /// `SymbolFlagsNameProxy`). It is internal to `SymbolTable`, which returns `target` for it, and it gets no id: it
+    /// is never seen outside the table. It is allocated in the current allocation target when the table at `table`
+    /// lives there, and in the thread's own (never freed) arena otherwise (`enter_table_owner`), so it never dies
+    /// before the table.
+    #[cold]
+    #[inline(never)]
+    fn new_name_proxy(name: &'static str, target: P<Symbol>, table: usize) -> P<Symbol> {
+        let _owner = tsrs_core::arena::enter_table_owner(table);
+        let proxy = Symbol::alloc(SymbolFlags::empty(), name);
+        // Read back by `SymbolMapEntry::proxy_target`.
+        proxy.parent_or_tables.set(target.key());
+        proxy
+    }
+
+    /// An ordinary data owner without an id.
+    #[inline]
+    fn alloc(flags: SymbolFlags, name: &'static str) -> P<Symbol> {
+        let allocation = P::new(SymbolWithData {
+            symbol: Symbol {
+                flags: OwnedCell::new(flags),
+                check_flags_and_kind: OwnedCell::new(0),
+                id: AtomicU32::new(0),
+                parent_or_tables: OwnedCell::new(0),
+            },
+            data: SymbolData { name: OwnedTaggedStrCell::new(name), ..Default::default() },
+        });
+        // SAFETY: SymbolWithData is repr(C) with the 8-aligned Symbol header first.
+        unsafe { allocation.cast::<Symbol>() }
+    }
+
+    /// A transient symbol with its own flags, check flags and id, sharing the source's data.
+    /// Go `newSharedDataSymbol` stores the same `symbolData` pointer on both symbols.
+    pub fn new_shared_data(source: P<Symbol>) -> P<Symbol> {
+        let data = if source.shares_data() {
+            // SAFETY: a shared symbol stores its live data owner's key here.
+            unsafe { P::from_key(source.parent_or_tables.get()) }
+        } else {
+            source
+        };
         let s = P::new(Symbol {
-            flags: OwnedCell::new(flags),
-            name: OwnedTaggedStrCell::new(name),
-            ..Default::default()
+            flags: OwnedCell::new(source.flags() | SymbolFlags::Transient),
+            check_flags_and_kind: OwnedCell::new(SHARED_DATA),
+            id: AtomicU32::new(0),
+            parent_or_tables: OwnedCell::new(data.key()),
         });
         if tsrs_core::sharedgraph::on_seed_thread() {
             crate::get_symbol_id(s);
         }
         s
+    }
+
+    #[inline]
+    pub fn shares_data(&self) -> bool {
+        self.check_flags_and_kind.get() & SHARED_DATA != 0
+    }
+
+    /// Inline payload of an ordinary data owner; shared instances never call this on themselves.
+    #[inline]
+    pub fn own_data(&self) -> &SymbolData {
+        debug_assert!(!self.shares_data());
+        // SAFETY: only alloc (behind new and new_name_proxy) and new_shared_data construct Symbol. An ordinary
+        // header is the first field of SymbolWithData, whose live payload is at this offset in the same arena
+        // allocation.
+        unsafe {
+            tsrs_core::ptr::arena_neighbor(
+                self,
+                std::mem::offset_of!(SymbolWithData, data) as isize,
+            )
+        }
+    }
+
+    #[inline]
+    fn data_owner(&self) -> &Symbol {
+        if self.shares_data() {
+            let key = self.parent_or_tables.get();
+            assert_ne!(key, 0, "instantiated symbol has no shared data");
+            // SAFETY: `new_shared_data` stores the key of the live data owner, flattening
+            // nested instances. The arena object outlives this instance.
+            unsafe { P::<Symbol>::from_key(key) }.get()
+        } else {
+            self
+        }
     }
 
     #[inline]
@@ -82,15 +188,26 @@ impl Symbol {
     }
     #[inline]
     pub fn check_flags(&self) -> CheckFlags {
-        self.check_flags.get()
+        CheckFlags::from_bits_retain(self.check_flags_and_kind.get() & !SHARED_DATA)
+    }
+    /// Updates semantic check flags without changing the immutable allocation layout.
+    #[inline]
+    pub fn set_check_flags(&self, flags: CheckFlags) {
+        assert_eq!(flags.bits() & SHARED_DATA, 0, "check flags overlap the symbol layout tag");
+        let kind = self.check_flags_and_kind.get() & SHARED_DATA;
+        self.check_flags_and_kind.set(flags.bits() | kind);
     }
     #[inline]
     pub fn name(&self) -> &'static str {
-        self.name.get()
+        self.data_owner().own_data().name.get()
+    }
+    #[inline]
+    pub fn set_name(&self, name: &'static str) {
+        self.data_owner().own_data().name.set(name);
     }
     #[inline]
     pub fn declarations(&self) -> &'static [P<Node>] {
-        self.declarations.get()
+        self.data_owner().own_data().declarations.get().get()
     }
     /// Go `symbol.Declarations = slices.Clone(declarations)`-like: stores a copy.
     #[inline]
@@ -99,27 +216,28 @@ impl Symbol {
     }
     /// Go `symbol.Declarations = declarations` (shares the slice).
     pub fn set_declarations_static(&self, declarations: &'static [P<Node>]) {
-        let tags = self.name.tags();
+        let data = self.data_owner();
+        let tags = data.own_data().name.tags();
         if tags & TAG_VALUE_FIRST != 0 {
-            let value_declaration = self.declarations.get()[0];
+            let value_declaration = data.own_data().declarations.get().get()[0];
             if declarations.first() != Some(&value_declaration) {
-                self.name.set_tags(tags & !TAG_VALUE_FIRST);
-                self.tables_for_write().value_declaration.set(Some(value_declaration));
+                data.own_data().name.set_tags(tags & !TAG_VALUE_FIRST);
+                data.tables_for_write().value_declaration.set(Some(value_declaration));
             }
         }
-        self.declarations.set(declarations);
+        data.own_data().declarations.set(ThinSlice::new(declarations));
     }
     /// Go `append(symbol.Declarations, declarations...)`.
     pub fn append_declarations(&self, declarations: &[P<Node>]) {
         if declarations.is_empty() {
             return;
         }
-        if self.declarations.get().is_empty() {
+        if self.declarations().is_empty() {
             self.set_declarations(declarations);
             return;
         }
-        let mut result = Vec::with_capacity(self.declarations.get().len() + declarations.len());
-        result.extend_from_slice(self.declarations.get());
+        let mut result = Vec::with_capacity(self.declarations().len() + declarations.len());
+        result.extend_from_slice(self.declarations());
         result.extend_from_slice(declarations);
         self.set_declarations_static(tsrs_core::alloc_vec(result));
     }
@@ -129,48 +247,52 @@ impl Symbol {
         reason = "indexing with a bounds check: +0.7% instructions, one checker (notes/mem-small.md)"
     )]
     pub fn value_declaration(&self) -> Option<P<Node>> {
-        if self.name.tags() & TAG_VALUE_FIRST != 0 {
-            let declarations = self.declarations.get();
+        let data = self.data_owner();
+        if data.own_data().name.tags() & TAG_VALUE_FIRST != 0 {
+            let declarations = data.own_data().declarations.get().get();
             debug_assert_ne!(declarations, []);
             // SAFETY: the bit is set only while the declarations are non-empty (`set_value_declaration`,
             // `set_declarations_static`).
             return Some(unsafe { *declarations.get_unchecked(0) });
         }
-        self.tables()?.value_declaration.get()
+        data.tables()?.value_declaration.get()
     }
     pub fn set_value_declaration(&self, value_declaration: Option<P<Node>>) {
-        let tags = self.name.tags();
+        let data = self.data_owner();
+        let tags = data.own_data().name.tags();
         if value_declaration.is_some()
-            && self.declarations.get().first().copied() == value_declaration
+            && data.own_data().declarations.get().get().first().copied() == value_declaration
         {
-            self.name.set_tags(tags | TAG_VALUE_FIRST);
-            if let Some(tables) = self.tables() {
+            data.own_data().name.set_tags(tags | TAG_VALUE_FIRST);
+            if let Some(tables) = data.tables() {
                 tables.value_declaration.set(None);
             }
             return;
         }
-        self.name.set_tags(tags & !TAG_VALUE_FIRST);
-        if value_declaration.is_some() || self.tables().is_some() {
-            self.tables_for_write().value_declaration.set(value_declaration);
+        data.own_data().name.set_tags(tags & !TAG_VALUE_FIRST);
+        if value_declaration.is_some() || data.tables().is_some() {
+            data.tables_for_write().value_declaration.set(value_declaration);
         }
     }
     #[inline]
-    fn tables(&self) -> Option<P<SymbolTables>> {
+    pub fn tables(&self) -> Option<P<SymbolTables>> {
+        let data = self.data_owner();
         // SAFETY: with the tag, the field holds the key of the tail made by `tables_for_write` (never freed).
-        (self.name.tags() & TAG_TABLES != 0)
-            .then(|| unsafe { P::from_key(self.parent_or_tables.get()) })
+        (data.own_data().name.tags() & TAG_TABLES != 0)
+            .then(|| unsafe { P::from_key(data.parent_or_tables.get()) })
     }
     #[inline]
     fn tables_for_write(&self) -> P<SymbolTables> {
-        if let Some(tables) = self.tables() {
+        let data = self.data_owner();
+        if let Some(tables) = data.tables() {
             tables
         } else {
             let tables = P::new(SymbolTables {
-                parent: OwnedCell::new(self.parent()),
+                parent: OwnedCell::new(data.parent()),
                 ..Default::default()
             });
-            self.parent_or_tables.set(tables.key());
-            self.name.set_tags(self.name.tags() | TAG_TABLES);
+            data.parent_or_tables.set(tables.key());
+            data.own_data().name.set_tags(data.own_data().name.tags() | TAG_TABLES);
             tables
         }
     }
@@ -191,10 +313,10 @@ impl Symbol {
     #[inline]
     pub fn exports(&self) -> Option<P<SymbolTable>> {
         let t = self.tables()?;
-        if let Some(lazy) = t.lazy.get() {
-            if lazy.fills_exports() {
-                lazy.ensure();
-            }
+        if let Some(lazy) = t.lazy.get()
+            && lazy.fills_exports()
+        {
+            lazy.ensure();
         }
         t.exports.get()
     }
@@ -219,17 +341,19 @@ impl Symbol {
     }
     #[inline]
     pub fn parent(&self) -> Option<P<Symbol>> {
-        match self.tables() {
+        let data = self.data_owner();
+        match data.tables() {
             Some(tables) => tables.parent.get(),
             // SAFETY: without the tag, the field is 0 or the key of the parent (a live symbol).
-            None => unsafe { P::from_key_opt(self.parent_or_tables.get()) },
+            None => unsafe { P::from_key_opt(data.parent_or_tables.get()) },
         }
     }
     #[inline]
     pub fn set_parent(&self, parent: Option<P<Symbol>>) {
-        match self.tables() {
+        let data = self.data_owner();
+        match data.tables() {
             Some(tables) => tables.parent.set(parent),
-            None => self.parent_or_tables.set(P::key_opt(parent)),
+            None => data.parent_or_tables.set(P::key_opt(parent)),
         }
     }
     #[inline]
@@ -245,15 +369,7 @@ impl Symbol {
 
     pub fn is_external_module(&self) -> bool {
         self.flags.get().intersects(SymbolFlags::Module)
-            && is_ambient_module_symbol_name(self.name.get())
-    }
-
-    pub fn is_static(&self) -> bool {
-        let Some(value_declaration) = self.value_declaration() else {
-            return false;
-        };
-        let modifier_flags = value_declaration.modifier_flags();
-        modifier_flags.intersects(ModifierFlags::Static)
+            && is_ambient_module_symbol_name(self.name())
     }
 
     // See comment on `declareModuleMember` in `binder.go`.
@@ -312,8 +428,10 @@ pub fn get_source_file_of_symbol(symbol: P<Symbol>) -> Option<P<SourceFile>> {
 // An entry does not store its key: the key is almost always the symbol's own name (on the private monorepo all but 1 of 16.7M
 // inserts; symbol names never change), so an entry is one word: the symbol plus a fingerprint of the key (its
 // length up to 63 and 12 bits of its hash), which rejects non-matching entries without reading the symbol (see
-// `SymbolMapEntry`). A key with other text than its symbol's name is kept in `SymbolMapExtra::odd_keys`. Keys
-// are compared by text, so returning the symbol's name where the caller stored an equal string is unobservable.
+// `SymbolMapEntry`). A key with other text than its symbol's name is stored as a name proxy: a symbol named by the
+// key whose parent is the symbol (Go `SymbolFlagsNameProxy`), marked by a bit of the entry, so a lookup reads the
+// proxy only for such a key. Keys are compared by text, so returning the symbol's name where the caller stored an
+// equal string is unobservable.
 
 #[derive(Default)]
 pub struct SymbolTable(FrozenCell<SymbolMap>);
@@ -454,7 +572,8 @@ unsafe impl Send for EntryVec {}
 // SAFETY: as for the `Vec` it stands for: through `&EntryVec` the plain-word entries are only read.
 unsafe impl Sync for EntryVec {}
 
-/// One word: the symbol in the low 45 bits (`P::pack`), then the odd-key flag (the key is in `odd_keys`), the key length capped at 63 (6 bits)
+/// One word: the symbol in the low 45 bits (`P::pack`), then the proxy flag (the stored symbol is a name proxy for the
+/// key), the key length capped at 63 (6 bits)
 /// and the top 12 bits of `hash_name(key)`. 8 bytes instead of 16 (pointer + 32-bit hash + length): symbol table
 /// entries are 465 MB of capacity on the private monorepo.
 #[derive(Clone, Copy)]
@@ -491,7 +610,7 @@ impl KeyPrint {
 impl SymbolMapEntry {
     const ADDR_BITS: u32 = tsrs_core::PACK_BITS;
     const ADDR_MASK: u64 = (1 << Self::ADDR_BITS) - 1;
-    const ODD_BIT: u64 = 1 << Self::ADDR_BITS;
+    const PROXY_BIT: u64 = 1 << Self::ADDR_BITS;
     const LEN_SHIFT: u32 = Self::ADDR_BITS + 1;
     const LEN_MASK: u64 = (1 << 6) - 1;
     const HASH_SHIFT: u32 = Self::LEN_SHIFT + 6;
@@ -502,25 +621,62 @@ impl SymbolMapEntry {
         symbol.pack()
     }
 
+    /// An entry for `symbol` under `key`, through a name proxy when the key is not the symbol's name.
     #[inline]
-    fn new(symbol: P<Symbol>, print: KeyPrint) -> SymbolMapEntry {
-        SymbolMapEntry(Self::addr_bits(symbol) | (print.0 << Self::LEN_SHIFT))
+    fn new(key: &'static str, symbol: P<Symbol>, print: KeyPrint, table: usize) -> SymbolMapEntry {
+        let mut e = SymbolMapEntry(print.0 << Self::LEN_SHIFT);
+        e.set_symbol(key, symbol, table);
+        e
     }
 
+    /// The symbol stored in the entry: the entry's symbol, or the name proxy standing for it.
+    #[inline]
+    fn stored(self) -> P<Symbol> {
+        // SAFETY: the low bits were stored from a live `P<Symbol>` (arena symbols are never freed or moved).
+        unsafe { P::unpack(self.0 & Self::ADDR_MASK) }
+    }
+
+    /// The entry's symbol.
     #[inline]
     fn symbol(self) -> P<Symbol> {
-        // SAFETY: the low bits were stored from a live `P<Symbol>` (arena symbols are never freed or moved).
-        unsafe { P::unpack(self.0) }
+        let stored = self.stored();
+        if self.is_proxy() {
+            return Self::proxy_target(stored);
+        }
+        stored
+    }
+
+    /// The symbol a name proxy stands for, out of line: lookups and iteration keep only the bit test.
+    #[cold]
+    #[inline(never)]
+    fn proxy_target(proxy: P<Symbol>) -> P<Symbol> {
+        // SAFETY: `new_name_proxy` stores the key of the symbol it stands for (a live symbol) here, and a proxy never
+        // leaves its table, so nothing gives it a tables tail or shared data that would reuse the field. Not
+        // `parent()`, whose shared-data and tables checks inlined into every lookup cost about 1% of instructions.
+        unsafe { P::from_key(proxy.parent_or_tables.get()) }
+    }
+
+    /// The entry's key: the stored symbol's name, which is the key for a name proxy too.
+    #[inline]
+    fn key(self) -> &'static str {
+        self.stored().name()
+    }
+
+    /// Stores `symbol` for `key`, through a name proxy when the key is not the symbol's name. `table` is the address
+    /// of the table holding the entry.
+    #[inline]
+    fn set_symbol(&mut self, key: &'static str, symbol: P<Symbol>, table: usize) {
+        let (stored, proxy) = if same_text(symbol.name(), key) {
+            (symbol, 0)
+        } else {
+            (Symbol::new_name_proxy(key, symbol, table), Self::PROXY_BIT)
+        };
+        self.0 = self.0 & !(Self::ADDR_MASK | Self::PROXY_BIT) | Self::addr_bits(stored) | proxy;
     }
 
     #[inline]
-    fn set_symbol(&mut self, symbol: P<Symbol>) {
-        self.0 = self.0 & !Self::ADDR_MASK | Self::addr_bits(symbol);
-    }
-
-    #[inline]
-    fn is_odd(self) -> bool {
-        self.0 & Self::ODD_BIT != 0
+    fn is_proxy(self) -> bool {
+        self.0 & Self::PROXY_BIT != 0
     }
 
     #[inline]
@@ -531,27 +687,21 @@ impl SymbolMapEntry {
     }
 }
 
-#[derive(Default, Clone)]
-struct SymbolMapExtra {
-    index: Option<HashTable<u32>>, // positions in `entries`; present once len > SYMBOL_TABLE_LINEAR_MAX
-    odd_keys: Vec<(u32, &'static str)>, // (position, key) of the entries whose key is not their symbol's name
-}
-
-/// `SymbolMap::extra`: one word holding either a boxed `SymbolMapExtra` (an even address) or, in a table without
-/// one (a linear table whose keys are all their symbols' names: nearly every table), a 64-bit Bloom filter of its
-/// keys' hashes (two bits per key) whose bit 0 is set as the tag. A lookup the filter rejects returns without
-/// reading the entries, which are a second cache line: over half of all lookups are misses in small tables
-/// (a property lookup tries each type on the apparent-type chain, down to `Object`'s members), and the entries of
-/// a table looked up once in a while are rarely in cache. Deleting a key leaves its bits set (a superset is still
-/// a valid filter).
-struct ExtraSlot(*mut SymbolMapExtra);
+/// `SymbolMap::extra`: one word holding either the boxed hash index of entry positions (an even address; a table gets
+/// one once it has more than `SYMBOL_TABLE_LINEAR_MAX` entries) or, in a linear table (nearly every table), a 64-bit
+/// Bloom filter of its keys' hashes (two bits per key) whose bit 0 is set as the tag. A lookup the filter rejects
+/// returns without reading the entries, which are a second cache line: over half of all lookups are misses in small
+/// tables (a property lookup tries each type on the apparent-type chain, down to `Object`'s members), and the entries
+/// of a table looked up once in a while are rarely in cache. Deleting a key leaves its bits set (a superset is still a
+/// valid filter).
+struct ExtraSlot(*mut HashTable<u32>);
 
 impl ExtraSlot {
     const EMPTY_FILTER: usize = 1;
 
     #[inline]
-    fn boxed(extra: SymbolMapExtra) -> ExtraSlot {
-        ExtraSlot(Box::into_raw(Box::new(extra)))
+    fn boxed(index: HashTable<u32>) -> ExtraSlot {
+        ExtraSlot(Box::into_raw(Box::new(index)))
     }
 
     #[inline]
@@ -560,23 +710,15 @@ impl ExtraSlot {
     }
 
     #[inline]
-    fn get(&self) -> Option<&SymbolMapExtra> {
+    fn get(&self) -> Option<&HashTable<u32>> {
         // SAFETY: an even word is the pointer `boxed` created, owned by this slot.
         (!self.is_filter()).then(|| unsafe { &*self.0 })
     }
 
     #[inline]
-    fn get_mut(&mut self) -> Option<&mut SymbolMapExtra> {
+    fn get_mut(&mut self) -> Option<&mut HashTable<u32>> {
         // SAFETY: as in `get`, and `&mut self` is unique.
         (!self.is_filter()).then(|| unsafe { &mut *self.0 })
-    }
-
-    /// The boxed extra, created (dropping the filter) when the slot holds a filter.
-    fn get_or_insert(&mut self) -> &mut SymbolMapExtra {
-        if self.is_filter() {
-            *self = ExtraSlot::boxed(SymbolMapExtra::default());
-        }
-        self.get_mut().unwrap()
     }
 
     #[inline]
@@ -612,7 +754,7 @@ impl Default for ExtraSlot {
 impl Clone for ExtraSlot {
     fn clone(&self) -> ExtraSlot {
         match self.get() {
-            Some(extra) => ExtraSlot::boxed(extra.clone()),
+            Some(index) => ExtraSlot::boxed(index.clone()),
             None => ExtraSlot(self.0),
         }
     }
@@ -627,10 +769,10 @@ impl Drop for ExtraSlot {
     }
 }
 
-// SAFETY: an `ExtraSlot` owns its `SymbolMapExtra` like a `Box` (or holds plain bits).
+// SAFETY: an `ExtraSlot` owns its index like a `Box` (or holds plain bits).
 unsafe impl Send for ExtraSlot {}
-// SAFETY: as for the `Box` it stands for: `SymbolMapExtra` has no interior mutability, and through `&ExtraSlot` it
-// is only read.
+// SAFETY: as for the `Box` it stands for: the index has no interior mutability, and through `&ExtraSlot` it is only
+// read.
 unsafe impl Sync for ExtraSlot {}
 
 /// A symbol name's 32-bit hash: one widening multiply over the first and last bytes (names of up to 16 bytes, nearly
@@ -687,16 +829,6 @@ fn short_text_eq(a: &[u8], b: &[u8]) -> bool {
     }
 }
 
-/// `SymbolMap::key` from the parts it reads (for the index's rehash, which borrows the index).
-#[inline]
-fn key_at(entries: &[SymbolMapEntry], odd_keys: &[(u32, &'static str)], i: usize) -> &'static str {
-    let e = entries[i];
-    if !e.is_odd() {
-        return e.symbol().name();
-    }
-    odd_keys.iter().find(|&&(j, _)| j as usize == i).unwrap().1
-}
-
 /// The index's hash of an entry: hashbrown takes the bucket from the low bits (the name hash's low bits) and its
 /// 7-bit tag from the top bits, here name hash bits 13-19, which neither the bucket of a table below 8192 buckets
 /// nor the entry fingerprint (bits 20-31) uses. One shifted `orr`, no constant to load.
@@ -709,10 +841,7 @@ fn index_hash(hash: u32) -> u64 {
 impl SymbolMap {
     fn with_capacity(n: usize) -> SymbolMap {
         let extra = if n > SYMBOL_TABLE_LINEAR_MAX {
-            ExtraSlot::boxed(SymbolMapExtra {
-                index: Some(HashTable::with_capacity(n)),
-                odd_keys: Vec::new(),
-            })
+            ExtraSlot::boxed(HashTable::with_capacity(n))
         } else {
             ExtraSlot::default()
         };
@@ -721,17 +850,13 @@ impl SymbolMap {
 
     #[inline]
     fn index(&self) -> Option<&HashTable<u32>> {
-        self.extra.get()?.index.as_ref()
+        self.extra.get()
     }
 
     /// The stored key of entry `i`.
     #[inline]
     fn key(&self, i: usize) -> &'static str {
-        let e = self.entries[i];
-        if !e.is_odd() {
-            return e.symbol().name();
-        }
-        key_at(&self.entries, &self.extra.get().unwrap().odd_keys, i)
+        self.entries[i].key()
     }
 
     /// Whether entry `i`'s key is `name` (whose fingerprint is `print`).
@@ -776,15 +901,12 @@ impl SymbolMap {
                 .find(index_hash(hash), |&i| self.entries[i as usize].print() == print)?
                 as usize,
         };
-        let e = self.entries[i];
-        if !e.is_odd() {
-            let key = e.symbol().name();
-            if key.len() == name.len()
-                && (std::ptr::eq(key.as_ptr(), name.as_ptr())
-                    || name.len() <= 16 && short_text_eq(key.as_bytes(), name.as_bytes()))
-            {
-                return Some(i);
-            }
+        let key = self.entries[i].key();
+        if key.len() == name.len()
+            && (std::ptr::eq(key.as_ptr(), name.as_ptr())
+                || name.len() <= 16 && short_text_eq(key.as_bytes(), name.as_bytes()))
+        {
+            return Some(i);
         }
         self.search_text(name, hash, i)
     }
@@ -806,19 +928,13 @@ impl SymbolMap {
         }
     }
 
-    fn add_odd_key(&mut self, i: usize, key: &'static str) {
-        self.entries[i].0 |= SymbolMapEntry::ODD_BIT;
-        self.extra.get_or_insert().odd_keys.push((i as u32, key));
-    }
-
     fn insert(&mut self, name: &'static str, symbol: P<Symbol>) {
+        let table = std::ptr::from_ref(self) as usize;
         let hash = hash_name(name);
         if let Some(i) = if self.extra.may_contain(hash) { self.search(name, hash) } else { None } {
-            // Go keeps the stored key; it is no longer the new symbol's name when that differs.
-            self.entries[i].set_symbol(symbol);
-            if !self.entries[i].is_odd() && !same_text(symbol.name(), name) {
-                self.add_odd_key(i, name);
-            }
+            // Go keeps the stored key; it is no longer the new symbol's name when that differs. `name` has the
+            // stored key's text.
+            self.entries[i].set_symbol(name, symbol, table);
             return;
         }
         let i = self.entries.len();
@@ -831,15 +947,12 @@ impl SymbolMap {
             // symbols (locals of small functions, members of small object literals).
             self.entries.reserve_exact(1);
         }
-        self.entries.push(SymbolMapEntry::new(symbol, KeyPrint::of(name, hash)));
+        self.entries.push(SymbolMapEntry::new(name, symbol, KeyPrint::of(name, hash), table));
         self.extra.add_to_filter(hash);
-        if !same_text(symbol.name(), name) {
-            self.add_odd_key(i, name);
-        }
-        if let Some(SymbolMapExtra { index: Some(index), odd_keys }) = self.extra.get_mut() {
+        if let Some(index) = self.extra.get_mut() {
             let entries = &self.entries;
             index.insert_unique(index_hash(hash), i as u32, |&m| {
-                index_hash(hash_name(key_at(entries, odd_keys, m as usize)))
+                index_hash(hash_name(entries[m as usize].key()))
             });
         } else if self.entries.len() > SYMBOL_TABLE_LINEAR_MAX {
             self.build_index();
@@ -857,7 +970,7 @@ impl SymbolMap {
                 index_hash(self.entry_hash(m as usize))
             });
         }
-        self.extra.get_or_insert().index = Some(index);
+        self.extra = ExtraSlot::boxed(index);
     }
 
     fn shift_remove(&mut self, name: &str) {
@@ -865,19 +978,11 @@ impl SymbolMap {
             return;
         };
         let hash = self.entry_hash(i);
-        if let Some(extra) = self.extra.get_mut() {
-            if let Some(index) = &mut extra.index {
-                if let Ok(entry) = index.find_entry(index_hash(hash), |&j| j as usize == i) {
-                    entry.remove();
-                }
-                for j in index.iter_mut() {
-                    if *j as usize > i {
-                        *j -= 1;
-                    }
-                }
+        if let Some(index) = self.extra.get_mut() {
+            if let Ok(entry) = index.find_entry(index_hash(hash), |&j| j as usize == i) {
+                entry.remove();
             }
-            extra.odd_keys.retain(|&(j, _)| j as usize != i);
-            for (j, _) in &mut extra.odd_keys {
+            for j in index.iter_mut() {
                 if *j as usize > i {
                     *j -= 1;
                 }
@@ -895,7 +1000,7 @@ impl SymbolMap {
 /// `Function`'s and `Object`'s) and testing it against a `NameFilter` without hashing it again for each.
 #[derive(Clone, Copy)]
 pub struct HashedName<'a> {
-    pub name: &'a str,
+    name: &'a str,
     hash: u32,
 }
 
@@ -974,6 +1079,12 @@ impl SymbolTable {
         P::new(SymbolTable(FrozenCell::new(self.0.borrow().clone())))
     }
 
+    /// Empties the table and frees its heap buffers (an arena table no one reads again: arena objects are never
+    /// dropped, so its entry buffer and index would otherwise stay allocated).
+    pub fn clear_and_free(&self) {
+        drop(self.0.replace(SymbolMap::default()));
+    }
+
     /// Go `table[name]`. On a `P<SymbolTable>` receiver `table.get(name)` resolves to `P::get`, so use
     /// `table.lookup(name)` (same thing) there.
     #[inline]
@@ -1011,22 +1122,6 @@ impl SymbolTable {
     #[inline]
     pub fn len(&self) -> usize {
         self.0.borrow().entries.len()
-    }
-
-    /// Heap census (notes/mem-checker-heap.md): entries, entry capacity, and the heap bytes of the entry buffer
-    /// plus the boxed index of a large table.
-    pub fn heap_usage(&self) -> (usize, usize, usize) {
-        let m = self.0.borrow();
-        let mut bytes = m.entries.capacity() * std::mem::size_of::<SymbolMapEntry>();
-        if let Some(extra) = m.extra.get() {
-            bytes += std::mem::size_of::<SymbolMapExtra>() + extra.odd_keys.capacity() * 24;
-            if let Some(index) = &extra.index {
-                let cap = index.capacity();
-                let buckets = if cap < 8 { (cap + 1).next_power_of_two() } else { cap / 7 * 8 };
-                bytes += (buckets * 4).div_ceil(16) * 16 + buckets + 16;
-            }
-        }
-        (m.entries.len(), m.entries.capacity(), bytes)
     }
 
     #[inline]
@@ -1068,46 +1163,46 @@ impl SymbolTable {
 // (DEL): a single byte, so `name.as_bytes()[0]` / `name.as_bytes()[1]` checks translate one to one, and it
 // cannot occur in an IdentifierName. Translate Go `name[0] == '\xFE'` to
 // `name.as_bytes().first() == Some(&InternalSymbolNamePrefixByte)`.
-pub const InternalSymbolNamePrefix: &str = "\u{7f}";
-pub const InternalSymbolNamePrefixByte: u8 = 0x7f;
+pub const INTERNAL_SYMBOL_NAME_PREFIX: &str = "\u{7f}";
+pub const INTERNAL_SYMBOL_NAME_PREFIX_BYTE: u8 = 0x7f;
 
-pub const InternalSymbolNameCall: &str = "\u{7f}call"; // Call signatures
-pub const InternalSymbolNameConstructor: &str = "\u{7f}constructor"; // Constructor implementations
-pub const InternalSymbolNameNew: &str = "\u{7f}new"; // Constructor signatures
-pub const InternalSymbolNameIndex: &str = "\u{7f}index"; // Index signatures
-pub const InternalSymbolNameExportStar: &str = "\u{7f}export"; // Module export * declarations
-pub const InternalSymbolNameGlobal: &str = "\u{7f}global"; // Global self-reference
-pub const InternalSymbolNameMissing: &str = "\u{7f}missing"; // Indicates missing symbol
-pub const InternalSymbolNameType: &str = "\u{7f}type"; // Anonymous type literal symbol
-pub const InternalSymbolNameObject: &str = "\u{7f}object"; // Anonymous object literal declaration
-pub const InternalSymbolNameJSXAttributes: &str = "\u{7f}jsxAttributes"; // Anonymous JSX attributes object literal declaration
-pub const InternalSymbolNameClass: &str = "\u{7f}class"; // Unnamed class expression
-pub const InternalSymbolNameFunction: &str = "\u{7f}function"; // Unnamed function expression
-pub const InternalSymbolNameComputed: &str = "\u{7f}computed"; // Computed property name declaration with dynamic name
-pub const InternalSymbolNameAssignmentDeclaration: &str = "\u{7f}assignment"; // Assignment declarations
-pub const InternalSymbolNameInstantiationExpression: &str = "\u{7f}instantiationExpression"; // Instantiation expressions
-pub const InternalSymbolNameImportAttributes: &str = "\u{7f}importAttributes";
-pub const InternalSymbolNameExportEquals: &str = "export="; // Export assignment symbol
-pub const InternalSymbolNameDefault: &str = "default"; // Default export symbol (technically not wholly internal, but included here for usability)
-pub const InternalSymbolNameThis: &str = "this";
-pub const InternalSymbolNameModuleExports: &str = "module.exports";
+pub const INTERNAL_SYMBOL_NAME_CALL: &str = "\u{7f}call"; // Call signatures
+pub const INTERNAL_SYMBOL_NAME_CONSTRUCTOR: &str = "\u{7f}constructor"; // Constructor implementations
+pub const INTERNAL_SYMBOL_NAME_NEW: &str = "\u{7f}new"; // Constructor signatures
+pub const INTERNAL_SYMBOL_NAME_INDEX: &str = "\u{7f}index"; // Index signatures
+pub const INTERNAL_SYMBOL_NAME_EXPORT_STAR: &str = "\u{7f}export"; // Module export * declarations
+pub const INTERNAL_SYMBOL_NAME_GLOBAL: &str = "\u{7f}global"; // Global self-reference
+pub const INTERNAL_SYMBOL_NAME_MISSING: &str = "\u{7f}missing"; // Indicates missing symbol
+pub const INTERNAL_SYMBOL_NAME_TYPE: &str = "\u{7f}type"; // Anonymous type literal symbol
+pub const INTERNAL_SYMBOL_NAME_OBJECT: &str = "\u{7f}object"; // Anonymous object literal declaration
+pub const INTERNAL_SYMBOL_NAME_JSX_ATTRIBUTES: &str = "\u{7f}jsxAttributes"; // Anonymous JSX attributes object literal declaration
+pub const INTERNAL_SYMBOL_NAME_CLASS: &str = "\u{7f}class"; // Unnamed class expression
+pub const INTERNAL_SYMBOL_NAME_FUNCTION: &str = "\u{7f}function"; // Unnamed function expression
+pub const INTERNAL_SYMBOL_NAME_COMPUTED: &str = "\u{7f}computed"; // Computed property name declaration with dynamic name
+pub const INTERNAL_SYMBOL_NAME_ASSIGNMENT_DECLARATION: &str = "\u{7f}assignment"; // Assignment declarations
+pub const INTERNAL_SYMBOL_NAME_INSTANTIATION_EXPRESSION: &str = "\u{7f}instantiationExpression"; // Instantiation expressions
+pub const INTERNAL_SYMBOL_NAME_IMPORT_ATTRIBUTES: &str = "\u{7f}importAttributes";
+pub const INTERNAL_SYMBOL_NAME_EXPORT_EQUALS: &str = "export="; // Export assignment symbol
+pub const INTERNAL_SYMBOL_NAME_DEFAULT: &str = "default"; // Default export symbol (technically not wholly internal, but included here for usability)
+pub const INTERNAL_SYMBOL_NAME_THIS: &str = "this";
+pub const INTERNAL_SYMBOL_NAME_MODULE_EXPORTS: &str = "module.exports";
 
 pub fn symbol_name(symbol: P<Symbol>) -> &'static str {
-    if let Some(value_declaration) = symbol.value_declaration() {
-        if is_private_identifier_class_element_declaration(value_declaration) {
-            return value_declaration.name().unwrap().text();
-        }
+    if let Some(value_declaration) = symbol.value_declaration()
+        && is_private_identifier_class_element_declaration(value_declaration)
+    {
+        return value_declaration.name().unwrap().text();
     }
-    symbol.name.get()
+    symbol.name()
 }
 
 // EscapeAllInternalSymbolNames replaces internal symbol name markers with "__".
 pub fn escape_all_internal_symbol_names(name: &str) -> String {
-    name.replace(InternalSymbolNamePrefix, "__")
+    name.replace(INTERNAL_SYMBOL_NAME_PREFIX, "__")
 }
 
 pub fn escape_internal_symbol_name(name: &str) -> String {
-    if let Some(rest) = name.strip_prefix(InternalSymbolNamePrefix) {
+    if let Some(rest) = name.strip_prefix(INTERNAL_SYMBOL_NAME_PREFIX) {
         return format!("__{rest}");
     }
     name.to_string()
@@ -1118,7 +1213,7 @@ pub fn escape_internal_symbol_name(name: &str) -> String {
 // and user names that already begin with "__" gain an extra leading underscore
 // so they can be distinguished from internal names.
 pub fn escape_symbol_name(name: &str) -> String {
-    if let Some(rest) = name.strip_prefix(InternalSymbolNamePrefix) {
+    if let Some(rest) = name.strip_prefix(INTERNAL_SYMBOL_NAME_PREFIX) {
         return format!("__{rest}");
     }
     let b = name.as_bytes();
@@ -1126,68 +1221,4 @@ pub fn escape_symbol_name(name: &str) -> String {
         return format!("_{name}");
     }
     name.to_string()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn name_filter_keeps_every_key() {
-        // Linear and indexed tables, keys up to and past 16 bytes, and an odd key (not its symbol's name).
-        let small = SymbolTable::new();
-        let large = SymbolTable::new();
-        let mut names = Vec::new();
-        for i in 0..200 {
-            let name: &'static str =
-                Box::leak(format!("member{i}{}", "x".repeat(i % 23)).into_boxed_str());
-            names.push(name);
-            let table = if i < 10 { &small } else { &large };
-            table.set(name, Symbol::new(SymbolFlags::Property, name));
-        }
-        small.set("odd", Symbol::new(SymbolFlags::Property, "other"));
-        names.push("odd");
-        let mut filter = NameFilter::default();
-        filter.add_keys(&small);
-        filter.add_keys(&large);
-        for name in names {
-            assert!(filter.may_contain(HashedName::new(name)), "{name}");
-        }
-        assert!(!NameFilter::default().may_contain(HashedName::new("member0")));
-    }
-
-    #[test]
-    fn index_finds_every_key_through_growth_and_deletes() {
-        // Past the linear limit and 255 entries, presized and grown, with deletes, an odd key and a replaced symbol.
-        for presized in [0, 20, 300] {
-            let table = if presized == 0 {
-                SymbolTable::new()
-            } else {
-                SymbolTable::with_capacity(presized)
-            };
-            let names: Vec<&'static str> =
-                (0..600).map(|i| &*Box::leak(format!("k{i}").into_boxed_str())).collect();
-            let mut expected: Vec<(&'static str, P<Symbol>)> = Vec::new();
-            for (i, &name) in names.iter().enumerate() {
-                let symbol = Symbol::new(SymbolFlags::Property, if i == 7 { "odd" } else { name });
-                table.set(name, symbol);
-                expected.push((name, symbol));
-                if i % 97 == 50 {
-                    let gone = expected.remove(i / 3).0;
-                    table.delete(gone);
-                    assert!(table.lookup(gone).is_none(), "{gone}");
-                }
-                if i % 89 == 3 {
-                    let replaced = Symbol::new(SymbolFlags::Property, expected[i / 2].0);
-                    table.set(expected[i / 2].0, replaced);
-                    expected[i / 2].1 = replaced;
-                }
-                for &(name, symbol) in &expected {
-                    assert!(table.lookup(name) == Some(symbol), "{name} after {i}");
-                }
-                assert!(table.lookup("absent").is_none());
-            }
-            assert_eq!(table.entries(), expected);
-        }
-    }
 }

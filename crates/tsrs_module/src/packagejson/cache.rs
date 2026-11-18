@@ -1,5 +1,5 @@
 use std::ops::Deref;
-use std::sync::{LazyLock, OnceLock};
+use std::sync::{Arc, LazyLock, OnceLock};
 
 use tsrs_core::P;
 use tsrs_core::collections::{OrderedMap, SyncMap, new_ordered_map_with_size_hint};
@@ -62,14 +62,14 @@ impl PackageJson {
         let types_versions = &self.fields.types_versions;
         if types_versions.type_() == JSONValueType::NotPresent {
             trace(
-                &diagnostics::X_package_json_does_not_have_a_0_field,
+                &diagnostics::X_PACKAGE_JSON_DOES_NOT_HAVE_A_0_FIELD,
                 vec!["typesVersions".to_string()],
             );
             return (VersionPaths::default(), version_traces);
         }
         if types_versions.type_() != JSONValueType::Object {
             trace(
-                &diagnostics::Expected_type_of_0_field_in_package_json_to_be_1_got_2,
+                &diagnostics::EXPECTED_TYPE_OF_0_FIELD_IN_PACKAGE_JSON_TO_BE_1_GOT_2,
                 vec![
                     "typesVersions".to_string(),
                     "object".to_string(),
@@ -80,19 +80,19 @@ impl PackageJson {
         }
 
         trace(
-            &diagnostics::X_package_json_has_a_typesVersions_field_with_version_specific_path_mappings,
+            &diagnostics::X_PACKAGE_JSON_HAS_A_TYPES_VERSIONS_FIELD_WITH_VERSION_SPECIFIC_PATH_MAPPINGS,
             vec!["typesVersions".to_string()],
         );
 
         for (key, value) in types_versions.as_object() {
             let Some(key_range) = semver::try_parse_version_range(key) else {
-                trace(&diagnostics::X_package_json_has_a_typesVersions_entry_0_that_is_not_a_valid_semver_range, vec![key.clone()]);
+                trace(&diagnostics::X_PACKAGE_JSON_HAS_A_TYPES_VERSIONS_ENTRY_0_THAT_IS_NOT_A_VALID_SEMVER_RANGE, vec![key.clone()]);
                 continue;
             };
             if key_range.test(&TYPE_SCRIPT_VERSION) {
                 if value.type_() != JSONValueType::Object {
                     trace(
-                        &diagnostics::Expected_type_of_0_field_in_package_json_to_be_1_got_2,
+                        &diagnostics::EXPECTED_TYPE_OF_0_FIELD_IN_PACKAGE_JSON_TO_BE_1_GOT_2,
                         vec![
                             format!("typesVersions['{}']", key),
                             "object".to_string(),
@@ -121,7 +121,7 @@ impl PackageJson {
         }
 
         trace(
-            &diagnostics::X_package_json_does_not_have_a_typesVersions_entry_that_matches_version_0,
+            &diagnostics::X_PACKAGE_JSON_DOES_NOT_HAVE_A_TYPES_VERSIONS_ENTRY_THAT_MATCHES_VERSION_0,
             vec![tsrs_core::version_major_minor().to_string()],
         );
         (VersionPaths::default(), version_traces)
@@ -132,12 +132,12 @@ impl PackageJson {
 // is done up front here.
 #[derive(Clone, Debug, Default)]
 pub struct VersionPaths {
-    pub version: String,
+    pub(crate) version: String,
     paths: Option<OrderedMap<String, Vec<String>>>,
 }
 
 impl VersionPaths {
-    pub fn exists(&self) -> bool {
+    pub(crate) fn exists(&self) -> bool {
         !self.version.is_empty() && self.paths.is_some()
     }
 
@@ -188,10 +188,6 @@ impl InfoCacheEntry {
     pub fn get_contents(&self) -> Option<P<PackageJson>> {
         self.contents
     }
-
-    pub fn get_directory(&self) -> &'static str {
-        self.package_directory
-    }
 }
 
 // WithPackageDirectory returns an entry whose PackageDirectory matches the
@@ -205,7 +201,10 @@ impl InfoCacheEntry {
 // candidate against PackageDirectory, so we must return a corrected
 // shallow copy when they diverge.
 // See https://github.com/microsoft/TypeScript/pull/50740.
-pub fn with_package_directory(p: P<InfoCacheEntry>, package_directory: &str) -> P<InfoCacheEntry> {
+pub(crate) fn with_package_directory(
+    p: P<InfoCacheEntry>,
+    package_directory: &str,
+) -> P<InfoCacheEntry> {
     if p.package_directory == package_directory {
         return p;
     }
@@ -221,37 +220,43 @@ pub struct InfoCache {
     cache: SyncMap<Path, P<InfoCacheEntry>>,
     current_directory: String,
     use_case_sensitive_file_names: bool,
-    // Memory regions (docs/LSP.md "Memory plan"), not in Go: the address of the cache this one was cloned from,
-    // transitively (0: none). Clones share their entries, so new entries live with the original (`owner_addr`).
-    origin: usize,
+    // Clones copy entry pointers, so they keep the entries' allocation region alive together. The region is entered
+    // only to allocate an entry, never while reading files or waiting for loader jobs on another thread.
+    entries_region: Arc<OnceLock<tsrs_core::arena::Region>>,
 }
 
-pub fn new_info_cache(current_directory: &str, use_case_sensitive_file_names: bool) -> InfoCache {
+pub(crate) fn new_info_cache(
+    current_directory: &str,
+    use_case_sensitive_file_names: bool,
+) -> InfoCache {
     InfoCache {
         cache: SyncMap::default(),
         current_directory: current_directory.to_string(),
         use_case_sensitive_file_names,
-        origin: 0,
+        entries_region: Arc::default(),
     }
 }
 
 impl InfoCache {
-    // The address that decides where a new entry is allocated (`arena::enter_table_owner`): the original cache's. A
-    // program's clones copy their predecessor's entries (`ResolutionData::clone_data`), so an entry added to one of
-    // them must outlive it: entries stay in the region that allocates the original cache (a full build's region,
-    // which every clone keeps; an auto-import update's scratch region) and go to the never-freed thread arena when
-    // added from anywhere else (a clone's construction, a checker, a parse worker).
-    pub fn owner_addr(&self) -> usize {
-        if self.origin != 0 {
-            return self.origin;
+    pub(crate) fn get_or_insert_with(
+        &self,
+        package_json_path: &str,
+        create: impl FnOnce() -> InfoCacheEntry,
+    ) -> P<InfoCacheEntry> {
+        let region = self.entries_region.get_or_init(|| tsrs_core::arena::Region::new(4 << 10));
+        let _scope = region.enter();
+        // The file was read and parsed before taking the region lock. Another worker may have filled the cache;
+        // discard that worker's losing parsed value before allocating it in the arena.
+        if let Some(existing) = self.get(package_json_path) {
+            return existing;
         }
-        std::ptr::from_ref::<InfoCache>(self) as usize
+        self.set(package_json_path, P::new(create()))
     }
 
     #[must_use]
-    pub fn clone_cache(&self) -> InfoCache {
+    pub(crate) fn clone_cache(&self) -> InfoCache {
         let mut clone = new_info_cache(&self.current_directory, self.use_case_sensitive_file_names);
-        clone.origin = self.owner_addr();
+        clone.entries_region = Arc::clone(&self.entries_region);
         self.cache.range(|key, value| {
             clone.cache.store(key.clone(), *value);
             true
@@ -259,16 +264,18 @@ impl InfoCache {
         clone
     }
 
-    pub fn get(&self, package_json_path: &str) -> Option<P<InfoCacheEntry>> {
-        let key = tspath::to_path(
+    pub(crate) fn get(&self, package_json_path: &str) -> Option<P<InfoCacheEntry>> {
+        // The key's text without the `Path` (an `Arc` per lookup; most lookups hit): borrowed from the argument
+        // on a case-sensitive host, the lowercase copy elsewhere.
+        let key = tspath::to_path_cow(
             package_json_path,
             &self.current_directory,
             self.use_case_sensitive_file_names,
         );
-        self.cache.load(&key)
+        self.cache.load::<str>(&key)
     }
 
-    pub fn set(&self, package_json_path: &str, info: P<InfoCacheEntry>) -> P<InfoCacheEntry> {
+    fn set(&self, package_json_path: &str, info: P<InfoCacheEntry>) -> P<InfoCacheEntry> {
         let key = tspath::to_path(
             package_json_path,
             &self.current_directory,
@@ -278,7 +285,7 @@ impl InfoCache {
         actual
     }
 
-    pub fn range(&self, f: impl FnMut(&Path, &P<InfoCacheEntry>) -> bool) {
+    pub(crate) fn range(&self, f: impl FnMut(&Path, &P<InfoCacheEntry>) -> bool) {
         self.cache.range(f);
     }
 }

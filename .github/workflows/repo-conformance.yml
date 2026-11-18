@@ -41,7 +41,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 90
     permissions:
       contents: read
@@ -52,20 +52,20 @@ jobs:
     steps:
       - uses: taiki-e/checkout-action@7d1e50e93dc4fb3bba58f85018fadf77898aee8b # v1.4.2
 
+      - uses: ./.github/actions/setup-node-tools
+
       - name: Check the rerun inputs
         env:
           RUN_ID: ${{ inputs.rerun_run_id }}
           SHARDS: ${{ inputs.rerun_shards }}
-        run: python3 tools/repo-conformance/run.py dispatch --run-id "$RUN_ID" --shards "$SHARDS"
+        run: node tools/repo-conformance/run.mjs dispatch --run-id "$RUN_ID" --shards "$SHARDS"
 
       - name: Check repository isolation
         env:
           TSRS_CONFORMANCE_SANDBOX_IMAGE: tsrs-repo-conformance
         run: |
           docker build --tag tsrs-repo-conformance tools/repo-conformance
-          python3 -m unittest discover -s tools/repo-conformance -p 'test_sandbox.py' -v
-
-      - uses: oxc-project/setup-node@f46a72f95efdc55273fcd042d61c84e723b2892c # v1.4.1
+          node --test tools/repo-conformance/test_sandbox.mjs
 
       - name: Read the earlier run
         if: inputs.rerun_run_id
@@ -76,7 +76,7 @@ jobs:
 
       - name: Read the earlier run's manifest and compilers
         if: inputs.rerun_run_id
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: repo-conformance-inputs
           path: repo-conformance
@@ -89,7 +89,7 @@ jobs:
         env:
           SHARDS: ${{ inputs.rerun_shards }}
         run: |
-          python3 tools/repo-conformance/run.py rerun --manifest repo-conformance/manifest.json --shards "$SHARDS" \
+          node tools/repo-conformance/run.mjs rerun --manifest repo-conformance/manifest.json --shards "$SHARDS" \
             --run "$RUNNER_TEMP/earlier-run.json"
           echo "harness=$(jq -r .tsrs_commit repo-conformance/manifest.json)" >> "$GITHUB_OUTPUT"
 
@@ -99,7 +99,7 @@ jobs:
         run: echo "commit=$(node npm/build.mjs --print-typescript-commit)" >> "$GITHUB_OUTPUT"
 
       - name: Check out pinned TypeScript compiler
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: ${{ !inputs.rerun_run_id }}
         with:
           repository: microsoft/TypeScript
@@ -133,7 +133,7 @@ jobs:
         env:
           TSRS_CONFORMANCE_TSRS: ${{ github.workspace }}/repo-conformance/bin/tsrs
           TSRS_CONFORMANCE_TSGO: ${{ github.workspace }}/repo-conformance/bin/tsgo
-        run: python3 -m unittest discover -s tools/repo-conformance -p 'test_*.py' -v
+        run: node --test tools/repo-conformance/test_*.mjs
 
       - name: Select popular TypeScript repositories
         id: plan
@@ -141,9 +141,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO_COUNT: ${{ github.event_name == 'pull_request' && '20' || inputs.count || '1000' }}
-        run: python3 tools/repo-conformance/run.py plan --count "$REPO_COUNT" --out repo-conformance/manifest.json
+        run: node tools/repo-conformance/run.mjs plan --count "$REPO_COUNT" --out repo-conformance/manifest.json
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: repo-conformance-inputs
           path: repo-conformance/
@@ -152,22 +152,24 @@ jobs:
 
   compare:
     needs: build
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 180
     strategy:
       fail-fast: false
       max-parallel: 8
       matrix: ${{ fromJSON(needs.build.outputs.matrix) }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.build.outputs.harness }}
           persist-credentials: false
 
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: repo-conformance-inputs
           path: repo-conformance
+
+      - uses: ./.github/actions/setup-node-tools
 
       - name: Compare projects
         env:
@@ -175,7 +177,7 @@ jobs:
         run: |
           docker build --tag tsrs-repo-conformance tools/repo-conformance
           chmod +x repo-conformance/bin/tsgo repo-conformance/bin/tsrs
-          python3 tools/repo-conformance/run.py run --manifest repo-conformance/manifest.json \
+          node tools/repo-conformance/run.mjs run --manifest repo-conformance/manifest.json \
             --shard "$SHARD" --tsgo repo-conformance/bin/tsgo --tsrs repo-conformance/bin/tsrs \
             --out repo-conformance/results --cache "$RUNNER_TEMP/repo-conformance-work" \
             --sandbox-image tsrs-repo-conformance
@@ -184,7 +186,7 @@ jobs:
         if: always()
         run: docker ps --all --quiet --filter label=tsrs.repo-conformance | xargs --no-run-if-empty docker rm --force
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: repo-conformance-shard-${{ matrix.shard }}
@@ -195,37 +197,39 @@ jobs:
   report:
     needs: [build, compare]
     if: ${{ !cancelled() && needs.build.result == 'success' }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
       actions: read
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.build.outputs.harness }}
           persist-credentials: false
 
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: repo-conformance-*
           path: repo-conformance-downloads
 
       - name: Read the earlier run's shard results
         if: inputs.rerun_run_id
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: repo-conformance-shard-*
           path: repo-conformance-previous
           run-id: ${{ inputs.rerun_run_id }}
           github-token: ${{ github.token }}
 
+      - uses: ./.github/actions/setup-node-tools
+
       - name: Report compatibility and coverage
         env:
           PREVIOUS: ${{ inputs.rerun_run_id && 'repo-conformance-previous' || '' }}
         run: |
           status=0
-          python3 tools/repo-conformance/run.py report \
+          node tools/repo-conformance/run.mjs report \
             --manifest repo-conformance-downloads/repo-conformance-inputs/manifest.json \
             --results repo-conformance-downloads ${PREVIOUS:+--previous "$PREVIOUS"} \
             --out repo-conformance-report.md || status=$?
@@ -236,7 +240,7 @@ jobs:
           fi
           exit "$status"
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: repo-conformance-report

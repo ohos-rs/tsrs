@@ -30,10 +30,10 @@ pub(crate) static TS_EXTENSION: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"
 // Returns the error baseline text for the given diagnostics (`baseline.NoContent` when there are none), as
 // `DoErrorBaseline` passes it to `baseline.Run`.
 pub fn do_error_baseline(input_files: &[TestFile], errors: &[Diag], pretty: bool) -> String {
-    if !errors.is_empty() {
-        get_error_baseline(input_files, errors, pretty)
-    } else {
+    if errors.is_empty() {
         NO_CONTENT.to_string()
+    } else {
+        get_error_baseline(input_files, errors, pretty)
     }
 }
 
@@ -47,7 +47,11 @@ fn minimal_diagnostics_to_string(diagnostics: &[&Diag], pretty: bool) -> String 
     output
 }
 
-pub fn get_error_baseline(input_files: &[TestFile], diagnostics: &[Diag], pretty: bool) -> String {
+pub(crate) fn get_error_baseline(
+    input_files: &[TestFile],
+    diagnostics: &[Diag],
+    pretty: bool,
+) -> String {
     let mut output_lines = iterate_error_baseline(input_files, diagnostics, pretty);
 
     if pretty {
@@ -309,7 +313,10 @@ fn replace_all(text: &str, pairs: &[(&str, &str)]) -> String {
     out
 }
 
-pub fn remove_test_path_prefixes(text: &str, retain_trailing_directory_separator: bool) -> String {
+pub(crate) fn remove_test_path_prefixes(
+    text: &str,
+    retain_trailing_directory_separator: bool,
+) -> String {
     if retain_trailing_directory_separator {
         return replace_all(text, TEST_PATH_PREFIXES_TRAILING_SEPARATOR);
     }

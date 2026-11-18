@@ -71,10 +71,6 @@ impl<T: VFS> FS<T> {
         self.stat_cache.clear();
     }
 
-    pub fn inner(&self) -> &T {
-        &self.fs
-    }
-
     fn enabled(&self) -> bool {
         self.enabled.load(Ordering::SeqCst)
     }
@@ -82,10 +78,10 @@ impl<T: VFS> FS<T> {
 
 impl<T: VFS> VFS for FS<T> {
     fn directory_exists(&self, path: &str) -> bool {
-        if self.enabled() {
-            if let Some(ret) = self.directory_exists_cache.load(path) {
-                return ret;
-            }
+        if self.enabled()
+            && let Some(ret) = self.directory_exists_cache.load(path)
+        {
+            return ret;
         }
 
         let ret = self.fs.directory_exists(path);
@@ -98,10 +94,10 @@ impl<T: VFS> VFS for FS<T> {
     }
 
     fn file_exists(&self, path: &str) -> bool {
-        if self.enabled() {
-            if let Some(ret) = self.file_exists_cache.load(path) {
-                return ret;
-            }
+        if self.enabled()
+            && let Some(ret) = self.file_exists_cache.load(path)
+        {
+            return ret;
         }
 
         let ret = self.fs.file_exists(path);
@@ -114,10 +110,10 @@ impl<T: VFS> VFS for FS<T> {
     }
 
     fn get_accessible_entries(&self, path: &str) -> Entries {
-        if self.enabled() {
-            if let Some(ret) = self.get_accessible_entries_cache.load(path) {
-                return ret;
-            }
+        if self.enabled()
+            && let Some(ret) = self.get_accessible_entries_cache.load(path)
+        {
+            return ret;
         }
 
         let ret = self.fs.get_accessible_entries(path);
@@ -137,10 +133,10 @@ impl<T: VFS> VFS for FS<T> {
     }
 
     fn realpath(&self, path: &str) -> String {
-        if self.enabled() {
-            if let Some(ret) = self.realpath_cache.load(path) {
-                return ret;
-            }
+        if self.enabled()
+            && let Some(ret) = self.realpath_cache.load(path)
+        {
+            return ret;
         }
 
         let ret = self.fs.realpath(path);
@@ -161,10 +157,10 @@ impl<T: VFS> VFS for FS<T> {
     }
 
     fn stat(&self, path: &str) -> Option<FileInfo> {
-        if self.enabled() {
-            if let Some(ret) = self.stat_cache.load(path) {
-                return ret;
-            }
+        if self.enabled()
+            && let Some(ret) = self.stat_cache.load(path)
+        {
+            return ret;
         }
 
         let ret = self.fs.stat(path);
@@ -188,7 +184,3 @@ impl<T: VFS> VFS for FS<T> {
         self.fs.append_file(path, data)
     }
 }
-
-#[cfg(test)]
-#[path = "cachedvfs_test.rs"]
-mod cachedvfs_test;

@@ -1,4 +1,5 @@
 #[expect(dead_code, reason = "This target uses only part of the shared integration helper module.")]
+#[path = "integration/common/mod.rs"]
 mod common;
 use common::*;
 use std::sync::Arc;
@@ -60,7 +61,7 @@ fn snapshots_and_types_own_their_memory_and_reject_foreign_handles() {
     assert!(
         next.non_nullable_type(&types[0])
             .unwrap_err()
-            .message
+            .to_string()
             .contains("another program")
     );
     let other = compiler(&dir.dir(), Arc::clone(&fs));
@@ -74,7 +75,7 @@ fn snapshots_and_types_own_their_memory_and_reject_foreign_handles() {
                 &FileChanges::default()
             )
             .unwrap_err()
-            .message
+            .to_string()
             .contains("another compiler")
     );
     drop(other);
@@ -115,8 +116,8 @@ fn incremental_kit_changes_preserve_old_snapshots() {
     let fs: Arc<dyn FS> = Arc::new(bundled::wrap_fs(osvfs::fs()));
     let service = compiler(&dir.dir(), Arc::clone(&fs));
     let opts = CompilerOptions {
-        module: tsrs_core::ModuleKind::ESNext,
-        module_resolution: tsrs_core::ModuleResolutionKind::Bundler,
+        module: tsrs_core::ModuleKind::ES_NEXT,
+        module_resolution: tsrs_core::ModuleResolutionKind::BUNDLER,
         ets_loader_path: dir.path("sdk/openharmony/ets/build-tools/ets-loader"),
         oh_sdk_configs: Some(vec![tsrs_core::OhSdkConfig {
             api_paths: vec![dir.path("sdk/api")],
@@ -342,7 +343,7 @@ fn failed_host_request_releases_inputs_and_keeps_the_compiler_usable() {
             &FileChanges::default(),
         )
         .unwrap_err();
-    assert!(error.message.contains("host failure regression"));
+    assert!(error.to_string().contains("host failure regression"));
     assert!(weak.upgrade().is_none());
     assert!(
         old.semantic_diagnostics()
@@ -458,7 +459,7 @@ const shape: Shape = { name: 123 };
             program
                 .arkts_strict_diagnostics(foreign)
                 .unwrap_err()
-                .message
+                .to_string()
                 .contains("another program")
         );
         // Transform-only callers can also release the build pool and keep owned facts.

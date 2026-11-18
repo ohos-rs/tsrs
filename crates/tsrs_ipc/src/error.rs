@@ -37,12 +37,12 @@ impl Error {
     }
 
     // A sentinel error value (Go `io.EOF`, `ipc.ErrConnClosed`, `context.DeadlineExceeded`).
-    pub fn tagged(tag: ErrorTag, message: impl Into<String>) -> Error {
+    pub(crate) fn tagged(tag: ErrorTag, message: impl Into<String>) -> Error {
         Error { message: message.into(), tags: vec![tag] }
     }
 
     // Go `fmt.Errorf(prefix + "%w", err)`.
-    pub fn wrap(prefix: &str, err: Error) -> Error {
+    pub(crate) fn wrap(prefix: &str, err: Error) -> Error {
         Error { message: format!("{prefix}{}", err.message), tags: err.tags }
     }
 
@@ -74,6 +74,6 @@ impl fmt::Display for Error {
 impl std::error::Error for Error {}
 
 // io.EOF.
-pub(crate) fn eof() -> Error {
+pub fn eof() -> Error {
     Error::tagged(ErrorTag::EOF, "EOF")
 }

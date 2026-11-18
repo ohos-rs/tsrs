@@ -15,32 +15,80 @@ Rust hosts can embed `tsrs_api::embedded` directly; Arkdown links these crates i
 
 ```sh
 pnpm add -D tsrs
-pnpm exec tsrs --noEmit
+pnpm exec tsrs --noEmit --fast
 ```
+
+`--fast` enables performance optimizations, including adaptive checker counts and additional caches.
+See [fast mode](#fast-mode) for details.
 
 You can try `tsrs` today and give us feedback on performance, memory usage, and conformance.
 Try checking and emitting code in the [browser playground](https://tsrs-playground.void.app).
 
+<a href="https://github.com/oxc-project/tsrs/blob/main/bench/RESULTS.md">
+  <img alt="tsrs --fast, tsrs and TypeScript 7.1 beta: check time and peak memory by project" src="https://raw.githubusercontent.com/oxc-project/tsrs/main/bench/benchmark.svg">
+</a>
+
 ## Conformance
 
-`tsrs` currently targets the main branch of [microsoft/TypeScript](https://github.com/microsoft/typescript).
-We aim to release a stable version against TypeScript 7.1 with 100% conformance. In our testing on existing projects,
-we have yet to find a correctness bug in `tsrs`.
-
-There are known order issues: the pinned Go compiler can produce different diagnostics and traces depending on
-parallel parse, resolution, and check order, while `tsrs` canonicalizes some checker history by default. For the
-closest comparison, use `--checkerAssignment go --noLazyMembers`; tsgo parser and resolver races can still vary
-between runs.
-
-`--init` and `--showConfig` are not supported. See [compatibility and evidence](https://github.com/oxc-project/tsrs/blob/main/docs/COMPATIBILITY.md)
+We aim to release a stable version against TypeScript 7.1 with 100% conformance.
+See [compatibility and evidence](https://github.com/oxc-project/tsrs/blob/main/docs/COMPATIBILITY.md)
 for supported features and known gaps.
 
-<a href="https://github.com/oxc-project/tsrs/blob/main/bench/RESULTS.md">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/oxc-project/tsrs/main/bench/large-projects-dark.svg">
-    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/oxc-project/tsrs/main/bench/large-projects.svg">
-    <img alt="tsrs vs the TypeScript nightly: times faster against times less peak memory on seven projects at 1, 2, 4 and 8 parallel checker threads" src="https://raw.githubusercontent.com/oxc-project/tsrs/main/bench/large-projects.svg">
-  </picture>
+Default mode preserves the pinned TypeScript compiler's checker behavior, including known diagnostic differences
+when checker count or file order changes. This sensitivity is inherited from TypeScript itself. See
+[differences from pinned TypeScript](https://github.com/oxc-project/tsrs/blob/main/docs/DEFAULTS.md) for the remaining
+runtime differences and unsupported features.
+
+## Versioning
+
+Versions identify the supported TypeScript release and an unpadded tsrs revision. For TypeScript `7.1.0-beta`,
+`7.1.0-beta.tsrs1` is the first tsrs release and `7.1.0-beta.tsrs2` is the next fix. Stable TypeScript `7.1.0`
+uses `7.1.0-tsrs1`.
+
+SemVer compares `tsrsN` as text, so `tsrs10` sorts before `tsrs9`; further sequential revisions require a new
+TypeScript version. These versions are tsrs prereleases, including those targeting stable TypeScript, and publish
+to npm's `next` tag (`pnpm add -D tsrs@next`). The compiler's TypeScript
+compatibility version and exact source commit remain available separately in `tsrs --version` and npm metadata.
+See [versioning and releases](https://github.com/oxc-project/tsrs/blob/main/docs/RELEASING_CRATES.md#versioning)
+for nightly versions and release ordering.
+
+## Fast mode
+
+The following defaults and opt-in preset are available in **0.20.0** and later.
+
+By default, tsrs follows the pinned TypeScript compiler's checker settings: four checkers (capped by file count),
+Go's file assignment and checker history. Enable the fast preset with `--fast` or
+`TSRS_FAST=1`:
+
+```sh
+pnpm exec tsrs --noEmit --fast
+# Or enable the same preset through the environment:
+TSRS_FAST=1 pnpm exec tsrs --noEmit
+```
+
+Fast mode adapts checker counts to the machine and project, groups related work together, and enables additional
+caches and memory optimizations. It keeps `strict`, `skipLibCheck`, `noCheck` and other checking options as configured.
+
+See [performance options](https://github.com/oxc-project/tsrs/blob/main/docs/USAGE.md#performance-options)
+for configuration, behavior and incremental-cache details.
+
+## Type-aware lint
+
+`tsrs-lint` can replace tsgolint as the backend for [Oxlint](https://oxc.rs)'s type-aware rules. With `--type-check`,
+the same run also reports the type errors of the files Oxlint lints, as tsgolint does. Available in tsrs **0.23.0** and
+later. Oxlint **1.92.0** and later finds `tsrs-lint` when `tsrs` is installed and uses it in place of oxlint-tsgolint:
+
+```sh
+pnpm add -D oxlint tsrs
+TSRS_FAST=1 pnpm exec oxlint --type-aware --type-check
+```
+
+Files Oxlint does not lint are not type-checked, so keep a separate `tsrs --noEmit` run to check whole tsconfig
+programs. See [type checking in the lint run](https://github.com/oxc-project/tsrs/blob/main/tools/tsgolint/README.md#type-checking-in-the-lint-run).
+The chart below was measured with tsrs 0.24.0, when `--type-check` checked whole tsconfig programs.
+
+<a href="https://github.com/oxc-project/tsrs/blob/main/bench/lint-typecheck/RESULTS.md">
+  <img alt="Type-aware lint plus type check on 8 cores: wall time, CPU time and peak memory of one Oxlint run with tsrs, Oxlint with tsrs plus a separate tsrs check, Oxlint with tsgolint plus tsgo, and ESLint with typescript-eslint plus tsc" src="https://raw.githubusercontent.com/oxc-project/tsrs/main/bench/lint-typecheck/chart.svg">
 </a>
 
 ## ArkTS / OpenHarmony support
@@ -73,7 +121,7 @@ targeting `wasm32-wasip1` (WASI Preview 1).
 
 - [CLI usage and memory tuning](https://github.com/oxc-project/tsrs/blob/main/docs/USAGE.md)
 - [Editor setup](https://github.com/oxc-project/tsrs/blob/main/docs/LSP.md#editor-setup)
-- [Node API (unstable)](https://github.com/oxc-project/tsrs/blob/main/docs/NODE_API.md)
+- [Node API](https://github.com/oxc-project/tsrs/blob/main/docs/NODE_API.md)
 - [WebAssembly for Node and browsers](https://github.com/oxc-project/tsrs/blob/main/npm/tsrs-wasm/README.md)
 - [Benchmarks and methodology](https://github.com/oxc-project/tsrs/blob/main/bench/README.md)
 - [Release notes](https://github.com/oxc-project/tsrs/blob/main/docs/STATUS.md)

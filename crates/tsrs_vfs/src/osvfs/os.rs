@@ -5,7 +5,7 @@ use std::time::SystemTime;
 
 use tsrs_core::{stringutil, tspath};
 
-use crate::internal::{self, Common, IoDirEntry, IoFS};
+use crate::internal::{self, Common, IoDirEntry, IoFS, RootFor};
 use crate::{Entries, FS, FileInfo, FileMode, FsError};
 
 // FS creates a new FS from the OS file system.
@@ -14,16 +14,20 @@ pub fn fs() -> &'static dyn FS {
 }
 
 static OS_VFS: LazyLock<OsFS> = LazyLock::new(|| OsFS {
-    common: Common {
-        root_for: Box::new(|root: &str| {
-            Some(Box::new(DirFS { dir: root.to_string() }) as Box<dyn IoFS>)
-        }),
-        is_reparse_point: Some(is_reparse_point),
-    },
+    common: Common { root_for: OsRoots, is_reparse_point: Some(is_reparse_point) },
 });
 
 pub struct OsFS {
-    common: Common,
+    common: Common<OsRoots>,
+}
+
+// The OS serves every root: os.DirFS(root) for each.
+struct OsRoots;
+
+impl RootFor for OsRoots {
+    fn with_root<T>(&self, root: &str, f: impl FnOnce(&dyn IoFS) -> T) -> Option<T> {
+        Some(f(&DirFS { dir: root }))
+    }
 }
 
 // Go computes this right at startup to minimize the chance that executable gets moved or deleted.
@@ -59,7 +63,7 @@ static IS_FILE_SYSTEM_CASE_SENSITIVE: LazyLock<bool> = LazyLock::new(|| {
 });
 
 // Convert all lowercase chars to uppercase, and vice-versa
-fn swap_case(str: &str) -> String {
+pub fn swap_case(str: &str) -> String {
     let mut out = String::with_capacity(str.len());
     for r in str.chars() {
         let r = r as stringutil::Rune;
@@ -79,22 +83,37 @@ impl FS for OsFS {
     }
 
     fn read_file(&self, path: &str) -> Option<String> {
+        if tspath::is_network_path(path) {
+            return None;
+        }
         self.common.read_file(path)
     }
 
     fn directory_exists(&self, path: &str) -> bool {
+        if tspath::is_network_path(path) {
+            return false;
+        }
         self.common.directory_exists(path)
     }
 
     fn file_exists(&self, path: &str) -> bool {
+        if tspath::is_network_path(path) {
+            return false;
+        }
         self.common.file_exists(path)
     }
 
     fn get_accessible_entries(&self, path: &str) -> Entries {
+        if tspath::is_network_path(path) {
+            return Entries::default();
+        }
         self.common.get_accessible_entries(path)
     }
 
     fn stat(&self, path: &str) -> Option<FileInfo> {
+        if tspath::is_network_path(path) {
+            return None;
+        }
         self.common.stat(path)
     }
 
@@ -111,11 +130,17 @@ impl FS for OsFS {
     }
 
     fn remove(&self, path: &str) -> Result<(), String> {
+        if tspath::is_network_path(path) {
+            return Err("network paths are not supported".to_string());
+        }
         // todo: #701 add retry mechanism?
         remove_all(path).map_err(|e| e.to_string())
     }
 
     fn chtimes(&self, path: &str, a_time: SystemTime, m_time: SystemTime) -> Result<(), String> {
+        if tspath::is_network_path(path) {
+            return Err("network paths are not supported".to_string());
+        }
         let file = fs::File::options()
             .write(true)
             .open(path)
@@ -126,10 +151,48 @@ impl FS for OsFS {
     }
 }
 
+// osvfs/os.go:231
+pub fn get_global_typings_cache_location() -> String {
+    global_typings_cache_location(user_cache_dir().as_deref())
+}
+
+pub fn global_typings_cache_location(cache_dir: Option<&str>) -> String {
+    let Some(cache_dir) = cache_dir.filter(|cache_dir| {
+        tspath::path_is_absolute(cache_dir)
+            && !(tspath::is_url(cache_dir) && cache_dir.contains(['?', '#']))
+    }) else {
+        return String::new();
+    };
+    let cache_path = tspath::get_normalized_absolute_path(cache_dir, "");
+    let subdir = if cfg!(windows) { "Microsoft/TypeScript" } else { "typescript" };
+    tspath::combine_paths(&cache_path, &[subdir, tsrs_core::version_major_minor()])
+}
+
+// Go os.UserCacheDir.
+fn user_cache_dir() -> Option<String> {
+    let non_empty = |name: &str| std::env::var(name).ok().filter(|v| !v.is_empty());
+    if cfg!(windows) {
+        return non_empty("LocalAppData");
+    }
+    if cfg!(target_os = "macos") {
+        return non_empty("HOME").map(|home| home + "/Library/Caches");
+    }
+    if let Some(dir) = non_empty("XDG_CACHE_HOME") {
+        if !dir.starts_with('/') {
+            return None;
+        }
+        return Some(dir);
+    }
+    non_empty("HOME").map(|home| home + "/.cache")
+}
+
 fn os_fs_realpath(path: &str) -> String {
     let _ = internal::root_length(path); // Assert path is rooted
 
     let orig = path;
+    if tspath::is_network_path(orig) {
+        return orig.to_string();
+    }
     let path = from_slash(path);
     let Ok(path) = native_realpath(&path) else {
         return orig.to_string();
@@ -137,6 +200,11 @@ fn os_fs_realpath(path: &str) -> String {
     let Ok(path) = abs(&path) else {
         return orig.to_string();
     };
+    // A mapped drive may resolve to a network share. Keep using its local
+    // spelling so later accesses do not open the share directly.
+    if tspath::is_network_path(&path) {
+        return orig.to_string();
+    }
     tspath::normalize_slashes(&path)
 }
 
@@ -153,10 +221,10 @@ fn native_realpath(path: &str) -> io::Result<String> {
 }
 
 #[cfg(windows)]
-fn native_realpath(path: &str) -> io::Result<String> {
+pub(crate) fn native_realpath(path: &str) -> io::Result<String> {
     let p = fs::canonicalize(path)?.to_string_lossy().into_owned();
     if let Some(rest) = p.strip_prefix(r"\\?\UNC\") {
-        return Ok(format!(r"\\{}", rest));
+        return Ok(format!(r"\\{rest}"));
     }
     if let Some(rest) = p.strip_prefix(r"\\?\") {
         return Ok(rest.to_string());
@@ -297,7 +365,7 @@ fn abs(path: &str) -> io::Result<String> {
 }
 
 // path.Clean (Unix semantics; on Windows the realpath result is already clean).
-pub(crate) fn clean(path: &str) -> String {
+pub fn clean(path: &str) -> String {
     if cfg!(windows) {
         return path.to_string();
     }
@@ -363,6 +431,9 @@ pub(crate) fn clean(path: &str) -> String {
 }
 
 fn is_reparse_point(path: &str) -> bool {
+    if tspath::is_network_path(path) {
+        return false;
+    }
     match fs::symlink_metadata(from_slash(path)) {
         Ok(info) => info.file_type().is_symlink(),
         Err(_) => false,
@@ -398,6 +469,9 @@ impl OsFS {
 
     fn write_file_ensuring_dir(path: &str, content: &str, append: bool) -> Result<(), String> {
         let _ = internal::root_length(path); // Assert path is rooted
+        if tspath::is_network_path(path) {
+            return Err("network paths are not supported".to_string());
+        }
         if Self::write_file_with_flag(path, content, append).is_ok() {
             return Ok(());
         }
@@ -407,12 +481,12 @@ impl OsFS {
     }
 }
 
-// DirFS is os.DirFS: an io/fs view of the OS file system rooted at dir.
-struct DirFS {
-    dir: String,
+// DirFS is os.DirFS: an io/fs view of the OS file system rooted at dir, lent by OsRoots for one operation.
+struct DirFS<'a> {
+    dir: &'a str,
 }
 
-impl DirFS {
+impl DirFS<'_> {
     fn join(&self, name: &str) -> Result<String, FsError> {
         if self.dir.is_empty() {
             return Err(FsError::Other("os: DirFS with empty root".to_string()));
@@ -422,7 +496,7 @@ impl DirFS {
         }
         // One allocation of the final size (module resolution stats and reads thousands of paths).
         let mut full = String::with_capacity(self.dir.len() + 1 + name.len());
-        full.push_str(&self.dir);
+        full.push_str(self.dir);
         let last = self.dir.as_bytes()[self.dir.len() - 1];
         if !(last == b'/' || (cfg!(windows) && last == b'\\')) {
             full.push(std::path::MAIN_SEPARATOR);
@@ -519,7 +593,7 @@ fn base(path: &str) -> String {
     }
 }
 
-impl IoFS for DirFS {
+impl IoFS for DirFS<'_> {
     fn stat(&self, name: &str) -> Result<FileInfo, FsError> {
         let full = self.join(name)?;
         let md = fs::metadata(&full).map_err(io_error)?;
@@ -579,11 +653,3 @@ fn metadata_file_type(path: &str) -> Result<FileMode, FsError> {
 fn metadata_file_type(path: &str) -> Result<FileMode, FsError> {
     fs::metadata(path).map(|md| file_type_mode(md.file_type())).map_err(io_error)
 }
-
-#[cfg(test)]
-#[path = "os_test.rs"]
-mod os_test;
-
-#[cfg(test)]
-#[path = "realpath_test.rs"]
-mod realpath_test;

@@ -163,16 +163,15 @@ pub(crate) fn get_recommended_completion(
     if let Some(result) = types.into_iter().find_map(|t| {
         let symbol = t.symbol();
         // Don't make a recommended completion for an abstract class.
-        if let Some(symbol) = symbol {
-            if symbol
+        if let Some(symbol) = symbol
+            && symbol
                 .flags()
                 .intersects(SymbolFlags::EnumMember | SymbolFlags::Enum | SymbolFlags::Class)
-                && !is_abstract_constructor_symbol(symbol)
-            {
-                let result = get_first_symbol_in_chain(symbol, Some(previous_token), type_checker);
-                if result.is_some() {
-                    return Some(result);
-                }
+            && !is_abstract_constructor_symbol(symbol)
+        {
+            let result = get_first_symbol_in_chain(symbol, Some(previous_token), type_checker);
+            if result.is_some() {
+                return Some(result);
             }
         }
 
@@ -434,54 +433,54 @@ pub(crate) fn generate_identifier_for_arbitrary_string(text: &str) -> String {
 
 // Copied from vscode TS extension.
 // completions.go:3782
-pub(crate) fn get_completions_symbol_kind(kind: ScriptElementKind) -> lsproto::CompletionItemKind {
+fn get_completions_symbol_kind(kind: ScriptElementKind) -> lsproto::CompletionItemKind {
     match kind {
         ScriptElementKind::PrimitiveType | ScriptElementKind::Keyword => {
-            lsproto::CompletionItemKind::Keyword
+            lsproto::CompletionItemKind::KEYWORD
         }
         ScriptElementKind::ConstElement
         | ScriptElementKind::LetElement
         | ScriptElementKind::VariableElement
         | ScriptElementKind::LocalVariableElement
         | ScriptElementKind::Alias
-        | ScriptElementKind::ParameterElement => lsproto::CompletionItemKind::Variable,
+        | ScriptElementKind::ParameterElement => lsproto::CompletionItemKind::VARIABLE,
 
         ScriptElementKind::MemberVariableElement
         | ScriptElementKind::MemberGetAccessorElement
-        | ScriptElementKind::MemberSetAccessorElement => lsproto::CompletionItemKind::Field,
+        | ScriptElementKind::MemberSetAccessorElement => lsproto::CompletionItemKind::FIELD,
 
         ScriptElementKind::FunctionElement | ScriptElementKind::LocalFunctionElement => {
-            lsproto::CompletionItemKind::Function
+            lsproto::CompletionItemKind::FUNCTION
         }
 
         ScriptElementKind::MemberFunctionElement
         | ScriptElementKind::ConstructSignatureElement
         | ScriptElementKind::CallSignatureElement
-        | ScriptElementKind::IndexSignatureElement => lsproto::CompletionItemKind::Method,
+        | ScriptElementKind::IndexSignatureElement => lsproto::CompletionItemKind::METHOD,
 
-        ScriptElementKind::EnumElement => lsproto::CompletionItemKind::Enum,
+        ScriptElementKind::EnumElement => lsproto::CompletionItemKind::ENUM,
 
-        ScriptElementKind::EnumMemberElement => lsproto::CompletionItemKind::EnumMember,
+        ScriptElementKind::EnumMemberElement => lsproto::CompletionItemKind::ENUM_MEMBER,
 
         ScriptElementKind::ModuleElement | ScriptElementKind::ExternalModuleName => {
-            lsproto::CompletionItemKind::Module
+            lsproto::CompletionItemKind::MODULE
         }
 
         ScriptElementKind::ClassElement | ScriptElementKind::TypeElement => {
-            lsproto::CompletionItemKind::Class
+            lsproto::CompletionItemKind::CLASS
         }
 
-        ScriptElementKind::InterfaceElement => lsproto::CompletionItemKind::Interface,
+        ScriptElementKind::InterfaceElement => lsproto::CompletionItemKind::INTERFACE,
 
-        ScriptElementKind::Warning => lsproto::CompletionItemKind::Text,
+        ScriptElementKind::Warning => lsproto::CompletionItemKind::TEXT,
 
-        ScriptElementKind::ScriptElement => lsproto::CompletionItemKind::File,
+        ScriptElementKind::ScriptElement => lsproto::CompletionItemKind::FILE,
 
-        ScriptElementKind::Directory => lsproto::CompletionItemKind::Folder,
+        ScriptElementKind::Directory => lsproto::CompletionItemKind::FOLDER,
 
-        ScriptElementKind::String => lsproto::CompletionItemKind::Constant,
+        ScriptElementKind::String => lsproto::CompletionItemKind::CONSTANT,
 
-        _ => lsproto::CompletionItemKind::Property,
+        _ => lsproto::CompletionItemKind::PROPERTY,
     }
 }
 
@@ -514,12 +513,13 @@ fn keyword_completions_cache() -> &'static Mutex<FxHashMap<u32, Vec<lsproto::Com
 pub(crate) fn all_keyword_completions() -> &'static [lsproto::CompletionItem] {
     static ALL_KEYWORD_COMPLETIONS: OnceLock<Vec<lsproto::CompletionItem>> = OnceLock::new();
     ALL_KEYWORD_COMPLETIONS.get_or_init(|| {
-        let mut result =
-            Vec::with_capacity((Kind::LastKeyword as i16 - Kind::FirstKeyword as i16 + 1) as usize);
-        result.extend((Kind::FirstKeyword as i16..=Kind::LastKeyword as i16).map(|i| {
+        let mut result = Vec::with_capacity(
+            (Kind::LAST_KEYWORD as i16 - Kind::FIRST_KEYWORD as i16 + 1) as usize,
+        );
+        result.extend((Kind::FIRST_KEYWORD as i16..=Kind::LAST_KEYWORD as i16).map(|i| {
             lsproto::CompletionItem {
                 label: scanner::token_to_string(Kind::from_i16(i)).to_string(),
-                kind: Some(lsproto::CompletionItemKind::Keyword),
+                kind: Some(lsproto::CompletionItemKind::KEYWORD),
                 sort_text: Some(SORT_TEXT_GLOBALS_OR_KEYWORDS.to_string()),
                 ..Default::default()
             }
@@ -542,7 +542,7 @@ pub(crate) fn get_keyword_completions(
         return clone_items(&get_typescript_keyword_completions(keyword_filter));
     }
 
-    let index = keyword_filter as u32 + KeywordCompletionFilters::Last as u32 + 1;
+    let index = keyword_filter as u32 + KeywordCompletionFilters::LAST as u32 + 1;
     if let Some(cached) = keyword_completions_cache().lock().unwrap().get(&index) {
         return clone_items(cached);
     }
@@ -650,7 +650,7 @@ fn is_function_like_body_keyword(kind: Kind) -> bool {
 }
 
 // completions.go:3977
-pub(crate) fn is_class_member_completion_keyword(kind: Kind) -> bool {
+fn is_class_member_completion_keyword(kind: Kind) -> bool {
     match kind {
         Kind::AbstractKeyword
         | Kind::AccessorKeyword
@@ -709,7 +709,7 @@ pub(crate) fn get_contextual_keywords(
         {
             entries.push(lsproto::CompletionItem {
                 label: scanner::token_to_string(Kind::AssertKeyword).to_string(),
-                kind: Some(lsproto::CompletionItemKind::Keyword),
+                kind: Some(lsproto::CompletionItemKind::KEYWORD),
                 sort_text: Some(SORT_TEXT_GLOBALS_OR_KEYWORDS.to_string()),
                 ..Default::default()
             });
@@ -739,7 +739,7 @@ impl LanguageService {
                 unique_names.insert(name.to_string());
                 Some(CompletionItem::new(lsproto::CompletionItem {
                     label: name.to_string(),
-                    kind: Some(lsproto::CompletionItemKind::Text),
+                    kind: Some(lsproto::CompletionItemKind::TEXT),
                     sort_text: Some(SORT_TEXT_JAVASCRIPT_IDENTIFIERS.to_string()),
                     commit_characters: Some(Vec::new()),
                     ..Default::default()
@@ -758,17 +758,17 @@ impl LanguageService {
         file: P<SourceFile>,
     ) -> Option<lsproto::Range> {
         // StringLiteralLike locations are handled separately in stringCompletions.ts
-        if let Some(location) = location {
-            if location.kind() == Kind::Identifier || location.kind() == Kind::PrivateIdentifier {
-                let start = astnav::get_start_of_node(location, file, false /*includeJSDoc*/);
-                let (lsp_range, fidelity) = self.create_lsp_range_from_bounds(
-                    start,
-                    location.end().expect_source("parsed names have source positions"),
-                    file,
-                );
-                if fidelity.is_exact() {
-                    return Some(lsp_range);
-                }
+        if let Some(location) = location
+            && (location.kind() == Kind::Identifier || location.kind() == Kind::PrivateIdentifier)
+        {
+            let start = astnav::get_start_of_node(location, file, false /*includeJSDoc*/);
+            let (lsp_range, fidelity) = self.create_lsp_range_from_bounds(
+                start,
+                location.end().expect_source("parsed names have source positions"),
+                file,
+            );
+            if fidelity.is_exact() {
+                return Some(lsp_range);
             }
         }
         None
@@ -993,35 +993,32 @@ pub(crate) fn is_probably_global_type(
         SymbolFlags::Value,
         None, /*diagnostic*/
     );
-    if let Some(self_symbol) = self_symbol {
-        if type_checker.get_type_of_symbol_at_location(self_symbol, Some(file.as_node())) == Some(t)
-        {
-            return true;
-        }
+    if let Some(self_symbol) = self_symbol
+        && type_checker.get_type_of_symbol_at_location(self_symbol, Some(file.as_node())) == Some(t)
+    {
+        return true;
     }
     let global_symbol = type_checker.get_global_symbol_exported(
         "global",
         SymbolFlags::Value,
         None, /*diagnostic*/
     );
-    if let Some(global_symbol) = global_symbol {
-        if type_checker.get_type_of_symbol_at_location(global_symbol, Some(file.as_node()))
+    if let Some(global_symbol) = global_symbol
+        && type_checker.get_type_of_symbol_at_location(global_symbol, Some(file.as_node()))
             == Some(t)
-        {
-            return true;
-        }
+    {
+        return true;
     }
     let global_this_symbol = type_checker.get_global_symbol_exported(
         "globalThis",
         SymbolFlags::Value,
         None, /*diagnostic*/
     );
-    if let Some(global_this_symbol) = global_this_symbol {
-        if type_checker.get_type_of_symbol_at_location(global_this_symbol, Some(file.as_node()))
+    if let Some(global_this_symbol) = global_this_symbol
+        && type_checker.get_type_of_symbol_at_location(global_this_symbol, Some(file.as_node()))
             == Some(t)
-        {
-            return true;
-        }
+    {
+        return true;
     }
     false
 }
@@ -1143,12 +1140,11 @@ pub(crate) fn try_get_object_like_completion_container(
                 return parent.parent();
             }
             let ancestor_node = ast::find_ancestor(parent, ast::is_property_assignment);
-            if let Some(ancestor_node) = ancestor_node {
-                if lsutil::get_last_token(Some(ancestor_node), file) == Some(context_token)
-                    && ast::is_object_literal_expression(ancestor_node.parent().unwrap())
-                {
-                    return ancestor_node.parent();
-                }
+            if let Some(ancestor_node) = ancestor_node
+                && lsutil::get_last_token(Some(ancestor_node), file) == Some(context_token)
+                && ast::is_object_literal_expression(ancestor_node.parent().unwrap())
+            {
+                return ancestor_node.parent();
             }
         }
         _ => {
@@ -1166,14 +1162,12 @@ pub(crate) fn try_get_object_like_completion_container(
                 return parent.parent();
             }
             let ancestor_node = ast::find_ancestor(parent, ast::is_property_assignment);
-            if context_token.kind() != Kind::ColonToken {
-                if let Some(ancestor_node) = ancestor_node {
-                    if lsutil::get_last_token(Some(ancestor_node), file) == Some(context_token)
-                        && ast::is_object_literal_expression(ancestor_node.parent().unwrap())
-                    {
-                        return ancestor_node.parent();
-                    }
-                }
+            if context_token.kind() != Kind::ColonToken
+                && let Some(ancestor_node) = ancestor_node
+                && lsutil::get_last_token(Some(ancestor_node), file) == Some(context_token)
+                && ast::is_object_literal_expression(ancestor_node.parent().unwrap())
+            {
+                return ancestor_node.parent();
             }
         }
     }
@@ -1277,7 +1271,7 @@ fn get_apparent_properties(
                 let apparent = type_checker.get_apparent_properties(member_type);
                 contains_non_public_properties(&apparent)
             };
-        if !excluded { Some(member_type) } else { None }
+        if excluded { None } else { Some(member_type) }
     }));
     type_checker.get_all_possible_properties_of_types(&filtered)
 }
@@ -1342,10 +1336,10 @@ pub(crate) fn filter_object_members_list(
             // NOTE: if one only performs this step when m.name is an identifier,
             // things like '__proto__' are not filtered out.
             let name = ast::get_name_of_declaration(member);
-            if let Some(name) = name {
-                if ast::is_property_name_literal(name) {
-                    existing_name = name.text().to_string();
-                }
+            if let Some(name) = name
+                && ast::is_property_name_literal(name)
+            {
+                existing_name = name.text().to_string();
             }
         }
 
@@ -1382,10 +1376,10 @@ fn set_member_declared_by_spread_assignment(
         t = type_checker.get_type_of_symbol_at_location(symbol, Some(expression));
     }
     let mut properties: &[P<Symbol>] = &[];
-    if let Some(t) = t {
-        if t.flags().intersects(TypeFlags::StructuredType) {
-            properties = t.as_structured_type().properties();
-        }
+    if let Some(t) = t
+        && t.flags().intersects(TypeFlags::StructuredType)
+    {
+        properties = t.as_structured_type().properties();
     }
     members.extend(properties.iter().map(|property| property.name().to_string()));
 }
@@ -1548,7 +1542,7 @@ pub(crate) fn try_get_object_type_declaration_completion_container(
 }
 
 // completions.go:4692
-pub(crate) fn is_from_object_type_declaration(node: P<Node>) -> bool {
+fn is_from_object_type_declaration(node: P<Node>) -> bool {
     node.parent().is_some_and(|parent| {
         ast::is_class_or_type_element(parent)
             && ast::is_object_type_declaration(parent.parent().unwrap())
@@ -1592,7 +1586,7 @@ pub(crate) fn filter_class_members_list(
         }
 
         let existing_name = ast::get_property_name_for_property_name_node(member.name().unwrap());
-        if !existing_name.is_empty() { Some(existing_name.into_owned()) } else { None }
+        if existing_name.is_empty() { None } else { Some(existing_name.into_owned()) }
     }));
 
     base_symbols
@@ -1666,15 +1660,15 @@ pub(crate) fn try_get_containing_jsx_element(
         // its parent is a JsxExpression, whose parent is a JsxAttribute,
         // whose parent is a JsxOpeningLikeElement
         Kind::StringLiteral => {
-            if let Some(parent) = parent {
-                if parent.kind() == Kind::JsxAttribute || parent.kind() == Kind::JsxSpreadAttribute
-                {
-                    // Currently we parse JsxOpeningLikeElement as:
-                    //      JsxOpeningLikeElement
-                    //          attributes: JsxAttributes
-                    //             properties: NodeArray<JsxAttributeLike>
-                    return parent.parent().unwrap().parent();
-                }
+            if let Some(parent) = parent
+                && (parent.kind() == Kind::JsxAttribute
+                    || parent.kind() == Kind::JsxSpreadAttribute)
+            {
+                // Currently we parse JsxOpeningLikeElement as:
+                //      JsxOpeningLikeElement
+                //          attributes: JsxAttributes
+                //             properties: NodeArray<JsxAttributeLike>
+                return parent.parent().unwrap().parent();
             }
         }
         Kind::CloseBraceToken => {
@@ -2016,7 +2010,7 @@ impl LanguageService {
             name += "?";
         }
         if kind_modifiers.intersects(ScriptElementKindModifier::Deprecated) {
-            tags = Some(vec![lsproto::CompletionItemTag::Deprecated]);
+            tags = Some(vec![lsproto::CompletionItemTag::DEPRECATED]);
         }
 
         if has_action && !source.is_empty() {
@@ -2026,7 +2020,7 @@ impl LanguageService {
         // Client assumes plain text by default.
         let mut insert_text_format: Option<lsproto::InsertTextFormat> = None;
         if is_snippet {
-            insert_text_format = Some(lsproto::InsertTextFormat::Snippet);
+            insert_text_format = Some(lsproto::InsertTextFormat::SNIPPET);
         }
 
         lsproto::CompletionItem {
@@ -2186,9 +2180,9 @@ fn is_solely_identifier_definition_location(
                 // var C = class D<T, |
                 || (ast::is_class_like(parent) && parent.type_parameter_list().is_some() && parent.type_parameter_list().unwrap().end() >= context_token.pos());
         }
-        Kind::DotToken => return containing_node_kind == Kind::ArrayBindingPattern, // var [.|
+        Kind::DotToken // var [.|
+        | Kind::OpenBracketToken => return containing_node_kind == Kind::ArrayBindingPattern, // var [x|
         Kind::ColonToken => return containing_node_kind == Kind::BindingElement,    // var {x :html|
-        Kind::OpenBracketToken => return containing_node_kind == Kind::ArrayBindingPattern, // var [x|
         Kind::OpenParenToken => {
             return containing_node_kind == Kind::CatchClause
                 || is_function_like_but_not_constructor(containing_node_kind);
@@ -2403,30 +2397,30 @@ fn is_in_jsx_text(context_token: P<Node>, location: P<Node>) -> bool {
         return true;
     }
 
-    if context_token.kind() == Kind::GreaterThanToken {
-        if let Some(ct_parent) = context_token.parent() {
-            // <Component<string> /**/ />
-            // <Component<string> /**/ ><Component>
+    if context_token.kind() == Kind::GreaterThanToken
+        && let Some(ct_parent) = context_token.parent()
+    {
+        // <Component<string> /**/ />
+        // <Component<string> /**/ ><Component>
+        // - contextToken: GreaterThanToken (before cursor)
+        // - location: JsxSelfClosingElement or JsxOpeningElement
+        // - contextToken.parent === location
+        if location == ct_parent && ast::is_jsx_opening_like_element(location) {
+            return false;
+        }
+
+        if ct_parent.kind() == Kind::JsxOpeningElement {
+            // <div>/**/
             // - contextToken: GreaterThanToken (before cursor)
-            // - location: JsxSelfClosingElement or JsxOpeningElement
-            // - contextToken.parent === location
-            if location == ct_parent && ast::is_jsx_opening_like_element(location) {
-                return false;
-            }
+            // - location: JSXElement
+            // - different parents (JSXOpeningElement, JSXElement)
+            return location.parent().unwrap().kind() != Kind::JsxOpeningElement;
+        }
 
-            if ct_parent.kind() == Kind::JsxOpeningElement {
-                // <div>/**/
-                // - contextToken: GreaterThanToken (before cursor)
-                // - location: JSXElement
-                // - different parents (JSXOpeningElement, JSXElement)
-                return location.parent().unwrap().kind() != Kind::JsxOpeningElement;
-            }
-
-            if ct_parent.kind() == Kind::JsxClosingElement
-                || ct_parent.kind() == Kind::JsxSelfClosingElement
-            {
-                return ct_parent.parent().is_some_and(|p| p.kind() == Kind::JsxElement);
-            }
+        if ct_parent.kind() == Kind::JsxClosingElement
+            || ct_parent.kind() == Kind::JsxSelfClosingElement
+        {
+            return ct_parent.parent().is_some_and(|p| p.kind() == Kind::JsxElement);
         }
     }
 
@@ -2477,7 +2471,7 @@ pub(crate) fn client_supports_default_commit_characters(ctx: &Context) -> bool {
 }
 
 // completions.go:5443
-pub(crate) fn client_supports_default_edit_range(ctx: &Context) -> bool {
+fn client_supports_default_edit_range(ctx: &Context) -> bool {
     lsproto::get_client_capabilities(ctx)
         .text_document
         .completion
@@ -2489,7 +2483,7 @@ pub(crate) fn client_supports_default_edit_range(ctx: &Context) -> bool {
 
 // completions.go:5447
 #[derive(Clone, Copy)]
-pub(crate) struct argumentInfoForCompletions {
+pub struct ArgumentInfoForCompletions {
     pub(crate) invocation: P<Node>,
     pub(crate) argument_index: usize,
     pub(crate) argument_count: usize,
@@ -2501,37 +2495,17 @@ pub(crate) fn get_argument_info_for_completions(
     position: u32,
     file: P<SourceFile>,
     type_checker: &mut Checker,
-) -> Option<argumentInfoForCompletions> {
+) -> Option<ArgumentInfoForCompletions> {
     let info = get_immediately_containing_argument_info(node, position, file, type_checker)?;
     if info.is_type_parameter_list || info.invocation.call_invocation.is_none() {
         return None;
     }
-    Some(argumentInfoForCompletions {
+    Some(ArgumentInfoForCompletions {
         invocation: info.invocation.call_invocation.unwrap().node,
         argument_index: info.argument_index,
         argument_count: info.argument_count,
     })
 }
 
-// Special values for `CompletionInfo['source']` used to disambiguate
-// completion items with the same `name`. (Each completion item must
-// have a unique name/source combination, because those two fields
-// comprise `CompletionEntryIdentifier` in `getCompletionEntryDetails`.
-//
-// When the completion item is an auto-import suggestion, the source
-// is the module specifier of the suggestion. To avoid collisions,
-// the values here should not be a module specifier we would ever
-// generate for an auto-import.
-// completions.go:5474
-// Completions that require `this.` insertion text
-pub const SOURCE_THIS_PROPERTY: &str = "ThisProperty/";
-// Auto-import that comes attached to a class member snippet
-pub const SOURCE_CLASS_MEMBER_SNIPPET: &str = "ClassMemberSnippet/";
-// A type-only import that needs to be promoted in order to be used at the completion location
-pub const SOURCE_TYPE_ONLY_ALIAS: &str = "TypeOnlyAlias/";
-// Auto-import that comes attached to an object literal method snippet
-pub const SOURCE_OBJECT_LITERAL_METHOD_SNIPPET: &str = "ObjectLiteralMethodSnippet/";
 // Case completions for switch statements
-pub const SOURCE_SWITCH_CASES: &str = "SwitchCases/";
-// Completions for an object literal expression
-pub const SOURCE_OBJECT_LITERAL_MEMBER_WITH_COMMA: &str = "ObjectLiteralMemberWithComma/";
+pub(crate) const SOURCE_SWITCH_CASES: &str = "SwitchCases/";

@@ -1,5 +1,11 @@
 # perf-order-independence: output that does not depend on which checker checks what
 
+**Source-112 update (2026-10-21):** TypeScript now keys `getUndefinedProperty` by source symbol
+(`microsoft/TypeScript@5237fd4689`). tsrs uses that same cache in both checker-history modes. The
+name-keyed Go behavior, the `undefined_properties_by_prop` field, and the Go-versus-canonical
+baseline differences below describe the earlier pinned compiler; they no longer apply to this
+source of ordering differences. Other history-dependent cases remain as documented separately.
+
 With several checkers, tsrs (like tsgo) printed different text depending on how files were split over checkers. On
 the 40k-error corpus (the 38k-file codebase in a Linux sandbox, workspace packages unbuilt), `--checkers 1, 2, 4, 8, 12,
 16` gave four different outputs. Since 2026-10-04 the default checker count depends on the machine, so two machines
@@ -35,8 +41,9 @@ checker. It copies the declarations of the first property named `x` that the che
 `get_named_members` sorts a widened literal's properties by first declaration (`compare_symbols`: file index, then
 position). So `x?: undefined` sorts at the declaration of whatever `x` that checker happened to see first. That can be
 in another file, or in an earlier statement of the same file. A two-file repro (no import between the files) and the
-one-line fix are in `upstream/determinism-undefined-property.md`: tsgo prints `{ user?: undefined; status: string; }`
-for `b.ts` when `a.ts` is in the program and `{ status: string; user?: undefined; }` when it is not.
+one-line fix are in [the upstream bug report](determinism-undefined-property.md): tsgo prints
+`{ user?: undefined; status: string; }` for `b.ts` when `a.ts` is in the program and
+`{ status: string; user?: undefined; }` when it is not.
 
 ## The fix and the compatibility mode
 

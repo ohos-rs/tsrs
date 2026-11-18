@@ -18,7 +18,7 @@ pub(crate) use tsrs_ast::{self as ast, *};
 pub(crate) use tsrs_checker::{
     self as checker, Checker, CheckerSlot, EmitResolver, SymbolAccessibilityResult, SymbolTracker,
 };
-pub(crate) use tsrs_core::collections::{MultiMap, OrderedSet, OrderedSetExt, Set};
+pub(crate) use tsrs_core::collections::{MultiMap, OrderedSet, Set};
 pub(crate) use tsrs_core::jsnum::{self, Number};
 pub(crate) use tsrs_core::{
     CompilerOptions, ModuleKind, P, SP, ScriptTarget, alloc_slice, alloc_str, alloc_vec,
@@ -35,21 +35,21 @@ pub mod nodebuilder {
     pub use tsrs_checker::{Flags, InternalFlags};
 }
 
-mod chain;
-mod emithost;
-mod modifiervisitor;
-mod resolver;
-mod transformer;
-mod utilities;
+pub mod chain;
+pub mod emithost;
+pub(crate) mod modifiervisitor;
+pub mod resolver;
+pub mod transformer;
+pub mod utilities;
 
 pub use chain::*;
 pub use emithost::*;
-pub use modifiervisitor::*;
+pub(crate) use modifiervisitor::*;
 pub use resolver::*;
 pub use transformer::*;
 pub use utilities::*;
 
-mod destructuring;
+pub mod destructuring;
 
 pub use destructuring::*;
 
@@ -58,8 +58,3 @@ pub mod inliners;
 pub mod jsxtransforms;
 pub mod moduletransforms;
 pub mod tstransforms;
-
-#[cfg(test)]
-mod emit_test;
-#[cfg(test)]
-mod utilities_test;

@@ -3,15 +3,14 @@ use std::sync::LazyLock;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsrs_core::collections::OrderedMap;
 use tsrs_core::{
-    JsxEmit, ModuleDetectionKind, ModuleKind, ModuleResolutionKind, NewLineKind, PollingKind,
-    ScriptTarget, Tristate, WatchDirectoryKind, WatchFileKind,
+    JsxEmit, ModuleDetectionKind, ModuleKind, ModuleResolutionKind, NewLineKind, ScriptTarget,
+    Tristate,
 };
 use tsrs_diagnostics::Message;
 
 use crate::enummaps::{
-    FALLBACK_ENUM_MAP, JSX_OPTION_MAP, LIB_MAP, MODULE_DETECTION_OPTION_MAP, MODULE_OPTION_MAP,
-    MODULE_RESOLUTION_OPTION_MAP, NEW_LINE_OPTION_MAP, TARGET_OPTION_MAP, WATCH_DIRECTORY_ENUM_MAP,
-    WATCH_FILE_ENUM_MAP,
+    JSX_OPTION_MAP, LIB_MAP, MODULE_DETECTION_OPTION_MAP, MODULE_OPTION_MAP,
+    MODULE_RESOLUTION_OPTION_MAP, NEW_LINE_OPTION_MAP, TARGET_OPTION_MAP,
 };
 use crate::tsconfigparsing::CommandLineOptionNameMap;
 
@@ -27,7 +26,7 @@ pub enum CommandLineOptionKind {
 }
 
 impl CommandLineOptionKind {
-    pub fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             CommandLineOptionKind::String => "string",
             CommandLineOptionKind::Number => "number",
@@ -56,9 +55,6 @@ pub enum DefaultValueDescription {
     Message(&'static Message),
     Tristate(Tristate),
     ScriptTarget(ScriptTarget),
-    WatchFileKind(WatchFileKind),
-    WatchDirectoryKind(WatchDirectoryKind),
-    PollingKind(PollingKind),
 }
 
 #[derive(Debug)]
@@ -81,18 +77,14 @@ pub struct CommandLineOption {
     pub category: Option<&'static Message>,
 
     // What kind of extra validation `validateJsonOptionValue` should do
-    pub(crate) extra_validation: ExtraValidation,
+    pub extra_validation: ExtraValidation,
 
     // checks that option with number type has value >= minValue
-    pub(crate) min_value: i32,
+    pub min_value: i32,
 
     // true or undefined
     // used for configDirTemplateSubstitutionOptions
-    #[expect(
-        dead_code,
-        reason = "unused in Go too; kept so the option tables match declscompiler.go"
-    )]
-    pub(crate) allow_config_dir_template_substitution: bool,
+    pub allow_config_dir_template_substitution: bool,
 
     // used for filter in compilerrunner
     pub affects_declaration_path: bool,
@@ -104,27 +96,22 @@ pub struct CommandLineOption {
     pub affects_module_resolution: bool,
     pub affects_emit: bool,
 
-    pub(crate) allow_js_flag: bool,
-    pub(crate) strict_flag: bool,
+    pub allow_js_flag: bool,
+    pub strict_flag: bool,
 
     // used in transpileoptions worker
     // todo: revisit to see if this can be reduced to boolean
-    #[expect(
-        dead_code,
-        reason = "unused in Go too; kept so the option tables match declscompiler.go"
-    )]
-    pub(crate) transpile_option_value: Tristate,
+    pub transpile_option_value: Tristate,
 
     // used for CommandLineOptionTypeList
-    pub(crate) list_preserve_falsy_values: bool,
+    pub list_preserve_falsy_values: bool,
     // used for COMPILER_OPTIONS_DECLARATION
     pub element_options: Option<CommandLineOptionNameMap>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum ExtraValidation {
+pub enum ExtraValidation {
     None,
-    Spec,
     Locale,
 }
 
@@ -158,7 +145,7 @@ impl CommandLineOption {
         element_options: None,
     };
 
-    pub fn deprecated_keys(&self) -> Option<&'static FxHashSet<&'static str>> {
+    pub(crate) fn deprecated_keys(&self) -> Option<&'static FxHashSet<&'static str>> {
         if self.kind != CommandLineOptionKind::Enum {
             return None;
         }
@@ -189,159 +176,137 @@ impl CommandLineOption {
         COMMAND_LINE_OPTION_ELEMENTS.get(self.name)
     }
 
-    pub fn disallow_null_or_undefined(&self) -> bool {
+    pub(crate) fn disallow_null_or_undefined(&self) -> bool {
         self.name == "extends"
     }
 }
 
 // CommandLineOption.Elements()
-pub(crate) static COMMAND_LINE_OPTION_ELEMENTS: LazyLock<
-    FxHashMap<&'static str, CommandLineOption>,
-> = LazyLock::new(|| {
-    let mut m = FxHashMap::default();
-    m.insert(
-        "lib",
-        CommandLineOption {
-            name: "lib",
-            kind: CommandLineOptionKind::Enum, // libMap,
-            default_value_description: DefaultValueDescription::Tristate(Tristate::Unknown),
-            ..CommandLineOption::DEFAULT
-        },
-    );
-    m.insert(
-        "rootDirs",
-        CommandLineOption {
-            name: "rootDirs",
-            kind: CommandLineOptionKind::String,
-            is_file_path: true,
-            ..CommandLineOption::DEFAULT
-        },
-    );
-    m.insert(
-        "typeRoots",
-        CommandLineOption {
-            name: "typeRoots",
-            kind: CommandLineOptionKind::String,
-            is_file_path: true,
-            ..CommandLineOption::DEFAULT
-        },
-    );
-    m.insert(
-        "types",
-        CommandLineOption {
-            name: "types",
-            kind: CommandLineOptionKind::String,
-            ..CommandLineOption::DEFAULT
-        },
-    );
-    m.insert(
-        "moduleSuffixes",
-        CommandLineOption {
-            name: "moduleSuffixes",
-            kind: CommandLineOptionKind::String,
-            ..CommandLineOption::DEFAULT
-        },
-    );
-    m.insert(
-        "customConditions",
-        CommandLineOption {
-            name: "condition",
-            kind: CommandLineOptionKind::String,
-            ..CommandLineOption::DEFAULT
-        },
-    );
-    m.insert(
-        "plugins",
-        CommandLineOption {
-            name: "plugin",
-            kind: CommandLineOptionKind::Object,
-            ..CommandLineOption::DEFAULT
-        },
-    );
-    // For tsconfig root options
-    m.insert(
-        "references",
-        CommandLineOption {
-            name: "references",
-            kind: CommandLineOptionKind::Object,
-            ..CommandLineOption::DEFAULT
-        },
-    );
-    m.insert(
-        "contentMappers",
-        CommandLineOption {
-            name: "contentMappers",
-            kind: CommandLineOptionKind::Object,
-            ..CommandLineOption::DEFAULT
-        },
-    );
-    m.insert(
-        "files",
-        CommandLineOption {
-            name: "files",
-            kind: CommandLineOptionKind::String,
-            ..CommandLineOption::DEFAULT
-        },
-    );
-    m.insert(
-        "include",
-        CommandLineOption {
-            name: "include",
-            kind: CommandLineOptionKind::String,
-            ..CommandLineOption::DEFAULT
-        },
-    );
-    m.insert(
-        "exclude",
-        CommandLineOption {
-            name: "exclude",
-            kind: CommandLineOptionKind::String,
-            ..CommandLineOption::DEFAULT
-        },
-    );
-    m.insert(
-        "extends",
-        CommandLineOption {
-            name: "extends",
-            kind: CommandLineOptionKind::String,
-            ..CommandLineOption::DEFAULT
-        },
-    );
-    // For Watch options
-    m.insert(
-        "excludeDirectories",
-        CommandLineOption {
-            name: "excludeDirectory",
-            kind: CommandLineOptionKind::String,
-            is_file_path: true,
-            extra_validation: ExtraValidation::Spec,
-            ..CommandLineOption::DEFAULT
-        },
-    );
-    m.insert(
-        "excludeFiles",
-        CommandLineOption {
-            name: "excludeFile",
-            kind: CommandLineOptionKind::String,
-            is_file_path: true,
-            extra_validation: ExtraValidation::Spec,
-            ..CommandLineOption::DEFAULT
-        },
-    );
-    // Test infra options
-    m.insert(
-        "libFiles",
-        CommandLineOption {
-            name: "libFiles",
-            kind: CommandLineOptionKind::String,
-            ..CommandLineOption::DEFAULT
-        },
-    );
-    m
-});
+static COMMAND_LINE_OPTION_ELEMENTS: LazyLock<FxHashMap<&'static str, CommandLineOption>> =
+    LazyLock::new(|| {
+        let mut m = FxHashMap::default();
+        m.insert(
+            "lib",
+            CommandLineOption {
+                name: "lib",
+                kind: CommandLineOptionKind::Enum, // libMap,
+                default_value_description: DefaultValueDescription::Tristate(Tristate::Unknown),
+                ..CommandLineOption::DEFAULT
+            },
+        );
+        m.insert(
+            "rootDirs",
+            CommandLineOption {
+                name: "rootDirs",
+                kind: CommandLineOptionKind::String,
+                is_file_path: true,
+                ..CommandLineOption::DEFAULT
+            },
+        );
+        m.insert(
+            "typeRoots",
+            CommandLineOption {
+                name: "typeRoots",
+                kind: CommandLineOptionKind::String,
+                is_file_path: true,
+                ..CommandLineOption::DEFAULT
+            },
+        );
+        m.insert(
+            "types",
+            CommandLineOption {
+                name: "types",
+                kind: CommandLineOptionKind::String,
+                ..CommandLineOption::DEFAULT
+            },
+        );
+        m.insert(
+            "moduleSuffixes",
+            CommandLineOption {
+                name: "moduleSuffixes",
+                kind: CommandLineOptionKind::String,
+                ..CommandLineOption::DEFAULT
+            },
+        );
+        m.insert(
+            "customConditions",
+            CommandLineOption {
+                name: "condition",
+                kind: CommandLineOptionKind::String,
+                ..CommandLineOption::DEFAULT
+            },
+        );
+        m.insert(
+            "plugins",
+            CommandLineOption {
+                name: "plugin",
+                kind: CommandLineOptionKind::Object,
+                ..CommandLineOption::DEFAULT
+            },
+        );
+        // For tsconfig root options
+        m.insert(
+            "references",
+            CommandLineOption {
+                name: "references",
+                kind: CommandLineOptionKind::Object,
+                ..CommandLineOption::DEFAULT
+            },
+        );
+        m.insert(
+            "contentMappers",
+            CommandLineOption {
+                name: "contentMappers",
+                kind: CommandLineOptionKind::Object,
+                ..CommandLineOption::DEFAULT
+            },
+        );
+        m.insert(
+            "files",
+            CommandLineOption {
+                name: "files",
+                kind: CommandLineOptionKind::String,
+                ..CommandLineOption::DEFAULT
+            },
+        );
+        m.insert(
+            "include",
+            CommandLineOption {
+                name: "include",
+                kind: CommandLineOptionKind::String,
+                ..CommandLineOption::DEFAULT
+            },
+        );
+        m.insert(
+            "exclude",
+            CommandLineOption {
+                name: "exclude",
+                kind: CommandLineOptionKind::String,
+                ..CommandLineOption::DEFAULT
+            },
+        );
+        m.insert(
+            "extends",
+            CommandLineOption {
+                name: "extends",
+                kind: CommandLineOptionKind::String,
+                ..CommandLineOption::DEFAULT
+            },
+        );
+        // Test infra options
+        m.insert(
+            "libFiles",
+            CommandLineOption {
+                name: "libFiles",
+                kind: CommandLineOptionKind::String,
+                ..CommandLineOption::DEFAULT
+            },
+        );
+        m
+    });
 
 // CommandLineOption.EnumMap()
-pub(crate) static COMMAND_LINE_OPTION_ENUM_MAP: LazyLock<
+static COMMAND_LINE_OPTION_ENUM_MAP: LazyLock<
     FxHashMap<&'static str, &'static LazyLock<OrderedMap<&'static str, CompilerOptionsValue>>>,
 > = LazyLock::new(|| {
     let mut m: FxHashMap<
@@ -355,22 +320,18 @@ pub(crate) static COMMAND_LINE_OPTION_ENUM_MAP: LazyLock<
     m.insert("moduleDetection", &MODULE_DETECTION_OPTION_MAP);
     m.insert("jsx", &JSX_OPTION_MAP);
     m.insert("newLine", &NEW_LINE_OPTION_MAP);
-    m.insert("watchFile", &WATCH_FILE_ENUM_MAP);
-    m.insert("watchDirectory", &WATCH_DIRECTORY_ENUM_MAP);
-    m.insert("fallbackPolling", &FALLBACK_ENUM_MAP);
     m
 });
 
 // CommandLineOption.DeprecatedKeys()
-pub(crate) static COMMAND_LINE_OPTION_DEPRECATED: LazyLock<
-    FxHashMap<&'static str, FxHashSet<&'static str>>,
-> = LazyLock::new(|| {
-    let mut m = FxHashMap::default();
-    m.insert("module", ["none", "amd", "system", "umd"].into_iter().collect());
-    m.insert("moduleResolution", ["node", "classic", "node10"].into_iter().collect());
-    m.insert("target", std::iter::once("es5").collect());
-    m
-});
+static COMMAND_LINE_OPTION_DEPRECATED: LazyLock<FxHashMap<&'static str, FxHashSet<&'static str>>> =
+    LazyLock::new(|| {
+        let mut m = FxHashMap::default();
+        m.insert("module", ["none", "amd", "system", "umd"].into_iter().collect());
+        m.insert("moduleResolution", ["node", "classic", "node10"].into_iter().collect());
+        m.insert("target", std::iter::once("es5").collect());
+        m
+    });
 
 // Go `any` as used for option values: JSON values produced from the tsconfig AST (float64 numbers,
 // []any arrays, *OrderedMap objects), command-line values (int numbers, []string lists) and the
@@ -403,9 +364,6 @@ pub enum CompilerOptionsValue {
     ScriptTarget(ScriptTarget),
     JsxEmit(JsxEmit),
     NewLineKind(NewLineKind),
-    WatchFileKind(WatchFileKind),
-    WatchDirectoryKind(WatchDirectoryKind),
-    PollingKind(PollingKind),
 }
 
 impl CompilerOptionsValue {
@@ -434,7 +392,9 @@ impl CompilerOptionsValue {
         }
     }
 
-    pub fn as_object_mut(&mut self) -> Option<&mut OrderedMap<String, CompilerOptionsValue>> {
+    pub(crate) fn as_object_mut(
+        &mut self,
+    ) -> Option<&mut OrderedMap<String, CompilerOptionsValue>> {
         match self {
             CompilerOptionsValue::Object(m) => Some(m),
             _ => None,

@@ -25,7 +25,7 @@ pub fn new_diagnostic_for_node(
 }
 
 // utilities.go:31
-pub fn new_diagnostic_chain_for_node(
+pub(crate) fn new_diagnostic_chain_for_node(
     chain: Option<P<Diagnostic>>,
     node: P<Node>,
     message: Option<&'static Message>,
@@ -110,7 +110,7 @@ pub(crate) fn is_in_compound_like_assignment(node: P<Node>) -> bool {
 }
 
 // utilities.go:122
-pub(crate) fn is_compound_like_assignment(assignment: P<Node>) -> bool {
+fn is_compound_like_assignment(assignment: P<Node>) -> bool {
     let right = ast::skip_parentheses(assignment.as_binary_expression().right());
     right.kind() == Kind::BinaryExpression
         && is_shift_operator_or_higher(right.as_binary_expression().operator_token.kind())
@@ -166,20 +166,6 @@ pub(crate) fn is_export_assignment_expression_name(node: Option<P<Node>>) -> boo
         Some(parent) => ast::is_export_assignment(parent) && parent.expression() == Some(current),
         None => false,
     }
-}
-
-// utilities.go:154
-pub fn get_single_variable_of_variable_statement(node: P<Node>) -> Option<P<Node>> {
-    if !ast::is_variable_statement(node) {
-        return None;
-    }
-    node.as_variable_statement()
-        .declaration_list
-        .as_variable_declaration_list()
-        .declarations
-        .nodes()
-        .first()
-        .copied()
 }
 
 // utilities.go:161
@@ -244,7 +230,7 @@ pub(crate) fn is_shorthand_ambient_module_symbol(module_symbol: P<Symbol>) -> bo
 }
 
 // utilities.go:201
-pub(crate) fn is_shorthand_ambient_module(node: Option<P<Node>>) -> bool {
+fn is_shorthand_ambient_module(node: Option<P<Node>>) -> bool {
     // The only kind of module that can be missing a body is a shorthand ambient module.
     matches!(node, Some(n) if n.kind() == Kind::ModuleDeclaration && n.body().is_none())
 }
@@ -325,7 +311,7 @@ pub(crate) fn is_syntactic_default(node: P<Node>) -> bool {
 // utilities.go:256
 pub(crate) fn has_export_assignment_symbol(module_symbol: P<Symbol>) -> bool {
     match module_symbol.exports() {
-        Some(exports) => exports.lookup(InternalSymbolNameExportEquals).is_some(),
+        Some(exports) => exports.lookup(INTERNAL_SYMBOL_NAME_EXPORT_EQUALS).is_some(),
         None => false,
     }
 }
@@ -633,7 +619,7 @@ fn compare_numbers(a: jsnum::Number, b: jsnum::Number) -> Ordering {
 /// The identity and flag-order answers inline (union construction sorts and binary-searches with this: on large
 /// projects it runs >100M times, mostly decided by the flags); the rest out of line.
 #[inline]
-pub fn compare_types(c: &mut Checker, t1: Option<P<Type>>, t2: Option<P<Type>>) -> Ordering {
+pub(crate) fn compare_types(c: &mut Checker, t1: Option<P<Type>>, t2: Option<P<Type>>) -> Ordering {
     if t1 == t2 {
         return Ordering::Equal;
     }
@@ -991,7 +977,7 @@ fn literal_bool_value(t: P<Type>) -> bool {
 }
 
 // utilities.go:624
-pub(crate) fn get_sort_order_flags(t: P<Type>) -> u32 {
+fn get_sort_order_flags(t: P<Type>) -> u32 {
     // Return TypeFlagsEnum for all enum-like unit types (they'll be sorted by their symbols)
     if t.flags().intersects(TypeFlags::EnumLiteral | TypeFlags::Enum)
         && !t.flags().intersects(TypeFlags::Union)
@@ -1002,7 +988,7 @@ pub(crate) fn get_sort_order_flags(t: P<Type>) -> u32 {
 }
 
 // utilities.go:632
-pub(crate) fn compare_type_names(c: &mut Checker, t1: P<Type>, t2: P<Type>) -> Ordering {
+fn compare_type_names(c: &mut Checker, t1: P<Type>, t2: P<Type>) -> Ordering {
     let s1 = get_type_name_symbol(t1);
     let s2 = get_type_name_symbol(t2);
     if s1 == s2 {
@@ -1037,7 +1023,7 @@ fn compare_names(a: &str, b: &str) -> Ordering {
 }
 
 // utilities.go:651
-pub(crate) fn get_type_name_symbol(t: P<Type>) -> Option<P<Symbol>> {
+fn get_type_name_symbol(t: P<Type>) -> Option<P<Symbol>> {
     if let Some(alias) = t.alias() {
         return alias.symbol();
     }
@@ -1050,7 +1036,7 @@ pub(crate) fn get_type_name_symbol(t: P<Type>) -> Option<P<Symbol>> {
 }
 
 // utilities.go:668
-pub(crate) fn compare_tuple_types(t1: &'static TupleType, t2: &'static TupleType) -> Ordering {
+fn compare_tuple_types(t1: &'static TupleType, t2: &'static TupleType) -> Ordering {
     if std::ptr::eq(t1, t2) {
         return Ordering::Equal;
     }
@@ -1078,7 +1064,7 @@ pub(crate) fn compare_tuple_types(t1: &'static TupleType, t2: &'static TupleType
 }
 
 // utilities.go:691
-pub(crate) fn compare_element_labels(n1: Option<P<Node>>, n2: Option<P<Node>>) -> Ordering {
+fn compare_element_labels(n1: Option<P<Node>>, n2: Option<P<Node>>) -> Ordering {
     if n1 == n2 {
         return Ordering::Equal;
     }
@@ -1092,7 +1078,7 @@ pub(crate) fn compare_element_labels(n1: Option<P<Node>>, n2: Option<P<Node>>) -
 }
 
 // utilities.go:704
-pub(crate) fn compare_type_lists(c: &mut Checker, s1: &[P<Type>], s2: &[P<Type>]) -> Ordering {
+fn compare_type_lists(c: &mut Checker, s1: &[P<Type>], s2: &[P<Type>]) -> Ordering {
     if s1.len() != s2.len() {
         return s1.len().cmp(&s2.len());
     }
@@ -1110,7 +1096,7 @@ pub(crate) fn compare_type_lists(c: &mut Checker, s1: &[P<Type>], s2: &[P<Type>]
 }
 
 // utilities.go:716
-pub(crate) fn compare_type_mappers(
+fn compare_type_mappers(
     c: &mut Checker,
     m1: Option<P<TypeMapper>>,
     m2: Option<P<TypeMapper>>,
@@ -1164,7 +1150,7 @@ pub(crate) fn compare_type_mappers(
 }
 
 // utilities.go:757
-pub fn get_declaration_modifier_flags_from_symbol(s: P<Symbol>) -> ModifierFlags {
+pub(crate) fn get_declaration_modifier_flags_from_symbol(s: P<Symbol>) -> ModifierFlags {
     get_declaration_modifier_flags_from_symbol_ex(s, false /*isWrite*/)
 }
 
@@ -1172,7 +1158,7 @@ pub fn get_declaration_modifier_flags_from_symbol(s: P<Symbol>) -> ModifierFlags
 /// is not a class has neither (its accessibility modifiers are dropped below), so its declaration is not read.
 #[inline]
 pub(crate) fn get_declaration_non_public_flags_from_symbol(s: P<Symbol>) -> ModifierFlags {
-    if !s.check_flags.get().intersects(CheckFlags::Synthetic)
+    if !s.check_flags().intersects(CheckFlags::Synthetic)
         && !s.parent().is_some_and(|p| p.flags().intersects(SymbolFlags::Class))
     {
         return ModifierFlags::None;
@@ -1185,7 +1171,7 @@ pub(crate) fn get_declaration_modifier_flags_from_symbol_ex(
     s: P<Symbol>,
     is_write: bool,
 ) -> ModifierFlags {
-    let check_flags = s.check_flags.get();
+    let check_flags = s.check_flags();
     if check_flags.intersects(CheckFlags::Synthetic) {
         let mut access_modifier = ModifierFlags::None;
         if !is_write && check_flags.intersects(CheckFlags::ContainsPublic)
@@ -1218,10 +1204,10 @@ pub(crate) fn get_declaration_modifier_flags_from_symbol_ex(
         }
         let declaration = declaration.unwrap_or(value_declaration);
         let flags = ast::get_combined_modifier_flags(declaration);
-        if let Some(parent) = s.parent() {
-            if parent.flags().intersects(SymbolFlags::Class) {
-                return flags;
-            }
+        if let Some(parent) = s.parent()
+            && parent.flags().intersects(SymbolFlags::Class)
+        {
+            return flags;
         }
         return flags & !ModifierFlags::AccessibilityModifier;
     }
@@ -1232,39 +1218,39 @@ pub(crate) fn get_declaration_modifier_flags_from_symbol_ex(
 }
 
 // utilities.go:800
-pub(crate) fn is_exponentiation_operator(kind: Kind) -> bool {
+fn is_exponentiation_operator(kind: Kind) -> bool {
     kind == Kind::AsteriskAsteriskToken
 }
 
 // utilities.go:804
-pub(crate) fn is_multiplicative_operator(kind: Kind) -> bool {
+fn is_multiplicative_operator(kind: Kind) -> bool {
     kind == Kind::AsteriskToken || kind == Kind::SlashToken || kind == Kind::PercentToken
 }
 
 // utilities.go:808
-pub(crate) fn is_multiplicative_operator_or_higher(kind: Kind) -> bool {
+fn is_multiplicative_operator_or_higher(kind: Kind) -> bool {
     is_exponentiation_operator(kind) || is_multiplicative_operator(kind)
 }
 
 // utilities.go:812
-pub(crate) fn is_additive_operator(kind: Kind) -> bool {
+fn is_additive_operator(kind: Kind) -> bool {
     kind == Kind::PlusToken || kind == Kind::MinusToken
 }
 
 // utilities.go:816
-pub(crate) fn is_additive_operator_or_higher(kind: Kind) -> bool {
+fn is_additive_operator_or_higher(kind: Kind) -> bool {
     is_additive_operator(kind) || is_multiplicative_operator_or_higher(kind)
 }
 
 // utilities.go:820
-pub(crate) fn is_shift_operator(kind: Kind) -> bool {
+fn is_shift_operator(kind: Kind) -> bool {
     kind == Kind::LessThanLessThanToken
         || kind == Kind::GreaterThanGreaterThanToken
         || kind == Kind::GreaterThanGreaterThanGreaterThanToken
 }
 
 // utilities.go:825
-pub(crate) fn is_shift_operator_or_higher(kind: Kind) -> bool {
+fn is_shift_operator_or_higher(kind: Kind) -> bool {
     is_shift_operator(kind) || is_additive_operator_or_higher(kind)
 }
 
@@ -1279,7 +1265,7 @@ pub(crate) fn is_declaration_readonly(declaration: P<Node>) -> bool {
         && !ast::is_parameter_property_declaration(declaration, declaration.parent().unwrap())
 }
 
-impl<T: Copy + Eq + std::hash::Hash> orderedSet<T> {
+impl<T: Copy + Eq + std::hash::Hash> CheckerOrderedSet<T> {
     // utilities.go:884
     pub(crate) fn contains(&self, value: T) -> bool {
         match &self.values_by_key {
@@ -1294,7 +1280,7 @@ impl<T: Copy + Eq + std::hash::Hash> orderedSet<T> {
         // Small sets are served by a linear scan over values; only materialize the map once the set
         // grows large enough for hashing to win.
         if self.values_by_key.is_none() {
-            if self.values.len() <= orderedSetMapThreshold {
+            if self.values.len() <= ORDERED_SET_MAP_THRESHOLD {
                 return;
             }
             let mut m =
@@ -1324,13 +1310,13 @@ pub(crate) fn is_node_descendant_of(node: Option<P<Node>>, ancestor: P<Node>) ->
 }
 
 // utilities.go:922
-pub fn is_type_usable_as_property_name(t: P<Type>) -> bool {
+pub(crate) fn is_type_usable_as_property_name(t: P<Type>) -> bool {
     t.flags().intersects(TypeFlags::StringOrNumberLiteralOrUnique)
 }
 
 // Gets the symbolic name for a member from its type.
 // utilities.go:929
-pub fn get_property_name_from_type(t: P<Type>) -> std::borrow::Cow<'static, str> {
+pub(crate) fn get_property_name_from_type(t: P<Type>) -> std::borrow::Cow<'static, str> {
     if t.flags().intersects(TypeFlags::StringLiteral) {
         return literal_string_value(t).into();
     }
@@ -1443,20 +1429,20 @@ pub fn is_known_symbol(symbol: P<Symbol>) -> bool {
 }
 
 // utilities.go:1022
-pub fn is_private_identifier_symbol(symbol: Option<P<Symbol>>) -> bool {
+pub(crate) fn is_private_identifier_symbol(symbol: Option<P<Symbol>>) -> bool {
     let Some(symbol) = symbol else {
         return false;
     };
     let name = symbol.name();
     name.len() >= 2
-        && name.as_bytes()[0] == InternalSymbolNamePrefixByte
+        && name.as_bytes()[0] == INTERNAL_SYMBOL_NAME_PREFIX_BYTE
         && name.as_bytes()[1] == b'#'
 }
 
 // utilities.go:1029
 pub(crate) fn is_late_bound_name(name: &str) -> bool {
     name.len() >= 2
-        && name.as_bytes()[0] == InternalSymbolNamePrefixByte
+        && name.as_bytes()[0] == INTERNAL_SYMBOL_NAME_PREFIX_BYTE
         && name.as_bytes()[1] == b'@'
 }
 
@@ -1667,11 +1653,11 @@ pub(crate) fn is_import_type_qualifier_part(node: P<Node>) -> Option<P<Node>> {
         parent = p.parent();
     }
 
-    if let Some(parent) = parent {
-        if parent.kind() == Kind::ImportType && parent.as_import_type_node().qualifier == Some(node)
-        {
-            return Some(parent);
-        }
+    if let Some(parent) = parent
+        && parent.kind() == Kind::ImportType
+        && parent.as_import_type_node().qualifier == Some(node)
+    {
+        return Some(parent);
     }
 
     None
@@ -1803,12 +1789,12 @@ pub(crate) fn for_each_yield_expression(
             }
             _ => {
                 if ast::is_function_like(node) {
-                    if let Some(name) = node.name() {
-                        if ast::is_computed_property_name(name) {
-                            // Note that we will not include methods/accessors of a class because they would require
-                            // first descending into the class. This is by design.
-                            return traverse(name.expression().unwrap(), visitor);
-                        }
+                    if let Some(name) = node.name()
+                        && ast::is_computed_property_name(name)
+                    {
+                        // Note that we will not include methods/accessors of a class because they would require
+                        // first descending into the class. This is by design.
+                        return traverse(name.expression().unwrap(), visitor);
                     }
                 } else if !ast::is_part_of_type_node(node) {
                     // This is the general case, which should include mostly expressions and statements.
@@ -1951,7 +1937,7 @@ pub(crate) fn get_any_import_syntax(node: P<Node>) -> Option<P<Node>> {
 // utilities.go:1677
 pub(crate) fn is_reserved_member_name(name: &str) -> bool {
     let b = name.as_bytes();
-    b.len() >= 2 && b[0] == InternalSymbolNamePrefixByte && b[1] != b'@' && b[1] != b'#'
+    b.len() >= 2 && b[0] == INTERNAL_SYMBOL_NAME_PREFIX_BYTE && b[1] != b'@' && b[1] != b'#'
 }
 
 // utilities.go:1681
@@ -2049,38 +2035,37 @@ impl Checker {
         exclude_classes: bool,
     ) -> bool {
         let file = node.and_then(ast::get_source_file_of_node);
-        if let Some(file) = file {
-            if self.compiler_options.check_js == Tristate::Unknown
-                && file.check_js_directive().is_none()
-                && (file.script_kind() == ScriptKind::JS || file.script_kind() == ScriptKind::JSX)
-            {
-                let mut declaration_file: Option<P<SourceFile>> = None;
-                if let Some(suggestion) = suggestion {
-                    let first_declaration = suggestion.declarations().first().copied();
-                    if let Some(first_declaration) = first_declaration {
-                        declaration_file = ast::get_source_file_of_node(first_declaration);
-                    }
+        if let Some(file) = file
+            && self.compiler_options.check_js == Tristate::Unknown
+            && file.check_js_directive().is_none()
+            && (file.script_kind() == ScriptKind::JS || file.script_kind() == ScriptKind::JSX)
+        {
+            let mut declaration_file: Option<P<SourceFile>> = None;
+            if let Some(suggestion) = suggestion {
+                let first_declaration = suggestion.declarations().first().copied();
+                if let Some(first_declaration) = first_declaration {
+                    declaration_file = ast::get_source_file_of_node(first_declaration);
                 }
-                let suggestion_has_no_extends_or_decorators = match suggestion {
-                    None => true,
-                    Some(suggestion) => match suggestion.value_declaration() {
-                        None => true,
-                        Some(vd) => {
-                            !ast::is_class_like(vd)
-                                || !ast::get_extends_heritage_clause_elements(vd).is_empty()
-                                || ast::class_or_constructor_parameter_is_decorated(false, vd)
-                        }
-                    },
-                };
-                return !(Some(file) != declaration_file
-                    && declaration_file.is_some()
-                    && ast::is_global_source_file(declaration_file.unwrap().as_node())
-                    || exclude_classes
-                        && matches!(suggestion, Some(s) if s.flags().intersects(SymbolFlags::Class))
-                        && suggestion_has_no_extends_or_decorators)
-                    && !(matches!(node, Some(n) if exclude_classes && ast::is_property_access_expression(n) && n.expression().unwrap().kind() == Kind::ThisKeyword)
-                        && suggestion_has_no_extends_or_decorators);
             }
+            let suggestion_has_no_extends_or_decorators = match suggestion {
+                None => true,
+                Some(suggestion) => match suggestion.value_declaration() {
+                    None => true,
+                    Some(vd) => {
+                        !ast::is_class_like(vd)
+                            || !ast::get_extends_heritage_clause_elements(vd).is_empty()
+                            || ast::class_or_constructor_parameter_is_decorated(false, vd)
+                    }
+                },
+            };
+            return !(Some(file) != declaration_file
+                && declaration_file.is_some()
+                && ast::is_global_source_file(declaration_file.unwrap().as_node())
+                || exclude_classes
+                    && matches!(suggestion, Some(s) if s.flags().intersects(SymbolFlags::Class))
+                    && suggestion_has_no_extends_or_decorators)
+                && !(matches!(node, Some(n) if exclude_classes && ast::is_property_access_expression(n) && n.expression().unwrap().kind() == Kind::ThisKeyword)
+                    && suggestion_has_no_extends_or_decorators);
         }
         false
     }
@@ -2136,34 +2121,34 @@ pub fn create_module_not_found_chain(
     let mut package_name = package_name.to_string();
     let resolved_module = program.get_resolved_module(file, module_reference, mode);
 
-    if let Some(resolved_module) = resolved_module {
-        if !resolved_module.alternate_result.is_empty() {
-            if resolved_module.alternate_result.contains("/node_modules/@types/") {
-                package_name =
-                    "@types/".to_string() + &tsrs_module::mangle_scoped_package_name(&package_name);
-            }
-            return DiagnosticDetails {
-                message: &diagnostics::There_are_types_at_0_but_this_result_could_not_be_resolved_when_respecting_package_json_exports_The_1_library_may_need_to_update_its_package_json_or_typings,
+    if let Some(resolved_module) = resolved_module
+        && !resolved_module.alternate_result.is_empty()
+    {
+        if resolved_module.alternate_result.contains("/node_modules/@types/") {
+            package_name =
+                "@types/".to_string() + &tsrs_module::mangle_scoped_package_name(&package_name);
+        }
+        return DiagnosticDetails {
+                message: &diagnostics::THERE_ARE_TYPES_AT_0_BUT_THIS_RESULT_COULD_NOT_BE_RESOLVED_WHEN_RESPECTING_PACKAGE_JSON_EXPORTS_THE_1_LIBRARY_MAY_NEED_TO_UPDATE_ITS_PACKAGE_JSON_OR_TYPINGS,
                 args: vec![resolved_module.alternate_result.to_string(), package_name],
             };
-        }
     }
 
     let packages_map = program.get_packages_map();
     if packages_map.contains_key(&tsrs_module::get_types_package_name(&package_name)) {
         return DiagnosticDetails {
-            message: &diagnostics::If_the_0_package_actually_exposes_this_module_consider_sending_a_pull_request_to_amend_https_Colon_Slash_Slashgithub_com_SlashDefinitelyTyped_SlashDefinitelyTyped_Slashtree_Slashmaster_Slashtypes_Slash_1,
+            message: &diagnostics::IF_THE_0_PACKAGE_ACTUALLY_EXPOSES_THIS_MODULE_CONSIDER_SENDING_A_PULL_REQUEST_TO_AMEND_HTTPS_COLON_SLASH_SLASHGITHUB_COM_SLASH_DEFINITELY_TYPED_SLASH_DEFINITELY_TYPED_SLASHTREE_SLASHMASTER_SLASHTYPES_SLASH_1,
             args: vec![package_name.clone(), tsrs_module::mangle_scoped_package_name(&package_name)],
         };
     }
     if packages_map.get(&package_name).copied().unwrap_or(false) {
         return DiagnosticDetails {
-            message: &diagnostics::If_the_0_package_actually_exposes_this_module_try_adding_a_new_declaration_d_ts_file_containing_declare_module_1,
+            message: &diagnostics::IF_THE_0_PACKAGE_ACTUALLY_EXPOSES_THIS_MODULE_TRY_ADDING_A_NEW_DECLARATION_D_TS_FILE_CONTAINING_DECLARE_MODULE_1,
             args: vec![package_name, module_reference.to_string()],
         };
     }
     DiagnosticDetails {
-        message: &diagnostics::Try_npm_i_save_dev_types_Slash_1_if_it_exists_or_add_a_new_declaration_d_ts_file_containing_declare_module_0,
+        message: &diagnostics::TRY_NPM_I_SAVE_DEV_TYPES_SLASH_1_IF_IT_EXISTS_OR_ADD_A_NEW_DECLARATION_D_TS_FILE_CONTAINING_DECLARE_MODULE_0,
         args: vec![module_reference.to_string(), tsrs_module::mangle_scoped_package_name(&package_name)],
     }
 }
@@ -2192,23 +2177,23 @@ pub fn create_mode_mismatch_details(
     if !package_json_directory.is_empty() && package_json_type.is_empty() {
         if !target_ext.is_empty() {
             return DiagnosticDetails {
-                message: &diagnostics::To_convert_this_file_to_an_ECMAScript_module_change_its_file_extension_to_0_or_add_the_field_type_Colon_module_to_1,
+                message: &diagnostics::TO_CONVERT_THIS_FILE_TO_AN_ECMA_SCRIPT_MODULE_CHANGE_ITS_FILE_EXTENSION_TO_0_OR_ADD_THE_FIELD_TYPE_COLON_MODULE_TO_1,
                 args: vec![target_ext.to_string(), tspath::combine_paths(&package_json_directory, &["package.json"])],
             };
         }
         return DiagnosticDetails {
-            message: &diagnostics::To_convert_this_file_to_an_ECMAScript_module_add_the_field_type_Colon_module_to_0,
+            message: &diagnostics::TO_CONVERT_THIS_FILE_TO_AN_ECMA_SCRIPT_MODULE_ADD_THE_FIELD_TYPE_COLON_MODULE_TO_0,
             args: vec![tspath::combine_paths(&package_json_directory, &["package.json"])],
         };
     }
     if !target_ext.is_empty() {
         return DiagnosticDetails {
-            message: &diagnostics::To_convert_this_file_to_an_ECMAScript_module_change_its_file_extension_to_0_or_create_a_local_package_json_file_with_type_Colon_module,
+            message: &diagnostics::TO_CONVERT_THIS_FILE_TO_AN_ECMA_SCRIPT_MODULE_CHANGE_ITS_FILE_EXTENSION_TO_0_OR_CREATE_A_LOCAL_PACKAGE_JSON_FILE_WITH_TYPE_COLON_MODULE,
             args: vec![target_ext.to_string()],
         };
     }
     DiagnosticDetails {
-        message: &diagnostics::To_convert_this_file_to_an_ECMAScript_module_create_a_local_package_json_file_with_type_Colon_module,
+        message: &diagnostics::TO_CONVERT_THIS_FILE_TO_AN_ECMA_SCRIPT_MODULE_CREATE_A_LOCAL_PACKAGE_JSON_FILE_WITH_TYPE_COLON_MODULE,
         args: Vec::new(),
     }
 }

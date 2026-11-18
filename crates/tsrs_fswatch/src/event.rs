@@ -8,16 +8,16 @@ use crate::watcher::Error;
 pub struct EventKind(pub i32);
 
 impl EventKind {
-    pub const Update: EventKind = EventKind(1);
-    pub const Delete: EventKind = EventKind(2);
+    pub const UPDATE: EventKind = EventKind(1);
+    pub const DELETE: EventKind = EventKind(2);
 }
 
 impl std::fmt::Display for EventKind {
     // event.go:13
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match *self {
-            EventKind::Update => f.write_str("update"),
-            EventKind::Delete => f.write_str("delete"),
+            EventKind::UPDATE => f.write_str("update"),
+            EventKind::DELETE => f.write_str("delete"),
             _ => f.write_str("unknown"),
         }
     }
@@ -40,7 +40,7 @@ impl Event {
 
 // eventEntry tracks coalescing state during a debounce batch.
 #[derive(Clone, Copy, Default)]
-pub(crate) struct eventEntry {
+pub struct EventEntry {
     created_seq: u64,
     updated_seq: u64,
     deleted_seq: u64,
@@ -51,24 +51,24 @@ pub(crate) struct eventEntry {
 //   - create after delete → update (rapid delete+recreate)
 //   - getEvents skips entries that were both created and deleted
 #[derive(Default)]
-pub(crate) struct eventList {
-    mu: Mutex<eventListState>,
+pub struct EventList {
+    mu: Mutex<EventListState>,
 }
 
 #[derive(Default)]
-struct eventListState {
-    entries: FxHashMap<String, eventEntry>,
+struct EventListState {
+    entries: FxHashMap<String, EventEntry>,
     err: Option<Error>,
     seq: u64,
 }
 
-impl eventList {
+impl EventList {
     // event.go:51
     // create records a new-file event for path. Both create and update
     // produce EventUpdate externally; sequence state tracks coalescing
     // (create+delete within a batch cancels out).
-    #[cfg(any(unix, test))]
-    pub(crate) fn create(&self, path: &str) {
+    #[cfg(unix)]
+    pub fn create(&self, path: &str) {
         let mut el = self.mu.lock().unwrap();
         let seq = el.next_seq_locked();
         el.create_locked(path, seq);
@@ -76,8 +76,8 @@ impl eventList {
 
     // event.go:79
     // update records an update event for path.
-    #[cfg(any(unix, test))]
-    pub(crate) fn update(&self, path: &str) {
+    #[cfg(unix)]
+    pub fn update(&self, path: &str) {
         let mut el = self.mu.lock().unwrap();
         let seq = el.next_seq_locked();
         el.update_locked(path, seq);
@@ -102,8 +102,8 @@ impl eventList {
 
     // event.go:106
     // remove records a delete event for path.
-    #[cfg(any(unix, test))]
-    pub(crate) fn remove(&self, path: &str) {
+    #[cfg(unix)]
+    pub fn remove(&self, path: &str) {
         let mut el = self.mu.lock().unwrap();
         let seq = el.next_seq_locked();
         el.remove_locked(path, seq);
@@ -114,7 +114,7 @@ impl eventList {
         dead_code,
         reason = "its only Go caller, windows.go (windowsSubscription.processOne), is not ported"
     )]
-    pub(crate) fn remove_and_get_sequence(&self, path: &str) -> u64 {
+    fn remove_and_get_sequence(&self, path: &str) -> u64 {
         let mut el = self.mu.lock().unwrap();
         let seq = el.next_seq_locked();
         el.remove_locked(path, seq);
@@ -141,15 +141,14 @@ impl eventList {
     // event.go:142
     // size returns the number of tracked entries (including ones that may
     // cancel out in getEvents).
-    pub(crate) fn size(&self) -> usize {
+    pub fn size(&self) -> usize {
         self.mu.lock().unwrap().entries.len()
     }
 
     // event.go:168
     // getEvents returns a snapshot of events, skipping entries that were both
     // created and deleted. Order is not guaranteed.
-    #[cfg(test)] // only tests call it, in Go too
-    pub(crate) fn get_events(&self) -> Vec<Event> {
+    pub fn get_events(&self) -> Vec<Event> {
         self.mu.lock().unwrap().snapshot_locked()
     }
 
@@ -157,7 +156,7 @@ impl eventList {
     // drain atomically snapshots all pending events and the stored error,
     // then clears the list. This prevents events added between a separate
     // getEvents+clear from being silently dropped.
-    pub(crate) fn drain(&self) -> (Vec<Event>, Option<Error>) {
+    pub fn drain(&self) -> (Vec<Event>, Option<Error>) {
         let mut el = self.mu.lock().unwrap();
         let out = el.snapshot_locked();
         let err = el.err.take();
@@ -166,11 +165,7 @@ impl eventList {
     }
 
     // event.go:187
-    #[cfg(test)] // only its ported test calls it: trigger_callbacks makes the snapshots outside the lock (`drain_entries`)
-    pub(crate) fn drain_for_sequences(
-        &self,
-        start_seqs: &[u64],
-    ) -> (Vec<Vec<Event>>, Option<Error>) {
+    pub fn drain_for_sequences(&self, start_seqs: &[u64]) -> (Vec<Vec<Event>>, Option<Error>) {
         let mut el = self.mu.lock().unwrap();
         let out = start_seqs.iter().map(|&start_seq| el.snapshot_since_locked(start_seq)).collect();
         let err = el.err.take();
@@ -180,7 +175,7 @@ impl eventList {
 
     // tsrs-only: `drain_for_sequences` without the per-callback snapshots, which the caller makes outside the lock
     // (`dirWatch::trigger_callbacks`): the pending entries and the stored error, and the list cleared.
-    pub(crate) fn drain_entries(&self) -> (Vec<(String, eventEntry)>, Option<Error>) {
+    pub(crate) fn drain_entries(&self) -> (Vec<(String, EventEntry)>, Option<Error>) {
         let mut el = self.mu.lock().unwrap();
         let entries = std::mem::take(&mut el.entries);
         let err = el.err.take();
@@ -192,8 +187,8 @@ impl eventList {
 
     // event.go:201
     // setError stores the first error encountered (later errors are ignored).
-    #[cfg(any(unix, test))]
-    pub(crate) fn set_error(&self, err: Error) {
+    #[cfg(unix)]
+    pub fn set_error(&self, err: Error) {
         let mut el = self.mu.lock().unwrap();
         if el.err.is_none() {
             el.err = Some(err);
@@ -202,26 +197,25 @@ impl eventList {
 
     // event.go:210
     // hasError reports whether an error has been recorded.
-    pub(crate) fn has_error(&self) -> bool {
+    pub fn has_error(&self) -> bool {
         self.mu.lock().unwrap().err.is_some()
     }
 
     // event.go:217
     // getError returns the stored error (or nil if none).
-    #[cfg(test)] // only tests call it, in Go too
-    pub(crate) fn get_error(&self) -> Option<Error> {
+    pub fn get_error(&self) -> Option<Error> {
         self.mu.lock().unwrap().err.clone()
     }
 
     // event.go:235
-    pub(crate) fn sequence(&self) -> u64 {
+    pub fn sequence(&self) -> u64 {
         self.mu.lock().unwrap().seq
     }
 }
 
-impl eventListState {
+impl EventListState {
     // event.go:65
-    #[cfg(any(unix, test))]
+    #[cfg(unix)]
     fn create_locked(&mut self, path: &str, seq: u64) {
         let entry = self.get_or_create(path);
         if entry.is_deleted() {
@@ -237,7 +231,7 @@ impl eventListState {
     }
 
     // event.go:101
-    #[cfg(any(unix, test))]
+    #[cfg(unix)]
     fn update_locked(&mut self, path: &str, seq: u64) {
         self.get_or_create(path).updated_seq = seq;
     }
@@ -267,9 +261,9 @@ impl eventListState {
     }
 
     // event.go:223
-    fn get_or_create(&mut self, path: &str) -> &mut eventEntry {
+    fn get_or_create(&mut self, path: &str) -> &mut EventEntry {
         if !self.entries.contains_key(path) {
-            self.entries.insert(path.to_string(), eventEntry::default());
+            self.entries.insert(path.to_string(), EventEntry::default());
         }
         self.entries.get_mut(path).unwrap()
     }
@@ -289,9 +283,9 @@ impl eventListState {
     }
 }
 
-impl eventEntry {
+impl EventEntry {
     // event.go:252
-    #[cfg(any(unix, test))]
+    #[cfg(unix)]
     fn is_deleted(&self) -> bool {
         self.deleted_seq > self.created_seq && self.deleted_seq > self.updated_seq
     }
@@ -311,11 +305,11 @@ impl eventEntry {
             {
                 return None;
             }
-            return Some(EventKind::Delete);
+            return Some(EventKind::DELETE);
         }
         let seq = self.created_seq.max(self.updated_seq);
         if seq > start_seq {
-            return Some(EventKind::Update);
+            return Some(EventKind::UPDATE);
         }
         None
     }

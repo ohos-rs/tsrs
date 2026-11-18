@@ -3,31 +3,57 @@ use std::sync::Arc;
 use tsrs_ast::{self as ast, SourceFile, Symbol, SymbolFlags};
 use tsrs_checker::{self as checker, Checker};
 use tsrs_core::P;
-use tsrs_core::tspath::{self, Path};
+use tsrs_core::tspath::Path;
 
 use super::extract::new_symbol_extractor;
 use super::util::try_get_module_id_and_file_name_of_module_symbol;
 use crate::lsutil::{ScriptElementKind, ScriptElementKindModifier};
 
 // export.go:17
-// ModuleID uniquely identifies a module across multiple declarations.
-// If the export is from an ambient module declaration, this is the module name.
-// If the export is from a module augmentation, this is the Path() of the resolved module file.
-// Otherwise this is the Path() of the exporting source file.
+// ModuleID uniquely identifies either a file module or an ambient module.
+// Keep the kind separate: an ambient module may have a rooted name.
 #[derive(Clone, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
-pub struct ModuleID(pub String);
+pub enum ModuleID {
+    #[default]
+    Invalid,
+    File(String),
+    Ambient(String),
+}
+
+impl ModuleID {
+    pub(crate) fn as_str(&self) -> &str {
+        match self {
+            Self::Invalid => "",
+            Self::File(path) | Self::Ambient(path) => path,
+        }
+    }
+
+    pub(crate) fn as_file(&self) -> Option<&str> {
+        match self {
+            Self::File(path) => Some(path),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn as_ambient(&self) -> Option<&str> {
+        match self {
+            Self::Ambient(specifier) => Some(specifier),
+            _ => None,
+        }
+    }
+}
 
 impl std::fmt::Display for ModuleID {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
+        f.write_str(self.as_str())
     }
 }
 
 // export.go:19
 #[derive(Clone, Default, PartialEq, Eq, Hash, Debug)]
 pub struct ExportID {
-    pub module_id: ModuleID,
-    pub export_name: String,
+    pub(crate) module_id: ModuleID,
+    pub(crate) export_name: String,
 }
 
 // export.go:24
@@ -61,7 +87,7 @@ pub enum ExportSyntax {
 
 impl ExportSyntax {
     // export_stringer_generated.go
-    pub fn string(self) -> String {
+    pub(crate) fn string(self) -> String {
         format!("ExportSyntax{self:?}")
     }
 }
@@ -69,25 +95,26 @@ impl ExportSyntax {
 // export.go:48
 #[derive(Clone, Default, Debug)]
 pub struct Export {
-    pub export_id: ExportID,
-    pub module_file_name: String,
-    pub syntax: ExportSyntax,
-    pub flags: SymbolFlags,
+    pub(crate) export_id: ExportID,
+    pub(crate) module_file_name: String,
+    pub(crate) unresolved_module_specifier: String,
+    pub(crate) syntax: ExportSyntax,
+    pub(crate) flags: SymbolFlags,
     pub(crate) local_name: String,
     // through is the name of the module symbol's export that this export was found on,
     // either 'export=', InternalSymbolNameExportStar, or empty string.
     pub(crate) through: String,
 
     // Checker-set fields
-    pub target: ExportID,
-    pub is_type_only: bool,
-    pub script_element_kind: ScriptElementKind,
-    pub script_element_kind_modifiers: ScriptElementKindModifier,
+    pub(crate) target: ExportID,
+    pub(crate) is_type_only: bool,
+    pub(crate) script_element_kind: ScriptElementKind,
+    pub(crate) script_element_kind_modifiers: ScriptElementKindModifier,
 
     // The file where the export was found.
-    pub path: Path,
+    pub(crate) path: Path,
 
-    pub package_name: String,
+    pub(crate) package_name: String,
 }
 
 impl std::ops::Deref for Export {
@@ -99,32 +126,29 @@ impl std::ops::Deref for Export {
 
 impl Export {
     // export.go:71
-    pub fn name(&self) -> &str {
+    pub(crate) fn name(&self) -> &str {
         if !self.local_name.is_empty() {
             return &self.local_name;
         }
-        if self.export_name == ast::InternalSymbolNameExportEquals {
+        if self.export_name == ast::INTERNAL_SYMBOL_NAME_EXPORT_EQUALS {
             return &self.target.export_name;
         }
         &self.export_name
     }
 
     // export.go:81
-    pub fn is_renameable(&self) -> bool {
-        self.export_name == ast::InternalSymbolNameExportEquals
-            || self.export_name == ast::InternalSymbolNameDefault
+    pub(crate) fn is_renameable(&self) -> bool {
+        self.export_name == ast::INTERNAL_SYMBOL_NAME_EXPORT_EQUALS
+            || self.export_name == ast::INTERNAL_SYMBOL_NAME_DEFAULT
     }
 
     // export.go:85
-    pub fn ambient_module_name(&self) -> &str {
-        if !tspath::is_external_module_name_relative(&self.module_id.0) {
-            return &self.module_id.0;
-        }
-        ""
+    pub(crate) fn ambient_module_name(&self) -> &str {
+        self.module_id.as_ambient().unwrap_or_default()
     }
 
     // export.go:92
-    pub fn is_unresolved_alias(&self) -> bool {
+    pub(crate) fn is_unresolved_alias(&self) -> bool {
         self.flags == SymbolFlags::Alias
     }
 }
@@ -136,22 +160,22 @@ impl super::index::Named for Arc<Export> {
 }
 
 // export.go:96
-pub fn symbol_to_export(symbol: P<Symbol>, ch: &mut Checker) -> Option<Arc<Export>> {
-    if let Some(parent) = symbol.parent() {
-        if checker::is_external_module_symbol(parent) {
-            if let Some((module_id, module_file_name)) =
-                try_get_module_id_and_file_name_of_module_symbol(parent)
-            {
-                return extract_first_export(
-                    symbol,
-                    ch,
-                    &module_id,
-                    &module_file_name,
-                    ast::get_source_file_of_module(parent).unwrap(),
-                );
-            }
-            return None;
+pub(crate) fn symbol_to_export(symbol: P<Symbol>, ch: &mut Checker) -> Option<Arc<Export>> {
+    if let Some(parent) = symbol.parent()
+        && checker::is_external_module_symbol(parent)
+    {
+        if let Some((module_id, module_file_name)) =
+            try_get_module_id_and_file_name_of_module_symbol(parent)
+        {
+            return extract_first_export(
+                symbol,
+                ch,
+                &module_id,
+                &module_file_name,
+                ast::get_source_file_of_module(parent).unwrap(),
+            );
         }
+        return None;
     }
 
     let declaration = symbol.declarations().first().copied()?;
@@ -160,13 +184,13 @@ pub fn symbol_to_export(symbol: P<Symbol>, ch: &mut Checker) -> Option<Arc<Expor
     let file_symbol = file.symbol()?;
 
     let module_symbol = ch.get_merged_symbol(file_symbol);
-    let module_id = ModuleID(file.path().to_string());
+    let module_id = ModuleID::File(file.path().to_string());
     let module_file_name = file.file_name().to_string();
     let skipped = ch.skip_alias(symbol);
     let target = ch.get_merged_symbol(skipped);
 
     if let Some(export) = try_get_module_export(
-        ast::InternalSymbolNameDefault,
+        ast::INTERNAL_SYMBOL_NAME_DEFAULT,
         target,
         module_symbol,
         ch,
@@ -177,7 +201,7 @@ pub fn symbol_to_export(symbol: P<Symbol>, ch: &mut Checker) -> Option<Arc<Expor
         return Some(export);
     }
     if let Some(export) = try_get_module_export(
-        ast::InternalSymbolNameExportEquals,
+        ast::INTERNAL_SYMBOL_NAME_EXPORT_EQUALS,
         target,
         module_symbol,
         ch,

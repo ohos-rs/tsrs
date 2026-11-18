@@ -31,7 +31,7 @@ pub(crate) struct SourceMapCompilationResult<'a> {
 
 // js_emit_baseline.go:149
 // TODO(emit/core): shared with the `.js` baseline (js_emit_baseline.go); keep one copy once both have landed.
-pub(crate) fn file_output(file: &TestFile, settings: &HarnessOptions) -> String {
+fn file_output(file: &TestFile, settings: &HarnessOptions) -> String {
     let file_name = if settings.full_emit_paths {
         remove_test_path_prefixes(&file.unit_name, false /*retainTrailingDirectorySeparator*/)
     } else {
@@ -104,7 +104,7 @@ pub(crate) fn do_sourcemap_baseline(
 }
 
 // sourcemap_baseline.go:72
-pub(crate) fn create_source_map_preview_link(
+fn create_source_map_preview_link(
     source_map: &TestFile,
     result: &SourceMapCompilationResult,
 ) -> String {
@@ -133,13 +133,10 @@ pub(crate) fn create_source_map_preview_link(
         .iter()
         .map(|s| {
             let source_file = result.inputs.iter().find(|td| td.unit_name.ends_with(s.as_str()));
-            if let Some(source_file) = source_file {
-                if let Some(text) = (result.get_program_source_text)(&source_file.unit_name) {
-                    return Some(TestFile {
-                        unit_name: source_file.unit_name.clone(),
-                        content: text,
-                    });
-                }
+            if let Some(source_file) = source_file
+                && let Some(text) = (result.get_program_source_text)(&source_file.unit_name)
+            {
+                return Some(TestFile { unit_name: source_file.unit_name.clone(), content: text });
             }
             source_file.cloned()
         })
@@ -172,7 +169,7 @@ fn base64_encode_chunk(s: &str) -> String {
 }
 
 // Go net/url QueryEscape (encodeQueryComponent mode).
-fn query_escape(s: &str) -> String {
+pub fn query_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for &c in s.as_bytes() {
         if c.is_ascii_alphanumeric() || c == b'-' || c == b'_' || c == b'.' || c == b'~' {
@@ -188,7 +185,7 @@ fn query_escape(s: &str) -> String {
 }
 
 // Go net/url QueryUnescape.
-fn query_unescape(s: &str) -> Result<Vec<u8>, String> {
+pub fn query_unescape(s: &str) -> Result<Vec<u8>, String> {
     let b = s.as_bytes();
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;
@@ -269,16 +266,4 @@ pub(crate) fn do_sourcemap_record_baseline(
     }
 
     (baseline_path, actual)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn query_round_trip_is_identity() {
-        for s in ["a b+c%d", "héllo\r\n\t~", ""] {
-            assert_eq!(query_unescape(&query_escape(s)).unwrap(), s.as_bytes());
-        }
-    }
 }

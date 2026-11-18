@@ -29,14 +29,19 @@ a user-visible capability status or closes a listed gap.
 
 Run the new regression against the fixed tsrs binary and the pinned Go
 compiler. Run the affected crate's checks/tests and `tools/regressions.sh`.
-Run `tools/lint/ratchet.py` when it exists, then `tools/lint/source.py`; on a
+Rebuild with `cargo build --profile dev --locked -p tsrs_cli -p tsrs_testrunner`
+after edits and use `target/debug/` binaries consistently. Reuse the pinned Go
+binary and commands recorded during reproduction; do not rebuild the reference.
+Run `tools/lint/ratchet.py` when it exists, then `tools/lint/source.mjs`; on a
 revision before the ratchet script exists, run the full Clippy command in
 `docs/RUST.md` instead. Run any generated-code freshness check relevant to the
 edited files.
 
-Do not claim success when a required check failed. Remove reproduction files,
-build artifacts, debug output, and instrumentation from tracked changes. Review
-`git diff` and `git status`, but do not commit or push.
+Do not claim success when a required check failed. Remove instrumentation from
+source, and move reproduction files, build artifacts, and debug output into
+`<triageDir>` or delete them. Every entry left in
+`git status --short --untracked-files=all` is committed, so it must list only
+the fix's source, regression, and documentation changes. Do not commit or push.
 
 Append the changed behavior, Go function followed, test evidence, commands and
 results, and final diff summary to `report.md`. Return `fixed: true` only when

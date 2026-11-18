@@ -1,3 +1,8 @@
+#![expect(
+    clippy::redundant_pub_crate,
+    reason = "Only the public API is re-exported; implementation helpers remain crate-private."
+)]
+
 use std::rc::Rc;
 
 use tsrs_ast::{self as ast, Kind, Node, NodeFlags, NodeList, NodeVisitor, SourceFile};
@@ -8,7 +13,7 @@ use crate::astnav::{self, VisitNodeFn, VisitNodesFn};
 
 // children.go:13
 // Replaces last(node.getChildren(sourceFile))
-pub fn get_last_child(node: P<Node>, source_file: P<SourceFile>) -> Option<P<Node>> {
+pub(crate) fn get_last_child(node: P<Node>, source_file: P<SourceFile>) -> Option<P<Node>> {
     let last_child_node = get_last_visited_child(node, source_file);
     if ast::is_jsdoc_single_comment_node(node) && last_child_node.is_none() {
         return None;
@@ -38,7 +43,7 @@ pub fn get_last_child(node: P<Node>, source_file: P<SourceFile>) -> Option<P<Nod
 }
 
 // children.go:37
-pub fn get_last_token(node: Option<P<Node>>, source_file: P<SourceFile>) -> Option<P<Node>> {
+pub(crate) fn get_last_token(node: Option<P<Node>>, source_file: P<SourceFile>) -> Option<P<Node>> {
     let node = node?;
 
     if ast::is_token_kind(node.kind()) || ast::is_identifier(node) {
@@ -49,7 +54,7 @@ pub fn get_last_token(node: Option<P<Node>>, source_file: P<SourceFile>) -> Opti
 
     let last_child = get_last_child(node, source_file)?;
 
-    if last_child.kind() < Kind::FirstNode {
+    if last_child.kind() < Kind::FIRST_NODE {
         Some(last_child)
     } else {
         get_last_token(Some(last_child), source_file)
@@ -59,16 +64,16 @@ pub fn get_last_token(node: Option<P<Node>>, source_file: P<SourceFile>) -> Opti
 // children.go:62
 // Gets the last visited child of the given node.
 // NOTE: This doesn't include unvisited tokens; for this, use `getLastChild` or `getLastToken`.
-pub fn get_last_visited_child(node: P<Node>, source_file: P<SourceFile>) -> Option<P<Node>> {
+pub(crate) fn get_last_visited_child(node: P<Node>, source_file: P<SourceFile>) -> Option<P<Node>> {
     let last_child: Rc<std::cell::Cell<Option<P<Node>>>> = Rc::new(std::cell::Cell::new(None));
 
     let visit_node: VisitNodeFn = {
         let last_child = Rc::clone(&last_child);
         Rc::new(move |n: Option<P<Node>>, _: &mut NodeVisitor| {
-            if let Some(nd) = n {
-                if !nd.flags().intersects(NodeFlags::Reparsed) {
-                    last_child.set(Some(nd));
-                }
+            if let Some(nd) = n
+                && !nd.flags().intersects(NodeFlags::Reparsed)
+            {
+                last_child.set(Some(nd));
             }
             n
         })
@@ -76,12 +81,12 @@ pub fn get_last_visited_child(node: P<Node>, source_file: P<SourceFile>) -> Opti
     let visit_node_list: VisitNodesFn = {
         let last_child = Rc::clone(&last_child);
         Rc::new(move |node_list: Option<P<NodeList>>, _: &mut NodeVisitor| {
-            if let Some(list) = node_list {
-                if let Some(v) = list.nodes().iter().rev().into_iter().find_map(|&v| {
-                    if !v.flags().intersects(NodeFlags::Reparsed) { Some(v) } else { None }
-                }) {
-                    last_child.set(Some(v));
-                }
+            if let Some(list) = node_list
+                && let Some(v) = list.nodes().iter().rev().into_iter().find_map(|&v| {
+                    if v.flags().intersects(NodeFlags::Reparsed) { None } else { Some(v) }
+                })
+            {
+                last_child.set(Some(v));
             }
             node_list
         })
@@ -92,7 +97,7 @@ pub fn get_last_visited_child(node: P<Node>, source_file: P<SourceFile>) -> Opti
 }
 
 // children.go:87
-pub fn get_first_token(node: P<Node>, source_file: P<SourceFile>) -> Option<P<Node>> {
+pub(crate) fn get_first_token(node: P<Node>, source_file: P<SourceFile>) -> Option<P<Node>> {
     if ast::is_identifier(node) || ast::is_token_kind(node.kind()) {
         return None;
     }
@@ -133,14 +138,14 @@ pub fn get_first_token(node: P<Node>, source_file: P<SourceFile>) -> Option<P<No
         return first_token;
     }
     let first_child = first_child?;
-    if first_child.kind() < Kind::FirstNode {
+    if first_child.kind() < Kind::FIRST_NODE {
         return Some(first_child);
     }
     get_first_token(first_child, source_file)
 }
 
 // children.go:128
-pub fn assert_has_real_position(node: P<Node>) {
+fn assert_has_real_position(node: P<Node>) {
     assert!(
         !(ast::position_is_synthesized(node.pos()) || ast::position_is_synthesized(node.end())),
         "Node must have a real position for this operation."

@@ -7,7 +7,7 @@
 pub const NODE_OFFSET_KIND: usize = 0;
 pub const NODE_OFFSET_POS: usize = 4;
 pub const NODE_OFFSET_END: usize = 8;
-pub const NODE_OFFSET_NEXT: usize = 12;
+pub(crate) const NODE_OFFSET_NEXT: usize = 12;
 pub const NODE_OFFSET_PARENT: usize = 16;
 pub const NODE_OFFSET_DATA: usize = 20;
 pub const NODE_OFFSET_FLAGS: usize = 24;
@@ -15,12 +15,12 @@ pub const NODE_OFFSET_FLAGS: usize = 24;
 pub const NODE_OFFSET_VIRTUAL: usize = 28;
 pub const NODE_SIZE: usize = 32;
 
-pub const NODE_DATA_TYPE_CHILDREN: u32 = 0 << 30;
+pub(crate) const NODE_DATA_TYPE_CHILDREN: u32 = 0 << 30;
 pub const NODE_DATA_TYPE_STRING: u32 = 1 << 30;
 pub const NODE_DATA_TYPE_EXTENDED_DATA: u32 = 2 << 30;
 
 pub const NODE_DATA_TYPE_MASK: u32 = 0xc0_00_00_00;
-pub const NODE_DATA_CHILD_MASK: u32 = 0x00_00_00_ff;
+pub(crate) const NODE_DATA_CHILD_MASK: u32 = 0x00_00_00_ff;
 pub const NODE_DATA_STRING_INDEX_MASK: u32 = 0x00_ff_ff_ff;
 
 /// `kind` of a `NodeList` record.
@@ -38,8 +38,8 @@ pub const HEADER_OFFSET_STRING_DATA: usize = 28;
 pub const HEADER_OFFSET_EXTENDED_DATA: usize = 32;
 pub const HEADER_OFFSET_STRUCTURED_DATA: usize = 36;
 pub const HEADER_OFFSET_NODES: usize = 40;
-pub const HEADER_OFFSET_SOURCE_FILE_ID: usize = 44;
-pub const HEADER_OFFSET_SOURCE_FILE_LEASE: usize = 52;
+pub(crate) const HEADER_OFFSET_SOURCE_FILE_ID: usize = 44;
+pub(crate) const HEADER_OFFSET_SOURCE_FILE_LEASE: usize = 52;
 pub const HEADER_OFFSET_BINDER_DATA: usize = 60;
 pub const HEADER_OFFSET_ETS_OPTIONS: usize = 64;
 pub const HEADER_SIZE: usize = 68;
@@ -48,7 +48,7 @@ pub const HEADER_SIZE: usize = 68;
 pub const PROTOCOL_VERSION: u8 = 10;
 
 /// "No data" marker for optional structured data / string indices in the `SourceFile` extended data.
-pub const NO_STRUCTURED_DATA: u32 = 0xFFFF_FFFF;
+pub(crate) const NO_STRUCTURED_DATA: u32 = 0xFFFF_FFFF;
 
 /// Byte size of the `SourceFile` extended data record (19 uint32 fields).
 pub const SOURCE_FILE_EXTENDED_DATA_SIZE: usize = 76;

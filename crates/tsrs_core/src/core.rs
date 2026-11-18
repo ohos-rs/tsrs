@@ -1,6 +1,6 @@
+use crate::ScriptKind;
 use crate::stringutil;
 use crate::tspath;
-use crate::{CompilerOptions, ScriptKind};
 use rustc_hash::FxHashMap;
 use std::borrow::Cow;
 use std::cmp::Ordering;
@@ -8,8 +8,6 @@ use std::hash::Hash;
 
 // Go helpers that return their input slice unchanged when nothing changes return `Cow::Borrowed`
 // so callers can preserve slice identity (see `same`).
-
-pub fn apply_debug_stack_limit() {}
 
 pub fn filter<T: Clone>(slice: &[T], mut f: impl FnMut(&T) -> bool) -> Cow<'_, [T]> {
     for (i, value) in slice.iter().enumerate() {
@@ -26,52 +24,9 @@ pub fn filter<T: Clone>(slice: &[T], mut f: impl FnMut(&T) -> bool) -> Cow<'_, [
     Cow::Borrowed(slice)
 }
 
-pub fn filter_index<T: Clone>(
-    slice: &[T],
-    mut f: impl FnMut(&T, usize, &[T]) -> bool,
-) -> Cow<'_, [T]> {
-    for (i, value) in slice.iter().enumerate() {
-        if !f(value, i, slice) {
-            let mut result = slice[..i].to_vec();
-            result.extend((i + 1..slice.len()).filter_map(|j| {
-                if f(&slice[j], j, slice) { Some(slice[j].clone()) } else { None }
-            }));
-            return Cow::Owned(result);
-        }
-    }
-    Cow::Borrowed(slice)
-}
-
-pub fn map<T, U>(slice: &[T], f: impl FnMut(&T) -> U) -> Vec<U> {
-    slice.iter().map(f).collect()
-}
-
-pub fn try_map<T, U, E>(slice: &[T], mut f: impl FnMut(&T) -> Result<U, E>) -> Result<Vec<U>, E> {
-    let mut result = Vec::with_capacity(slice.len());
-    result = slice.iter().try_fold(result, |mut result, value| {
-        result.push(f(value)?);
-        Ok::<_, E>(result)
-    })?;
-    Ok(result)
-}
-
-pub fn map_index<T, U>(slice: &[T], mut f: impl FnMut(&T, usize) -> U) -> Vec<U> {
-    slice.iter().enumerate().map(|(i, v)| f(v, i)).collect()
-}
-
 /// Go `MapNonNil`: the callback returns `None` where Go returns the zero value.
 pub fn map_non_nil<T, U>(slice: &[T], f: impl FnMut(&T) -> Option<U>) -> Vec<U> {
     slice.iter().filter_map(f).collect()
-}
-
-pub fn map_filtered<T, U>(slice: &[T], f: impl FnMut(&T) -> Option<U>) -> Vec<U> {
-    slice.iter().filter_map(f).collect()
-}
-
-pub fn flat_map<T, U, I: IntoIterator<Item = U>>(slice: &[T], f: impl FnMut(&T) -> I) -> Vec<U> {
-    let mut result = Vec::new();
-    result.extend(slice.iter().flat_map(f));
-    result
 }
 
 pub fn same_map<T: Clone + PartialEq>(slice: &[T], mut f: impl FnMut(&T) -> T) -> Cow<'_, [T]> {
@@ -88,23 +43,6 @@ pub fn same_map<T: Clone + PartialEq>(slice: &[T], mut f: impl FnMut(&T) -> T) -
     Cow::Borrowed(slice)
 }
 
-pub fn same_map_index<T: Clone + PartialEq>(
-    slice: &[T],
-    mut f: impl FnMut(&T, usize) -> T,
-) -> Cow<'_, [T]> {
-    for (i, value) in slice.iter().enumerate() {
-        let mapped = f(value, i);
-        if mapped != *value {
-            let mut result = Vec::with_capacity(slice.len());
-            result.extend_from_slice(&slice[..i]);
-            result.push(mapped);
-            result.extend((i + 1..slice.len()).map(|j| f(&slice[j], j)));
-            return Cow::Owned(result);
-        }
-    }
-    Cow::Borrowed(slice)
-}
-
 /// Go `Same`: slices are identical (same length and same backing storage).
 pub fn same<T>(s1: &[T], s2: &[T]) -> bool {
     if s1.len() == s2.len() {
@@ -113,16 +51,8 @@ pub fn same<T>(s1: &[T], s2: &[T]) -> bool {
     false
 }
 
-pub fn some<T>(slice: &[T], f: impl FnMut(&T) -> bool) -> bool {
-    slice.iter().any(f)
-}
-
 pub fn every<T>(slice: &[T], f: impl FnMut(&T) -> bool) -> bool {
     slice.iter().all(f)
-}
-
-pub fn or<T>(funcs: Vec<Box<dyn Fn(&T) -> bool>>) -> impl Fn(&T) -> bool {
-    move |input| funcs.iter().any(|f| f(input))
 }
 
 pub fn find<T: Clone>(slice: &[T], mut f: impl FnMut(&T) -> bool) -> Option<T> {
@@ -153,22 +83,8 @@ pub fn element_or_nil<T: Clone>(slice: &[T], index: usize) -> Option<T> {
     slice.get(index).cloned()
 }
 
-pub fn first_or_nil_seq<T>(seq: impl IntoIterator<Item = T>) -> Option<T> {
-    seq.into_iter().next()
-}
-
 pub fn first_non_nil<T, U>(slice: &[T], f: impl FnMut(&T) -> Option<U>) -> Option<U> {
     slice.iter().find_map(f)
-}
-
-pub fn first_non_zero<T: Clone + Default + PartialEq>(values: &[T]) -> T {
-    let zero = T::default();
-    if let Some(result) =
-        values.iter().find_map(|value| if *value != zero { Some(value.clone()) } else { None })
-    {
-        return result;
-    }
-    zero
 }
 
 pub fn concatenate<'a, T: Clone>(s1: &'a [T], s2: &'a [T]) -> Cow<'a, [T]> {
@@ -262,17 +178,6 @@ pub fn append_if_unique<T: PartialEq>(slice: &mut Vec<T>, element: T) {
         return;
     }
     slice.push(element);
-}
-
-pub fn memoize<T: Clone>(create: impl FnOnce() -> T) -> impl FnMut() -> T {
-    let mut create = Some(create);
-    let mut value: Option<T> = None;
-    move || {
-        if let Some(c) = create.take() {
-            value = Some(c());
-        }
-        value.clone().unwrap()
-    }
 }
 
 // Returns whenTrue if b is true; otherwise, returns whenFalse. IfElse should only be used when branches are either
@@ -397,12 +302,6 @@ pub fn utf16_len(s: &str) -> UTF16Offset {
         }
     }
     bytes.len() as UTF16Offset
-}
-
-pub fn flatten<T: Clone>(array: &[Vec<T>]) -> Vec<T> {
-    let mut result = Vec::new();
-    result.extend(array.iter().flat_map(|sub_array| sub_array.iter().cloned()));
-    result
 }
 
 pub fn get_script_kind_from_file_name(file_name: &str) -> ScriptKind {
@@ -573,22 +472,23 @@ pub fn get_spelling_suggestion_for_strings<S: AsRef<str>>(
 }
 
 #[derive(Default)]
-struct LevenshteinBuffers {
+pub struct LevenshteinBuffers {
     previous: Vec<f64>,
     current: Vec<f64>,
 }
 
-fn levenshtein_with_max<T: Copy + Eq>(
+pub fn levenshtein_with_max<T: Copy + Eq>(
     buffers: &mut LevenshteinBuffers,
     s1: &[T],
     s2: &[T],
     max_value: f64,
     to_lowercase: impl Fn(T) -> T,
 ) -> Option<f64> {
+    if s1.len().abs_diff(s2.len()) as f64 > max_value {
+        return None;
+    }
     let buffer_size = s2.len() + 1;
-    buffers.previous.clear();
     buffers.previous.resize(buffer_size, 0.0);
-    buffers.current.clear();
     buffers.current.resize(buffer_size, 0.0);
 
     let mut previous = std::mem::take(&mut buffers.previous);
@@ -600,13 +500,18 @@ fn levenshtein_with_max<T: Copy + Eq>(
     }
     for i in 1..=s1.len() {
         let c1 = s1[i - 1];
+        let c1_lower = to_lowercase(c1);
         let min_j = ((i as f64 - max_value).ceil() as i64).max(1) as usize;
         let max_j = ((max_value + i as f64).floor() as i64).min(s2.len() as i64).max(0) as usize;
         let mut col_min = i as f64;
         current[0] = col_min;
-        current.iter_mut().take(min_j.min(buffer_size)).skip(1).for_each(|value| *value = big);
+        // Adjacent bands shift by one cell, so later rows can only observe the
+        // sentinel immediately outside either edge of this row's band.
+        if min_j > 1 && min_j <= s2.len() {
+            current[min_j - 1] = big;
+        }
         for j in min_j..=max_j {
-            let substitution_distance = if to_lowercase(s1[i - 1]) == to_lowercase(s2[j - 1]) {
+            let substitution_distance = if c1_lower == to_lowercase(s2[j - 1]) {
                 previous[j - 1] + 0.1
             } else {
                 previous[j - 1] + 2.0
@@ -619,7 +524,9 @@ fn levenshtein_with_max<T: Copy + Eq>(
             current[j] = dist;
             col_min = col_min.min(dist);
         }
-        current.iter_mut().take(s2.len() + 1).skip(max_j + 1).for_each(|value| *value = big);
+        if max_j < s2.len() {
+            current[max_j + 1] = big;
+        }
         if col_min > max_value {
             // Give up -- everything in this column is > max and it can't get better in future columns.
             buffers.previous = previous;
@@ -635,11 +542,6 @@ fn levenshtein_with_max<T: Copy + Eq>(
         return None;
     }
     Some(res)
-}
-
-#[inline]
-pub fn identity<T>(t: T) -> T {
-    t
 }
 
 pub fn index_after(s: &str, pattern: &str, start_index: usize) -> Option<usize> {
@@ -674,41 +576,6 @@ pub fn index_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     None
 }
 
-pub fn should_rewrite_module_specifier(
-    specifier: &str,
-    compiler_options: &CompilerOptions,
-) -> bool {
-    compiler_options.rewrite_relative_import_extensions.is_true()
-        && tspath::path_is_relative(specifier)
-        && !tspath::is_declaration_file_name(specifier)
-        && tspath::has_ts_file_extension(specifier)
-}
-
-pub fn single_element_slice<T>(element: Option<T>) -> Vec<T> {
-    match element {
-        None => Vec::new(),
-        Some(e) => vec![e],
-    }
-}
-
-// DiffMaps compares two maps m1 and m2 and calls the provided callbacks for added, removed, and changed entries.
-// onAdded is called for each key-value pair that is in m2 but not in m1.
-// onRemoved is called for each key-value pair that is in m1 but not in m2.
-// onChanged is called for each key where the value in m1 differs from the value in m2.
-#[expect(
-    clippy::implicit_hasher,
-    reason = "The API deliberately accepts only FxHashMap, as required by the workspace hashing policy."
-)]
-pub fn diff_maps<K: Hash + Eq, V: PartialEq>(
-    m1: &FxHashMap<K, V>,
-    m2: &FxHashMap<K, V>,
-    on_added: impl FnMut(&K, &V),
-    on_removed: impl FnMut(&K, &V),
-    on_changed: impl FnMut(&K, &V, &V),
-) {
-    diff_maps_func(m1, m2, |a, b| a == b, Some(on_added), Some(on_removed), Some(on_changed));
-}
-
 #[expect(
     clippy::iter_over_hash_type,
     reason = "Go's DiffMapsFunc ranges over the maps too; the one caller (tsrs_project update_watches) collects watch changes, whose order is not output"
@@ -739,32 +606,13 @@ pub fn diff_maps_func<K: Hash + Eq, V1, V2>(
     let mut on_removed = on_removed;
     for (k, v1) in m1 {
         if let Some(v2) = m2.get(k) {
-            if let Some(on_changed) = on_changed.as_mut() {
-                if !equal_values(v1, v2) {
-                    on_changed(k, v1, v2);
-                }
+            if let Some(on_changed) = on_changed.as_mut()
+                && !equal_values(v1, v2)
+            {
+                on_changed(k, v1, v2);
             }
         } else if let Some(on_removed) = on_removed.as_mut() {
             on_removed(k, v1);
-        }
-    }
-}
-
-// CopyMapInto is maps.Copy, unless dst is nil, in which case it clones and returns src.
-#[expect(
-    clippy::implicit_hasher,
-    reason = "The API deliberately accepts only FxHashMap, as required by the workspace hashing policy."
-)]
-pub fn copy_map_into<K: Hash + Eq + Clone, V: Clone>(
-    dst: Option<FxHashMap<K, V>>,
-    src: &FxHashMap<K, V>,
-) -> FxHashMap<K, V> {
-    match dst {
-        None => src.clone(),
-        Some(mut dst) => {
-            // inserts distinct keys into a map
-            dst.extend(src.iter().map(|(k, v)| (k.clone(), v.clone())));
-            dst
         }
     }
 }
@@ -833,98 +681,4 @@ pub fn deduplicate_sorted<T: Clone>(
 // CompareBooleans treats true as greater than false.
 pub fn compare_booleans(a: bool, b: bool) -> Ordering {
     a.cmp(&b)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn index_bytes_matches_memmem() {
-        let many_fails = format!("{}ab", "a".repeat(500));
-        let multibyte = format!("{}éb", "éa".repeat(200));
-        let cases: [(&str, &str); 14] = [
-            ("hello world", "world"),
-            ("hello world", "worlds"),
-            ("hello", "hello"),
-            ("hell", "hello"),
-            ("", "a"),
-            ("abc", ""),
-            ("abcabc", "c"),
-            (&many_fails, "ab"),
-            (&many_fails, "aab"),
-            (&many_fails, "ac"),
-            (&multibyte, "éb"),
-            (&multibyte, "aé"),
-            (&multibyte, "ab"),
-            ("日本語のテキスト", "テキ"),
-        ];
-        for (text, needle) in cases {
-            for start in 0..=text.len() {
-                let haystack = &text.as_bytes()[start..];
-                assert_eq!(
-                    index_bytes(haystack, needle.as_bytes()),
-                    memchr::memmem::find(haystack, needle.as_bytes()),
-                    "{needle:?} in {text:?} from {start}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn helpers() {
-        let v = [1, 2, 3, 4];
-        assert!(matches!(filter(&v, |x| *x > 0), Cow::Borrowed(_)));
-        assert_eq!(&*filter(&v, |x| x % 2 == 0), &[2, 4]);
-        assert_eq!(&*splice(&v, SpliceStart::FromStart(1), 2, &[9]), &[1, 9, 4]);
-        assert_eq!(&*splice(&v, SpliceStart::FromEnd(1), 1, &[]), &[1, 2, 3]);
-        assert_eq!(&*deduplicate(&[1, 2, 1, 3, 2]), &[1, 2, 3]);
-        assert!(same(&v[..], &v[..]));
-        assert!(!same(&v[..], &[1, 2, 3, 4][..]));
-        let mut s = vec![1, 3, 5];
-        insert_sorted(&mut s, 4, Ord::cmp);
-        assert_eq!(s, vec![1, 3, 4, 5]);
-        assert_eq!(compute_ecma_line_starts("a\r\nb\nc\u{2028}d\re"), vec![0, 3, 5, 9, 11]);
-        assert_eq!(position_to_line_and_byte_offset(4, &[0, 3, 5]), (1, 1));
-        assert_eq!(utf16_len("a😀é"), 4);
-        assert_eq!(get_script_kind_from_file_name("a.D.TS"), ScriptKind::TS);
-    }
-
-    #[test]
-    fn line_start_count() {
-        for text in [
-            "",
-            "a",
-            "\n",
-            "\r",
-            "\r\n",
-            "\n\r",
-            "a\r\nb\nc\u{2028}d\re",
-            "x\r",
-            "\r\r\n\n",
-            "\u{2029}\u{2028}",
-            "é\u{2020}\u{2027}\u{202A}\u{2029}é\r\n",
-            "\u{2028}\r\n\u{E280}",
-        ] {
-            let mut expected = 0;
-            compute_ecma_line_starts_seq(text, |_| {
-                expected += 1;
-                true
-            });
-            assert_eq!(count_ecma_line_starts(text), expected, "{text:?}");
-        }
-    }
-
-    #[test]
-    fn spelling() {
-        let names = ["foo", "bar", "length", "lengthy_name"];
-        assert_eq!(
-            get_spelling_suggestion_for_strings("lenght", names.iter().copied()),
-            Some("length")
-        );
-        assert_eq!(get_spelling_suggestion_for_strings("xyzzy", names.iter().copied()), None);
-        assert_eq!(get_spelling_suggestion_for_strings("Foo", names.iter().copied()), Some("foo"));
-        assert_eq!(get_spelling_suggestion_for_strings("École", ["école"]), Some("école"));
-        assert_eq!(get_spelling_suggestion_for_strings("Ecole", ["école"]), Some("école"));
-    }
 }

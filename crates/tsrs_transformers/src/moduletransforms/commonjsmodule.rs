@@ -4,21 +4,27 @@ use super::*;
 // commonjsmodule_3.rs (986–1339), commonjsmodule_4.rs (1340–end).
 
 // commonjsmodule.go:15
-pub struct CommonJSModuleTransformer {
-    pub base: Transformer,
-    pub(crate) top_level_visitor: OnceCell<NodeVisitor>, // visits statements at top level of a module
-    pub(crate) top_level_nested_visitor: OnceCell<NodeVisitor>, // visits nested statements at top level of a module
-    pub(crate) discarded_value_visitor: OnceCell<NodeVisitor>, // visits expressions whose values would be discarded at runtime
-    pub(crate) assignment_pattern_visitor: OnceCell<NodeVisitor>, // visits assignment patterns in a destructuring assignment
-    pub compiler_options: P<CompilerOptions>,
-    pub resolver: ReferenceResolverRef,
-    pub get_emit_module_format_of_file: Rc<dyn Fn(P<SourceFile>) -> ModuleKind>,
-    pub module_kind: ModuleKind,
-    pub language_version: ScriptTarget,
-    pub current_source_file: Cell<Option<P<SourceFile>>>,
-    pub(crate) current_module_info: RefCell<Option<Rc<externalModuleInfo>>>,
-    pub parent_node: Cell<Option<P<Node>>>, // used for ancestor tracking via pushNode/popNode to detect expression identifiers
-    pub current_node: Cell<Option<P<Node>>>, // used for ancestor tracking via pushNode/popNode to detect expression identifiers
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Only the public API is re-exported; implementation helpers remain crate-private."
+)]
+pub(crate) struct CommonJSModuleTransformer {
+    pub(crate) base: Transformer,
+    top_level_visitor: OnceCell<NodeVisitor>, // visits statements at top level of a module
+    top_level_nested_visitor: OnceCell<NodeVisitor>, // visits nested statements at top level of a module
+    discarded_value_visitor: OnceCell<NodeVisitor>, // visits expressions whose values would be discarded at runtime
+    assignment_pattern_visitor: OnceCell<NodeVisitor>, // visits assignment patterns in a destructuring assignment
+    pub(crate) compiler_options: P<CompilerOptions>,
+    pub(crate) resolver: ReferenceResolverRef,
+    pub(crate) get_emit_module_format_of_file: Rc<dyn Fn(P<SourceFile>) -> ModuleKind>,
+    pub(crate) module_kind: ModuleKind,
+    pub(crate) language_version: ScriptTarget,
+    pub(crate) current_source_file: Cell<Option<P<SourceFile>>>,
+    current_module_info: RefCell<Option<Rc<ExternalModuleInfo>>>,
+    pub(crate) parent_node: Cell<Option<P<Node>>>, // used for ancestor tracking via pushNode/popNode to detect expression identifiers
+    current_node: Cell<Option<P<Node>>>, // used for ancestor tracking via pushNode/popNode to detect expression identifiers
+    pub(crate) content_mapper_extension_rewrites: Vec<tspath::ExtensionRewrite>,
+    pub(crate) use_case_sensitive_file_names: bool,
 }
 
 // commonjsmodule.go:32
@@ -44,6 +50,8 @@ pub fn new_common_js_module_transformer(opts: &TransformOptions) -> Option<P<Tra
         current_module_info: RefCell::new(None),
         parent_node: Cell::new(None),
         current_node: Cell::new(None),
+        content_mapper_extension_rewrites: opts.content_mapper_extension_rewrites.clone(),
+        use_case_sensitive_file_names: opts.use_case_sensitive_file_names,
     });
     let _ =
         tx.top_level_visitor.set(emit_context.new_node_visitor(Rc::new(
@@ -77,7 +85,7 @@ impl CommonJSModuleTransformer {
         self.base.visitor()
     }
 
-    pub(crate) fn top_level_visitor(&self) -> NodeVisitor {
+    fn top_level_visitor(&self) -> NodeVisitor {
         self.top_level_visitor.get().unwrap().clone()
     }
 
@@ -93,7 +101,7 @@ impl CommonJSModuleTransformer {
         self.assignment_pattern_visitor.get().unwrap().clone()
     }
 
-    pub(crate) fn module_info(&self) -> Rc<externalModuleInfo> {
+    pub(crate) fn module_info(&self) -> Rc<ExternalModuleInfo> {
         self.current_module_info.borrow().clone().unwrap()
     }
 
@@ -370,8 +378,8 @@ impl CommonJSModuleTransformer {
         // initialize all exports to `undefined`, e.g.:
         //  exports.a = exports.b = void 0;
         if !info.exported_names.is_empty() {
-            const chunkSize: usize = 50;
-            statements.extend(info.exported_names.chunks(chunkSize).map(|chunk| {
+            const CHUNK_SIZE: usize = 50;
+            statements.extend(info.exported_names.chunks(CHUNK_SIZE).map(|chunk| {
                 let mut right = f.new_void_zero_expression();
                 for &next_id in chunk {
                     let left = if next_id.kind() == Kind::StringLiteral {
@@ -673,24 +681,25 @@ impl CommonJSModuleTransformer {
             None => &mut own_seen,
         };
 
-        if let Some(name) = decl.name() {
-            if !info.export_specifiers.m.is_empty() && ast::is_identifier(name) {
-                let name = self.factory().get_declaration_name(decl);
-                let export_specifiers = info.export_specifiers.get(&name.text());
-                if !export_specifiers.is_empty() {
-                    let export_value = self.visit_expression_identifier(name);
-                    for &export_specifier in export_specifiers {
-                        let export_name = export_specifier.name().unwrap();
-                        self.append_export_statement(
-                            statements,
-                            seen,
-                            export_name,
-                            export_value,
-                            Some(export_name.loc()), /*location*/
-                            false,                   /*allowComments*/
-                            live_binding,
-                        );
-                    }
+        if let Some(name) = decl.name()
+            && !info.export_specifiers.m.is_empty()
+            && ast::is_identifier(name)
+        {
+            let name = self.factory().get_declaration_name(decl);
+            let export_specifiers = info.export_specifiers.get(&name.text());
+            if !export_specifiers.is_empty() {
+                let export_value = self.visit_expression_identifier(name);
+                for &export_specifier in export_specifiers {
+                    let export_name = export_specifier.name().unwrap();
+                    self.append_export_statement(
+                        statements,
+                        seen,
+                        export_name,
+                        export_value,
+                        Some(export_name.loc()), /*location*/
+                        false,                   /*allowComments*/
+                        live_binding,
+                    );
                 }
             }
         }

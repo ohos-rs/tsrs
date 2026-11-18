@@ -4,8 +4,8 @@ use std::ops::{Add, Div, Mul, Neg, Sub};
 use super::big;
 use super::math;
 
-pub const MaxSafeInteger: Number = Number(((1u64 << 53) - 1) as f64);
-pub const MinSafeInteger: Number = Number(-MaxSafeInteger.0);
+pub const MAX_SAFE_INTEGER: Number = Number(((1u64 << 53) - 1) as f64);
+pub const MIN_SAFE_INTEGER: Number = Number(-MAX_SAFE_INTEGER.0);
 
 // Number represents a JS-like number.
 //
@@ -80,15 +80,15 @@ impl Number {
     }
 }
 
-pub(crate) fn is_non_finite(x: f64) -> bool {
+fn is_non_finite(x: f64) -> bool {
     // This is equivalent to checking `math.IsNaN(x) || math.IsInf(x, 0)` in one operation.
-    const mask: u64 = 0x7FF0_0000_0000_0000;
-    x.to_bits() & mask == mask
+    const MASK: u64 = 0x7FF0_0000_0000_0000;
+    x.to_bits() & MASK == MASK
 }
 
 impl Number {
     // https://tc39.es/ecma262/2024/multipage/abstract-operations.html#sec-touint32
-    pub(crate) fn to_uint32(self) -> u32 {
+    fn to_uint32(self) -> u32 {
         // The only difference between ToUint32 and ToInt32 is the interpretation of the bits.
         self.to_int32() as u32
     }
@@ -98,7 +98,7 @@ impl Number {
         clippy::float_cmp,
         reason = "Exact equality preserves JavaScript numeric identity; an epsilon comparison would merge distinct values."
     )]
-    pub(crate) fn to_int32(self) -> i32 {
+    pub fn to_int32(self) -> i32 {
         let mut x = self.0;
 
         // Fast path: if the number is in the range (-2^31, 2^32), i.e. an SMI,
@@ -122,7 +122,7 @@ impl Number {
         x as i64 as i32
     }
 
-    pub(crate) fn to_shift_count(self) -> u32 {
+    fn to_shift_count(self) -> u32 {
         self.to_uint32() & 31
     }
 
@@ -171,18 +171,12 @@ impl Number {
     }
 
     #[must_use]
-    pub fn floor(self) -> Number {
-        Number(self.0.floor())
-    }
-
-    #[must_use]
     pub fn abs(self) -> Number {
         Number(self.0.abs())
     }
 }
 
-#[cfg(test)] // only tests use it, in Go too
-pub(crate) const negative_zero: Number = Number(-0.0);
+pub const NEGATIVE_ZERO: Number = Number(-0.0);
 
 impl Number {
     // https://tc39.es/ecma262/2024/multipage/ecmascript-data-types-and-values.html#sec-numeric-types-number-remainder

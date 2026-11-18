@@ -42,7 +42,7 @@ impl Checker {
                     Kind::PropertyAccessExpression => expression.name().unwrap(),
                     _ => node,
                 };
-                self.error(Some(error_node), &diagnostics::Function_may_throw_exceptions_Special_handling_is_required, &[]);
+                self.error(Some(error_node), &diagnostics::FUNCTION_MAY_THROW_EXCEPTIONS_SPECIAL_HANDLING_IS_REQUIRED, &[]);
                 return;
             }
             current = owner.parent();

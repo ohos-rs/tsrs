@@ -8,9 +8,12 @@
 // (Go reports the first invalid field in document order, this in struct order) except for DocumentIdentifier,
 // whose custom decoder text is reproduced.
 
-use rustc_hash::FxHashMap;
+use std::fmt::Write as _;
+use std::sync::LazyLock;
 
-use tsrs_core::json::Value;
+use rustc_hash::{FxHashMap, FxHashSet};
+
+use tsrs_core::json::{JsonMap, Value};
 
 use crate::handler::{ApiError, ApiResult};
 use crate::paramfields::{Elem, FieldKind, FieldSpec, params_fields, struct_fields};
@@ -42,13 +45,24 @@ fn go_type_name(t: &str) -> String {
 /// lane, `checker/params.rs`).
 fn check_document(v: &Value, pointer: &str) -> Result<(), String> {
     let got = match v {
-        Value::String(_) => return Ok(()),
+        Value::String(s) => {
+            return if s.is_empty() {
+                Err(format!(
+                    "cannot unmarshal into Go api.DocumentIdentifier within \"{pointer}\": DocumentIdentifier: file name must not be empty"
+                ))
+            } else {
+                Ok(())
+            };
+        }
         Value::Object(o) => {
             return match o.get("uri") {
-                Some(Value::Object(_) | Value::Array(_)) => Err(format!(
-                    "cannot unmarshal into Go api.DocumentIdentifier within \"{pointer}\": DocumentIdentifier: unsupported uri value"
+                Some(Value::String(uri)) if !uri.is_empty() => Ok(()),
+                Some(_) => Err(format!(
+                    "cannot unmarshal into Go api.DocumentIdentifier within \"{pointer}\": DocumentIdentifier: uri must be a non-empty string"
                 )),
-                _ => Ok(()),
+                None => Err(format!(
+                    "cannot unmarshal into Go api.DocumentIdentifier within \"{pointer}\": DocumentIdentifier: object must contain uri"
+                )),
             };
         }
         Value::Null => "null",
@@ -121,6 +135,67 @@ fn token(key: &str) -> String {
     key.replace('~', "~0").replace('/', "~1")
 }
 
+/// The JSON pointer of the value being checked, for error texts and inexact-literal lookups. A pointer that
+/// is off (`Pointer::off`) stays empty: `predecode` checks with it off first and, only if that fails,
+/// checks again with it on for the error text (the outcome does not depend on the pointer when there are no
+/// literals to look up).
+struct Pointer {
+    text: String,
+    on: bool,
+}
+
+impl Pointer {
+    fn new(on: bool) -> Pointer {
+        Pointer { text: if on { String::with_capacity(64) } else { String::new() }, on }
+    }
+
+    fn len(&self) -> usize {
+        self.text.len()
+    }
+
+    fn truncate(&mut self, len: usize) {
+        self.text.truncate(len);
+    }
+
+    fn push_key(&mut self, key: &str) {
+        if self.on {
+            push_token(&mut self.text, key);
+        }
+    }
+
+    fn push_index(&mut self, i: usize) {
+        if self.on {
+            let _ = write!(self.text, "/{i}");
+        }
+    }
+
+    fn as_str(&self) -> &str {
+        &self.text
+    }
+}
+
+impl std::fmt::Display for Pointer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.text)
+    }
+}
+
+/// Appends `/` and the pointer token of `key` to `pointer`.
+fn push_token(pointer: &mut String, key: &str) {
+    pointer.push('/');
+    if !key.contains(['~', '/']) {
+        pointer.push_str(key);
+        return;
+    }
+    for c in key.chars() {
+        match c {
+            '~' => pointer.push_str("~0"),
+            '/' => pointer.push_str("~1"),
+            c => pointer.push(c),
+        }
+    }
+}
+
 /// proto.go / project.go `SyntheticProjectID.UnmarshalJSONFrom`: a string (null decodes as "") that parses as a
 /// synthetic project ID.
 fn check_synthetic_id(v: &Value, pointer: &str) -> Result<(), String> {
@@ -143,19 +218,48 @@ fn check_synthetic_id(v: &Value, pointer: &str) -> Result<(), String> {
 }
 
 fn base_type(go_type: &str) -> &str {
+    if !go_type.starts_with(['*', '[']) {
+        return go_type;
+    }
     go_type.trim_start_matches('*').trim_start_matches("[]").trim_start_matches('*')
+}
+
+/// `name` as one of the field names of the params structs and the api-package structs nested in them, for
+/// the request decoder to borrow.
+pub(crate) fn known_member_name(name: &str) -> Option<&'static str> {
+    static NAMES: LazyLock<FxHashSet<&'static str>> = LazyLock::new(|| {
+        let mut names = FxHashSet::default();
+        let mut seen_types = FxHashSet::default();
+        let mut pending: Vec<&'static [FieldSpec]> =
+            crate::methods::PARAMS_TYPES.iter().map(|(method, _)| params_fields(method)).collect();
+        while let Some(fields) = pending.pop() {
+            for spec in fields {
+                names.insert(spec.name);
+                let go_type = base_type(spec.go_type);
+                if seen_types.insert(go_type) {
+                    pending.push(struct_fields(go_type));
+                }
+            }
+        }
+        names
+    });
+    NAMES.get(name).copied()
 }
 
 /// The fields of an api-package struct value at `pointer`, recursively (Go decodes the whole params struct).
 fn check_struct(
     go_type: &str,
-    o: &tsrs_core::collections::OrderedMap<String, Value>,
-    pointer: &str,
+    o: &JsonMap,
+    pointer: &mut Pointer,
     lexemes: &FxHashMap<String, String>,
 ) -> Result<(), String> {
+    let mut next = 0;
     for spec in struct_fields(base_type(go_type)) {
-        if let Some(v) = o.get(spec.name) {
-            check_field(spec, v, &format!("{pointer}/{}", token(spec.name)), lexemes)?;
+        if let Some(v) = o.get_from(spec.name, &mut next) {
+            let len = pointer.len();
+            pointer.push_key(spec.name);
+            check_field(spec, v, pointer, lexemes)?;
+            pointer.truncate(len);
         }
     }
     Ok(())
@@ -166,7 +270,7 @@ fn check_struct(
 /// above int64). Wrong JSON kinds and int32 ranges are reported by `gojson`.
 fn check_external_integers(
     go_type: &str,
-    o: &tsrs_core::collections::OrderedMap<String, Value>,
+    o: &JsonMap,
     pointer: &str,
     lexemes: &FxHashMap<String, String>,
 ) -> Result<(), String> {
@@ -217,11 +321,7 @@ pub(crate) fn exact_build_options_ints(value: &Value, options: &mut tsrs_core::B
 /// requestfilesystem.RequestFileSystem (decoded by `requestfs.rs` from the parsed value): Go decodes the whole
 /// struct first, so a wrong JSON kind anywhere in it is an invalid request. `null` is the zero value (a null
 /// file content is "", a null path element is ""), as in Go.
-fn check_request_file_system(
-    go_type: &str,
-    o: &tsrs_core::collections::OrderedMap<String, Value>,
-    pointer: &str,
-) -> Result<(), String> {
+fn check_request_file_system(go_type: &str, o: &JsonMap, pointer: &str) -> Result<(), String> {
     if base_type(go_type) != "requestfilesystem.RequestFileSystem" {
         return Ok(());
     }
@@ -297,13 +397,13 @@ fn check_request_file_system(
     Ok(())
 }
 
+/// `pointer` locates `v`; it is a scratch buffer that nested checks extend and restore.
 fn check_field(
     spec: &FieldSpec,
     v: &Value,
-    pointer: &str,
+    pointer: &mut Pointer,
     lexemes: &FxHashMap<String, String>,
 ) -> Result<(), String> {
-    let pointer = pointer.to_string();
     let mismatch = |v: &Value, pointer: &str, go_type: &str| {
         format!(
             "cannot unmarshal JSON {} into Go {} within \"{pointer}\"",
@@ -321,8 +421,8 @@ fn check_field(
                 Ok(())
             }
             Value::Null if spec.go_type.starts_with("[]") => Ok(()),
-            _ if spec.go_type.starts_with("[]") => Err(mismatch(v, &pointer, spec.go_type)),
-            _ => check_synthetic_id(v, &pointer),
+            _ if spec.go_type.starts_with("[]") => Err(mismatch(v, pointer.as_str(), spec.go_type)),
+            _ => check_synthetic_id(v, pointer.as_str()),
         };
     }
     if matches!(v, Value::Null) && spec.kind != FieldKind::Doc && spec.kind != FieldKind::DocList {
@@ -330,12 +430,12 @@ fn check_field(
         return Ok(());
     }
     if let Some(elem) = field_elem(spec.kind) {
-        check_scalar(elem, v, lexemes.get(&pointer).map(String::as_str))
-            .ok_or_else(|| mismatch(v, &pointer, spec.go_type))?;
+        check_scalar(elem, v, lexemes.get(pointer.as_str()).map(String::as_str))
+            .ok_or_else(|| mismatch(v, pointer.as_str(), spec.go_type))?;
         if let Value::Object(o) = v {
-            check_struct(spec.go_type, o, &pointer, lexemes)?;
-            check_external_integers(spec.go_type, o, &pointer, lexemes)?;
-            check_request_file_system(spec.go_type, o, &pointer)?;
+            check_struct(spec.go_type, o, pointer, lexemes)?;
+            check_external_integers(spec.go_type, o, pointer.as_str(), lexemes)?;
+            check_request_file_system(spec.go_type, o, pointer.as_str())?;
         }
         return Ok(());
     }
@@ -344,7 +444,7 @@ fn check_field(
             if matches!(v, Value::Null) && spec.nullable {
                 return Ok(());
             }
-            check_document(v, &pointer)
+            check_document(v, pointer.as_str())
         }
         FieldKind::DocList => match v {
             Value::Null => Ok(()),
@@ -354,27 +454,34 @@ fn check_field(
                 }
                 Ok(())
             }
-            _ => Err(mismatch(v, &pointer, spec.go_type)),
+            _ => Err(mismatch(v, pointer.as_str(), spec.go_type)),
         },
         FieldKind::Array => match v {
             Value::Array(items) => {
                 let elem = spec.elem.unwrap_or(Elem::Any);
                 let elem_type = spec.go_type.trim_start_matches("[]");
+                let len = pointer.len();
                 for (i, item) in items.iter().enumerate() {
-                    let p = format!("{pointer}/{i}");
+                    pointer.truncate(len);
+                    pointer.push_index(i);
                     // A null element is the element type's zero value (or nil), as for fields.
                     if !matches!(item, Value::Null)
-                        && !check_scalar(elem, item, lexemes.get(&p).map(String::as_str))
+                        && !check_scalar(
+                            elem,
+                            item,
+                            lexemes.get(pointer.as_str()).map(String::as_str),
+                        )
                     {
-                        return Err(mismatch(item, &p, elem_type));
+                        return Err(mismatch(item, pointer.as_str(), elem_type));
                     }
                     if let Value::Object(o) = item {
-                        check_struct(elem_type, o, &p, lexemes)?;
+                        check_struct(elem_type, o, pointer, lexemes)?;
                     }
                 }
+                pointer.truncate(len);
                 Ok(())
             }
-            _ => Err(mismatch(v, &pointer, spec.go_type)),
+            _ => Err(mismatch(v, pointer.as_str(), spec.go_type)),
         },
         _ => Ok(()),
     }
@@ -420,9 +527,8 @@ impl Scanner<'_> {
         }
         self.i += 1;
     }
-    /// Scans one value. `path` is its JSON pointer; with `numbers`, number literals are recorded by pointer.
-    fn value(&mut self, path: &mut String, numbers: Option<&mut FxHashMap<String, String>>) {
-        let mut numbers = numbers;
+    /// Skips one value.
+    fn value(&mut self) {
         self.ws();
         if self.i >= self.b.len() {
             return;
@@ -441,19 +547,14 @@ impl Scanner<'_> {
                         self.i += 1;
                         continue;
                     }
-                    let key = self.string();
+                    self.skip_string();
                     self.ws();
                     self.i += 1; // ':'
-                    let len = path.len();
-                    path.push('/');
-                    path.push_str(&token(&key));
-                    self.value(path, numbers.as_deref_mut());
-                    path.truncate(len);
+                    self.value();
                 }
             }
             b'[' => {
                 self.i += 1;
-                let mut index = 0;
                 loop {
                     self.ws();
                     if self.i >= self.b.len() || self.b[self.i] == b']' {
@@ -464,48 +565,29 @@ impl Scanner<'_> {
                         self.i += 1;
                         continue;
                     }
-                    let len = path.len();
-                    path.push('/');
-                    path.push_str(&index.to_string());
-                    self.value(path, numbers.as_deref_mut());
-                    path.truncate(len);
-                    index += 1;
+                    self.value();
                 }
             }
             _ => {
-                let start = self.i;
                 self.i += (self.i..self.b.len())
                     .take_while(|&index| {
                         !matches!(self.b[index], b',' | b'}' | b']' | b' ' | b'\t' | b'\n' | b'\r')
                     })
                     .count();
-                if let Some(numbers) = numbers {
-                    let lexeme = &self.b[start..self.i];
-                    if lexeme.first().is_some_and(|c| *c == b'-' || c.is_ascii_digit()) {
-                        numbers.insert(path.clone(), String::from_utf8_lossy(lexeme).into_owned());
-                    }
-                }
             }
         }
     }
 }
 
-/// Number literals anywhere in `raw`, keyed by JSON pointer (`/key`, `/key/<i>/inner`).
-fn number_lexemes(raw: &[u8]) -> FxHashMap<String, String> {
-    let mut out = FxHashMap::default();
-    Scanner { b: raw, i: 0 }.value(&mut String::new(), Some(&mut out));
-    out
-}
-
 /// The raw bytes of the value at JSON pointer `pointer` in `raw` (strict JSON), if present.
-pub(crate) fn raw_value_at<'a>(raw: &'a [u8], pointer: &str) -> Option<&'a [u8]> {
+pub fn raw_value_at<'a>(raw: &'a [u8], pointer: &str) -> Option<&'a [u8]> {
     let mut s = Scanner { b: raw, i: 0 };
     let mut tokens = pointer.split('/').skip(1);
     loop {
         s.ws();
         let Some(want) = tokens.next() else {
             let start = s.i;
-            s.value(&mut String::new(), None);
+            s.value();
             return Some(&raw[start..s.i.min(raw.len())]);
         };
         match raw.get(s.i)? {
@@ -527,7 +609,7 @@ pub(crate) fn raw_value_at<'a>(raw: &'a [u8], pointer: &str) -> Option<&'a [u8]>
                     if token(&key) == want {
                         break;
                     }
-                    s.value(&mut String::new(), None);
+                    s.value();
                 }
             }
             b'[' => {
@@ -547,7 +629,7 @@ pub(crate) fn raw_value_at<'a>(raw: &'a [u8], pointer: &str) -> Option<&'a [u8]>
                     if index == want {
                         break;
                     }
-                    s.value(&mut String::new(), None);
+                    s.value();
                     index += 1;
                 }
             }
@@ -558,24 +640,41 @@ pub(crate) fn raw_value_at<'a>(raw: &'a [u8], pointer: &str) -> Option<&'a [u8]>
 
 /// Checks `params` (an object, or `{}` for `null`) against the method's pinned params struct, nested api structs
 /// included. `raw` is the request payload the value was parsed from. Returns the number literals by pointer.
+/// `lexemes` are the request's inexact number literals (`strictjson::Decoded::lexemes`); it returns them.
 pub(crate) fn predecode(
     method: &str,
     go_type: &str,
     params: &Value,
-    raw: &[u8],
+    lexemes: FxHashMap<String, String>,
 ) -> ApiResult<FxHashMap<String, String>> {
     let Value::Object(o) = params else {
-        return Ok(FxHashMap::default());
+        return Ok(lexemes);
     };
-    let lexemes = number_lexemes(raw);
+    // Inexact literals are looked up by pointer, so with any the pointer must be on from the start.
+    if lexemes.is_empty() && check_params(method, o, &mut Pointer::new(false), &lexemes).is_ok() {
+        return Ok(lexemes);
+    }
+    check_params(method, o, &mut Pointer::new(true), &lexemes).map_err(|e| {
+        ApiError::invalid_request(format!("failed to unmarshal *api.{go_type}: json: {e}"))
+    })?;
+    Ok(lexemes)
+}
+
+fn check_params(
+    method: &str,
+    o: &JsonMap,
+    pointer: &mut Pointer,
+    lexemes: &FxHashMap<String, String>,
+) -> Result<(), String> {
+    let mut next = 0;
     for spec in params_fields(method) {
-        if let Some(v) = o.get(spec.name) {
-            check_field(spec, v, &format!("/{}", token(spec.name)), &lexemes).map_err(|e| {
-                ApiError::invalid_request(format!("failed to unmarshal *api.{go_type}: json: {e}"))
-            })?;
+        if let Some(v) = o.get_from(spec.name, &mut next) {
+            pointer.truncate(0);
+            pointer.push_key(spec.name);
+            check_field(spec, v, pointer, lexemes)?;
         }
     }
-    Ok(lexemes)
+    Ok(())
 }
 
 /// The current request on this thread: its raw payload, number literals by pointer, and the JSON pointer of each
@@ -618,11 +717,8 @@ fn index_objects(v: &Value, pointer: &mut String, out: &mut FxHashMap<usize, Str
 
 /// Makes `root` (the parsed params, alive and unmodified until the guard drops), its raw payload and number
 /// literals the current request.
-pub(crate) fn enter_request(
-    raw: &[u8],
-    lexemes: FxHashMap<String, String>,
-    root: &Value,
-) -> RequestGuard {
+#[expect(clippy::implicit_hasher, reason = "Public for the integration tests.")]
+pub fn enter_request(raw: &[u8], lexemes: FxHashMap<String, String>, root: &Value) -> RequestGuard {
     let mut objects = FxHashMap::default();
     if !lexemes.is_empty() {
         index_objects(root, &mut String::new(), &mut objects);
@@ -633,7 +729,7 @@ pub(crate) fn enter_request(
     RequestGuard(())
 }
 
-pub(crate) struct RequestGuard(());
+pub struct RequestGuard(());
 
 impl Drop for RequestGuard {
     fn drop(&mut self) {
@@ -645,7 +741,7 @@ impl Drop for RequestGuard {
 
 /// The exact unsigned integer literal of member `key` of `object`, when `object` is part of the current request's
 /// params tree (by address) and the member is a number literal.
-pub(crate) fn exact_u64(object: &Value, key: &str) -> Option<u64> {
+pub fn exact_u64(object: &Value, key: &str) -> Option<u64> {
     FRAMES.with(|f| {
         let f = f.borrow();
         let frame = f.last()?;
@@ -655,7 +751,7 @@ pub(crate) fn exact_u64(object: &Value, key: &str) -> Option<u64> {
 }
 
 /// The exact signed integer literal of member `key` of `object` (see `exact_u64`).
-pub(crate) fn exact_i64(object: &Value, key: &str) -> Option<i64> {
+fn exact_i64(object: &Value, key: &str) -> Option<i64> {
     FRAMES.with(|f| {
         let f = f.borrow();
         let frame = f.last()?;
@@ -667,10 +763,10 @@ pub(crate) fn exact_i64(object: &Value, key: &str) -> Option<i64> {
 /// The raw `params` bytes of each element of the top-level `requests` array of the current request
 /// (batchRequests), indexed in one pass over the payload; `None` where an element has no `params`.
 pub(crate) fn current_batch_params() -> Vec<Option<Vec<u8>>> {
-    FRAMES.with(|f| f.borrow().last().map(|frame| batch_params(&frame.raw)).unwrap_or_default())
+    FRAMES.with(|f| f.borrow().last().map_or_default(|frame| batch_params(&frame.raw)))
 }
 
-fn batch_params(raw: &[u8]) -> Vec<Option<Vec<u8>>> {
+pub fn batch_params(raw: &[u8]) -> Vec<Option<Vec<u8>>> {
     let Some(requests) = raw_value_at(raw, "/requests") else {
         return Vec::new();
     };
@@ -710,7 +806,7 @@ fn batch_params(raw: &[u8]) -> Vec<Option<Vec<u8>>> {
                     s.i += 1; // ':'
                     s.ws();
                     let start = s.i;
-                    s.value(&mut String::new(), None);
+                    s.value();
                     if key == "params" {
                         params = Some(requests[start..s.i.min(requests.len())].to_vec());
                     }
@@ -718,64 +814,9 @@ fn batch_params(raw: &[u8]) -> Vec<Option<Vec<u8>>> {
                 out.push(params);
             }
             Some(_) => {
-                s.value(&mut String::new(), None);
+                s.value();
                 out.push(None);
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use tsrs_core::json::Value;
-
-    #[test]
-    fn number_lexemes() {
-        let m = super::number_lexemes(br#"{"a":1e3,"b":[1,2.5,{"c":3}],"d":{"e":4},"f":"9"}"#);
-        assert_eq!(m.get("/a").map(String::as_str), Some("1e3"));
-        assert_eq!(m.get("/b/1").map(String::as_str), Some("2.5"));
-        assert_eq!(m.get("/b/2/c").map(String::as_str), Some("3"));
-        assert_eq!(m.get("/d/e").map(String::as_str), Some("4"));
-        assert!(!m.contains_key("/f"));
-        let m = super::number_lexemes(br#"{"snap\u0073hot":1e3}"#);
-        assert_eq!(m.get("/snapshot").map(String::as_str), Some("1e3"));
-    }
-
-    #[test]
-    fn exact_literals_by_object_identity() {
-        let raw = br#"{"snapshot":9007199254740993,"inner":{"snapshot":9007199254740992},"list":[{"snapshot":9007199254740995}]}"#;
-        let root = tsrs_core::json::unmarshal(std::str::from_utf8(raw).unwrap()).unwrap();
-        let _g = super::enter_request(raw, super::number_lexemes(raw), &root);
-        assert_eq!(super::exact_u64(&root, "snapshot"), Some(9_007_199_254_740_993));
-        let Value::Object(o) = &root else { unreachable!() };
-        assert_eq!(
-            super::exact_u64(o.get("inner").unwrap(), "snapshot"),
-            Some(9_007_199_254_740_992)
-        );
-        let Value::Array(list) = o.get("list").unwrap() else { unreachable!() };
-        assert_eq!(super::exact_u64(&list[0], "snapshot"), Some(9_007_199_254_740_995));
-        // A copy outside the tree has no recorded literal.
-        let copy = o.get("inner").unwrap().clone();
-        assert_eq!(super::exact_u64(&copy, "snapshot"), None);
-    }
-
-    #[test]
-    fn raw_values_by_pointer() {
-        let raw = br#"{"requests":[{"method":"a","params":{"x":1e3}},{"par\u0061ms": {"snapshot":9007199254740993} ,"method":"b"}]}"#;
-        assert_eq!(super::raw_value_at(raw, "/requests/0/params"), Some(&br#"{"x":1e3}"#[..]));
-        assert_eq!(
-            super::raw_value_at(raw, "/requests/1/params"),
-            Some(&br#"{"snapshot":9007199254740993}"#[..])
-        );
-        assert_eq!(super::raw_value_at(raw, "/requests/2/params"), None);
-        assert_eq!(super::raw_value_at(raw, "/requests/0/nope"), None);
-        let params = super::batch_params(raw);
-        assert_eq!(params.len(), 2);
-        assert_eq!(params[0].as_deref(), Some(&br#"{"x":1e3}"#[..]));
-        assert_eq!(params[1].as_deref(), Some(&br#"{"snapshot":9007199254740993}"#[..]));
-        assert_eq!(
-            super::batch_params(br#"{"requests":[1,{"method":"ping"},null]}"#),
-            vec![None, None, None]
-        );
     }
 }

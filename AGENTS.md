@@ -3,16 +3,40 @@
 `CONTRIBUTING.md` and `docs/PORTING.md` have the porting rules and the test workflow; `docs/RUST.md` has the Rust
 practices. This file adds the rules below.
 
+Do not update `README.md` files unless the user explicitly asks.
+
+## Reproductions and fixes
+
+Every bug reproduction and fix must conform to the microsoft/TypeScript reference checkout in `ts-ref/`, at the
+exact commit pinned in `Cargo.toml` under `[workspace.metadata.typescript]`. Verify that `ts-ref`'s HEAD matches
+that pin before using it. Use its Go compiler as the source of truth for expected behavior, diagnostics and
+baselines, and follow this repository's porting and test workflow.
+See [reference compiler setup and verification](CONTRIBUTING.md#reference-compiler).
+
 ## Build and test
 
 Build with `cargo build --profile dev -p tsrs_cli -p tsrs_testrunner` and run `target/debug/tsrs-test`, not
 `--release`: an edit rebuilds in seconds instead of minutes, with the same test results (notes/dev-loop-build.md).
 Use `--release` only for performance numbers.
 
+## Tests
+
+Do not add unit tests: no `#[test]`, `#[cfg(test)]` or `cfg!(test)` in `src`. Use an integration test or a fixture.
+
+- Each crate has one test binary, `tests/integration/main.rs`. Add a test as a module under `tests/integration/`.
+- Prefer a fixture when the test checks compiler or language-server output: a `testdata/regressions` case, or the
+  conformance or fourslash suites.
+- Keep `test = false` on every `[lib]` and `[[bin]]`: `cargo test` then builds no unit-test harness, and a unit test
+  would never run (`tools/lint/source.mjs` rejects one).
+- When a test needs internals, make the item `pub` instead of adding a test-only path.
+- A test that changes process-wide state (fast mode, checker history, RSS) runs alone in a child process, as
+  `isolated::in_child` does in the tsrs_fswatch, tsrs_incremental, tsrs_api and tsrs_cli tests.
+- tsrs_wasm keeps its unit tests: it is cdylib only, so no integration test can link it.
+
 ## Lint
 
 Run `cargo clippy --all-targets --config 'build.warnings="deny"'` and
-`tools/lint/source.py` before a change lands (`docs/RUST.md`).
+`tools/lint/source.mjs` before a change lands (`docs/RUST.md`).
 
 - Fix what they report in the code you wrote.
 - If the flagged code is intended, use `#[expect(clippy::<lint>, reason = "...")]` on the smallest item. Never a bare
@@ -28,18 +52,20 @@ different, and say what in the brief or the pull request: new evidence, a change
 note gave for revisiting it.
 
 **Bring numbers.** A performance change needs instructions retired and peak RSS, before and after, in the pull
-request.
+request. Include wall time when claiming a speedup.
 
-**Clear the bar.** A change lands only if it gains at least one of:
+**Accept measured improvements.** A change may land when measurements show repeatable reductions in wall time,
+instructions retired or peak RSS on most `bench/projects.json` projects, or a significant, repeatable reduction on
+one catalog project. There is no fixed minimum percentage threshold. Report results across the catalog, including
+regressions and tradeoffs. Earlier experiments rejected solely for missing the old percentage thresholds may be
+revisited under this policy.
 
-- 1% of single-threaded instructions on at least one `bench/projects.json` project (`bench/count.py`, deterministic);
-- 2% of wall time in the wall-time table in [`bench/RESULTS.md`](bench/RESULTS.md), read across two publishes on
-  the same hardware;
-- 5% of peak memory at the default checker count.
-
-A change that adds a thread, a cache, an overlap between phases or an invariant later code must keep needs a clear
-margin over that bar: a sub-percent gain never justifies it, whichever measure it is on (notes/perf-serial-steps.md
-has why). A change below the bar does not land.
+**Measure consistently.** Prefer `xcrun xctrace` on macOS to find bottlenecks and Hyperfine 2 with hardware counters
+to measure wall time, retired instructions and peak RSS. Profile release binaries with full debug symbols and
+stripping disabled (`profile.release.debug=true`, `profile.release.strip=false`). Compare baseline and candidate
+with the same build configuration, hardware, workload and checker count. Use warmups and repeated, interleaved runs
+to distinguish improvements from run-to-run variation; measure single-threaded instructions and default-checker
+peak RSS.
 
 ## Keep the capability table current
 
@@ -47,8 +73,8 @@ has why). A change below the bar does not land.
 capability with its status and evidence.
 Update it in the same pull request when a change ports a subsystem or emit wave, adds a feature, makes a capability
 start or stop being supported, become the default or ship in an npm release, changes a pass count the table cites,
-or closes or finds a known gap. How to update it is in a comment above the table. Keep the root and npm README
-compatibility summaries consistent with it.
+or closes or finds a known gap. How to update it is in a comment above the table. When explicitly asked to update
+README files, keep the root and npm README compatibility summaries consistent with it.
 
 ## Private code
 
@@ -59,3 +85,5 @@ types or code. This holds in code, comments, notes, commit messages and pull req
 ## Scripts and automation
 
 Write new scripts and ad hoc automation in JavaScript, not Python.
+
+Do not write tests for tooling scripts. Validate script changes with a direct run or a focused smoke check instead.

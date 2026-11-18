@@ -4,10 +4,10 @@ use super::*;
 
 // rule.go:5
 pub(crate) struct RuleImpl {
-    pub(crate) debug_name: &'static str,
-    pub(crate) context: Vec<ContextPredicate>,
-    pub(crate) action: RuleAction,
-    pub(crate) flags: RuleFlags,
+    debug_name: &'static str,
+    context: Vec<ContextPredicate>,
+    action: RuleAction,
+    flags: RuleFlags,
 }
 
 impl RuleImpl {
@@ -31,14 +31,14 @@ impl RuleImpl {
         dead_code,
         reason = "Go's String() makes ruleImpl a fmt.Stringer for debug output; no Go code calls it"
     )]
-    pub(crate) fn string(&self) -> &'static str {
+    fn string(&self) -> &'static str {
         self.debug_name
     }
 }
 
 // rule.go:28
 #[derive(Clone)]
-pub(crate) struct TokenRange {
+pub struct TokenRange {
     pub(crate) tokens: Vec<Kind>,
     pub(crate) is_specific: bool,
 }
@@ -51,7 +51,7 @@ pub(crate) struct RuleSpec {
 }
 
 // Go's `rule` takes `left`/`right` as `any` (ast.Kind, []ast.Kind or tokenRange); toTokenRange dispatches on the type.
-pub(crate) trait ToTokenRange {
+pub trait ToTokenRange {
     fn to_token_range(self) -> TokenRange;
 }
 
@@ -132,24 +132,24 @@ pub(crate) fn any_context() -> Vec<ContextPredicate> {
 
 // rule.go:87
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) struct RuleAction(pub(crate) u32);
+pub struct RuleAction(u32);
 
 impl RuleAction {
-    pub(crate) const None: RuleAction = RuleAction(0);
-    pub(crate) const StopProcessingSpaceActions: RuleAction = RuleAction(1 << 0);
-    pub(crate) const StopProcessingTokenActions: RuleAction = RuleAction(1 << 1);
-    pub(crate) const InsertSpace: RuleAction = RuleAction(1 << 2);
-    pub(crate) const InsertNewLine: RuleAction = RuleAction(1 << 3);
-    pub(crate) const DeleteSpace: RuleAction = RuleAction(1 << 4);
-    pub(crate) const DeleteToken: RuleAction = RuleAction(1 << 5);
-    pub(crate) const InsertTrailingSemicolon: RuleAction = RuleAction(1 << 6);
+    pub(crate) const NONE: RuleAction = RuleAction(0);
+    pub(crate) const STOP_PROCESSING_SPACE_ACTIONS: RuleAction = RuleAction(1 << 0);
+    pub(crate) const STOP_PROCESSING_TOKEN_ACTIONS: RuleAction = RuleAction(1 << 1);
+    pub(crate) const INSERT_SPACE: RuleAction = RuleAction(1 << 2);
+    pub(crate) const INSERT_NEW_LINE: RuleAction = RuleAction(1 << 3);
+    pub(crate) const DELETE_SPACE: RuleAction = RuleAction(1 << 4);
+    pub(crate) const DELETE_TOKEN: RuleAction = RuleAction(1 << 5);
+    pub(crate) const INSERT_TRAILING_SEMICOLON: RuleAction = RuleAction(1 << 6);
 
-    pub(crate) const StopAction: RuleAction =
-        RuleAction(Self::StopProcessingSpaceActions.0 | Self::StopProcessingTokenActions.0);
-    pub(crate) const ModifySpaceAction: RuleAction =
-        RuleAction(Self::InsertSpace.0 | Self::InsertNewLine.0 | Self::DeleteSpace.0);
-    pub(crate) const ModifyTokenAction: RuleAction =
-        RuleAction(Self::DeleteToken.0 | Self::InsertTrailingSemicolon.0);
+    pub(crate) const STOP_ACTION: RuleAction =
+        RuleAction(Self::STOP_PROCESSING_SPACE_ACTIONS.0 | Self::STOP_PROCESSING_TOKEN_ACTIONS.0);
+    pub(crate) const MODIFY_SPACE_ACTION: RuleAction =
+        RuleAction(Self::INSERT_SPACE.0 | Self::INSERT_NEW_LINE.0 | Self::DELETE_SPACE.0);
+    pub(crate) const MODIFY_TOKEN_ACTION: RuleAction =
+        RuleAction(Self::DELETE_TOKEN.0 | Self::INSERT_TRAILING_SEMICOLON.0);
 }
 
 impl std::ops::BitAnd for RuleAction {
@@ -181,7 +181,7 @@ impl std::ops::Not for RuleAction {
 
 // rule.go:104
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum RuleFlags {
+pub enum RuleFlags {
     None,
     CanDeleteNewLines,
 }

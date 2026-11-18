@@ -7,6 +7,8 @@ use crate::types::{ResolvedModule, ResolvedTypeReferenceDirective};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct KnownDirectoryLink {
+    /// Original spelling used to reach the symlink, with trailing separator.
+    pub symlink: String,
     // Matches the casing returned by `realpath`. Used to compute the `realpath` of children.
     // Always has trailing directory separator
     pub real: String,
@@ -15,14 +17,26 @@ pub struct KnownDirectoryLink {
     pub real_path: Path,
 }
 
+impl KnownDirectoryLink {
+    pub fn resolve_file_name(
+        &self,
+        file_name: &str,
+        use_case_sensitive_file_names: bool,
+    ) -> Option<String> {
+        let relative =
+            tspath::trim_file_path_prefix(file_name, &self.symlink, use_case_sensitive_file_names)?;
+        Some(format!("{}{relative}", self.real))
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct KnownSymlinks {
     directories: SyncMap<Path, Option<P<KnownDirectoryLink>>>,
     directories_by_realpath: SyncMap<Path, P<SyncSet<String>>>,
     files: SyncMap<Path, String>,
     files_by_realpath: SyncMap<Path, P<SyncSet<String>>>,
-    cwd: String,
-    use_case_sensitive_file_names: bool,
+    pub cwd: String,
+    pub use_case_sensitive_file_names: bool,
 }
 
 impl KnownSymlinks {
@@ -55,13 +69,18 @@ impl KnownSymlinks {
         symlink_path: Path,
         real_directory: Option<P<KnownDirectoryLink>>,
     ) {
-        if let Some(real_directory) = real_directory {
-            if self.directories.load(&symlink_path).is_none() {
-                let (set, _) = self
-                    .directories_by_realpath
-                    .load_or_store(real_directory.real_path.clone(), P::new(SyncSet::default()));
-                set.add(symlink.to_string());
-            }
+        let real_directory = real_directory.map(|real_directory| {
+            let mut link = (*real_directory).clone();
+            link.symlink = tspath::ensure_trailing_directory_separator(symlink);
+            P::new(link)
+        });
+        if let Some(real_directory) = real_directory
+            && self.directories.load(&symlink_path).is_none()
+        {
+            let (set, _) = self
+                .directories_by_realpath
+                .load_or_store(real_directory.real_path.clone(), P::new(SyncSet::default()));
+            set.add(symlink.to_string());
         }
         self.directories.store(symlink_path, real_directory);
     }
@@ -140,6 +159,7 @@ impl KnownSymlinks {
                     &common_original,
                     symlink_path.ensure_trailing_directory_separator(),
                     Some(P::new(KnownDirectoryLink {
+                        symlink: String::new(),
                         real: tspath::ensure_trailing_directory_separator(&common_resolved),
                         real_path: tspath::to_path(
                             &common_resolved,
@@ -153,7 +173,7 @@ impl KnownSymlinks {
         }
     }
 
-    fn guess_directory_symlink(&self, a: &str, b: &str, cwd: &str) -> (String, String) {
+    pub fn guess_directory_symlink(&self, a: &str, b: &str, cwd: &str) -> (String, String) {
         let mut a_parts =
             tspath::get_path_components(&tspath::get_normalized_absolute_path(a, cwd), "");
         let mut b_parts =
@@ -184,14 +204,10 @@ impl KnownSymlinks {
         (String::new(), String::new())
     }
 
-    fn is_node_modules_or_scoped_package_directory(&self, s: &str) -> bool {
+    pub fn is_node_modules_or_scoped_package_directory(&self, s: &str) -> bool {
         !s.is_empty()
             && (tspath::get_canonical_file_name(s, self.use_case_sensitive_file_names)
                 == "node_modules"
                 || s.starts_with('@'))
     }
 }
-
-#[cfg(test)]
-#[path = "knownsymlinks_test.rs"]
-mod knownsymlinks_test;

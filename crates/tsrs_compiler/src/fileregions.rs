@@ -15,6 +15,10 @@
 //! keeps its region, a leaf that was not predicted is not freed. After a leaf's semantic diagnostics are collected (the
 //! pass's callback), `free` drops its region with `Region::retire_on_free`: its pages go back to the system and its
 //! address range is never reused. Every other region lives for the rest of the process, as the thread arenas did.
+#![expect(
+    clippy::too_long_first_doc_paragraph,
+    reason = "Public for the integration tests; the comment keeps its upstream wording."
+)]
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{LazyLock, Mutex};
@@ -97,17 +101,16 @@ pub struct LeafSettings {
 /// and more checkers free leaves in a more scattered order). The README bench's +21% on the 8-vCPU runner was a
 /// slower runner and a PGO build without its training profiles (#153), not freeing. `TSRS_FREE_LEAVES=1` turns it on
 /// at any count.
-pub const MAX_DEFAULT_CHECKERS: usize = 16;
+const MAX_DEFAULT_CHECKERS: usize = 16;
 
 /// Keeps lazy declaration parsing within its supported CLI modes.
 ///
 /// Whether the CLI may parse declaration-file member lists lazily (notes/mem-lazy-dts-members.md):
-/// `TSRS_LAZY_DTS=0` turns it off, and so does the shared-object check, which freezes the whole program.
+/// Enabled by `--fast` or `TSRS_LAZY_DTS=1`; the shared-object check freezes the whole program and disables it.
 pub fn lazy_dts_allowed() -> bool {
-    if std::env::var_os("TSRS_LAZY_DTS").is_some_and(|v| v == "0" || v == "off") {
-        return false;
-    }
-    !tsrs_core::ptr::shared_check::enabled()
+    let enabled = std::env::var_os("TSRS_LAZY_DTS")
+        .map_or_else(tsrs_core::fast::enabled, |v| v != "0" && v != "off");
+    enabled && !tsrs_core::ptr::shared_check::enabled()
 }
 
 /// Enables lazy declaration parsing for subsequent CLI programs.
@@ -143,6 +146,8 @@ static LAZY_DTS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::
 /// Forcing a list early changes nothing observable (`lazylist`). `TSRS_LAZY_DTS_SHARED=0` forces only the
 /// merges.
 pub(crate) fn force_shared_lists(program: &crate::program::Program) {
+    use rayon::prelude::*;
+
     // Relaxed: see `LAZY_DTS`.
     if !LAZY_DTS.load(std::sync::atomic::Ordering::Relaxed) {
         return;
@@ -192,7 +197,6 @@ pub(crate) fn force_shared_lists(program: &crate::program::Program) {
             })
             .flatten(),
     );
-    use rayon::prelude::*;
     tsrs_core::phases::time(program.options().diagnostics_enabled(), "Lazy lists: shared", || {
         crate::program::worker_pool().install(|| lists.par_iter().for_each(|l| l.ensure()));
     });
@@ -200,7 +204,7 @@ pub(crate) fn force_shared_lists(program: &crate::program::Program) {
 
 /// The declaration files of the global libraries (`force_shared_lists`), in program order.
 fn global_library_files(program: &crate::program::Program) -> Vec<P<SourceFile>> {
-    use crate::file_include::fileIncludeKind as K;
+    use crate::file_include::FileIncludeKind as K;
     let reasons = &program.file_include_data.file_include_reasons;
     let mut global: FxHashSet<&str> = FxHashSet::default();
     let mut by_reference: Vec<(&str, &str)> = Vec::new(); // (referencing file's path, referenced file's path)
@@ -643,8 +647,8 @@ fn adds_nothing(program: &Program, file: P<SourceFile>) -> bool {
         return true;
     };
     exports.entries().iter().all(|&(name, s)| {
-        name != ast::InternalSymbolNameExportEquals
-            && name != ast::InternalSymbolNameExportStar
+        name != ast::INTERNAL_SYMBOL_NAME_EXPORT_EQUALS
+            && name != ast::INTERNAL_SYMBOL_NAME_EXPORT_STAR
             && !s.flags().intersects(SymbolFlags::Alias | SymbolFlags::ExportStar)
     })
 }
@@ -698,8 +702,7 @@ pub fn stats_report() -> Option<String> {
     // Relaxed (all loads): read on the main thread after the pass's threads joined.
     let load = |c: &AtomicUsize| c.load(Ordering::Relaxed);
     let reserve = tsrs_core::ptr::reserve_stats()
-        .map(|(_, high)| format!("; arena address space used {:.1} MB", mb(high)))
-        .unwrap_or_default();
+        .map_or_default(|(_, high)| format!("; arena address space used {:.1} MB", mb(high)));
     Some(format!(
         "tsrs: leaf files: {} of {} checked files ({} more not predicted, {:.1}% of the leaves' nodes), {:.1} MB of the {:.1} MB used by {} file regions ({:.1} MB reserved); freed {} ({:.1} MB reserved){reserve}\n",
         load(&LEAVES),

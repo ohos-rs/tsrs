@@ -120,10 +120,10 @@ impl Node {
             }
             node = n.children.get(&a).map(|c| &**c);
         }
-        if let Some(n) = node {
-            if n.fallback != Fallback::Inherit {
-                fallback = n.fallback;
-            }
+        if let Some(n) = node
+            && n.fallback != Fallback::Inherit
+        {
+            fallback = n.fallback;
         }
         (node, fallback)
     }
@@ -190,10 +190,10 @@ impl Node {
         for a in ancestors(path) {
             let Some(n) = node else { return false };
             node = n.children.get(&a).map(|c| &**c);
-            if &a != path {
-                if let Some(Entry::File { .. }) = node.and_then(|n| n.entry.as_deref()) {
-                    return true;
-                }
+            if &a != path
+                && let Some(Entry::File { .. }) = node.and_then(|n| n.entry.as_deref())
+            {
+                return true;
             }
         }
         false
@@ -254,7 +254,7 @@ fn compose(
     if overlay.replaces_subtree() {
         base = None;
     }
-    let mut result: Node = base.map(|b| (**b).clone()).unwrap_or_default();
+    let mut result: Node = base.map_or_default(|b| (**b).clone());
     if overlay.fallback != Fallback::Inherit || overlay.replaces_subtree() {
         result.fallback = fallback;
     }
@@ -290,50 +290,49 @@ fn compose(
     let overlay_has_listing = matches!(&overlay_dir, Some((_, Some(_))));
     if let Some(Entry::Directory { directory_name, listing: Some(listing) }) =
         result.entry.as_deref()
+        && !overlay_has_listing
     {
-        if !overlay_has_listing {
-            let mut entries = listing.clone();
-            #[expect(
-                clippy::iter_over_hash_type,
-                reason = "order-independent: one child per name, and merge_entries sorts the listing; Go ranges the map too"
-            )]
-            for (path, child) in &overlay.children {
-                let name = tspath::get_base_file_name(path);
-                if child.fallback == Fallback::Missing || child.replaces_subtree() {
-                    entries.files.retain(|e| !equal_names(e, &name, cs));
-                    entries.directories.retain(|e| !equal_names(e, &name, cs));
-                    if let Some(s) = &mut entries.symlinks {
-                        s.retain(|e| !equal_names(e, &name, cs));
-                    }
-                }
-                match child.entry.as_deref() {
-                    Some(Entry::File { file_name, .. }) => {
-                        entries = merge_entries(
-                            &entries,
-                            &Entries {
-                                files: vec![tspath::get_base_file_name(file_name)],
-                                ..Default::default()
-                            },
-                            cs,
-                        );
-                    }
-                    Some(Entry::Directory { directory_name, .. }) => {
-                        entries = merge_entries(
-                            &entries,
-                            &Entries {
-                                directories: vec![tspath::get_base_file_name(directory_name)],
-                                ..Default::default()
-                            },
-                            cs,
-                        );
-                    }
-                    _ => {}
+        let mut entries = listing.clone();
+        #[expect(
+            clippy::iter_over_hash_type,
+            reason = "order-independent: one child per name, and merge_entries sorts the listing; Go ranges the map too"
+        )]
+        for (path, child) in &overlay.children {
+            let name = tspath::get_base_file_name(path);
+            if child.fallback == Fallback::Missing || child.replaces_subtree() {
+                entries.files.retain(|e| !equal_names(e, &name, cs));
+                entries.directories.retain(|e| !equal_names(e, &name, cs));
+                if let Some(s) = &mut entries.symlinks {
+                    s.retain(|e| !equal_names(e, &name, cs));
                 }
             }
-            let name = directory_name.clone();
-            result.entry =
-                Some(Arc::new(Entry::Directory { directory_name: name, listing: Some(entries) }));
+            match child.entry.as_deref() {
+                Some(Entry::File { file_name, .. }) => {
+                    entries = merge_entries(
+                        &entries,
+                        &Entries {
+                            files: vec![tspath::get_base_file_name(file_name)],
+                            ..Default::default()
+                        },
+                        cs,
+                    );
+                }
+                Some(Entry::Directory { directory_name, .. }) => {
+                    entries = merge_entries(
+                        &entries,
+                        &Entries {
+                            directories: vec![tspath::get_base_file_name(directory_name)],
+                            ..Default::default()
+                        },
+                        cs,
+                    );
+                }
+                _ => {}
+            }
         }
+        let name = directory_name.clone();
+        result.entry =
+            Some(Arc::new(Entry::Directory { directory_name: name, listing: Some(entries) }));
     }
     result.has_symlinks = matches!(result.entry.as_deref(), Some(Entry::Symlink(_)))
         || result.children.values().any(|c| c.has_symlinks);
@@ -342,7 +341,7 @@ fn compose(
 
 /// Parsed `RequestFileSystem` params.
 pub struct RequestParams {
-    pub kind: Kind,
+    pub(crate) kind: Kind,
     files: Vec<(String, String)>,
     directories: Vec<(String, Entries)>,
     symlinks: Vec<(String, String, bool)>,
@@ -380,9 +379,9 @@ impl RequestParams {
             Value::Object(m) => {
                 files = m.iter().try_fold(files, |mut files, (k, v)| {
                     match v {
-                        Value::String(c) => files.push((k.clone(), c.clone())),
+                        Value::String(c) => files.push((k.to_string(), c.clone())),
                         // Go map[string]string: a null value is "".
-                        Value::Null => files.push((k.clone(), String::new())),
+                        Value::Null => files.push((k.to_string(), String::new())),
                         _ => return Err("fileSystem.files values must be strings".to_string()),
                     }
 
@@ -398,7 +397,7 @@ impl RequestParams {
                 directories = m.iter().try_fold(directories, |mut directories, (k, v)| {
                     let d = Params(v);
                     directories.push((
-                        k.clone(),
+                        k.to_string(),
                         Entries {
                             files: str_list(d.get("files"), "directory files")?,
                             directories: str_list(d.get("directories"), "directory directories")?,
@@ -422,7 +421,11 @@ impl RequestParams {
                         Value::Null => String::new(),
                         _ => return Err("symlink target must be a string".to_string()),
                     };
-                    symlinks.push((k.clone(), target, matches!(s.get("host"), Value::Bool(true))));
+                    symlinks.push((
+                        k.to_string(),
+                        target,
+                        matches!(s.get("host"), Value::Bool(true)),
+                    ));
 
                     Ok::<_, String>(symlinks)
                 })?;
@@ -442,7 +445,7 @@ impl RequestParams {
 /// Go `requestFileSystem`.
 #[derive(Clone)]
 pub struct RequestFileSystem {
-    pub kind: Kind,
+    kind: Kind,
     base: Arc<dyn FS>,
     /// `base` as the snapshot sees it: the host file system, or (after rebasing) the snapshot overlay layer.
     base_ref: FsRef,
@@ -590,7 +593,7 @@ impl RequestFileSystem {
         Ok(r)
     }
 
-    pub fn is_full(&self) -> bool {
+    pub(crate) fn is_full(&self) -> bool {
         self.kind == Kind::Full
     }
 

@@ -5,27 +5,27 @@ use tsrs_ast::{self as ast, Diagnostic, DiagnosticExt, Node, SourceFile, Symbol}
 use tsrs_checker::Program as _;
 use tsrs_compiler::{Checker, Context, Program as CompilerProgram};
 use tsrs_core::P;
-use tsrs_core::collections::Set;
+use tsrs_core::collections::{Set, SyncMap};
 use tsrs_core::tspath::{self, Path};
 
 use crate::program::Program;
 use crate::referencemap::RefSet;
 use crate::snapshot::{
-    DiagnosticsCache, DiagnosticsOrBuildInfoDiagnosticsWithFileName, EmitSignature, FileEmitKind,
-    FileInfo, Snapshot, buildInfoDiagnosticWithFileName, get_file_emit_kind,
-    get_pending_emit_kind_with_options, repopulate_diagnostic_chain,
+    BuildInfoDiagnosticWithFileName, DiagnosticsCache,
+    DiagnosticsOrBuildInfoDiagnosticsWithFileName, EmitSignature, FileEmitKind, FileInfo, Snapshot,
+    get_file_emit_kind, get_pending_emit_kind_with_options, repopulate_diagnostic_chain,
 };
 
 // programtosnapshot.go:16
-pub(crate) fn program_to_snapshot(
+pub fn program_to_snapshot(
     program: &'static CompilerProgram,
     old_program: Option<P<Program>>,
     hash_with_text: bool,
 ) -> P<Snapshot> {
-    if let Some(old_program) = old_program {
-        if old_program.program.is_some_and(|p| std::ptr::eq(p, program)) {
-            return old_program.snapshot;
-        }
+    if let Some(old_program) = old_program
+        && old_program.program.is_some_and(|p| std::ptr::eq(p, program))
+    {
+        return old_program.snapshot;
     }
     // Recycled: a watch session frees the snapshot it replaces (`Program::drop_replaced`).
     let snapshot = P::new_recycled(Snapshot {
@@ -35,7 +35,7 @@ pub(crate) fn program_to_snapshot(
     });
     snapshot.options.set(Some(program.options()));
     snapshot.check_pending.set(program.options().no_check.is_true());
-    let mut to = toProgramSnapshot {
+    let mut to = ToProgramSnapshot {
         program,
         old_program,
         snapshot,
@@ -56,16 +56,18 @@ pub(crate) fn program_to_snapshot(
 }
 
 // What computeProgramFileChanges' per-file function stores into the snapshot besides the file info and references.
-struct fileChange {
+struct FileChange {
     add_to_change_set: bool,
     // The old state had the file affecting the global scope and the new program does not (handle_global_scope_change).
     global_scope_lost: bool,
     emit_diagnostics: Option<DiagnosticsCache>,
     semantic_diagnostics: Option<DiagnosticsCache>,
     emit_signature: Option<EmitSignature>,
+    // tsrs-only: the file changed and its old or new text declares an interface, or the old text is unknown.
+    declares_interface_before_or_after: bool,
 }
 
-struct toProgramSnapshot {
+struct ToProgramSnapshot {
     program: &'static CompilerProgram,
     old_program: Option<P<Program>>,
     snapshot: P<Snapshot>,
@@ -76,7 +78,20 @@ struct toProgramSnapshot {
     global_scope_lost: bool,
 }
 
-impl toProgramSnapshot {
+fn for_each_deleted_file(
+    old_file_infos: &SyncMap<Path, FileInfo>,
+    new_file_infos: &SyncMap<Path, FileInfo>,
+    mut on_deleted_file: impl FnMut(&Path, &FileInfo),
+) {
+    old_file_infos.range(|file_path, old_info| {
+        if new_file_infos.load(file_path).is_none() {
+            on_deleted_file(file_path, old_info);
+        }
+        true
+    });
+}
+
+impl ToProgramSnapshot {
     // programtosnapshot.go:50
     fn reuse_from_old_program(&self) {
         if let Some(old_program) = self.old_program {
@@ -87,16 +102,24 @@ impl toProgramSnapshot {
                     .borrow_mut()
                     .clone_from(&old.latest_changed_dts_file.borrow());
             }
+            self.snapshot.build_info_emit_pending.set(old.build_info_emit_pending.get());
             // Copy old snapshot's changed files set
             old.changed_files_set.range(|key| {
-                self.snapshot.changed_files_set.add(key.clone());
+                if self.program.get_source_file_by_path(key).is_some() {
+                    self.snapshot.changed_files_set.add(key.clone());
+                } else {
+                    self.snapshot.build_info_emit_pending.set(true);
+                }
                 true
             });
             old.affected_files_pending_emit.range(|key, &emit_kind| {
-                self.snapshot.affected_files_pending_emit.store(key.clone(), emit_kind);
+                if self.program.get_source_file_by_path(key).is_some() {
+                    self.snapshot.affected_files_pending_emit.store(key.clone(), emit_kind);
+                } else {
+                    self.snapshot.build_info_emit_pending.set(true);
+                }
                 true
             });
-            self.snapshot.build_info_emit_pending.set(old.build_info_emit_pending.get());
             self.snapshot.has_errors_from_old_state.set(old.has_errors.get());
             self.snapshot.has_semantic_errors_from_old_state.set(old.has_semantic_errors.get());
             self.snapshot
@@ -177,12 +200,13 @@ impl toProgramSnapshot {
             })
         };
         let new_options = self.snapshot.options();
+        let canonical_diagnostics = self.program.uses_canonical_diagnostics();
         // programtosnapshot.go:91: Go queues the per-file work on a work group and lets each function store into the
         // snapshot's sync maps. Here the per-file work runs on the program's worker pool and only reads shared state;
         // its results are stored in file order afterwards, so the maps are filled in the same order as a sequential run.
         let compute = |file: P<SourceFile>,
-                       checker_references: Option<checkerReferences>|
-         -> (FileInfo, Option<std::sync::Arc<RefSet>>, fileChange) {
+                       checker_references: Option<CheckerReferences>|
+         -> (FileInfo, Option<std::sync::Arc<RefSet>>, FileChange) {
             // programtosnapshot.go:94
             let old_file_info = old.and_then(|old| old.file_infos.load(file.path()));
             let version = match reused_version(old_compiler_program, old_file_info.as_ref(), file) {
@@ -197,6 +221,14 @@ impl toProgramSnapshot {
             let implied_node_format =
                 self.program.get_source_file_meta_data(file.path()).implied_node_format;
             let affects_global_scope = file_affects_global_scope(file);
+            // tsrs-only: the same version has the same text, so the old state's answer still holds.
+            let declares_interface = canonical_diagnostics.then(|| {
+                old_file_info
+                    .as_ref()
+                    .filter(|old_file_info| old_file_info.version == version)
+                    .and_then(|old_file_info| old_file_info.declares_interface)
+                    .unwrap_or_else(|| contains_interface_declaration(file))
+            });
             let mut signature = String::new();
             let old_references = old.and_then(|old| old.referenced_map.get_references(file.path()));
             let new_references = if keeps_references(file) {
@@ -215,12 +247,13 @@ impl toProgramSnapshot {
                     &shared_ambient_paths,
                 )
             };
-            let mut change = fileChange {
+            let mut change = FileChange {
                 add_to_change_set: false,
                 global_scope_lost: false,
                 emit_diagnostics: None,
                 semantic_diagnostics: None,
                 emit_signature: None,
+                declares_interface_before_or_after: false,
             };
             if let Some(old) = old {
                 if let Some(old_file_info) = old_file_info {
@@ -249,9 +282,14 @@ impl toProgramSnapshot {
                             change.add_to_change_set = true;
                         }
                     }
+                    change.declares_interface_before_or_after = change.add_to_change_set
+                        && declares_interface.is_some_and(|declares| {
+                            declares || old_file_info.declares_interface != Some(false)
+                        });
                     signature = old_file_info.signature;
                 } else {
                     change.add_to_change_set = true;
+                    change.declares_interface_before_or_after = declares_interface == Some(true);
                 }
                 // Only this file's own entry in the change set matters, and the parallel phase does not write the set.
                 if !change.add_to_change_set && !self.snapshot.changed_files_set.has(file.path()) {
@@ -280,25 +318,30 @@ impl toProgramSnapshot {
                         }
                     }
                 }
-                if can_copy_emit_signatures {
-                    if let Some(old_emit_signature) = old.emit_signatures.load(file.path()) {
-                        change.emit_signature =
-                            Some(old_emit_signature.get_new_emit_signature(
-                                old_options.as_ref().unwrap(),
-                                &new_options,
-                            ));
-                    }
+                if can_copy_emit_signatures
+                    && let Some(old_emit_signature) = old.emit_signatures.load(file.path())
+                {
+                    change.emit_signature = Some(
+                        old_emit_signature
+                            .get_new_emit_signature(old_options.as_ref().unwrap(), &new_options),
+                    );
                 }
             } else {
                 signature.clone_from(&version);
             }
             (
-                FileInfo { version, signature, affects_global_scope, implied_node_format },
+                FileInfo {
+                    version,
+                    signature,
+                    affects_global_scope,
+                    implied_node_format,
+                    declares_interface,
+                },
                 new_references,
                 change,
             )
         };
-        let results: Vec<(FileInfo, Option<std::sync::Arc<RefSet>>, fileChange)> =
+        let results: Vec<(FileInfo, Option<std::sync::Arc<RefSet>>, FileChange)> =
             if self.program.single_threaded() {
                 files.iter().map(|&file| compute(file, None)).collect()
             } else {
@@ -306,7 +349,7 @@ impl toProgramSnapshot {
                 // The checker lookups first, one task per checker that holds its checker for all of its files (in file
                 // order) instead of 18 workers taking turns on 4 checker locks per file; then the rest of the per-file
                 // work on the worker pool. Without a pool of its own the program locks per file.
-                let checker_references: Vec<std::sync::OnceLock<checkerReferences>> =
+                let checker_references: Vec<std::sync::OnceLock<CheckerReferences>> =
                     files.iter().map(|_| std::sync::OnceLock::new()).collect();
                 let looked_up: Vec<usize> =
                     (0..files.len()).filter(|&i| !keeps_references(files[i])).collect();
@@ -320,7 +363,7 @@ impl toProgramSnapshot {
                             &ambient_module_files_by_checker,
                         ));
                     });
-                let checker_references: Vec<Option<checkerReferences>> = checker_references
+                let checker_references: Vec<Option<CheckerReferences>> = checker_references
                     .into_iter()
                     .map(|r| if batched { r.into_inner() } else { None })
                     .collect();
@@ -345,7 +388,6 @@ impl toProgramSnapshot {
 
         // Hash the actual virtual slots, not the deduplicated reference sets: an export alias can change edge
         // multiplicities without changing any source. The same lazily initialized table serves diagnostic reporting.
-        let canonical_diagnostics = self.program.uses_canonical_diagnostics();
         if canonical_diagnostics {
             let mut hash = xxhash_rust::xxh3::Xxh3::new();
             for &file in files {
@@ -363,20 +405,10 @@ impl toProgramSnapshot {
         }
         // Source/order/option changes can change a merge's declarations even when its slots remain equal.
         // tsrs-only: a changed file moves a report site only by adding or removing a declaration of a merged
-        // interface, so it counts when its new or old text declares an interface. Without the old text (a program
-        // loaded from build info) every changed file counts. Counting every changed file made a comment edit in
-        // a watch recheck every checked file that declares an interface: 690 -> 70 ms per edit on vscode (#391).
-        let declares_interface_before_or_after = |file: P<SourceFile>| {
-            contains_interface_declaration(file.as_node())
-                || match old_compiler_program {
-                    Some(old_program) => {
-                        old_program.get_source_file_by_path(file.path()).is_some_and(|old_file| {
-                            old_file != file && contains_interface_declaration(old_file.as_node())
-                        })
-                    }
-                    None => true,
-                }
-        };
+        // interface, so it counts when its new or old text declares an interface. The old answer comes from the old
+        // state's file info (build info `tsrsInterfaceFiles`); when it is unknown, the file counts. Counting every
+        // changed file made each edit recheck every checked file that declares an interface: 690 -> 70 ms per
+        // watch edit on vscode (#391).
         let refresh_interface_diagnostics = reporting_policy_changed
             || canonical_diagnostics
                 && old.is_some_and(|old| {
@@ -385,15 +417,15 @@ impl toProgramSnapshot {
                         || old.options().skip_default_lib_check
                             != new_options.skip_default_lib_check
                         || !deleted_files.is_empty()
-                        || files.iter().zip(&results).any(|(&file, (_, _, change))| {
-                            change.add_to_change_set && declares_interface_before_or_after(file)
-                        })
+                        || results
+                            .iter()
+                            .any(|(_, _, change)| change.declares_interface_before_or_after)
                 });
         for (&file, (info, new_references, mut change)) in files.iter().zip(results) {
             if refresh_interface_diagnostics
                 && change.semantic_diagnostics.is_some()
                 && !self.program.skip_type_checking(file, false)
-                && contains_interface_declaration(file.as_node())
+                && info.declares_interface.unwrap_or_else(|| contains_interface_declaration(file))
             {
                 change.semantic_diagnostics = None;
             }
@@ -437,24 +469,33 @@ impl toProgramSnapshot {
             return;
         }
         if let Some(old_program) = self.old_program {
-            // If the global file is removed, add all files as changed
-            old_program.snapshot.file_infos.range(|file_path, old_info| {
-                if self.snapshot.file_infos.load(file_path).is_none() {
-                    if old_info.affects_global_scope {
-                        for &file in self
-                            .snapshot
-                            .get_all_files_excluding_default_library_file(self.program, None)
-                        {
-                            self.snapshot.add_file_to_change_set(file.path().clone());
-                        }
-                        self.global_file_removed = true;
-                    } else {
-                        self.snapshot.build_info_emit_pending.set(true);
-                    }
-                    return false;
-                }
-                true
-            });
+            let snapshot = self.snapshot;
+            for_each_deleted_file(
+                &old_program.snapshot.file_infos,
+                &snapshot.file_infos,
+                |file_path, old_info| self.handle_deleted_file(file_path, old_info),
+            );
+            if self.global_file_removed {
+                self.invalidate_global_scope();
+            }
+        }
+    }
+
+    fn handle_deleted_file(&mut self, file_path: &Path, old_info: &FileInfo) {
+        self.snapshot.build_info_emit_pending.set(true);
+        self.snapshot.changed_files_set.delete(file_path);
+        self.snapshot.affected_files_pending_emit.delete(file_path);
+        self.global_file_removed |= old_info.affects_global_scope;
+    }
+
+    fn invalidate_global_scope(&self) {
+        self.snapshot.build_info_emit_pending.set(true);
+        for &file in self.program.get_source_files() {
+            if !self.program.is_source_file_default_library(file.path()) {
+                self.snapshot.add_file_to_change_set(file.path().clone());
+            } else if !self.program.skip_type_checking(file, true) {
+                self.snapshot.semantic_diagnostics_per_file.delete(file.path());
+            }
         }
     }
 
@@ -466,11 +507,7 @@ impl toProgramSnapshot {
         // Go ranges the old file infos for a file that affected the global scope and no longer does; each file's
         // compute function recorded that for its own file (fileChange::global_scope_lost).
         if self.global_scope_lost {
-            for &file in
-                self.snapshot.get_all_files_excluding_default_library_file(self.program, None)
-            {
-                self.snapshot.add_file_to_change_set(file.path().clone());
-            }
+            self.invalidate_global_scope();
         }
     }
 
@@ -511,23 +548,44 @@ impl toProgramSnapshot {
 
     // programtosnapshot.go:226
     fn handle_pending_check(&self) {
-        if let Some(old_program) = self.old_program {
-            if self.snapshot.semantic_diagnostics_per_file.size()
+        if let Some(old_program) = self.old_program
+            && self.snapshot.semantic_diagnostics_per_file.size()
                 != self.program.get_source_files().len()
-                && old_program.snapshot.check_pending.get() != self.snapshot.check_pending.get()
-            {
-                self.snapshot.build_info_emit_pending.set(true);
-            }
+            && old_program.snapshot.check_pending.get() != self.snapshot.check_pending.get()
+        {
+            self.snapshot.build_info_emit_pending.set(true);
         }
     }
 }
 
-fn contains_interface_declaration(node: P<Node>) -> bool {
-    ast::is_interface_declaration(node) || node.for_each_child(&mut contains_interface_declaration)
+fn contains_interface_declaration(file: P<SourceFile>) -> bool {
+    fn in_node(node: P<Node>) -> bool {
+        ast::is_interface_declaration(node) || node.for_each_child(&mut in_node)
+    }
+    fn in_statements(statements: &[P<Node>]) -> bool {
+        statements.iter().any(|&statement| {
+            ast::is_interface_declaration(statement)
+                || ast::is_module_declaration(statement) && in_module_body(statement)
+        })
+    }
+    fn in_module_body(module: P<Node>) -> bool {
+        match module.as_module_declaration().body() {
+            Some(body) if ast::is_module_block(body) => in_statements(body.statements()),
+            Some(body) if ast::is_module_declaration(body) => in_module_body(body),
+            _ => false,
+        }
+    }
+    // A declaration file declares interfaces only in its statements and its module bodies. Walking its classes and
+    // type literals too would parse the member lists the fast preset leaves lazy in declaration files.
+    if file.is_declaration_file() {
+        in_statements(file.statements().nodes())
+    } else {
+        in_node(file.as_node())
+    }
 }
 
 // programtosnapshot.go:235
-pub(crate) fn file_affects_global_scope(file: P<SourceFile>) -> bool {
+pub fn file_affects_global_scope(file: P<SourceFile>) -> bool {
     tsrs_binder::bind_source_file(file);
     // if file contains anything that augments to global scope we need to build them as if
     // they are global files as well as module
@@ -583,20 +641,20 @@ fn add_referenced_files_from_import_literal(
 
 // Gets the path to reference file from file name, it could be resolvedPath if present otherwise path
 // programtosnapshot.go:281 (addReferencedFileFromFileName, returning the path it adds)
-fn referenced_file_path_from_file_name(
-    program: &CompilerProgram,
-    file_name: &str,
-    source_file_directory: &str,
-) -> Path {
+fn referenced_file_path_from_file_name(program: &CompilerProgram, file_name: &str) -> Path {
     let redirect = program.get_parse_file_redirect(file_name);
-    if !redirect.is_empty() {
+    if redirect.is_empty() {
+        tspath::to_path(
+            file_name,
+            program.get_current_directory(),
+            program.use_case_sensitive_file_names(),
+        )
+    } else {
         tspath::to_path(
             &redirect,
             program.get_current_directory(),
             program.use_case_sensitive_file_names(),
         )
-    } else {
-        tspath::to_path(file_name, source_file_directory, program.use_case_sensitive_file_names())
     }
 }
 
@@ -613,7 +671,7 @@ type AmbientModuleFilesByChecker =
 // The part of getReferencedFiles that needs the file's checker: the files declaring the symbols of the file's imports
 // and module augmentations, and the files declaring the checker's ambient modules (the file itself included;
 // referenced_files_of leaves it out).
-struct checkerReferences {
+struct CheckerReferences {
     import_files: Vec<P<SourceFile>>,
     augmentation_files: Vec<P<SourceFile>>,
     ambient_module_files: AmbientModuleFiles,
@@ -623,7 +681,7 @@ fn checker_references_of(
     file: P<SourceFile>,
     checker: &mut Checker,
     ambient_module_files_by_checker: &AmbientModuleFilesByChecker,
-) -> checkerReferences {
+) -> CheckerReferences {
     let mut import_files: Vec<P<SourceFile>> = Vec::new();
     let mut augmentation_files: Vec<P<SourceFile>> = Vec::new();
     for &import_name in file.imports() {
@@ -664,7 +722,7 @@ fn checker_references_of(
         ambient_module_files_by_checker.lock().unwrap().insert(key, Arc::clone(&declaring_files));
         declaring_files
     });
-    checkerReferences { import_files, augmentation_files, ambient_module_files }
+    CheckerReferences { import_files, augmentation_files, ambient_module_files }
 }
 
 // Gets the referenced files for a file from the program with values for the keys as referenced file's path to be true
@@ -679,36 +737,32 @@ fn checker_references_of(
 fn referenced_files_of(
     program: &'static CompilerProgram,
     file: P<SourceFile>,
-    checker_references: checkerReferences,
+    checker_references: CheckerReferences,
     old: Option<&std::sync::Arc<RefSet>>,
     shared_ambient_paths: &SharedAmbientPaths,
 ) -> Option<std::sync::Arc<RefSet>> {
-    let checkerReferences { import_files, augmentation_files, ambient_module_files } =
+    let CheckerReferences { import_files, augmentation_files, ambient_module_files } =
         checker_references;
     let (ambient_files, ambient_file_set, ambient_paths) = &*ambient_module_files;
     let source_file_directory = tspath::get_directory_path(file.file_name());
     // Triple slash references, then type reference directives.
     let mut file_name_paths: Vec<Path> = Vec::new();
     file_name_paths.extend(file.referenced_files().iter().map(|referenced_file| {
-        referenced_file_path_from_file_name(
-            program,
+        let file_name = tspath::get_normalized_absolute_path(
             &referenced_file.file_name,
             &source_file_directory,
-        )
+        );
+        referenced_file_path_from_file_name(program, &file_name)
     }));
     if let Some(type_refs_in_file) =
         program.get_resolved_type_reference_directives().get(file.path())
     {
         // the paths go into a set, and references_equal does not depend on their order
         file_name_paths.extend(type_refs_in_file.values().filter_map(|type_ref| {
-            if !type_ref.resolved_file_name.is_empty() {
-                Some(referenced_file_path_from_file_name(
-                    program,
-                    type_ref.resolved_file_name,
-                    &source_file_directory,
-                ))
-            } else {
+            if type_ref.resolved_file_name.is_empty() {
                 None
+            } else {
+                Some(referenced_file_path_from_file_name(program, type_ref.resolved_file_name))
             }
         }));
     }
@@ -765,12 +819,12 @@ fn referenced_files_of(
         import_files
             .into_iter()
             .chain(augmentation_files)
-            .filter_map(|f| if !in_shared(f.path()) { Some(f.path().clone()) } else { None }),
+            .filter_map(|f| if in_shared(f.path()) { None } else { Some(f.path().clone()) }),
     );
     own.m.extend(
         file_name_paths
             .into_iter()
-            .filter_map(|path| if !in_shared(&path) { Some(path) } else { None }),
+            .filter_map(|path| if in_shared(&path) { None } else { Some(path) }),
     );
     let shared_len = ambient_paths.len() - usize::from(file_is_ambient);
     if own.len() + shared_len == 0 {
@@ -934,7 +988,7 @@ fn repopulate_diagnostic_message_chain(
     for &c in chain {
         if let Some(info) = c.repopulate_info() {
             // Convert to buildInfoDiagnosticWithFileName and repopulate
-            let mut b = buildInfoDiagnosticWithFileName {
+            let mut b = BuildInfoDiagnosticWithFileName {
                 pos: c.pos().unwrap_or(0),
                 end: c.end().unwrap_or(0),
                 code: c.code(),
@@ -972,8 +1026,8 @@ fn repopulate_diagnostic_message_chain(
 }
 
 // programtosnapshot.go:420
-fn ast_diag_to_build_info_diag(d: P<Diagnostic>) -> buildInfoDiagnosticWithFileName {
-    let mut b = buildInfoDiagnosticWithFileName {
+fn ast_diag_to_build_info_diag(d: P<Diagnostic>) -> BuildInfoDiagnosticWithFileName {
+    let mut b = BuildInfoDiagnosticWithFileName {
         pos: d.pos().unwrap_or(0),
         end: d.end().unwrap_or(0),
         code: d.code(),

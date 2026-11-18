@@ -9,15 +9,15 @@ use crate::*;
 //
 
 impl Printer {
-    pub(crate) fn emit_keyword_expression(&mut self, node: P<Node>) {
+    fn emit_keyword_expression(&mut self, node: P<Node>) {
         self.emit_keyword_node(Some(node));
     }
 
-    pub(crate) fn emit_array_literal_expression_element(&mut self, node: P<Node>) {
+    fn emit_array_literal_expression_element(&mut self, node: P<Node>) {
         self.emit_expression(node, OperatorPrecedence::Spread);
     }
 
-    pub(crate) fn emit_array_literal_expression(&mut self, node: P<Node>) {
+    fn emit_array_literal_expression(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         let n = node.as_array_literal_expression();
         self.emit_list(
@@ -30,7 +30,7 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_object_literal_expression(&mut self, node: P<Node>) {
+    fn emit_object_literal_expression(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         let n = node.as_object_literal_expression();
         let indented = self.should_emit_indented(node);
@@ -57,7 +57,7 @@ impl Printer {
 
     // 1..toString is a valid property access, emit a dot after the literal
     // Also emit a dot if expression is a integer const enum value - it will appear in generated code as numeric literal
-    pub(crate) fn may_need_dot_dot_for_property_access(&mut self, expression: P<Node>) -> bool {
+    fn may_need_dot_dot_for_property_access(&mut self, expression: P<Node>) -> bool {
         let expression = skip_partially_emitted_expressions(expression);
         if is_numeric_literal(expression) {
             // check if numeric literal is a decimal literal that was originally written with a dot
@@ -122,7 +122,7 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_element_access_expression(&mut self, node: P<Node>) {
+    fn emit_element_access_expression(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         let n = node.as_element_access_expression();
         self.emit_expression(
@@ -150,11 +150,11 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_argument(&mut self, node: P<Node>) {
+    fn emit_argument(&mut self, node: P<Node>) {
         self.emit_expression(node, OperatorPrecedence::Spread);
     }
 
-    pub(crate) fn emit_callee(&mut self, callee: P<Node>, parent_node: P<Node>) {
+    fn emit_callee(&mut self, callee: P<Node>, parent_node: P<Node>) {
         if self.should_emit_indirect_call(parent_node) {
             self.write_punctuation("(");
             self.write_literal("0");
@@ -179,7 +179,7 @@ impl Printer {
         }
     }
 
-    pub(crate) fn emit_call_expression(&mut self, node: P<Node>) {
+    fn emit_call_expression(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         let n = node.as_call_expression();
         self.emit_callee(n.expression(), node);
@@ -198,7 +198,7 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_new_expression(&mut self, node: P<Node>) {
+    fn emit_new_expression(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         let n = node.as_new_expression();
         self.emit_token(Kind::NewKeyword, node.pos(), WriteKind::Keyword, node);
@@ -219,7 +219,7 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_template_literal(&mut self, node: P<Node>) {
+    fn emit_template_literal(&mut self, node: P<Node>) {
         match node.kind() {
             Kind::NoSubstitutionTemplateLiteral => self.emit_no_substitution_template_literal(node),
             Kind::TemplateExpression => self.emit_template_expression(node),
@@ -227,7 +227,7 @@ impl Printer {
         }
     }
 
-    pub(crate) fn emit_tagged_template_expression(&mut self, node: P<Node>) {
+    fn emit_tagged_template_expression(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         let n = node.as_tagged_template_expression();
         self.emit_callee(n.tag(), node);
@@ -237,7 +237,7 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_type_assertion_expression(&mut self, node: P<Node>) {
+    fn emit_type_assertion_expression(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         let n = node.as_type_assertion();
         self.write_punctuation("<");
@@ -247,7 +247,7 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_parenthesized_expression(&mut self, node: P<Node>) {
+    fn emit_parenthesized_expression(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         let expression = node.as_parenthesized_expression().expression();
         let _open_paren_pos =
@@ -262,7 +262,7 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_function_expression(&mut self, node: P<Node>) {
+    fn emit_function_expression(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         let n = node.as_function_expression();
         self.generate_name_if_needed(n.name());
@@ -281,7 +281,7 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_concise_body(&mut self, node: P<Node>) {
+    fn emit_concise_body(&mut self, node: P<Node>) {
         if is_block(node) {
             self.emit_function_body(node);
         } else if is_object_literal_expression(get_leftmost_expression(
@@ -292,7 +292,7 @@ impl Printer {
             // via parenthesizeConciseBodyOfArrowFunction.
             let paren = self.emit_context.factory.new_parenthesized_expression(node);
             paren.set_loc(node.loc());
-            self.emit_expression(paren, OperatorPrecedence::Lowest);
+            self.emit_expression(paren, OperatorPrecedence::LOWEST);
         } else if is_expression(node) {
             self.emit_expression(node, OperatorPrecedence::Yield);
         } else {
@@ -300,7 +300,7 @@ impl Printer {
         }
     }
 
-    pub(crate) fn emit_arrow_function(&mut self, node: P<Node>) {
+    fn emit_arrow_function(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         let n = node.as_arrow_function();
         self.emit_modifier_list(node, node.modifiers(), false /*allowDecorators*/);
@@ -319,7 +319,7 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_delete_expression(&mut self, node: P<Node>) {
+    fn emit_delete_expression(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         self.emit_token(Kind::DeleteKeyword, node.pos(), WriteKind::Keyword, node);
         self.write_space();
@@ -327,7 +327,7 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_type_of_expression(&mut self, node: P<Node>) {
+    fn emit_type_of_expression(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         self.emit_token(Kind::TypeOfKeyword, node.pos(), WriteKind::Keyword, node);
         self.write_space();
@@ -335,7 +335,7 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_void_expression(&mut self, node: P<Node>) {
+    fn emit_void_expression(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         self.emit_token(Kind::VoidKeyword, node.pos(), WriteKind::Keyword, node);
         self.write_space();
@@ -343,7 +343,7 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_await_expression(&mut self, node: P<Node>) {
+    fn emit_await_expression(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         self.emit_token(Kind::AwaitKeyword, node.pos(), WriteKind::Keyword, node);
         self.write_space();
@@ -351,7 +351,7 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_prefix_unary_expression(&mut self, node: P<Node>) {
+    fn emit_prefix_unary_expression(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         let n = node.as_prefix_unary_expression();
         let operator = n.operator;
@@ -385,7 +385,7 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_postfix_unary_expression(&mut self, node: P<Node>) {
+    fn emit_postfix_unary_expression(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         let n = node.as_postfix_unary_expression();
         self.emit_expression(n.operand(), OperatorPrecedence::LeftHandSide);
@@ -397,7 +397,7 @@ impl Printer {
     // literal expressions or binary plus expressions that all share the same literal kind.
     // It is used to determine whether the right-hand operand of a binary plus expression can be
     // emitted without parentheses.
-    pub(crate) fn get_literal_kind_of_binary_plus_operand(node: P<Node>) -> Kind {
+    fn get_literal_kind_of_binary_plus_operand(node: P<Node>) -> Kind {
         let node = skip_partially_emitted_expressions(node);
 
         if is_literal_kind(node.kind()) {
@@ -428,19 +428,12 @@ impl Printer {
         Kind::Unknown
     }
 
-    pub(crate) fn get_binary_expression_precedence(
-        node: P<Node>,
-    ) -> (OperatorPrecedence, OperatorPrecedence) {
+    fn get_binary_expression_precedence(node: P<Node>) -> (OperatorPrecedence, OperatorPrecedence) {
         let n = node.as_binary_expression();
         let precedence = get_expression_precedence(node);
         let mut left_prec = precedence;
         let mut right_prec = precedence;
         match precedence {
-            OperatorPrecedence::Comma => {
-                // No need to parenthesize the right operand when the binary operator and
-                // operand are both ,:
-                //  x,(a,b)     => x,a,b
-            }
             OperatorPrecedence::Assignment => {
                 // assignment is right-associative
                 left_prec = OperatorPrecedence::Conditional;
@@ -452,19 +445,15 @@ impl Printer {
             OperatorPrecedence::LogicalAND => {
                 right_prec = OperatorPrecedence::BitwiseOR;
             }
-            OperatorPrecedence::BitwiseOR => {
+            OperatorPrecedence::Comma
+            | OperatorPrecedence::BitwiseOR
+            | OperatorPrecedence::BitwiseXOR
+            | OperatorPrecedence::BitwiseAND => {
                 // No need to parenthesize the right operand when the binary operator and
-                // operand are both | due to the associative property of mathematics:
+                // operand are both comma, |, ^, or & due to associativity:
+                //  x,(a,b)     => x,a,b
                 //  x|(a|b)     => x|a|b
-            }
-            OperatorPrecedence::BitwiseXOR => {
-                // No need to parenthesize the right operand when the binary operator and
-                // operand are both ^ due to the associative property of mathematics:
                 //  x^(a^b)     => x^a^b
-            }
-            OperatorPrecedence::BitwiseAND => {
-                // No need to parenthesize the right operand when the binary operator and
-                // operand are both & due to the associative property of mathematics:
                 //  x&(a&b)     => x&a&b
             }
             OperatorPrecedence::Equality => {
@@ -515,7 +504,7 @@ impl Printer {
         (left_prec, right_prec)
     }
 
-    pub(crate) fn emit_binary_expression(&mut self, node: P<Node>) {
+    fn emit_binary_expression(&mut self, node: P<Node>) {
         let n = node.as_binary_expression();
         let (mut left_prec, mut right_prec) = Self::get_binary_expression_precedence(node);
         let emitted_left = skip_partially_emitted_expressions(n.left());
@@ -526,7 +515,7 @@ impl Printer {
                 emitted_left.as_binary_expression().operator_token().kind(),
             )
         {
-            left_prec = OperatorPrecedence::Highest;
+            left_prec = OperatorPrecedence::HIGHEST;
         }
         let emitted_right = skip_partially_emitted_expressions(n.right());
         if node_is_synthesized(emitted_right)
@@ -536,7 +525,7 @@ impl Printer {
                 emitted_right.as_binary_expression().operator_token().kind(),
             )
         {
-            right_prec = OperatorPrecedence::Highest;
+            right_prec = OperatorPrecedence::HIGHEST;
         }
         let state = self.enter_node(node);
         self.emit_expression(n.left(), left_prec);
@@ -556,18 +545,18 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_short_circuit_expression(&mut self, node: P<Node>) {
+    fn emit_short_circuit_expression(&mut self, node: P<Node>) {
         if is_binary_operation(
             skip_partially_emitted_expressions(node),
             Kind::QuestionQuestionToken,
         ) {
-            self.emit_expression(node, OperatorPrecedence::Coalesce);
+            self.emit_expression(node, OperatorPrecedence::COALESCE);
         } else {
             self.emit_expression(node, OperatorPrecedence::LogicalOR);
         }
     }
 
-    pub(crate) fn emit_conditional_expression(&mut self, node: P<Node>) {
+    fn emit_conditional_expression(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         let n = node.as_conditional_expression();
         let lines_before_question =
@@ -592,7 +581,7 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_template_expression(&mut self, node: P<Node>) {
+    fn emit_template_expression(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         let n = node.as_template_expression();
         self.emit_template_head(n.head());
@@ -605,29 +594,29 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_yield_expression(&mut self, node: P<Node>) {
+    fn emit_yield_expression(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         let n = node.as_yield_expression();
         self.emit_token(Kind::YieldKeyword, node.pos(), WriteKind::Keyword, node);
         self.emit_punctuation_node(n.asterisk_token());
         if let Some(expression) = n.expression() {
             self.write_space();
-            self.emit_expression_no_asi(expression, OperatorPrecedence::DisallowComma);
+            self.emit_expression_no_asi(expression, OperatorPrecedence::DISALLOW_COMMA);
         }
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_spread_element(&mut self, node: P<Node>) {
+    fn emit_spread_element(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         self.emit_token(Kind::DotDotDotToken, node.pos(), WriteKind::Punctuation, node);
         self.emit_expression(
             node.as_spread_element().expression(),
-            OperatorPrecedence::DisallowComma,
+            OperatorPrecedence::DISALLOW_COMMA,
         );
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_class_expression(&mut self, node: P<Node>) {
+    fn emit_class_expression(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         let n = node.as_class_expression();
         self.generate_name_if_needed(n.name());
@@ -667,7 +656,7 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_omitted_expression(&mut self, node: P<Node>) {
+    fn emit_omitted_expression(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         self.exit_node(node, state);
     }
@@ -680,7 +669,7 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_as_expression(&mut self, node: P<Node>) {
+    fn emit_as_expression(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         let n = node.as_as_expression();
         self.emit_expression(n.expression(), OperatorPrecedence::Relational);
@@ -691,7 +680,7 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_satisfies_expression(&mut self, node: P<Node>) {
+    fn emit_satisfies_expression(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         let n = node.as_satisfies_expression();
         self.emit_expression(n.expression(), OperatorPrecedence::Relational);
@@ -702,7 +691,7 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_non_null_expression(&mut self, node: P<Node>) {
+    fn emit_non_null_expression(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         self.emit_expression(
             node.as_non_null_expression().expression(),
@@ -712,23 +701,23 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_meta_property(&mut self, node: P<Node>) {
+    fn emit_meta_property(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         let n = node.as_meta_property();
-        self.emit_token(n.keyword_token, node.pos(), WriteKind::Punctuation, node);
-        self.write_punctuation(".");
+        let pos = self.emit_token(n.keyword_token, node.pos(), WriteKind::Punctuation, node);
+        self.emit_token(Kind::DotToken, pos, WriteKind::Punctuation, node);
         self.emit_identifier_name(n.name());
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_partially_emitted_expression(&mut self, node: P<Node>) {
+    fn emit_partially_emitted_expression(&mut self, node: P<Node>) {
         // avoid reprinting parens for nested partially emitted expressions
-        struct entry {
+        struct Entry {
             node: P<Node>,
-            state: printerState,
+            state: PrinterState,
         }
         let mut node = node;
-        let mut stack: Vec<entry> = Vec::new();
+        let mut stack: Vec<Entry> = Vec::new();
         loop {
             let state = self.enter_node(node);
             let emit_flags = self.emit_context.emit_flags(node);
@@ -742,7 +731,7 @@ impl Printer {
                     false, /*forceNoNewline*/
                 );
             }
-            stack.push(entry { node, state });
+            stack.push(Entry { node, state });
             if !is_partially_emitted_expression(expression) {
                 break;
             }
@@ -751,7 +740,7 @@ impl Printer {
 
         self.emit_expression(
             node.as_partially_emitted_expression().expression(),
-            OperatorPrecedence::Lowest,
+            OperatorPrecedence::LOWEST,
         );
 
         // unwind stack
@@ -768,15 +757,15 @@ impl Printer {
         }
     }
 
-    pub(crate) fn comment_will_emit_new_line(comment: CommentRange) -> bool {
+    fn comment_will_emit_new_line(comment: CommentRange) -> bool {
         comment.kind == Kind::SingleLineCommentTrivia || comment.has_trailing_new_line
     }
 
-    pub(crate) fn synthetic_comment_will_emit_new_line(comment: &SynthesizedComment) -> bool {
+    fn synthetic_comment_will_emit_new_line(comment: &SynthesizedComment) -> bool {
         comment.kind == Kind::SingleLineCommentTrivia || comment.has_trailing_new_line
     }
 
-    pub(crate) fn will_emit_leading_new_line(&self, node: P<Node>) -> bool {
+    fn will_emit_leading_new_line(&self, node: P<Node>) -> bool {
         let Some(current_source_file) = self.current_source_file() else {
             return false;
         };
@@ -797,10 +786,10 @@ impl Printer {
         }
         if has_leading_comment_ranges {
             let parse_node = self.emit_context.parse_node(Some(node));
-            if let Some(parse_node) = parse_node {
-                if parse_node.parent().is_some_and(is_parenthesized_expression) {
-                    return true;
-                }
+            if let Some(parse_node) = parse_node
+                && parse_node.parent().is_some_and(is_parenthesized_expression)
+            {
+                return true;
             }
         }
         if has_new_line_comment {
@@ -816,17 +805,16 @@ impl Printer {
         }
         if is_partially_emitted_expression(node) {
             let pee = node.as_partially_emitted_expression();
-            if node.pos() != pee.expression().pos() {
-                if pee
+            if node.pos() != pee.expression().pos()
+                && pee
                     .expression()
                     .pos()
                     .source_offset()
                     .into_iter()
                     .flat_map(|pos| scanner::get_trailing_comment_ranges(text, pos))
                     .any(Self::comment_will_emit_new_line)
-                {
-                    return true;
-                }
+            {
+                return true;
             }
             return self.will_emit_leading_new_line(pee.expression());
         }
@@ -835,24 +823,24 @@ impl Printer {
 
     // parenthesizeExpressionForNoAsi wraps an expression in parens if we would emit a leading comment
     // that would introduce a line separator between the node and its parent.
-    pub(crate) fn parenthesize_expression_for_no_asi(&mut self, node: P<Node>) -> P<Node> {
+    fn parenthesize_expression_for_no_asi(&mut self, node: P<Node>) -> P<Node> {
         if !self.comments_disabled {
             match node.kind() {
                 Kind::PartiallyEmittedExpression => {
                     if self.will_emit_leading_new_line(node) {
                         let pee = node.as_partially_emitted_expression();
                         let parse_node = self.emit_context.parse_node(Some(node));
-                        if let Some(parse_node) = parse_node {
-                            if is_parenthesized_expression(parse_node) {
-                                // If the original node was a parenthesized expression, restore it to preserve comment and source map emit
-                                let parens = self
-                                    .emit_context
-                                    .factory
-                                    .new_parenthesized_expression(pee.expression());
-                                self.emit_context.set_original(parens, node);
-                                parens.set_loc(parse_node.loc());
-                                return parens;
-                            }
+                        if let Some(parse_node) = parse_node
+                            && is_parenthesized_expression(parse_node)
+                        {
+                            // If the original node was a parenthesized expression, restore it to preserve comment and source map emit
+                            let parens = self
+                                .emit_context
+                                .factory
+                                .new_parenthesized_expression(pee.expression());
+                            self.emit_context.set_original(parens, node);
+                            parens.set_loc(parse_node.loc());
+                            return parens;
                         }
                         return self.emit_context.factory.new_parenthesized_expression(node);
                     }
@@ -976,7 +964,7 @@ impl Printer {
         node
     }
 
-    pub(crate) fn emit_expression_no_asi(&mut self, node: P<Node>, precedence: OperatorPrecedence) {
+    fn emit_expression_no_asi(&mut self, node: P<Node>, precedence: OperatorPrecedence) {
         let node = self.parenthesize_expression_for_no_asi(node);
         self.emit_expression(node, precedence);
     }
@@ -1080,7 +1068,7 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_template_span_node(&mut self, node: P<Node>) {
+    fn emit_template_span_node(&mut self, node: P<Node>) {
         self.emit_template_span(node);
     }
 
@@ -1096,7 +1084,7 @@ impl Printer {
 //
 
 impl Printer {
-    pub(crate) fn is_empty_block(&self, block: P<Node>, statements: P<NodeList>) -> bool {
+    fn is_empty_block(&self, block: P<Node>, statements: P<NodeList>) -> bool {
         statements.nodes().is_empty()
             && (self.current_source_file().is_none()
                 || range_end_is_on_same_line_as_range_start(
@@ -1106,7 +1094,7 @@ impl Printer {
                 ))
     }
 
-    pub(crate) fn emit_block(&mut self, node: P<Node>) {
+    fn emit_block(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         let n = node.as_block();
         self.generate_names(Some(node));
@@ -1135,7 +1123,7 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_variable_statement(&mut self, node: P<Node>) {
+    fn emit_variable_statement(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         self.emit_modifier_list(node, node.modifiers(), false /*allowDecorators*/);
         self.emit_variable_declaration_list(node.as_variable_statement().declaration_list());
@@ -1143,7 +1131,7 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_empty_statement(&mut self, node: P<Node>, is_embedded_statement: bool) {
+    fn emit_empty_statement(&mut self, node: P<Node>, is_embedded_statement: bool) {
         let state = self.enter_node(node);
 
         // While most trailing semicolons are possibly insignificant, an embedded "empty"
@@ -1156,7 +1144,7 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_expression_statement(&mut self, node: P<Node>) {
+    fn emit_expression_statement(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         let expression = node.as_expression_statement().expression();
 
@@ -1198,14 +1186,14 @@ impl Printer {
     // instead of:
     //
     //	(function() { }())   -- parens around entire call
-    pub(crate) fn emit_iife_with_parenthesized_callee(&mut self, node: P<Node>) {
+    fn emit_iife_with_parenthesized_callee(&mut self, node: P<Node>) {
         // Walk through PartiallyEmittedExpression wrappers to find the call
         let call_node = skip_partially_emitted_expressions(node);
         let call = call_node.as_call_expression();
         let state = self.enter_node(call_node);
         // Emit the callee wrapped in parens
         self.write_punctuation("(");
-        self.emit_expression(call.expression(), OperatorPrecedence::Lowest);
+        self.emit_expression(call.expression(), OperatorPrecedence::LOWEST);
         self.write_punctuation(")");
         self.emit_token_node(call.question_dot_token());
         self.emit_type_arguments(call_node, call.type_arguments());
@@ -1218,13 +1206,13 @@ impl Printer {
         self.exit_node(call_node, state);
     }
 
-    pub(crate) fn emit_if_statement(&mut self, node: P<Node>) {
+    fn emit_if_statement(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         let n = node.as_if_statement();
         let pos = self.emit_token(Kind::IfKeyword, node.pos(), WriteKind::Keyword, node);
         self.write_space();
         self.emit_token(Kind::OpenParenToken, pos, WriteKind::Punctuation, node);
-        self.emit_expression(n.expression(), OperatorPrecedence::Lowest);
+        self.emit_expression(n.expression(), OperatorPrecedence::LOWEST);
         self.emit_token(Kind::CloseParenToken, n.expression().end(), WriteKind::Punctuation, node);
         self.emit_embedded_statement(node, n.then_statement());
         if let Some(else_statement) = n.else_statement() {
@@ -1240,20 +1228,15 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_while_clause(
-        &mut self,
-        node: P<Node>,
-        expression: P<Node>,
-        start_pos: TextPos,
-    ) {
+    fn emit_while_clause(&mut self, node: P<Node>, expression: P<Node>, start_pos: TextPos) {
         let pos = self.emit_token(Kind::WhileKeyword, start_pos, WriteKind::Keyword, node);
         self.write_space();
         self.emit_token(Kind::OpenParenToken, pos, WriteKind::Punctuation, node);
-        self.emit_expression(expression, OperatorPrecedence::Lowest);
+        self.emit_expression(expression, OperatorPrecedence::LOWEST);
         self.emit_token(Kind::CloseParenToken, expression.end(), WriteKind::Punctuation, node);
     }
 
-    pub(crate) fn emit_do_statement(&mut self, node: P<Node>) {
+    fn emit_do_statement(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         let n = node.as_do_statement();
         self.emit_token(Kind::DoKeyword, node.pos(), WriteKind::Keyword, node);
@@ -1269,7 +1252,7 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_while_statement(&mut self, node: P<Node>) {
+    fn emit_while_statement(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         let n = node.as_while_statement();
         self.emit_while_clause(node, n.expression(), node.pos());
@@ -1277,15 +1260,15 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_for_initializer(&mut self, node: P<Node>) {
+    fn emit_for_initializer(&mut self, node: P<Node>) {
         if node.kind() == Kind::VariableDeclarationList {
             self.emit_variable_declaration_list(node);
         } else {
-            self.emit_expression(node, OperatorPrecedence::Lowest);
+            self.emit_expression(node, OperatorPrecedence::LOWEST);
         }
     }
 
-    pub(crate) fn emit_for_statement(&mut self, node: P<Node>) {
+    fn emit_for_statement(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         let n = node.as_for_statement();
         let mut pos = self.emit_token(Kind::ForKeyword, node.pos(), WriteKind::Keyword, node);
@@ -1298,13 +1281,13 @@ impl Printer {
         pos = self.emit_token(Kind::SemicolonToken, pos, WriteKind::Punctuation, node);
         if let Some(condition) = n.condition() {
             self.write_space();
-            self.emit_expression(condition, OperatorPrecedence::Lowest);
+            self.emit_expression(condition, OperatorPrecedence::LOWEST);
             pos = condition.end();
         }
         pos = self.emit_token(Kind::SemicolonToken, pos, WriteKind::Punctuation, node);
         if let Some(incrementor) = n.incrementor() {
             self.write_space();
-            self.emit_expression(incrementor, OperatorPrecedence::Lowest);
+            self.emit_expression(incrementor, OperatorPrecedence::LOWEST);
             pos = incrementor.end();
         }
         self.emit_token(Kind::CloseParenToken, pos, WriteKind::Punctuation, node);
@@ -1312,7 +1295,7 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_for_in_statement(&mut self, node: P<Node>) {
+    fn emit_for_in_statement(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         let n = node.as_for_in_or_of_statement();
         let pos = self.emit_token(Kind::ForKeyword, node.pos(), WriteKind::Keyword, node);
@@ -1322,13 +1305,13 @@ impl Printer {
         self.write_space();
         self.emit_token(Kind::InKeyword, n.initializer().end(), WriteKind::Keyword, node);
         self.write_space();
-        self.emit_expression(n.expression(), OperatorPrecedence::Lowest);
+        self.emit_expression(n.expression(), OperatorPrecedence::LOWEST);
         self.emit_token(Kind::CloseParenToken, n.expression().end(), WriteKind::Punctuation, node);
         self.emit_embedded_statement(node, n.statement());
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_for_of_statement(&mut self, node: P<Node>) {
+    fn emit_for_of_statement(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         let n = node.as_for_in_or_of_statement();
         let open_paren_pos =
@@ -1343,13 +1326,13 @@ impl Printer {
         self.write_space();
         self.emit_token(Kind::OfKeyword, n.initializer().end(), WriteKind::Keyword, node);
         self.write_space();
-        self.emit_expression(n.expression(), OperatorPrecedence::Lowest);
+        self.emit_expression(n.expression(), OperatorPrecedence::LOWEST);
         self.emit_token(Kind::CloseParenToken, n.expression().end(), WriteKind::Punctuation, node);
         self.emit_embedded_statement(node, n.statement());
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_continue_statement(&mut self, node: P<Node>) {
+    fn emit_continue_statement(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         self.emit_token(Kind::ContinueKeyword, node.pos(), WriteKind::Keyword, node);
         if let Some(label) = node.as_continue_statement().label() {
@@ -1360,7 +1343,7 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_break_statement(&mut self, node: P<Node>) {
+    fn emit_break_statement(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         self.emit_token(Kind::BreakKeyword, node.pos(), WriteKind::Keyword, node);
         if let Some(label) = node.as_break_statement().label() {
@@ -1371,43 +1354,43 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_return_statement(&mut self, node: P<Node>) {
+    fn emit_return_statement(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         self.emit_token(Kind::ReturnKeyword, node.pos(), WriteKind::Keyword, node);
         if let Some(expression) = node.as_return_statement().expression() {
             self.write_space();
-            self.emit_expression_no_asi(expression, OperatorPrecedence::Lowest);
+            self.emit_expression_no_asi(expression, OperatorPrecedence::LOWEST);
         }
         self.write_trailing_semicolon();
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_with_statement(&mut self, node: P<Node>) {
+    fn emit_with_statement(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         let n = node.as_with_statement();
         let pos = self.emit_token(Kind::WithKeyword, node.pos(), WriteKind::Keyword, node);
         self.write_space();
         self.emit_token(Kind::OpenParenToken, pos, WriteKind::Punctuation, node);
-        self.emit_expression(n.expression(), OperatorPrecedence::Lowest);
+        self.emit_expression(n.expression(), OperatorPrecedence::LOWEST);
         self.emit_token(Kind::CloseParenToken, n.expression().end(), WriteKind::Punctuation, node);
         self.emit_embedded_statement(node, n.statement());
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_switch_statement(&mut self, node: P<Node>) {
+    fn emit_switch_statement(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         let n = node.as_switch_statement();
         let pos = self.emit_token(Kind::SwitchKeyword, node.pos(), WriteKind::Keyword, node);
         self.write_space();
         self.emit_token(Kind::OpenParenToken, pos, WriteKind::Punctuation, node);
-        self.emit_expression(n.expression(), OperatorPrecedence::Lowest);
+        self.emit_expression(n.expression(), OperatorPrecedence::LOWEST);
         self.emit_token(Kind::CloseParenToken, n.expression().end(), WriteKind::Punctuation, node);
         self.write_space();
         self.emit_case_block(n.case_block());
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_labeled_statement(&mut self, node: P<Node>) {
+    fn emit_labeled_statement(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         let n = node.as_labeled_statement();
         self.emit_label_identifier(n.label());
@@ -1424,19 +1407,19 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_throw_statement(&mut self, node: P<Node>) {
+    fn emit_throw_statement(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         self.emit_token(Kind::ThrowKeyword, node.pos(), WriteKind::Keyword, node);
         self.write_space();
         self.emit_expression_no_asi(
             node.as_throw_statement().expression(),
-            OperatorPrecedence::Lowest,
+            OperatorPrecedence::LOWEST,
         );
         self.write_trailing_semicolon();
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_try_statement(&mut self, node: P<Node>) {
+    fn emit_try_statement(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         let n = node.as_try_statement();
         self.emit_token(Kind::TryKeyword, node.pos(), WriteKind::Keyword, node);
@@ -1456,7 +1439,7 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_debugger_statement(&mut self, node: P<Node>) {
+    fn emit_debugger_statement(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         self.emit_token(Kind::DebuggerKeyword, node.pos(), WriteKind::Keyword, node);
         self.write_trailing_semicolon();
@@ -1494,7 +1477,7 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_variable_declaration_node(&mut self, node: P<Node>) {
+    fn emit_variable_declaration_node(&mut self, node: P<Node>) {
         self.emit_variable_declaration(node);
     }
 
@@ -1523,7 +1506,7 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_function_declaration(&mut self, node: P<Node>) {
+    fn emit_function_declaration(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         let n = node.as_function_declaration();
         self.generate_name_if_needed(n.name());
@@ -1544,7 +1527,7 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_class_declaration(&mut self, node: P<Node>) {
+    fn emit_class_declaration(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         let n = node.as_class_declaration();
         self.generate_name_if_needed(n.name());
@@ -1586,7 +1569,7 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_interface_declaration(&mut self, node: P<Node>) {
+    fn emit_interface_declaration(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         let n = node.as_interface_declaration();
         self.emit_modifier_list(node, node.modifiers(), false /*allowDecorators*/);
@@ -1631,7 +1614,7 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_enum_declaration(&mut self, node: P<Node>) {
+    fn emit_enum_declaration(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         let n = node.as_enum_declaration();
         self.emit_modifier_list(node, node.modifiers(), false /*allowDecorators*/);
@@ -1650,7 +1633,7 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_module_declaration(&mut self, node: P<Node>) {
+    fn emit_module_declaration(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         let n = node.as_module_declaration();
         self.emit_modifier_list(node, node.modifiers(), false /*allowDecorators*/);
@@ -1735,7 +1718,7 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_import_equals_declaration(&mut self, node: P<Node>) {
+    fn emit_import_equals_declaration(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         let n = node.as_import_equals_declaration();
         self.emit_modifier_list(node, node.modifiers(), false /*allowDecorators*/);
@@ -1759,7 +1742,7 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_module_reference(&mut self, node: P<Node>) {
+    fn emit_module_reference(&mut self, node: P<Node>) {
         match node.kind() {
             Kind::Identifier => self.emit_identifier_reference(node),
             Kind::QualifiedName => self.emit_qualified_name(node),
@@ -1768,7 +1751,7 @@ impl Printer {
         }
     }
 
-    pub(crate) fn emit_import_declaration(&mut self, node: P<Node>) {
+    fn emit_import_declaration(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         let n = node.as_import_declaration();
         self.emit_modifier_list(node, node.modifiers(), false /*allowDecorators*/);
@@ -1785,7 +1768,7 @@ impl Printer {
             self.emit_token(Kind::FromKeyword, import_clause.end(), WriteKind::Keyword, node);
             self.write_space();
         }
-        self.emit_expression(n.module_specifier(), OperatorPrecedence::Lowest);
+        self.emit_expression(n.module_specifier(), OperatorPrecedence::LOWEST);
         if let Some(attributes) = n.attributes() {
             self.write_space();
             self.emit_import_attributes(attributes);
@@ -1838,7 +1821,7 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_named_import_bindings(&mut self, node: Option<P<Node>>) {
+    fn emit_named_import_bindings(&mut self, node: Option<P<Node>>) {
         let Some(node) = node else {
             return;
         };
@@ -1866,11 +1849,11 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_import_specifier_node(&mut self, node: P<Node>) {
+    fn emit_import_specifier_node(&mut self, node: P<Node>) {
         self.emit_import_specifier(node);
     }
 
-    pub(crate) fn emit_export_assignment(&mut self, node: P<Node>) {
+    fn emit_export_assignment(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         let n = node.as_export_assignment();
         let next_pos = self.emit_token(Kind::ExportKeyword, node.pos(), WriteKind::Keyword, node);
@@ -1897,7 +1880,7 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_export_declaration(&mut self, node: P<Node>) {
+    fn emit_export_declaration(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         let n = node.as_export_declaration();
         self.emit_modifier_list(node, node.modifiers(), false /*allowDecorators*/);
@@ -1921,7 +1904,7 @@ impl Printer {
                 node,
             );
             self.write_space();
-            self.emit_expression(module_specifier, OperatorPrecedence::Lowest);
+            self.emit_expression(module_specifier, OperatorPrecedence::LOWEST);
         }
         if let Some(attributes) = n.attributes() {
             self.write_space();
@@ -1954,9 +1937,9 @@ impl Printer {
         let value = n.value();
         if !self.emit_context.emit_flags(value).intersects(EmitFlags::NoLeadingComments) {
             let comment_range = self.emit_context.comment_range(value);
-            self.emit_trailing_comments(comment_range.pos(), commentSeparator::After);
+            self.emit_trailing_comments(comment_range.pos(), CommentSeparator::After);
         }
-        self.emit_expression(value, OperatorPrecedence::DisallowComma);
+        self.emit_expression(value, OperatorPrecedence::DISALLOW_COMMA);
         self.exit_node(node, state);
     }
 
@@ -1964,7 +1947,7 @@ impl Printer {
         self.emit_import_attribute(node);
     }
 
-    pub(crate) fn emit_namespace_export_declaration(&mut self, node: P<Node>) {
+    fn emit_namespace_export_declaration(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         let mut pos = self.emit_token(Kind::ExportKeyword, node.pos(), WriteKind::Keyword, node);
         self.write_space();
@@ -2000,7 +1983,7 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_named_export_bindings(&mut self, node: P<Node>) {
+    fn emit_named_export_bindings(&mut self, node: P<Node>) {
         match node.kind() {
             Kind::NamespaceExport => self.emit_namespace_export(node),
             Kind::NamedExports => self.emit_named_exports(node),
@@ -2025,11 +2008,11 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_export_specifier_node(&mut self, node: P<Node>) {
+    fn emit_export_specifier_node(&mut self, node: P<Node>) {
         self.emit_export_specifier(node);
     }
 
-    pub(crate) fn emit_embedded_statement(&mut self, parent_node: P<Node>, node: P<Node>) {
+    fn emit_embedded_statement(&mut self, parent_node: P<Node>, node: P<Node>) {
         if is_block(node)
             || self.should_emit_on_single_line(parent_node)
             || self.options.preserve_source_newlines
@@ -2120,7 +2103,7 @@ impl Printer {
         self.write_punctuation("(");
         self.emit_expression(
             node.as_external_module_reference().expression(),
-            OperatorPrecedence::DisallowComma,
+            OperatorPrecedence::DISALLOW_COMMA,
         );
         self.write_punctuation(")");
         self.exit_node(node, state);
@@ -2132,7 +2115,7 @@ impl Printer {
 //
 
 impl Printer {
-    pub(crate) fn emit_jsx_element(&mut self, node: P<Node>) {
+    fn emit_jsx_element(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         let n = node.as_jsx_element();
         self.emit_jsx_opening_element(n.opening_element());
@@ -2146,7 +2129,7 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_jsx_self_closing_element(&mut self, node: P<Node>) {
+    fn emit_jsx_self_closing_element(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         let n = node.as_jsx_self_closing_element();
         self.write_punctuation("<");
@@ -2158,7 +2141,7 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_jsx_fragment(&mut self, node: P<Node>) {
+    fn emit_jsx_fragment(&mut self, node: P<Node>) {
         let state = self.enter_node(node);
         let n = node.as_jsx_fragment();
         self.emit_jsx_opening_fragment(n.opening_fragment());
@@ -2245,13 +2228,13 @@ impl Printer {
         self.write_punctuation("{...");
         self.emit_expression(
             node.as_jsx_spread_attribute().expression(),
-            OperatorPrecedence::Lowest,
+            OperatorPrecedence::LOWEST,
         );
         self.write_punctuation("}");
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_jsx_attribute_like(&mut self, node: P<Node>) {
+    fn emit_jsx_attribute_like(&mut self, node: P<Node>) {
         match node.kind() {
             Kind::JsxAttribute => self.emit_jsx_attribute(node),
             Kind::JsxSpreadAttribute => self.emit_jsx_spread_attribute(node),
@@ -2281,7 +2264,7 @@ impl Printer {
                 self.emit_token(Kind::OpenBraceToken, node.pos(), WriteKind::Punctuation, node);
             self.emit_token_node(n.dot_dot_dot_token());
             if let Some(expression) = n.expression() {
-                self.emit_expression(expression, OperatorPrecedence::DisallowComma);
+                self.emit_expression(expression, OperatorPrecedence::DISALLOW_COMMA);
             }
             self.emit_token(
                 Kind::CloseBraceToken,
@@ -2303,7 +2286,7 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_jsx_child(&mut self, node: P<Node>) {
+    fn emit_jsx_child(&mut self, node: P<Node>) {
         match node.kind() {
             Kind::JsxText => self.emit_jsx_text(node),
             Kind::JsxExpression => self.emit_jsx_expression(node),
@@ -2314,7 +2297,7 @@ impl Printer {
         }
     }
 
-    pub(crate) fn emit_jsx_tag_name(&mut self, node: P<Node>) {
+    fn emit_jsx_tag_name(&mut self, node: P<Node>) {
         match node.kind() {
             Kind::Identifier => self.emit_identifier_reference(node),
             Kind::ThisKeyword => self.emit_keyword_expression(node),
@@ -2324,7 +2307,7 @@ impl Printer {
         }
     }
 
-    pub(crate) fn emit_jsx_attribute_name(&mut self, node: P<Node>) {
+    fn emit_jsx_attribute_name(&mut self, node: P<Node>) {
         match node.kind() {
             Kind::Identifier => self.emit_identifier_name(node),
             Kind::JsxNamespacedName => self.emit_jsx_namespaced_name(node),
@@ -2332,14 +2315,14 @@ impl Printer {
         }
     }
 
-    pub(crate) fn emit_jsx_attribute_value(&mut self, node: P<Node>) {
+    fn emit_jsx_attribute_value(&mut self, node: P<Node>) {
         match node.kind() {
             Kind::StringLiteral => self.emit_string_literal(node),
             Kind::JsxExpression => self.emit_jsx_expression(node),
             Kind::JsxElement => self.emit_jsx_element(node),
             Kind::JsxSelfClosingElement => self.emit_jsx_self_closing_element(node),
             Kind::JsxFragment => self.emit_jsx_fragment(node),
-            _ => self.emit_expression(node, OperatorPrecedence::Lowest),
+            _ => self.emit_expression(node, OperatorPrecedence::LOWEST),
         }
     }
 }
@@ -2349,11 +2332,7 @@ impl Printer {
 //
 
 impl Printer {
-    pub(crate) fn emit_case_or_default_clause_statements(
-        &mut self,
-        node: P<Node>,
-        colon_pos: TextPos,
-    ) {
+    fn emit_case_or_default_clause_statements(&mut self, node: P<Node>, colon_pos: TextPos) {
         let statements = node.as_case_or_default_clause().statements();
         let emit_as_single_statement = statements.nodes().len() == 1
             // treat synthesized nodes as located on the same line for emit purposes
@@ -2381,7 +2360,7 @@ impl Printer {
         let expression = node.as_case_or_default_clause().expression().unwrap();
         self.emit_token(Kind::CaseKeyword, node.pos(), WriteKind::Keyword, node);
         self.write_space();
-        self.emit_expression(expression, OperatorPrecedence::Lowest);
+        self.emit_expression(expression, OperatorPrecedence::LOWEST);
         self.emit_case_or_default_clause_statements(node, expression.end());
         self.exit_node(node, state);
     }
@@ -2393,7 +2372,7 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_case_or_default_clause_node(&mut self, node: P<Node>) {
+    fn emit_case_or_default_clause_node(&mut self, node: P<Node>) {
         match node.kind() {
             Kind::CaseClause => self.emit_case_clause(node),
             Kind::DefaultClause => self.emit_default_clause(node),
@@ -2416,7 +2395,7 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_heritage_clause_element(&mut self, node: P<Node>) {
+    fn emit_heritage_clause_element(&mut self, node: P<Node>) {
         match node.kind() {
             Kind::ExpressionWithTypeArguments => self.emit_expression_with_type_arguments(node),
             Kind::TypeReference => self.emit_type_reference(node),
@@ -2424,7 +2403,7 @@ impl Printer {
         }
     }
 
-    pub(crate) fn emit_heritage_clause_node(&mut self, node: P<Node>) {
+    fn emit_heritage_clause_node(&mut self, node: P<Node>) {
         self.emit_heritage_clause(node);
     }
 
@@ -2473,9 +2452,9 @@ impl Printer {
         let initializer = n.initializer();
         if !self.emit_context.emit_flags(initializer).intersects(EmitFlags::NoLeadingComments) {
             let comment_range = self.emit_context.comment_range(initializer);
-            self.emit_trailing_comments(comment_range.pos(), commentSeparator::After);
+            self.emit_trailing_comments(comment_range.pos(), CommentSeparator::After);
         }
-        self.emit_expression(initializer, OperatorPrecedence::DisallowComma);
+        self.emit_expression(initializer, OperatorPrecedence::DISALLOW_COMMA);
         self.exit_node(node, state);
     }
 
@@ -2487,7 +2466,7 @@ impl Printer {
             self.write_space();
             self.write_punctuation("=");
             self.write_space();
-            self.emit_expression(object_assignment_initializer, OperatorPrecedence::DisallowComma);
+            self.emit_expression(object_assignment_initializer, OperatorPrecedence::DISALLOW_COMMA);
         }
         self.exit_node(node, state);
     }
@@ -2497,7 +2476,7 @@ impl Printer {
         // Go checks `node.Expression != nil`; the field is never nil here.
         let expression = node.as_spread_assignment().expression();
         self.emit_token(Kind::DotDotDotToken, node.pos(), WriteKind::Punctuation, node);
-        self.emit_expression(expression, OperatorPrecedence::DisallowComma);
+        self.emit_expression(expression, OperatorPrecedence::DISALLOW_COMMA);
         self.exit_node(node, state);
     }
 }
@@ -2515,7 +2494,7 @@ impl Printer {
         self.exit_node(node, state);
     }
 
-    pub(crate) fn emit_enum_member_node(&mut self, node: P<Node>) {
+    fn emit_enum_member_node(&mut self, node: P<Node>) {
         self.emit_enum_member(node);
     }
 }
@@ -2536,7 +2515,7 @@ impl Printer {
 //
 
 impl Printer {
-    pub(crate) fn emit_shebang_if_needed(&mut self, node: P<SourceFile>) {
+    fn emit_shebang_if_needed(&mut self, node: P<SourceFile>) {
         if node_is_synthesized(node.as_node()) {
             return;
         }
@@ -2591,7 +2570,7 @@ impl Printer {
         helpers_emitted
     }
 
-    pub(crate) fn make_file_level_optimistic_unique_name(&mut self, name: &str) -> String {
+    fn make_file_level_optimistic_unique_name(&mut self, name: &str) -> String {
         self.name_generator.make_file_level_optimistic_unique_name(name)
     }
 
@@ -2609,7 +2588,9 @@ impl Printer {
 
         let mut index = 0;
         let state;
-        if file.script_kind() != ScriptKind::JSON {
+        if file.script_kind() == ScriptKind::JSON {
+            state = self.emit_detached_comments_before_statement_list(node, file.statements().loc());
+        } else {
             self.emit_shebang_if_needed(file);
             index = self.emit_prologue_directives(file.statements());
             if !self.writer().is_at_start_of_line() {
@@ -2620,8 +2601,6 @@ impl Printer {
             if file.is_declaration_file() {
                 self.emit_triple_slash_directives(file);
             }
-        } else {
-            state = self.emit_detached_comments_before_statement_list(node, file.statements().loc());
         }
 
         // !!! Emit triple-slash directives
@@ -2639,13 +2618,13 @@ impl Printer {
         self.comments_disabled = saved_comments_disabled;
     }
 
-    pub(crate) fn emit_triple_slash_directives(&mut self, node: P<SourceFile>) {
+    fn emit_triple_slash_directives(&mut self, node: P<SourceFile>) {
         self.emit_directive("path", node.referenced_files());
         self.emit_directive("types", node.type_reference_directives());
         self.emit_directive("lib", node.lib_reference_directives());
     }
 
-    pub(crate) fn emit_directive(&mut self, kind: &str, refs: &[P<FileReference>]) {
+    fn emit_directive(&mut self, kind: &str, refs: &[P<FileReference>]) {
         for r in refs {
             let mut resolution_mode = String::new();
             if r.resolution_mode != RESOLUTION_MODE_NONE {

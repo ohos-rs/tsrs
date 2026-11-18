@@ -21,12 +21,12 @@ pub(crate) fn create_diagnostic_for_invalid_enum_type(
     create_diagnostic_for_node_in_source_file_or_compiler_diagnostic(
         source_file,
         node,
-        &diagnostics::Argument_for_0_option_must_be_Colon_1,
+        &diagnostics::ARGUMENT_FOR_0_OPTION_MUST_BE_COLON_1,
         &[&opt_name, &string_names],
     )
 }
 
-pub(crate) fn format_enum_type_keys(opt: &CommandLineOption, keys: Vec<&str>) -> String {
+fn format_enum_type_keys(opt: &CommandLineOption, keys: Vec<&str>) -> String {
     let mut keys = keys;
     if let Some(deprecated) = opt.deprecated_keys() {
         keys.retain(|key| !deprecated.contains(key));
@@ -83,22 +83,21 @@ pub(crate) fn create_unknown_option_error(
     unknown_did_you_mean_diagnostic: Option<&'static Message>, // optional; nil skips suggestion
     options_name_map: Option<&CommandLineOptionNameMap>, // optional; nil skips suggestion
 ) -> P<Diagnostic> {
-    if let Some(alternate_mode) = alternate_mode {
-        if let Some(options_name_map) = alternate_mode.options_name_map {
-            if let Some(other_option) = options_name_map.get(&unknown_option.to_lowercase()) {
-                // tscbuildoption
-                let mut diagnostic = alternate_mode.diagnostic;
-                if other_option.name == "build" {
-                    diagnostic = &diagnostics::Option_build_must_be_the_first_command_line_argument;
-                }
-                return create_diagnostic_for_node_in_source_file_or_compiler_diagnostic(
-                    source_file,
-                    node,
-                    diagnostic,
-                    &[&unknown_option],
-                );
-            }
+    if let Some(alternate_mode) = alternate_mode
+        && let Some(options_name_map) = alternate_mode.options_name_map
+        && let Some(other_option) = options_name_map.get(&unknown_option.to_lowercase())
+    {
+        // tscbuildoption
+        let mut diagnostic = alternate_mode.diagnostic;
+        if other_option.name == "build" {
+            diagnostic = &diagnostics::OPTION_BUILD_MUST_BE_THE_FIRST_COMMAND_LINE_ARGUMENT;
         }
+        return create_diagnostic_for_node_in_source_file_or_compiler_diagnostic(
+            source_file,
+            node,
+            diagnostic,
+            &[&unknown_option],
+        );
     }
     let unknown_option_error_text = if unknown_option_error_text.is_empty() {
         unknown_option
@@ -107,15 +106,14 @@ pub(crate) fn create_unknown_option_error(
     };
     if let (Some(unknown_did_you_mean_diagnostic), Some(options_name_map)) =
         (unknown_did_you_mean_diagnostic, options_name_map)
+        && let Some(possible_option) = options_name_map.get_spelling_suggestion(unknown_option)
     {
-        if let Some(possible_option) = options_name_map.get_spelling_suggestion(unknown_option) {
-            return create_diagnostic_for_node_in_source_file_or_compiler_diagnostic(
-                source_file,
-                node,
-                unknown_did_you_mean_diagnostic,
-                &[&unknown_option_error_text, &possible_option.name],
-            );
-        }
+        return create_diagnostic_for_node_in_source_file_or_compiler_diagnostic(
+            source_file,
+            node,
+            unknown_did_you_mean_diagnostic,
+            &[&unknown_option_error_text, &possible_option.name],
+        );
     }
     create_diagnostic_for_node_in_source_file_or_compiler_diagnostic(
         source_file,
@@ -145,7 +143,7 @@ pub fn create_diagnostic_for_node_in_source_file(
     )
 }
 
-pub fn create_diagnostic_for_node_in_source_file_or_compiler_diagnostic(
+pub(crate) fn create_diagnostic_for_node_in_source_file_or_compiler_diagnostic(
     source_file: Option<P<SourceFile>>,
     node: Option<P<Node>>,
     message: &'static Message,
@@ -159,20 +157,18 @@ pub fn create_diagnostic_for_node_in_source_file_or_compiler_diagnostic(
 
 pub(crate) fn extra_key_diagnostics(s: &str) -> Option<&'static Message> {
     match s {
-        "compilerOptions" => Some(&diagnostics::Unknown_compiler_option_0),
-        "watchOptions" => Some(&diagnostics::Unknown_watch_option_0),
-        "typeAcquisition" => Some(&diagnostics::Unknown_type_acquisition_option_0),
-        "buildOptions" => Some(&diagnostics::Unknown_build_option_0),
+        "compilerOptions" => Some(&diagnostics::UNKNOWN_COMPILER_OPTION_0),
+        "typeAcquisition" => Some(&diagnostics::UNKNOWN_TYPE_ACQUISITION_OPTION_0),
+        "buildOptions" => Some(&diagnostics::UNKNOWN_BUILD_OPTION_0),
         _ => None,
     }
 }
 
 pub(crate) fn extra_key_did_you_mean_diagnostics(s: &str) -> Option<&'static Message> {
     match s {
-        "compilerOptions" => Some(&diagnostics::Unknown_compiler_option_0_Did_you_mean_1),
-        "watchOptions" => Some(&diagnostics::Unknown_watch_option_0_Did_you_mean_1),
-        "typeAcquisition" => Some(&diagnostics::Unknown_type_acquisition_option_0_Did_you_mean_1),
-        "buildOptions" => Some(&diagnostics::Unknown_build_option_0_Did_you_mean_1),
+        "compilerOptions" => Some(&diagnostics::UNKNOWN_COMPILER_OPTION_0_DID_YOU_MEAN_1),
+        "typeAcquisition" => Some(&diagnostics::UNKNOWN_TYPE_ACQUISITION_OPTION_0_DID_YOU_MEAN_1),
+        "buildOptions" => Some(&diagnostics::UNKNOWN_BUILD_OPTION_0_DID_YOU_MEAN_1),
         _ => None,
     }
 }

@@ -1,3 +1,8 @@
+#![expect(
+    clippy::redundant_pub_crate,
+    reason = "Only the public API is re-exported; implementation helpers remain crate-private."
+)]
+
 // Package contentmappertest provides realistic content mapper implementations used by tests.
 
 use std::sync::Arc;
@@ -33,7 +38,7 @@ pub(crate) fn identity_mapped_output(content: &str) -> Result<MappedOutput, ipc:
     let mappings = marshal_span_map(&[Segment {
         virtual_end: content.len() as u32,
         original_end: content.len() as u32,
-        kind: Kind::Verbatim,
+        kind: Kind::VERBATIM,
         features: Feature::All,
         ..Default::default()
     }])?;
@@ -46,12 +51,12 @@ pub(crate) fn identity_mapped_output(content: &str) -> Result<MappedOutput, ipc:
 }
 
 // protocol.go:40 (Go embeds the ipc.Handler it wraps.)
-pub(crate) struct staticProjectHandler {
-    pub(crate) handler: Arc<dyn testHandler>,
+pub struct StaticProjectHandler {
+    pub(crate) handler: Arc<dyn TestHandler>,
 }
 
 // protocol.go:42
-pub(crate) trait projectLifecycleHandler {
+pub trait ProjectLifecycleHandler {
     fn open_project(&self, params: OpenProjectParams) -> Result<(), ipc::Error>;
     fn close_project(&self, params: CloseProjectParams);
 }
@@ -59,13 +64,13 @@ pub(crate) trait projectLifecycleHandler {
 // An ipc.Handler of this package. staticProjectHandler asks the handler it wraps whether it is also a
 // projectLifecycleHandler with a type assertion (`h.Handler.(projectLifecycleHandler)`); `project_lifecycle` is that
 // assertion.
-pub(crate) trait testHandler: Handler {
-    fn project_lifecycle(&self) -> Option<&dyn projectLifecycleHandler> {
+pub trait TestHandler: Handler {
+    fn project_lifecycle(&self) -> Option<&dyn ProjectLifecycleHandler> {
         None
     }
 }
 
-impl Handler for staticProjectHandler {
+impl Handler for StaticProjectHandler {
     // protocol.go:47
     fn handle_request(&self, method: &str, params: Option<&Value>) -> Result<Value, ipc::Error> {
         match method {
@@ -121,7 +126,7 @@ pub(crate) fn marshal_span_map(segments: &[Segment]) -> Result<Value, ipc::Error
 
 // Go's `string(raw)` of a json.Value: "" when it is empty (absent), else its compact JSON text.
 pub(crate) fn raw_text(raw: Option<&Value>) -> String {
-    raw.map(|value| json::marshal(value).unwrap_or_default()).unwrap_or_default()
+    raw.map_or_default(|value| json::marshal(value).unwrap_or_default())
 }
 
 // The handlers' error for a method they do not implement: Go's `fmt.Errorf("contentmappertest: unexpected method %q", method)`.

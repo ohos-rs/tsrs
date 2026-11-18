@@ -1,41 +1,76 @@
 # The language server (`tsrs --lsp -stdio`)
 
 tsrs provides diagnostics, hover, go to definition, references, rename, completions with auto-imports, code fixes
-and formatting through the TypeScript 7 language-server protocol. It passes 4,074 of 4,546 fourslash groups; see
-[known gaps](#known-gaps) and the [compatibility table](COMPATIBILITY.md#what-it-does-and-doesnt-do).
+and formatting through the TypeScript 7 language-server protocol. The recorded 0.19.0 beta validation passes 4,092 of
+4,562 fourslash groups; see [known gaps](#known-gaps) and the
+[compatibility table](COMPATIBILITY.md#what-it-does-and-doesnt-do).
 
 ## Editor setup
 
 `tsrs --lsp -stdio` speaks the same protocol as `tsgo --lsp -stdio` (Go's flag parsing: `-stdio` and `--stdio` both
-work; only stdio is supported, like Go). Build it with `cargo build --release -p tsrs_cli` (binary
-`target/release/tsrs`) or install the npm package (`tsrs`, binary `tsrs`). The configurations below follow the
+work; only stdio is supported, like Go). Build it with `cargo build --profile dev -p tsrs_cli` (binary
+`target/debug/tsrs`) or install the npm package (`tsrs`, binary `tsrs`). The configurations below follow the
 editors' documented mechanisms.
 
 **VS Code** — the TypeScript 7 extension (`TypeScriptTeam.native-preview`, source in
-`ts-ref/packages/vscode-typescript`) starts `<tsdk>/tsgo --lsp --stdio` when `js/ts.tsdk.path` points at a directory
-that contains an executable named `tsgo` or `tsc` (`src/util.ts`: `tsdkConfigSources`, `packagedExeBaseNames`). So:
-
-```sh
-mkdir -p ~/.tsrs-tsdk && ln -sf "$PWD/target/release/tsrs" ~/.tsrs-tsdk/tsgo
-```
+`ts-ref/packages/vscode-typescript`) starts `<tsdk>/tsgo --lsp --stdio` (`tsgo.exe` on Windows) when
+`js/ts.tsdk.path` points at a directory that contains an executable named `tsgo` or `tsc` (`.exe` on Windows;
+`src/util.ts`: `tsdkConfigSources`, `packagedExeBaseNames`).
+Since 0.20.0, the package includes `tsdk/tsgo` for macOS and Linux. Install it with
+`pnpm add -D tsrs@7.1.0-beta.tsrs2` and commit this `.vscode/settings.json` so each teammate's editor uses the
+version in the project's lockfile:
 
 ```jsonc
-// settings.json (user settings; a workspace-level tsdk asks for workspace trust and consent)
 {
-  "js/ts.tsdk.path": "/Users/<you>/.tsrs-tsdk",
+  "js/ts.experimental.useTsgo": true,
+  "js/ts.tsdk.path": "./node_modules/tsrs/tsdk",
   "js/ts.trace.server": "verbose"   // optional: protocol log in the "TypeScript 7" output channel
 }
 ```
 
+The native `tsrs` (`tsrs.exe` on Windows) and default libraries ship together at each `@tsrs/<platform>`
+package root. The CLI and Node API resolve `tsrs[.exe]`. Version 0.20.1 adds an identical `tsgo.exe` to Windows
+packages for VS Code's native SDK discovery.
+
+On **Windows**, use the native platform package's root directory. The x64 example below uses
+`@tsrs/win32-x64` as a direct optional dependency at the same version as `tsrs`, so npm and pnpm both expose
+the project-local path. Keep both packages at the same version when upgrading:
+
+```sh
+pnpm add -O --save-exact @tsrs/win32-x64@7.1.0-beta.tsrs2
+```
+
+Use these VS Code settings on Windows:
+
+```jsonc
+{
+  "js/ts.experimental.useTsgo": true,
+  "js/ts.tsdk.path": "./node_modules/@tsrs/win32-x64"
+}
+```
+
+On Windows ARM64, use `@tsrs/win32-arm64` (0.25.0 and later) in both places.
+
+The extension asks for workspace trust and consent before running a workspace SDK. Its automatic package
+resolver is specific to `@typescript` packages; pointing at the native package directory uses its executable
+discovery instead. The macOS/Linux `tsrs/tsdk` launcher delegates to the same platform binary, just like
+`pnpm exec tsrs`. Neither layout adds a `tsgo` command to `node_modules/.bin`.
+
+For an older npm release or a local build on macOS/Linux, create a symlink instead:
+
+```sh
+mkdir -p ~/.tsrs-tsdk && ln -sf "$PWD/target/debug/tsrs" ~/.tsrs-tsdk/tsgo
+```
+
+Then set `js/ts.tsdk.path` in user settings to that directory's absolute path, such as `/Users/<you>/.tsrs-tsdk`.
 Run "TypeScript 7: Restart Server" (or reload the window); the output channel names the executable it started.
-The server does not run content mappers yet (`js/ts.contentMappers.enabled`); turn them off if a workspace
-contributes any. `tsrs -p` and `tsrs -b` do run them.
+Content mappers (`js/ts.contentMappers.enabled`) run in trusted workspaces, as they do for `tsrs -p` and `tsrs -b`.
 
 **Neovim** (0.11+, built-in client):
 
 ```lua
 vim.lsp.config('tsrs', {
-  cmd = { 'tsrs', '--lsp', '-stdio' },          -- or the absolute path to target/release/tsrs
+  cmd = { 'tsrs', '--lsp', '-stdio' },          -- or the absolute path to target/debug/tsrs
   filetypes = { 'typescript', 'typescriptreact', 'javascript', 'javascriptreact' },
   root_markers = { 'tsconfig.json', 'jsconfig.json', 'package.json', '.git' },
 })
@@ -50,6 +85,11 @@ attaches, the type error of the opened file arrives as a diagnostic, and hover r
 What to expect: diagnostics are pull-based (`textDocument/diagnostic`; both clients support it) and tsconfig errors
 are pushed; see [known gaps](#known-gaps) for unsupported features and
 [memory management](#memory-management) for program, checker and file-version lifetimes.
+
+Editor integrations can obtain a TypeScript 7 Node API session through the language server:
+`custom/initializeAPISession` returns a pipe (a private Unix socket or Windows named pipe), and `API.fromLSPConnection({ pipe })` from the package's
+`tsrs/async` client connects to an API session over the server's projects, open files included
+([NODE_API.md](NODE_API.md)).
 
 ## Implementation
 
@@ -67,7 +107,7 @@ diagnostics through native snapshot APIs, including the in-process Rust API used
 
 | Go package (`ts-ref/tsc/internal/…`) | Rust crate / module | notes |
 | --- | --- | --- |
-| `lsp/lsproto` (+ `jsonrpc`) | `tsrs_lsproto` | `lsp_generated.rs` is generated by `tools/gen-lsproto` (a port of `lsproto/_generate/generate.mts` that emits Rust) from the same LSP meta model (vscode-languageclient 10.1.1, meta model 3.18.0); `jsonrpc.rs`, `baseproto.rs` (Content-Length framing), `lsp.rs`, `util.rs` by hand |
+| `lsp/lsproto` (+ `jsonrpc`) | `tsrs_lsproto` | `lsp_generated.rs` is generated by `tools/gen-lsproto` (a port of `tools/scripts/lsp/generate.mts` that emits Rust) from the same LSP meta model (vscode-languageclient 10.1.1, meta model 3.18.0); `jsonrpc.rs`, `baseproto.rs` (Content-Length framing), `lsp.rs`, `util.rs` by hand |
 | `lsp` | `tsrs_lsp` | `server.rs` (read / dispatch / write loops, handler table), `logger.rs`, `dynamic_queue.rs`, `progress.rs`, `lspwatcher.rs` (builtin in-process watcher) |
 | `fswatch` | `tsrs_fswatch` | FSEvents (CoreServices through `extern "C"`, `unsafe` confined to `fsevents_darwin_ffi.rs`) and kqueue on macOS, inotify on Linux (`libc`); `fanotify_linux.go` and `windows.go` not ported (notes/lsp-robust.md) |
 | `project` (+ `background`) | `tsrs_project` | session, snapshots, overlays, project collection builder, config file registry, parse cache, checker pool, auto-import registry host and cache warming; `ata` is out of scope for now |
@@ -81,8 +121,9 @@ diagnostics through native snapshot APIs, including the in-process Rust API used
 
 The [Go fourslash subprocess runner](../tools/go-fourslash/README.md) keeps the upstream Go test bodies
 and assertions and drives the Rust language server over a local LSP socket. It uses a test-only server entry point,
-a filesystem bridge, and a read-only project-state bridge. Go content-mapper callbacks remain unsupported. The
-Go runner runs in Linux CI with zero failures and a floor of 4,074 exercised groups, including all 4,066 groups
+a filesystem bridge, and a read-only project-state bridge. Go content-mapper callbacks cannot cross the process
+boundary, so the server serves the Rust port of the same in-process test mappers to the tests that set one. The
+Go runner runs in Linux CI with zero failures and a floor of 4,149 exercised groups, including all 4,066 groups
 that passed in the former translated Rust suite. Release verification and PGO/BOLT training also use the Go runner.
 
 ## Protocol types and JSON
@@ -94,7 +135,7 @@ reproducible offline). Mapping, chosen so that the `ls` and `lsp` code ports mec
 - structures -> structs, fields snake_case; Go `*T` optional field -> `Option<T>` (`Box` only where the type is
   recursive), `[]T` / `[]*T` -> `Vec<T>`, `map[K]V` -> `OrderedMap` / `FxHashMap` as Go's iteration order requires.
 - enumerations -> newtypes over the base type with associated consts named like the rest of the port
-  (`lsproto.SymbolKindFile` -> `SymbolKind::File`), because LSP enums are open sets (Go accepts any value).
+  (`lsproto.SymbolKindFile` -> `SymbolKind::FILE`), because LSP enums are open sets (Go accepts any value).
 - unions (`IntegerOrString`, `LocationOrLocationsOrDefinitionLinksOrNull`, …) -> structs of `Option`s with Go's
   field names, exactly like Go, so `if x.Integer != nil` ports as `if let Some(i) = &x.integer`.
 - JSON goes through `tsrs_core::json::Value` (already Go-compatible: key order preserved, Go's number and string
@@ -221,7 +262,7 @@ has also been run on a large private monorepo.
 - Go Fourslash drives the production server implementation in separate Rust processes; its results and skips are below.
 
 The [initial port log](history/LSP.md) includes the oracle results for diagnostics, navigation and watched-file
-invalidation. `lsp_oracle.py --closed GLOB --disk-edits N [--disk-edit-at REGEX] [--watch-client]` tests a closed
+invalidation. `lsp_oracle.mjs --closed GLOB --disk-edits N [--disk-edit-at REGEX] [--watch-client]` tests a closed
 file changing on disk through client notifications or the builtin watcher; fixtures are in
 `tools/oracle/lsp/fixtures`.
 
@@ -239,14 +280,16 @@ index 0, as in Go), so `sort_symbols` uses Go's pdqsort port there (`checker::Pr
 
 ## Fourslash
 
-The Go subprocess runner passes **4,074 groups, with 0 failures and 472 skips**. Its state snapshots preserve
-the upstream project-state assertions. Go's `@tsc` setup helper builds fixtures for eight groups unsupported by
-the former translated harness; their LSP requests run against Rust. See the [runner guide](../tools/go-fourslash/README.md)
+The [recorded beta validation](STATUS.md#2026-10-25-0190-beta-refresh) passes **4,092 groups, with 0 failures and 470 skips**
+through the Go subprocess runner.
+Its state snapshots preserve the upstream project-state assertions. Go's `@tsc` setup helper builds fixtures for
+eight groups unsupported by the former translated harness; their LSP requests run against Rust. See the
+[runner guide](../tools/go-fourslash/README.md)
 for commands and comparison results.
 
-Run the suite with `PYTHON=python3.12 .github/scripts/go-fourslash-gate.sh` after building
+Run the suite with `.github/scripts/go-fourslash-gate.sh` after building
 `cargo build --profile dev -p tsrs_fourslash_server`. To select cases, use
-`python3.12 tools/go-fourslash/run.py -- -run '^TestQuickInfoAlias$' -v`.
+`node tools/go-fourslash/run.mjs -- -run '^TestQuickInfoAlias$' -v`.
 
 The generated Rust suite and its translator have been removed. CI, PGO training, and BOLT release gates use
 the Go harness against the appropriate Rust task binary. The [port log](history/LSP.md#fourslash)
@@ -254,12 +297,11 @@ retains the translated runner's historical results and verify-family breakdown.
 
 ## Known gaps
 
-- Content mappers are not loaded by the language server; 55 fourslash groups are explicitly skipped.
-  CLI checks and builds support them ([content-mapper note](../notes/contentmappers.md)). The language service's
-  span-map branches are retained but receive no content-mapped scripts.
-- LSP-attached API sessions, automatic type acquisition, performance/project telemetry, profiling requests and
-  localized messages are not ported. Request-failure telemetry, including flaky diagnostics, is sent when enabled.
-  The standalone API server is available; see [NODE_API.md](NODE_API.md).
+- A pending API session with no connected client is stopped by an explicit LSP `shutdown`, but EOF or context
+  cancellation alone leaves its listener pending and its private Unix socket directory behind. This matches
+  `handleInitializeAPISession` and `closeAPISessions` in the pinned Go source (`3e9236361fa9`).
+- Automatic type acquisition, performance/project telemetry, profiling requests and localized messages are not
+  ported. Request-failure telemetry, including flaky diagnostics, is sent when enabled.
 - Eight `@tsc` fixture groups use Go's `tsctests.GetFileMapWithBuild` before the Rust LSP session starts;
   this verifies Rust LSP behavior with the resulting files, not Rust emit or build.
 - Builtin watcher backends for Windows and Linux fanotify are not ported. Linux uses inotify, Go's fallback;
@@ -288,6 +330,7 @@ Checked in the code on 2026-10-10; collected from the porting waves' notes.
 - Cross-project orchestration (`handle_cross_project`, references / rename across projects) searches projects
   sequentially; Go fans out to goroutines. Results are merged in the same order, so responses are identical; only
   latency differs on multi-project workspaces.
+- An edit that keeps a file's imports reuses the program even when the file has synthetic imports; Go rebuilds it.
 - The `this` parameter that a JSDoc `@this` tag adds has a name without a source position (Go position -1). Go's name
   table stores -1 for it, which reads as "appears more than once"; tsrs stores the same. Go to definition and source
   definition on `this` point at the tag name (`definition.rs`, `get_file_and_start_pos_from_declaration`) where Go

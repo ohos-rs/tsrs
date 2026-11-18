@@ -1,7 +1,12 @@
+#![expect(
+    clippy::redundant_pub_crate,
+    reason = "Only the public API is re-exported; implementation helpers remain crate-private."
+)]
+
 use crate::*;
 use tsrs_checker::TypeReferenceSerializationKind;
 
-pub struct MetadataSerializer {
+pub(crate) struct MetadataSerializer {
     resolver: Resolver,
     language_version: ScriptTarget,
     strict_null_checks: bool,
@@ -12,9 +17,9 @@ pub struct MetadataSerializer {
 
 #[derive(Clone, Copy, Default)]
 pub struct MetadataSerializerContext {
-    pub current_lexical_scope: Option<P<Node>>,
-    pub current_name_scope: Option<P<Node>>,
-    pub serializing_conditional_type_branch: bool,
+    pub(crate) current_lexical_scope: Option<P<Node>>,
+    pub(crate) current_name_scope: Option<P<Node>>,
+    pub(crate) serializing_conditional_type_branch: bool,
 }
 
 // typeserializer.go:26
@@ -42,7 +47,7 @@ impl MetadataSerializer {
     }
 
     // typeserializer.go:34
-    pub fn serialize_type_of_node(
+    pub(crate) fn serialize_type_of_node(
         &self,
         ctx: MetadataSerializerContext,
         node: P<Node>,
@@ -56,7 +61,7 @@ impl MetadataSerializer {
     }
 
     // typeserializer.go:41
-    pub fn serialize_parameter_types_of_node(
+    pub(crate) fn serialize_parameter_types_of_node(
         &self,
         ctx: MetadataSerializerContext,
         node: P<Node>,
@@ -70,7 +75,7 @@ impl MetadataSerializer {
     }
 
     // typeserializer.go:48
-    pub fn serialize_return_type_of_node(
+    pub(crate) fn serialize_return_type_of_node(
         &self,
         ctx: MetadataSerializerContext,
         node: P<Node>,
@@ -84,7 +89,7 @@ impl MetadataSerializer {
 }
 
 // typeserializer.go:55
-pub fn get_set_accessor_value_parameter(node: Option<P<Node>>) -> Option<P<Node>> {
+fn get_set_accessor_value_parameter(node: Option<P<Node>>) -> Option<P<Node>> {
     let node = node?;
     let parameters = node.parameters();
     if !parameters.is_empty() {
@@ -192,12 +197,12 @@ fn get_parameters_of_decorated_declaration(
     node: P<Node>,
     container: Option<P<Node>>,
 ) -> Option<P<NodeList>> {
-    if let Some(container) = container {
-        if node.kind() == Kind::GetAccessor {
-            let acc = ast::get_all_accessor_declarations(container.members(), node);
-            if let Some(set_accessor) = acc.set_accessor {
-                return set_accessor.parameter_list();
-            }
+    if let Some(container) = container
+        && node.kind() == Kind::GetAccessor
+    {
+        let acc = ast::get_all_accessor_declarations(container.members(), node);
+        if let Some(set_accessor) = acc.set_accessor {
+            return set_accessor.parameter_list();
         }
     }
     node.parameter_list()
@@ -310,14 +315,13 @@ impl MetadataSerializer {
             | Kind::AnyKeyword
             | Kind::UnknownKeyword
             | Kind::ThisType
-            | Kind::ImportType => {
+            | Kind::ImportType
+            // no meaningful serialization for these invalid-parse JSDoc types
+            | Kind::JSDocAllType | Kind::JSDocVariadicType => {
                 // These types fall back to Object.
             }
 
             // handle JSDoc types from an invalid parse
-            Kind::JSDocAllType | Kind::JSDocVariadicType => {
-                // no meaningful serialization for these invalid-parse JSDoc types
-            }
             Kind::JSDocNullableType | Kind::JSDocNonNullableType | Kind::JSDocOptionalType => {
                 return self.serialize_type_node(node.type_node());
             }

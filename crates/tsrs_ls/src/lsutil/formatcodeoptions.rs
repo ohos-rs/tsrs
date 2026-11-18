@@ -7,24 +7,24 @@ use tsrs_core::json::Value;
 pub struct IndentStyle(pub i32);
 
 impl IndentStyle {
-    pub const None: IndentStyle = IndentStyle(0);
-    pub const Block: IndentStyle = IndentStyle(1);
-    pub const Smart: IndentStyle = IndentStyle(2);
+    pub(crate) const NONE: IndentStyle = IndentStyle(0);
+    pub const BLOCK: IndentStyle = IndentStyle(1);
+    pub const SMART: IndentStyle = IndentStyle(2);
 }
 
 // formatcodeoptions.go:19
 pub(crate) fn parse_indent_style(v: &Value) -> IndentStyle {
     match v {
         Value::String(s) => match s.to_lowercase().as_str() {
-            "none" => return IndentStyle::None,
-            "block" => return IndentStyle::Block,
-            "smart" => return IndentStyle::Smart,
+            "none" => return IndentStyle::NONE,
+            "block" => return IndentStyle::BLOCK,
+            "smart" => return IndentStyle::SMART,
             _ => {}
         },
         Value::Number(s) => return IndentStyle(*s as i32),
         _ => {}
     }
-    IndentStyle::Smart
+    IndentStyle::SMART
 }
 
 // formatcodeoptions.go:38
@@ -38,7 +38,7 @@ pub enum SemicolonPreference {
 }
 
 impl SemicolonPreference {
-    pub fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             SemicolonPreference::None => "",
             SemicolonPreference::Ignore => "ignore",
@@ -115,7 +115,7 @@ impl std::ops::DerefMut for FormatCodeSettings {
 }
 
 // formatcodeoptions.go:94
-pub fn from_ls_format_options(
+pub(crate) fn from_ls_format_options(
     f: &FormatCodeSettings,
     opt: tsrs_lsproto::FormattingOptions,
 ) -> FormatCodeSettings {
@@ -130,19 +130,6 @@ pub fn from_ls_format_options(
     updated_settings
 }
 
-impl FormatCodeSettings {
-    // formatcodeoptions.go:105
-    pub fn to_ls_format_options(&self) -> tsrs_lsproto::FormattingOptions {
-        let trim_trailing_whitespace = self.trim_trailing_whitespace.is_true();
-        tsrs_lsproto::FormattingOptions {
-            tab_size: self.tab_size as u32,
-            insert_spaces: self.convert_tabs_to_spaces.is_true(),
-            trim_trailing_whitespace: Some(trim_trailing_whitespace),
-            ..Default::default()
-        }
-    }
-}
-
 // formatcodeoptions.go:114
 pub fn get_default_format_code_settings() -> FormatCodeSettings {
     FormatCodeSettings {
@@ -151,7 +138,7 @@ pub fn get_default_format_code_settings() -> FormatCodeSettings {
             tab_size: tsrs_printer::get_default_indent_size() as i32,
             new_line_character: "\n".to_string(),
             convert_tabs_to_spaces: Tristate::True,
-            indent_style: IndentStyle::Smart,
+            indent_style: IndentStyle::SMART,
             trim_trailing_whitespace: Tristate::True,
             ..Default::default()
         },

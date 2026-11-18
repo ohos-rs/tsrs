@@ -16,7 +16,7 @@ use crate::*;
 // emit-only transform helpers of factory.go are in factory_2.rs.
 #[derive(Default, Clone)]
 pub struct NodeFactory {
-    pub node_factory: ast::NodeFactory,
+    node_factory: ast::NodeFactory,
     // Shared with the hooks: `new_emit_context` fills it once the context is allocated (Go builds the context first
     // and then its factory, which a plain field behind `P` cannot express).
     emit_context: Rc<Cell<Option<P<EmitContext>>>>,
@@ -124,19 +124,8 @@ impl NodeFactory {
     }
 
     // Allocates a new loop variable name.
-    pub fn new_loop_variable(&self) -> P<Node> {
-        self.new_loop_variable_ex(AutoGenerateOptions::default())
-    }
 
     // Allocates a new loop variable name.
-    pub fn new_loop_variable_ex(&self, options: AutoGenerateOptions) -> P<Node> {
-        self.new_generated_identifier(
-            GeneratedIdentifierFlags::Loop,
-            "",
-            None, /*node*/
-            options,
-        )
-    }
 
     // Allocates a new unique name based on the provided text.
     pub fn new_unique_name(&self, text: &str) -> P<Node> {
@@ -214,24 +203,10 @@ impl NodeFactory {
     }
 
     // Allocates a new unique private name based on the provided text.
-    pub fn new_unique_private_name(&self, text: &str) -> P<Node> {
-        self.new_unique_private_name_ex(text, AutoGenerateOptions::default())
-    }
 
     // Allocates a new unique private name based on the provided text.
-    pub fn new_unique_private_name_ex(&self, text: &str, options: AutoGenerateOptions) -> P<Node> {
-        self.new_generated_private_identifier(
-            GeneratedIdentifierFlags::Unique,
-            text,
-            None, /*node*/
-            options,
-        )
-    }
 
     // Allocates a new unique private name based on the provided node.
-    pub fn new_generated_private_name_for_node(&self, node: P<Node>) -> P<Node> {
-        self.new_generated_private_name_for_node_ex(node, AutoGenerateOptions::default())
-    }
 
     // Allocates a new unique private name based on the provided node.
     pub fn new_generated_private_name_for_node_ex(
@@ -290,7 +265,7 @@ impl NodeFactory {
     }
 
     // factory.go:229
-    pub fn new_strict_equality_expression(&self, left: P<Node>, right: P<Node>) -> P<Node> {
+    pub(crate) fn new_strict_equality_expression(&self, left: P<Node>, right: P<Node>) -> P<Node> {
         self.new_binary_expression(
             None, /*modifiers*/
             left,

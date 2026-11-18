@@ -125,7 +125,7 @@ laid out as cold code. `pgo-train.sh` now also runs the fourslash suite with an 
 release and bench workflows build that binary in the instrumented step.
 
 Same source and instrumented build, final binaries differing only in the profile, 200-edit editor session on
-xstate-main (`tools/lsp-mem/lsp_mem.py --completion`: diagnostics, hover and completion after every edit), server
+xstate-main (`tools/lsp-mem/lsp_mem.mjs --completion`: diagnostics, hover and completion after every edit), server
 process: 94.4 G -> 85.0 G instructions (-10%), ~34.9 G -> ~31.5 G cycles (2 rounds each, machine under load). The
 checker is unaffected on the private monorepo: 269.2 G vs 268.9 G instructions with one checker, 365.9 G vs
 363.7 G with four; identical output. A `workflow_dispatch` dry run of the release produced a fourslash profile on
@@ -142,7 +142,6 @@ instructions on every project between those two publishes while a release-build 
 measured -0.2%. `finish` now calls `exit` when `LLVM_PROFILE_FILE` is set (only the training sets it), and
 pgo-train.sh fails on an empty profile.
 
-
 ## 2026-10-09: a strip setting that differed between the two builds dropped the profile
 
 PR #245 set `strip = "symbols"` in `[profile.release]`, which `dist` inherits, and `CARGO_PROFILE_DIST_STRIP=none`
@@ -157,7 +156,7 @@ Reproduced on macOS arm64 with the workflows' commands (instrumented build, pgo-
 final build with `-Cllvm-args=-pgo-warn-missing-function`), on main at cab0f26e unless noted. "Same metadata": of
 the 56 crates both builds compile, those whose `-C metadata` is the same in both. Instructions: `/usr/bin/time -l`
 with `--singleThreaded` and `RAYON_NUM_THREADS=1`, minimum [median] of 5 interleaved runs; macOS counts include
-kernel work, so they spread by up to a few percent where bench/count.py's Linux counts repeat to 0.001%.
+kernel work, so they spread by up to a few percent where bench/count.mjs's Linux counts repeat to 0.001%.
 
 | build | same metadata | functions without profile data | vscode G | drizzle-orm G |
 | --- | ---: | ---: | ---: | ---: |
@@ -249,3 +248,32 @@ history; 12,778 each in canonical history with its documented `objectLiteralNorm
 Both fourslash gates pass with the same 4,066 passes / 63 known failures. There are no conformance crashes or timeouts.
 
 Raw build, runtime, profile-coverage and gate measurements for this run are in `/tmp/tsrs-thin-pgo/ab/`.
+
+## 2026-11-06: Windows ARM64 PGO remains blocked
+
+The release dry run at `49a75718` completed 15,448 Windows ARM64 conformance variants without reported failures,
+then the test runner exited with `0xC0000005`.
+
+A native [linker comparison](https://github.com/oxc-project/tsrs/actions/runs/42274844204) kept the build flags and
+training workload unchanged. MSVC crashed when reusing a `%m` profile; separate `%p` profiles avoided the crash
+but were malformed ("symbol name is empty"). With `rust-lld`, both forms worked and full conformance, CLI and lint
+training produced mergeable profiles. This matches the ARM64 profile-section padding problem documented in
+[ts-rust's workflow](https://github.com/pingdotgg/ts-rust/blob/91f3d021c4f1f102cebee704ac285e85ae0c8ff5/.github/workflows/release.yml),
+but no crash stack identified the faulting instruction and no performance comparison was made.
+
+The [full release run at `4c48d3fa`](https://github.com/oxc-project/tsrs/actions/runs/42276909483/job/128109541953)
+still failed with `rust-lld`: training completed, but profile merging reported "not enough space for another
+header" and "no profile can be merged". Windows ARM64 stays disabled until its npm package is set up and the
+native release dry run passes.
+
+## 2026-11-11: Windows ARM64 release dry run passes
+
+The [release dry run at `181538bf`](https://github.com/oxc-project/tsrs/actions/runs/42937173948/job/130250157316)
+re-enabled the `windows-11-arm` build with the `rust-lld` linker step unchanged from `4c48d3fa`. Training ran all
+15,448 conformance variants (13,700 error-baseline passes, 0 failures, crashes or timeouts), profile merging
+succeeded (32,299 functions), and the final build passed the binary and installed-package smoke tests. The job
+took 15 minutes.
+
+The malformed `suite-%m` profile from `4c48d3fa` did not recur in this single run.
+If it returns, per-process `suite-%p` profiles are the fallback: the 2026-11-06 probe merged them cleanly in both
+of its training runs.

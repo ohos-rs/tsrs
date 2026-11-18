@@ -58,7 +58,7 @@ fn get_include_base_path(absolute: &str) -> String {
 }
 
 // getBasePaths computes the unique non-wildcard base paths amongst the provided include patterns.
-fn get_base_paths(
+pub fn get_base_paths(
     path: &str,
     includes: &[impl AsRef<str>],
     use_case_sensitive_file_names: bool,
@@ -107,7 +107,7 @@ fn get_base_paths(
 
 // globPattern is a compiled glob pattern for matching file paths without regex.
 #[derive(Clone, Debug)]
-struct GlobPattern {
+pub struct GlobPattern {
     components: Vec<Component>, // path segments to match (e.g., ["src", "**", "*.ts"])
     is_exclude: bool,           // exclude patterns have different matching rules
     case_sensitive: bool,
@@ -149,13 +149,15 @@ enum SegmentKind {
 
 // compileGlobPattern compiles a glob spec (e.g., "src/**/*.ts") into a pattern.
 // Returns None if the pattern would match nothing.
-fn compile_glob_pattern(
+pub fn compile_glob_pattern(
     spec: &str,
     base_path: &str,
     usage: Usage,
     case_sensitive: bool,
 ) -> Option<GlobPattern> {
     let mut parts = tspath::get_normalized_path_components(spec, base_path);
+    let case_sensitive = case_sensitive
+        || parts.first().is_some_and(|root| tspath::is_encoded_dynamic_file_name(root));
 
     // "src/**" without a filename matches nothing (for include patterns)
     if usage != Usage::Exclude && parts.last().map_or("", std::string::String::as_str) == "**" {
@@ -164,6 +166,10 @@ fn compile_glob_pattern(
 
     // Normalize root: "/home/" -> "/home"
     parts[0] = tspath::remove_trailing_directory_separator(&parts[0]).to_string();
+    if tspath::is_encoded_dynamic_file_name(&parts[0]) {
+        let root_parts = parts[0].split('/').map(str::to_string).collect::<Vec<_>>();
+        parts.splice(0..1, root_parts);
+    }
 
     // Directories implicitly match all files: "src" -> "src/**/*"
     if is_implicit_glob(parts.last().map_or("", std::string::String::as_str)) {
@@ -246,7 +252,7 @@ fn parse_segments(s: &str) -> Vec<Segment> {
 
 impl GlobPattern {
     // matches returns true if path matches this pattern.
-    fn matches(&self, path: &str) -> bool {
+    pub fn matches(&self, path: &str) -> bool {
         self.match_path_parts(path, "", 0, 0, false)
     }
 
@@ -475,10 +481,11 @@ impl GlobPattern {
     }
 
     fn has_min_js_suffix(&self, filename: &str) -> bool {
+        const MIN_JS: &str = ".min.js";
+
         if self.case_sensitive {
             return filename.ends_with(".min.js");
         }
-        const MIN_JS: &str = ".min.js";
         let f = filename.as_bytes();
         if f.len() < MIN_JS.len() {
             return false;
@@ -488,20 +495,17 @@ impl GlobPattern {
     }
 
     fn pattern_mentions_min_suffix(&self, segs: &[Segment]) -> bool {
-        if segs.iter().any(|seg| {
+        segs.iter().any(|seg| {
             if seg.kind != SegmentKind::Literal {
                 return false;
             }
-            let lit = if !self.case_sensitive {
-                stringutil::go_strings_to_lower(&seg.literal)
-            } else {
+            let lit = if self.case_sensitive {
                 seg.literal.clone()
+            } else {
+                stringutil::go_strings_to_lower(&seg.literal)
             };
             lit.contains(".min.js") || lit.contains(".min.")
-        }) {
-            return true;
-        }
-        false
+        })
     }
 
     // stringsEqual compares strings with appropriate case sensitivity.
@@ -536,7 +540,7 @@ fn next_path_part_single(s: &str, mut offset: usize) -> Option<(usize, usize, us
 
 // The part is returned as a byte range of the virtual string prefix+suffix
 // (it never spans both).
-fn next_path_part_parts(
+pub fn next_path_part_parts(
     prefix: &str,
     suffix: &str,
     mut offset: usize,
@@ -600,7 +604,7 @@ fn is_package_folder(name: &str) -> bool {
     }
 }
 
-fn ensure_trailing_slash(s: &str) -> String {
+pub fn ensure_trailing_slash(s: &str) -> String {
     if !s.is_empty() && !s.ends_with('/') {
         return format!("{s}/");
     }
@@ -742,6 +746,9 @@ struct GlobVisitor {
     listings: FxHashMap<String, PrefetchedListing>,
 }
 
+// Directory listings `prefetch_listings` reads on the calling thread before the rest of the tree fans out on rayon.
+const INLINE_PREFETCH_LISTINGS: usize = 64;
+
 // A directory listing read ahead, with the matching that the visit of the directory does on it.
 struct PrefetchedListing {
     entries: Entries,
@@ -772,15 +779,21 @@ impl GlobVisitor {
             directory_matcher: &'a GlobMatcher,
             listings: std::sync::Mutex<FxHashMap<String, PrefetchedListing>>,
         }
-        // `live_files` / `live_directories`: the parent directory's live excludes (`GlobMatcher::live_excludes`).
-        fn walk<'s>(
-            s: &rayon::Scope<'s>,
-            w: &'s Walk<'s>,
+        // A directory to read, with its parent's live excludes (`GlobMatcher::live_excludes`; `None` for a base path).
+        struct Pending {
             path: String,
             depth: usize,
-            live_files: Option<&[u32]>,
-            live_directories: Option<&[u32]>,
-        ) {
+            live: Option<(Vec<u32>, Vec<u32>)>,
+        }
+        // Reads and matches one listing and returns the subdirectories to read next.
+        fn read(w: &Walk<'_>, pending: Pending) -> Vec<Pending> {
+            let Pending { path, depth, live } = pending;
+            let (live_files, live_directories) = match &live {
+                Some((files, directories)) => {
+                    (Some(files.as_slice()), Some(directories.as_slice()))
+                }
+                None => (None, None),
+            };
             let entries = w.host.get_accessible_entries(&path);
             let prefix = ensure_trailing_slash(&path);
             let live_files = w.file_matcher.live_excludes(live_files, &prefix);
@@ -801,6 +814,7 @@ impl GlobVisitor {
                 .collect();
             let child_depth = if depth == UNLIMITED_DEPTH { UNLIMITED_DEPTH } else { depth - 1 };
             let mut directories = Vec::new();
+            let mut children = Vec::new();
             if child_depth != 0 {
                 directories = entries
                     .directories
@@ -816,18 +830,10 @@ impl GlobVisitor {
                 if let Some(symlinks) = &entries.symlinks {
                     for (dir, &matched) in entries.directories.iter().zip(&directories) {
                         if matched && !symlinks.contains(dir) {
-                            let child = format!("{prefix}{dir}");
-                            let (live_files, live_directories) =
-                                (live_files.clone(), live_directories.clone());
-                            s.spawn(move |s| {
-                                walk(
-                                    s,
-                                    w,
-                                    child,
-                                    child_depth,
-                                    Some(&live_files),
-                                    Some(&live_directories),
-                                );
+                            children.push(Pending {
+                                path: format!("{prefix}{dir}"),
+                                depth: child_depth,
+                                live: Some((live_files.clone(), live_directories.clone())),
                             });
                         }
                     }
@@ -837,6 +843,12 @@ impl GlobVisitor {
                 .lock()
                 .unwrap()
                 .insert(path, PrefetchedListing { entries, files, directories });
+            children
+        }
+        fn walk<'s>(s: &rayon::Scope<'s>, w: &'s Walk<'s>, pending: Pending) {
+            for child in read(w, pending) {
+                s.spawn(move |s| walk(s, w, child));
+            }
         }
         let w = Walk {
             host,
@@ -846,15 +858,28 @@ impl GlobVisitor {
             listings: std::sync::Mutex::new(FxHashMap::default()),
         };
         let mut seen: FxHashSet<&str> = FxHashSet::default();
-        rayon::scope(|s| {
-            for path in base_paths {
-                if seen.insert(path) {
-                    let path = path.clone();
+        let mut queue: std::collections::VecDeque<Pending> = base_paths
+            .iter()
+            .filter(|path| seen.insert(path))
+            .map(|path| Pending { path: path.clone(), depth, live: None })
+            .collect();
+        // `tsc -b` expands one small include per project on each builder, where a hand-off to the pool per project
+        // costs more than the reads; only a larger tree fans out.
+        let mut read_inline = 0;
+        while read_inline < INLINE_PREFETCH_LISTINGS
+            && let Some(pending) = queue.pop_front()
+        {
+            queue.extend(read(&w, pending));
+            read_inline += 1;
+        }
+        if !queue.is_empty() {
+            rayon::scope(|s| {
+                for pending in queue {
                     let w = &w;
-                    s.spawn(move |s| walk(s, w, path, depth, None, None));
+                    s.spawn(move |s| walk(s, w, pending));
                 }
-            }
-        });
+            });
+        }
         self.listings = w.listings.into_inner().unwrap();
     }
 }
@@ -874,10 +899,10 @@ impl GlobVisitor {
         resolved_real_path: &str,
     ) {
         // Detect symlink cycles
-        let real_path = if !resolved_real_path.is_empty() {
-            resolved_real_path.to_string()
-        } else {
+        let real_path = if resolved_real_path.is_empty() {
             host.realpath(absolute_path)
+        } else {
+            resolved_real_path.to_string()
         };
         let canonical_path =
             tspath::get_canonical_file_name(&real_path, self.use_case_sensitive_file_names);
@@ -931,13 +956,13 @@ impl GlobVisitor {
             }
             let abs_dir = format!("{abs_prefix}{dir}");
             let mut child_real_path = String::new();
-            if let Some(symlinks) = &entries.symlinks {
-                if !symlinks.contains(dir) {
-                    // Non-symlink directory: compute realpath incrementally.
-                    child_real_path = tspath::combine_paths(&real_path, &[dir]);
-                }
-                // else: symlink directory; leave childRealPath empty to force Realpath call.
+            if let Some(symlinks) = &entries.symlinks
+                && !symlinks.contains(dir)
+            {
+                // Non-symlink directory: compute realpath incrementally.
+                child_real_path = tspath::combine_paths(&real_path, &[dir]);
             }
+            // else: symlink directory; leave childRealPath empty to force Realpath call.
             // If Symlinks is None, the FS doesn't track symlinks;
             // leave childRealPath empty to call Realpath (preserving old behavior).
             self.visit(
@@ -952,7 +977,7 @@ impl GlobVisitor {
     }
 }
 
-fn match_files(
+pub fn match_files(
     path: &str,
     extensions: &[impl AsRef<str>],
     excludes: &[impl AsRef<str>],
@@ -1047,7 +1072,3 @@ pub fn new_spec_matcher(
     }
     Some(SpecMatcher { patterns })
 }
-
-#[cfg(test)]
-#[path = "vfsmatch_test.rs"]
-mod vfsmatch_test;

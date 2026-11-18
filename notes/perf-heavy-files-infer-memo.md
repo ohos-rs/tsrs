@@ -1,5 +1,8 @@
 # perf-heavy-files-infer-memo: the same inference walk made again and again
 
+The default mode in this record predates 0.20.0. Additional inference caches now belong to the opt-in fast
+preset; see [current options and overrides](../docs/USAGE.md#performance-options).
+
 The check phase of vscode, t3code-server, mui-docs and formbricks-web at 16-32 checkers is bounded by a few files
 (the task brief, 2026-10-07). This note is about the one of them whose cost is the algorithm itself, vscode's
 `src/vs/platform/agentHost/test/node/mapSessionEvents.test.ts` (0.35 s in a 0.78 s check at 16 checkers on the 64-vCPU
@@ -87,7 +90,7 @@ saved nothing: the 99,829-step walk does find `K`.
 ## Results
 
 Instructions: 64-vCPU Linux runner (`depot ci run --workflow .depot/workflows/perf-probe.yml` with an A/B
-`tools/perf/probe.sh` that builds origin/main in the same job and runs both binaries), `bench/count.py`, one checker
+`tools/perf/probe.sh` that builds origin/main in the same job and runs both binaries), `bench/count.mjs`, one checker
 (`--singleThreaded`, `RAYON_NUM_THREADS=1`), user-space instructions, deterministic. Base 249561e (main moved on to
 7262f61 with front-end changes only before this was opened).
 
@@ -151,4 +154,4 @@ steps; t3code-server 12,778 hits skipping 3.0M steps (63,834 at 16 checkers).
 - `testdata/regressions/infer-memo-repeated-walks`: the vscode shape at 24 members with 8 errors, tsgo-ref's output;
   identical with the memo off, on and in shadow mode (125 hits at the defaults).
 - `cargo check --workspace`, `tools/lint/ratchet.py` (one `#[expect(clippy::set_contains_or_insert)]`, the target is
-  marked after the walk), `tools/lint/source.py`, `cargo test -p tsrs_checker`, `tools/regressions.sh`.
+  marked after the walk), `tools/lint/source.mjs`, `cargo test -p tsrs_checker`, `tools/regressions.sh`.

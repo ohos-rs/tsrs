@@ -1,9 +1,9 @@
 use rustc_hash::FxHashSet;
 use tsrs_ast::{Diagnostic, Node, SourceFile, new_compiler_diagnostic};
-use tsrs_core::collections::{OrderedMap, OrderedMapExt};
+use tsrs_core::collections::OrderedMap;
 use tsrs_core::stringutil;
 use tsrs_core::tspath::{self, ComparePathsOptions, Path};
-use tsrs_core::{BuildOptions, CompilerOptions, P, WatchOptions};
+use tsrs_core::{BuildOptions, CompilerOptions, P};
 use tsrs_diagnostics as diagnostics;
 use tsrs_diagnostics::Message;
 use tsrs_vfs::FS;
@@ -13,23 +13,27 @@ use crate::declsbuild::TSC_BUILD_OPTION;
 use crate::diagnostics::{
     AlternateModeDiagnostics, BUILD_OPTIONS_DID_YOU_MEAN_DIAGNOSTICS,
     COMPILER_OPTIONS_DID_YOU_MEAN_DIAGNOSTICS, ParseCommandLineWorkerDiagnostics,
-    WATCH_OPTIONS_DID_YOU_MEAN_DIAGNOSTICS,
 };
 use crate::errors::{
     create_diagnostic_for_invalid_enum_type, get_compiler_option_value_type_string,
 };
-use crate::namemap::{
-    BUILD_NAME_MAP, COMPILER_NAME_MAP, NameMap, WATCH_NAME_MAP, get_name_map_from_list,
-};
+use crate::namemap::{BUILD_NAME_MAP, COMPILER_NAME_MAP, NameMap, get_name_map_from_list};
 use crate::parsedbuildcommandline::ParsedBuildCommandLine;
 use crate::parsedcommandline::{ParsedCommandLine, new_parsed_command_line};
 use crate::parsinghelpers::{
-    BuildOptionsParser, CompilerOptionsParser, WatchOptionsParser,
-    convert_to_options_with_absolute_paths, parse_compiler_options,
+    BuildOptionsParser, CompilerOptionsParser, convert_to_options_with_absolute_paths,
+    parse_compiler_options,
 };
 use crate::tsconfigparsing::{
     COMMAND_LINE_COMPILER_OPTIONS_MAP, ParseConfigHost, convert_map_to_options,
-    validate_json_option_value,
+    is_network_path_value, validate_json_option_value,
+};
+
+// CLI-only tsrs preset. Keep it out of the upstream compiler/config declarations and serialized compiler options.
+static FAST_OPTION: CommandLineOption = CommandLineOption {
+    name: "fast",
+    kind: CommandLineOptionKind::Boolean,
+    ..CommandLineOption::DEFAULT
 };
 
 impl CommandLineParser {
@@ -37,7 +41,7 @@ impl CommandLineParser {
         self.worker_diagnostics.did_you_mean.alternate_mode.as_ref()
     }
 
-    pub(crate) fn options_declarations(&self) -> &'static [&'static CommandLineOption] {
+    pub fn options_declarations(&self) -> &'static [&'static CommandLineOption] {
         &self.worker_diagnostics.did_you_mean.option_declarations
     }
 
@@ -51,19 +55,19 @@ impl CommandLineParser {
 }
 
 // The Go struct also holds the file system; here it is passed to the methods that read response files.
-pub(crate) struct CommandLineParser {
-    pub(crate) worker_diagnostics: &'static ParseCommandLineWorkerDiagnostics,
-    pub(crate) options_map: NameMap,
-    pub(crate) current_directory: String,
-    pub(crate) options: OrderedMap<String, CompilerOptionsValue>,
-    pub(crate) file_names: Vec<String>,
-    pub(crate) errors: Vec<P<Diagnostic>>,
-    pub(crate) response_file_stack: FxHashSet<Path>,
+pub struct CommandLineParser {
+    pub worker_diagnostics: &'static ParseCommandLineWorkerDiagnostics,
+    pub options_map: NameMap,
+    pub current_directory: String,
+    pub options: OrderedMap<String, CompilerOptionsValue>,
+    pub file_names: Vec<String>,
+    pub errors: Vec<P<Diagnostic>>,
+    pub response_file_stack: FxHashSet<Path>,
 }
 
 pub fn parse_command_line(
     command_line: &[String],
-    host: &'static dyn ParseConfigHost,
+    host: &dyn ParseConfigHost,
 ) -> ParsedCommandLine {
     let parser = parse_command_line_worker(
         &COMPILER_OPTIONS_DID_YOU_MEAN_DIAGNOSTICS,
@@ -78,8 +82,6 @@ pub fn parse_command_line(
     );
     let compiler_options =
         convert_map_to_options(&options, CompilerOptionsParser(CompilerOptions::default())).0;
-    let watch_options =
-        convert_map_to_options(&options, WatchOptionsParser(WatchOptions::default())).0;
     let mut result = new_parsed_command_line(
         P::new(compiler_options),
         parser.file_names,
@@ -89,7 +91,6 @@ pub fn parse_command_line(
             current_directory: host.get_current_directory().to_string(),
         },
     );
-    result.parsed_config.watch_options = Some(watch_options);
     result.errors = parser.errors;
     result.raw = CompilerOptionsValue::Object(parser.options);
     result
@@ -97,7 +98,7 @@ pub fn parse_command_line(
 
 pub fn parse_build_command_line(
     command_line: &[String],
-    host: &'static dyn ParseConfigHost,
+    host: &dyn ParseConfigHost,
 ) -> ParsedBuildCommandLine {
     let parser = parse_command_line_worker(
         &BUILD_OPTIONS_DID_YOU_MEAN_DIAGNOSTICS,
@@ -126,11 +127,6 @@ pub fn parse_build_command_line(
         )
         .0,
         compiler_options,
-        watch_options: convert_map_to_options(
-            &parser.options,
-            WatchOptionsParser(WatchOptions::default()),
-        )
-        .0,
         projects: parser.file_names,
         errors: parser.errors,
         raw: CompilerOptionsValue::Object(parser.options),
@@ -150,25 +146,25 @@ pub fn parse_build_command_line(
     // Nonsensical combinations
     if result.build_options.clean.is_true() && result.build_options.force.is_true() {
         result.errors.push(new_compiler_diagnostic(
-            &diagnostics::Options_0_and_1_cannot_be_combined,
+            &diagnostics::OPTIONS_0_AND_1_CANNOT_BE_COMBINED,
             &[&"clean", &"force"],
         ));
     }
     if result.build_options.clean.is_true() && result.build_options.verbose.is_true() {
         result.errors.push(new_compiler_diagnostic(
-            &diagnostics::Options_0_and_1_cannot_be_combined,
+            &diagnostics::OPTIONS_0_AND_1_CANNOT_BE_COMBINED,
             &[&"clean", &"verbose"],
         ));
     }
     if result.build_options.clean.is_true() && result.compiler_options.watch.is_true() {
         result.errors.push(new_compiler_diagnostic(
-            &diagnostics::Options_0_and_1_cannot_be_combined,
+            &diagnostics::OPTIONS_0_AND_1_CANNOT_BE_COMBINED,
             &[&"clean", &"watch"],
         ));
     }
     if result.compiler_options.watch.is_true() && result.build_options.dry.is_true() {
         result.errors.push(new_compiler_diagnostic(
-            &diagnostics::Options_0_and_1_cannot_be_combined,
+            &diagnostics::OPTIONS_0_AND_1_CANNOT_BE_COMBINED,
             &[&"watch", &"dry"],
         ));
     }
@@ -176,7 +172,7 @@ pub fn parse_build_command_line(
     result
 }
 
-pub(crate) fn parse_command_line_worker(
+fn parse_command_line_worker(
     parse_command_line_with_diagnostics: &'static ParseCommandLineWorkerDiagnostics,
     command_line: &[String],
     fs: Option<&dyn FS>,
@@ -197,7 +193,7 @@ pub(crate) fn parse_command_line_worker(
 }
 
 impl CommandLineParser {
-    pub(crate) fn parse_strings(&mut self, args: &[String], fs: Option<&dyn FS>) {
+    pub fn parse_strings(&mut self, args: &[String], fs: Option<&dyn FS>) {
         let mut i = 0;
         while i < args.len() {
             let s = &args[i];
@@ -211,10 +207,15 @@ impl CommandLineParser {
                 }
                 b'-' => {
                     let input_option_name = get_input_option_name(s);
-                    let opt = self.options_map.get_option_declaration_from_name(
-                        input_option_name,
-                        true, /*allowShort*/
-                    );
+                    let opt = self
+                        .options_map
+                        .get_option_declaration_from_name(
+                            input_option_name,
+                            true, /*allowShort*/
+                        )
+                        .or_else(|| {
+                            input_option_name.eq_ignore_ascii_case("fast").then_some(&FAST_OPTION)
+                        });
                     if let Some(opt) = opt {
                         i = self.parse_option_value(
                             args,
@@ -223,23 +224,9 @@ impl CommandLineParser {
                             self.worker_diagnostics.option_type_mismatch_diagnostic,
                         );
                     } else {
-                        let watch_opt = WATCH_NAME_MAP.get_option_declaration_from_name(
-                            input_option_name,
-                            true, /*allowShort*/
-                        );
-                        if let Some(watch_opt) = watch_opt {
-                            i = self.parse_option_value(
-                                args,
-                                i,
-                                watch_opt,
-                                WATCH_OPTIONS_DID_YOU_MEAN_DIAGNOSTICS
-                                    .option_type_mismatch_diagnostic,
-                            );
-                        } else {
-                            let err =
-                                self.create_unknown_option_error(input_option_name, s, None, None);
-                            self.errors.push(err);
-                        }
+                        let err =
+                            self.create_unknown_option_error(input_option_name, s, None, None);
+                        self.errors.push(err);
                     }
                 }
                 _ => {
@@ -250,14 +237,14 @@ impl CommandLineParser {
     }
 }
 
-pub(crate) fn get_input_option_name(input: &str) -> &str {
+fn get_input_option_name(input: &str) -> &str {
     // removes at most two leading '-' from the input string
     let input = input.strip_prefix('-').unwrap_or(input);
     input.strip_prefix('-').unwrap_or(input)
 }
 
 impl CommandLineParser {
-    pub(crate) fn parse_response_file(&mut self, file_name: &str, fs: Option<&dyn FS>) {
+    fn parse_response_file(&mut self, file_name: &str, fs: Option<&dyn FS>) {
         let file_name = tspath::get_normalized_absolute_path(file_name, &self.current_directory);
         let use_case_sensitive_file_names = match fs {
             Some(fs) => fs.use_case_sensitive_file_names(),
@@ -304,7 +291,7 @@ impl CommandLineParser {
                     pos += 1;
                 } else {
                     self.errors.push(new_compiler_diagnostic(
-                        &diagnostics::Unterminated_quoted_string_in_response_file_0,
+                        &diagnostics::UNTERMINATED_QUOTED_STRING_IN_RESPONSE_FILE_0,
                         &[&file_name],
                     ));
                 }
@@ -329,14 +316,14 @@ pub(crate) fn try_read_file(
     } else {
         // !!! Divergence: the returned error will not give a useful message
         // errors = append(errors, ast.NewCompilerDiagnostic(diagnostics.Cannot_read_file_0_Colon_1, *e));
-        errors.push(new_compiler_diagnostic(&diagnostics::Cannot_read_file_0, &[&file_name]));
+        errors.push(new_compiler_diagnostic(&diagnostics::CANNOT_READ_FILE_0, &[&file_name]));
         String::new()
     };
     (text, errors)
 }
 
 impl CommandLineParser {
-    pub(crate) fn parse_option_value(
+    fn parse_option_value(
         &mut self,
         args: &[String],
         mut i: usize,
@@ -346,24 +333,24 @@ impl CommandLineParser {
         if opt.is_tsconfig_only && i <= args.len() {
             let opt_value = if i < args.len() { args[i].as_str() } else { "" };
             if opt_value == "null" {
-                self.options.set(opt.name.to_string(), CompilerOptionsValue::Null);
+                self.options.insert(opt.name.to_string(), CompilerOptionsValue::Null);
                 i += 1;
             } else if opt.kind == CommandLineOptionKind::Boolean {
                 if opt_value == "false" {
-                    self.options.set(opt.name.to_string(), CompilerOptionsValue::Bool(false));
+                    self.options.insert(opt.name.to_string(), CompilerOptionsValue::Bool(false));
                     i += 1;
                 } else {
                     if opt_value == "true" {
                         i += 1;
                     }
                     self.errors.push(new_compiler_diagnostic(
-                        &diagnostics::Option_0_can_only_be_specified_in_tsconfig_json_file_or_set_to_false_or_null_on_command_line,
+                        &diagnostics::OPTION_0_CAN_ONLY_BE_SPECIFIED_IN_TSCONFIG_JSON_FILE_OR_SET_TO_FALSE_OR_NULL_ON_COMMAND_LINE,
                         &[&opt.name],
                     ));
                 }
             } else {
                 self.errors.push(new_compiler_diagnostic(
-                    &diagnostics::Option_0_can_only_be_specified_in_tsconfig_json_file_or_set_to_null_on_command_line,
+                    &diagnostics::OPTION_0_CAN_ONLY_BE_SPECIFIED_IN_TSCONFIG_JSON_FILE_OR_SET_TO_NULL_ON_COMMAND_LINE,
                     &[&opt.name],
                 ));
                 if !opt_value.is_empty() && !opt_value.starts_with('-') {
@@ -373,36 +360,41 @@ impl CommandLineParser {
         } else {
             // Check to see if no argument was provided (e.g. "--locale" is the last command-line argument).
             if i >= args.len() {
-                if opt.kind != CommandLineOptionKind::Boolean {
+                if opt.kind == CommandLineOptionKind::Boolean {
+                    self.options.insert(opt.name.to_string(), CompilerOptionsValue::Bool(true));
+                } else {
                     self.errors.push(new_compiler_diagnostic(
                         diag,
                         &[&opt.name, &get_compiler_option_value_type_string(opt)],
                     ));
                     if opt.kind == CommandLineOptionKind::List {
-                        self.options.set(
+                        self.options.insert(
                             opt.name.to_string(),
                             CompilerOptionsValue::StringArray(Vec::new()),
                         );
                     } else if opt.kind == CommandLineOptionKind::Enum {
                         self.errors.push(create_diagnostic_for_invalid_enum_type(opt, None, None));
                     }
-                } else {
-                    self.options.set(opt.name.to_string(), CompilerOptionsValue::Bool(true));
                 }
                 return i;
             }
-            if args[i] != "null" {
+            if args[i] == "null" {
+                self.options.insert(opt.name.to_string(), CompilerOptionsValue::Null);
+                i += 1;
+            } else {
                 match opt.kind {
                     CommandLineOptionKind::Number => {
                         // !!! Make sure this parseInt matches JS parseInt
                         match args[i].parse::<i64>() {
                             Ok(num) => {
                                 if num >= opt.min_value as i64 {
-                                    self.options
-                                        .set(opt.name.to_string(), CompilerOptionsValue::Int(num));
+                                    self.options.insert(
+                                        opt.name.to_string(),
+                                        CompilerOptionsValue::Int(num),
+                                    );
                                 } else {
                                     self.errors.push(new_compiler_diagnostic(
-                                        &diagnostics::Option_0_requires_value_to_be_greater_than_1,
+                                        &diagnostics::OPTION_0_REQUIRES_VALUE_TO_BE_GREATER_THAN_1,
                                         &[&opt.name, &opt.min_value.to_string()],
                                     ));
                                 }
@@ -421,10 +413,10 @@ impl CommandLineParser {
                         // check next argument as boolean flag value
                         if opt_value == "false" {
                             self.options
-                                .set(opt.name.to_string(), CompilerOptionsValue::Bool(false));
+                                .insert(opt.name.to_string(), CompilerOptionsValue::Bool(false));
                         } else {
                             self.options
-                                .set(opt.name.to_string(), CompilerOptionsValue::Bool(true));
+                                .insert(opt.name.to_string(), CompilerOptionsValue::Bool(true));
                         }
                         // try to consume next argument as value for boolean flag; do not consume argument if it is not "true" or "false"
                         if opt_value == "false" || opt_value == "true" {
@@ -438,8 +430,17 @@ impl CommandLineParser {
                             None,
                             None,
                         );
-                        if err.is_empty() {
-                            self.options.set(opt.name.to_string(), val);
+                        if let CompilerOptionsValue::String(path) = &val
+                            && err.is_empty()
+                            && opt.is_file_path
+                            && is_network_path_value(path, &self.current_directory)
+                        {
+                            self.errors.push(new_compiler_diagnostic(
+                                &diagnostics::NETWORK_PATH_0_IS_NOT_SUPPORTED,
+                                &[path],
+                            ));
+                        } else if err.is_empty() {
+                            self.options.insert(opt.name.to_string(), val);
                         } else {
                             self.errors.extend(err);
                         }
@@ -448,7 +449,8 @@ impl CommandLineParser {
                     CommandLineOptionKind::List => {
                         let (result, err) = Self::parse_list_type_option(opt, &args[i]);
                         let advance = !result.is_empty() || !err.is_empty();
-                        self.options.set(opt.name.to_string(), CompilerOptionsValue::Array(result));
+                        self.options
+                            .insert(opt.name.to_string(), CompilerOptionsValue::Array(result));
                         self.errors.extend(err);
                         if advance {
                             i += 1;
@@ -466,20 +468,17 @@ impl CommandLineParser {
                             None,
                             None,
                         );
-                        self.options.set(opt.name.to_string(), val);
+                        self.options.insert(opt.name.to_string(), val);
                         self.errors.extend(err);
                         i += 1;
                     }
                 }
-            } else {
-                self.options.set(opt.name.to_string(), CompilerOptionsValue::Null);
-                i += 1;
             }
         }
         i
     }
 
-    pub(crate) fn parse_list_type_option(
+    fn parse_list_type_option(
         opt: &'static CommandLineOption,
         value: &str,
     ) -> (Vec<CompilerOptionsValue>, Vec<P<Diagnostic>>) {
@@ -523,11 +522,12 @@ pub fn parse_list_type_option(
                     None,
                     None,
                 );
-                if let CompilerOptionsValue::String(s) = &val {
-                    if err.is_empty() && !s.is_empty() {
-                        result.push(CompilerOptionsValue::String(s.clone()));
-                        continue;
-                    }
+                if let CompilerOptionsValue::String(s) = &val
+                    && err.is_empty()
+                    && !s.is_empty()
+                {
+                    result.push(CompilerOptionsValue::String(s.clone()));
+                    continue;
                 }
                 errors.extend(err);
             }
@@ -549,11 +549,12 @@ pub fn parse_list_type_option(
                     None,
                     None,
                 );
-                if let CompilerOptionsValue::String(s) = &val {
-                    if err.is_empty() && !s.is_empty() {
-                        result.push(CompilerOptionsValue::String(s.clone()));
-                        continue;
-                    }
+                if let CompilerOptionsValue::String(s) = &val
+                    && err.is_empty()
+                    && !s.is_empty()
+                {
+                    result.push(CompilerOptionsValue::String(s.clone()));
+                    continue;
                 }
                 errors.extend(err);
             }

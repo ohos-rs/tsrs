@@ -12,9 +12,9 @@ use tsrs_vfs::{FS, bundled, osvfs};
 
 use snapshot::RecordingFs;
 
-pub const PROJECTS: &[&str] = &["Compiler-Unions", "xstate-main", "webpack", "drizzle-orm"];
+const PROJECTS: &[&str] = &["Compiler-Unions", "xstate-main", "webpack", "drizzle-orm"];
 
-pub fn project_config(name: &str) -> &'static str {
+fn project_config(name: &str) -> &'static str {
     match name {
         "Compiler-Unions" => "bench/.work/suite/cases/solutions/Compiler-Unions/tsconfig.json",
         "xstate-main" => "bench/.work/solutions/xstate-main/tsconfig.json",
@@ -47,8 +47,8 @@ impl Compilation {
             matches!(
                 self.status,
                 ExitStatus::Success
-                    | ExitStatus::DiagnosticsPresent_OutputsSkipped
-                    | ExitStatus::DiagnosticsPresent_OutputsGenerated
+                    | ExitStatus::DiagnosticsPresentOutputsSkipped
+                    | ExitStatus::DiagnosticsPresentOutputsGenerated
             ),
             "benchmark compilation failed: {self:?}"
         );
@@ -78,12 +78,13 @@ impl PreparedProject {
     fn capture(cwd: String, config: &str, lib_path: String, fs: Arc<dyn FS>) -> Self {
         assert!(
             fs.file_exists(config),
-            "missing benchmark config {config:?}; run bench/run.py --setup-only first"
+            "missing benchmark config {config:?}; run node bench/bench.mjs prepare first"
         );
         let recording = Arc::new(RecordingFs::new(fs));
         let args: Vec<String> = [
             "-p",
             config,
+            "--fast",
             "--noEmit",
             "--incremental",
             "false",
@@ -118,7 +119,7 @@ impl PreparedProject {
     }
 }
 
-/// Disk-backed compilation with the CLI's default checker count, for walltime and peak memory.
+/// Disk-backed compilation with fast mode's adaptive checker count, for walltime and peak memory.
 /// Call once in a fresh process so earlier compilations cannot inflate its physical-memory peak.
 pub fn default_invocation(name: &str) -> (&'static BenchmarkSystem, Vec<String>) {
     let cwd = workspace_directory();
@@ -126,11 +127,12 @@ pub fn default_invocation(name: &str) -> (&'static BenchmarkSystem, Vec<String>)
     let fs = Arc::new(bundled::wrap_fs(osvfs::fs()));
     assert!(
         fs.file_exists(&config),
-        "missing benchmark config {config:?}; run bench/run.py --setup-only first"
+        "missing benchmark config {config:?}; run pnpm bench prepare first"
     );
     let args = [
         "-p",
         &config,
+        "--fast",
         "--noEmit",
         "--incremental",
         "false",

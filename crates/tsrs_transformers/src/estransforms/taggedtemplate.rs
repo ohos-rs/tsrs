@@ -6,8 +6,8 @@ fn newline_normalizer_replace(text: &str) -> String {
 }
 
 // taggedtemplate.go:15
-pub struct taggedTemplateTransformer {
-    pub base: Transformer,
+struct TaggedTemplateTransformer {
+    base: Transformer,
     current_source_file: Cell<Option<P<SourceFile>>>,
 
     tagged_template_string_declarations: RefCell<Vec<P<Node>>>,
@@ -21,7 +21,7 @@ pub struct taggedTemplateTransformer {
 pub fn new_tagged_template_lift_restriction_transformer(
     opt: &TransformOptions,
 ) -> Option<P<Transformer>> {
-    let tx = P::new(taggedTemplateTransformer {
+    let tx = P::new(TaggedTemplateTransformer {
         base: Transformer::default(),
         current_source_file: Cell::new(None),
         tagged_template_string_declarations: RefCell::new(Vec::new()),
@@ -32,7 +32,7 @@ pub fn new_tagged_template_lift_restriction_transformer(
     ))
 }
 
-impl taggedTemplateTransformer {
+impl TaggedTemplateTransformer {
     fn emit_context(&self) -> P<EmitContext> {
         self.base.emit_context()
     }

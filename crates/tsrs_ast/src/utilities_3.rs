@@ -78,7 +78,7 @@ pub fn is_valid_type_only_alias_use_site(use_site: P<Node>) -> bool {
         || !(is_expression_node(use_site) || is_shorthand_property_name_use_site(use_site))
 }
 
-pub(crate) fn is_identifier_in_non_emitting_heritage_clause(node: P<Node>) -> bool {
+fn is_identifier_in_non_emitting_heritage_clause(node: P<Node>) -> bool {
     if !is_identifier(node) {
         return false;
     }
@@ -91,9 +91,7 @@ pub(crate) fn is_identifier_in_non_emitting_heritage_clause(node: P<Node>) -> bo
             || is_interface_declaration(parent.parent().unwrap()))
 }
 
-pub(crate) fn is_part_of_possibly_valid_type_or_abstract_computed_property_name(
-    mut node: P<Node>,
-) -> bool {
+fn is_part_of_possibly_valid_type_or_abstract_computed_property_name(mut node: P<Node>) -> bool {
     while node_kind_is(node, &[Kind::Identifier, Kind::PropertyAccessExpression]) {
         node = node.parent().unwrap();
     }
@@ -107,7 +105,7 @@ pub(crate) fn is_part_of_possibly_valid_type_or_abstract_computed_property_name(
     node_kind_is(parent.parent().unwrap(), &[Kind::InterfaceDeclaration, Kind::TypeLiteral])
 }
 
-pub(crate) fn is_shorthand_property_name_use_site(use_site: P<Node>) -> bool {
+fn is_shorthand_property_name_use_site(use_site: P<Node>) -> bool {
     is_identifier(use_site)
         && is_shorthand_property_assignment(use_site.parent().unwrap())
         && use_site.parent().unwrap().name() == Some(use_site)
@@ -135,7 +133,7 @@ pub fn get_property_name_for_property_name_node(name: P<Node>) -> std::borrow::C
                 }
                 return text.into();
             }
-            InternalSymbolNameMissing.into()
+            INTERNAL_SYMBOL_NAME_MISSING.into()
         }
         _ => panic!("Unhandled case in getPropertyNameForPropertyNameNode"),
     }
@@ -188,7 +186,7 @@ pub fn has_resolution_mode_override(node: impl Into<Option<P<Node>>>) -> bool {
 }
 
 pub fn is_template_literal_kind(kind: Kind) -> bool {
-    Kind::FirstTemplateToken <= kind && kind <= Kind::LastTemplateToken
+    Kind::FIRST_TEMPLATE_TOKEN <= kind && kind <= Kind::LAST_TEMPLATE_TOKEN
 }
 
 pub fn get_external_module_import_equals_declaration_expression(node: P<Node>) -> Option<P<Node>> {
@@ -600,8 +598,7 @@ pub fn is_right_side_of_qualified_name_or_property_access(node: P<Node>) -> bool
     let parent = node.parent().unwrap();
     match parent.kind() {
         Kind::QualifiedName => parent.as_qualified_name().right == node,
-        Kind::PropertyAccessExpression => parent.name() == Some(node),
-        Kind::MetaProperty => parent.name() == Some(node),
+        Kind::PropertyAccessExpression | Kind::MetaProperty => parent.name() == Some(node),
         _ => false,
     }
 }
@@ -612,8 +609,8 @@ pub fn should_transform_import_call(
     implied_node_format_for_emit: ModuleKind,
 ) -> bool {
     let module_kind = options.get_emit_module_kind();
-    if ModuleKind::Node16 <= module_kind && module_kind <= ModuleKind::NodeNext
-        || module_kind == ModuleKind::Preserve
+    if ModuleKind::NODE16 <= module_kind && module_kind <= ModuleKind::NODE_NEXT
+        || module_kind == ModuleKind::PRESERVE
     {
         return false;
     }
@@ -643,7 +640,7 @@ pub fn is_call_or_new_expression(node: P<Node>) -> bool {
 }
 
 // Go `slices.BinarySearchFunc`: the leftmost insertion index and whether the target was found.
-pub(crate) fn binary_search_func<T: Copy, U: Copy>(
+fn binary_search_func<T: Copy, U: Copy>(
     items: &[T],
     target: U,
     mut cmp: impl FnMut(T, U) -> std::cmp::Ordering,
@@ -684,10 +681,6 @@ pub fn has_decorators(node: P<Node>) -> bool {
 pub struct HasFileNameImpl {
     file_name: String,
     path: tsrs_core::tspath::Path,
-}
-
-pub fn new_has_file_name(file_name: &str, path: tsrs_core::tspath::Path) -> HasFileNameImpl {
-    HasFileNameImpl { file_name: file_name.to_string(), path }
 }
 
 impl HasFileName for HasFileNameImpl {
@@ -826,12 +819,12 @@ pub fn is_jsdoc_name_reference_context(node: P<Node>) -> bool {
 }
 
 // GetJSDocRoot returns the containing JSDoc node for a node inside a JSDoc comment.
-pub fn get_jsdoc_root(node: P<Node>) -> Option<P<Node>> {
+fn get_jsdoc_root(node: P<Node>) -> Option<P<Node>> {
     find_ancestor(node.parent(), |n| n.kind() == Kind::JSDoc)
 }
 
 // GetJSDocHost returns the declaration that the JSDoc comment containing the given node is attached to.
-pub fn get_jsdoc_host(node: P<Node>) -> Option<P<Node>> {
+fn get_jsdoc_host(node: P<Node>) -> Option<P<Node>> {
     get_jsdoc_root(node)?.parent()
 }
 
@@ -840,12 +833,11 @@ pub fn get_jsdoc_host(node: P<Node>) -> Option<P<Node>> {
 pub fn get_host_signature_from_jsdoc(node: P<Node>) -> Option<P<Node>> {
     let host = get_jsdoc_host(node)?;
     // !!! Strada's getEffectiveJSDocHost applies JS assignment pattern transforms (getSourceOfAssignment, getSourceOfDefaultedAssignment, etc.) not yet ported
-    if is_property_signature_declaration(host) {
-        if let Some(t) = host.type_node() {
-            if is_function_like(t) {
-                return Some(t);
-            }
-        }
+    if is_property_signature_declaration(host)
+        && let Some(t) = host.type_node()
+        && is_function_like(t)
+    {
+        return Some(t);
     }
     if is_function_like(host) {
         return Some(host);
@@ -938,7 +930,7 @@ pub fn has_inferred_type(node: P<Node>) -> bool {
 }
 
 pub fn is_keyword(token: Kind) -> bool {
-    Kind::FirstKeyword <= token && token <= Kind::LastKeyword
+    Kind::FIRST_KEYWORD <= token && token <= Kind::LAST_KEYWORD
 }
 
 pub fn has_modifier(node: P<Node>, flags: ModifierFlags) -> bool {
@@ -1013,7 +1005,7 @@ pub fn get_first_constructor_with_body(node: P<Node>) -> Option<P<Node>> {
 
 // Returns true for nodes that are considered executable for the purposes of unreachable code detection.
 pub fn is_potentially_executable_node(node: P<Node>) -> bool {
-    if Kind::FirstStatement <= node.kind() && node.kind() <= Kind::LastStatement {
+    if Kind::FIRST_STATEMENT <= node.kind() && node.kind() <= Kind::LAST_STATEMENT {
         if is_variable_statement(node) {
             let declaration_list = node.as_variable_statement().declaration_list;
             if get_combined_node_flags(declaration_list).intersects(NodeFlags::BlockScoped) {
@@ -1125,15 +1117,15 @@ pub fn class_element_or_class_element_parameter_is_decorated(
     if node_is_decorated(use_legacy_decorators, node, Some(parent), None) {
         return true;
     }
-    if let Some(parameters) = parameters {
-        if parameters.nodes().iter().any(|&parameter| {
+    if let Some(parameters) = parameters
+        && parameters.nodes().iter().any(|&parameter| {
             if is_this_parameter(parameter) {
                 return false;
             }
             node_is_decorated(use_legacy_decorators, parameter, Some(node), Some(parent))
-        }) {
-            return true;
-        }
+        })
+    {
+        return true;
     }
     false
 }
@@ -1262,10 +1254,10 @@ pub fn get_rest_parameter_element_type(node: impl Into<Option<P<Node>>>) -> Opti
     if node.kind() == Kind::ArrayType {
         return Some(node.as_array_type_node().element_type);
     }
-    if node.kind() == Kind::TypeReference {
-        if let Some(type_arguments) = node.as_type_reference_node().type_arguments() {
-            return type_arguments.nodes().first().copied();
-        }
+    if node.kind() == Kind::TypeReference
+        && let Some(type_arguments) = node.as_type_reference_node().type_arguments()
+    {
+        return type_arguments.nodes().first().copied();
     }
     None
 }
@@ -1305,7 +1297,7 @@ pub(crate) fn literal_is_name(node: P<Node>) -> bool {
         || is_literal_computed_property_declaration_name(node)
 }
 
-pub(crate) fn is_argument_of_element_access_expression(node: impl Into<Option<P<Node>>>) -> bool {
+fn is_argument_of_element_access_expression(node: impl Into<Option<P<Node>>>) -> bool {
     let Some(node) = node.into() else {
         return false;
     };
@@ -1319,28 +1311,29 @@ pub(crate) fn is_argument_of_element_access_expression(node: impl Into<Option<P<
 // return the corresponding reparsed clone in the subtree. Otherwise, just return the node.
 pub fn get_reparsed_node_for_node(node: impl Into<Option<P<Node>>>) -> Option<P<Node>> {
     let node = node.into()?;
-    if node.flags().intersects(NodeFlags::JSDoc) && !node.flags().intersects(NodeFlags::Reparsed) {
-        if let Some(file) = get_source_file_of_node(node) {
-            let reparsed_clones = file.reparsed_clones();
-            if !reparsed_clones.is_empty() {
-                let (mut pos, found) =
-                    binary_search_func(reparsed_clones, node, compare_node_positions);
-                if !found && pos > 0 {
-                    pos -= 1;
-                }
-                let candidate = reparsed_clones[pos];
-                if node.loc().contained_by(candidate.loc()) {
-                    if let Some(reparsed) = find_clone_in_node(candidate, node) {
-                        return Some(reparsed);
-                    }
-                }
+    if node.flags().intersects(NodeFlags::JSDoc)
+        && !node.flags().intersects(NodeFlags::Reparsed)
+        && let Some(file) = get_source_file_of_node(node)
+    {
+        let reparsed_clones = file.reparsed_clones();
+        if !reparsed_clones.is_empty() {
+            let (mut pos, found) =
+                binary_search_func(reparsed_clones, node, compare_node_positions);
+            if !found && pos > 0 {
+                pos -= 1;
+            }
+            let candidate = reparsed_clones[pos];
+            if node.loc().contained_by(candidate.loc())
+                && let Some(reparsed) = find_clone_in_node(candidate, node)
+            {
+                return Some(reparsed);
             }
         }
     }
     Some(node)
 }
 
-pub(crate) fn find_clone_in_node(mut node: P<Node>, original: P<Node>) -> Option<P<Node>> {
+fn find_clone_in_node(mut node: P<Node>, original: P<Node>) -> Option<P<Node>> {
     loop {
         if node.kind() == original.kind() && node.loc() == original.loc() {
             return Some(node);
@@ -1407,12 +1400,8 @@ pub fn is_named_evaluation_source(node: P<Node>) -> bool {
 // Per the ECMA-262 spec, this only matters for property assignments whose name is
 // the Identifier `__proto__`, or the string literal `"__proto__"`, but not for
 // computed property names.
-pub fn is_proto_setter(node: P<Node>) -> bool {
+fn is_proto_setter(node: P<Node>) -> bool {
     (is_identifier(node) || is_string_literal(node)) && node.text() == "__proto__"
-}
-
-pub fn is_string_literal_like_type(node: P<Node>) -> bool {
-    node.kind() == Kind::LiteralType && is_string_literal_like(node.as_literal_type_node().literal)
 }
 
 // Go `res := node.Clone(f); res.Kind = ast.KindImportDeclaration` (declarations transformTopLevelDeclaration, for a
@@ -1430,7 +1419,7 @@ pub fn clone_as_import_declaration(node: P<Node>, f: &NodeFactory) -> P<Node> {
 
 // utilities.go:3028
 pub fn is_contextual_keyword(token: Kind) -> bool {
-    Kind::FirstContextualKeyword <= token && token <= Kind::LastContextualKeyword
+    Kind::FIRST_CONTEXTUAL_KEYWORD <= token && token <= Kind::LAST_CONTEXTUAL_KEYWORD
 }
 
 // utilities.go:4170
@@ -1447,20 +1436,6 @@ pub fn is_external_module_indicator(node: P<Node>) -> bool {
 }
 
 // Language-service-only utilities (added for tsrs_ls; the batch port skipped them).
-
-// utilities.go:89
-pub fn find_last_visible_node(nodes: &[P<Node>]) -> Option<P<Node>> {
-    let mut from_end = 1;
-    while from_end <= nodes.len()
-        && nodes[nodes.len() - from_end].flags().intersects(NodeFlags::Reparsed)
-    {
-        from_end += 1;
-    }
-    if from_end <= nodes.len() {
-        return Some(nodes[nodes.len() - from_end]);
-    }
-    None
-}
 
 // utilities.go:687
 pub fn is_statement_but_not_declaration(node: P<Node>) -> bool {
@@ -1521,7 +1496,7 @@ pub fn is_jsdoc_single_comment_node(node: P<Node>) -> bool {
 
 // utilities.go:3806
 pub fn is_trivia(token: Kind) -> bool {
-    Kind::FirstTriviaToken <= token && token <= Kind::LastTriviaToken
+    Kind::FIRST_TRIVIA_TOKEN <= token && token <= Kind::LAST_TRIVIA_TOKEN
 }
 
 // utilities.go:3848
@@ -1900,6 +1875,7 @@ pub fn get_type_annotation_node(node: P<Node>) -> Option<P<Node>> {
         | Kind::RestType
         | Kind::TemplateLiteralTypeSpan
         | Kind::JSDocTypeExpression
+        | Kind::JSDocParameterTag
         | Kind::JSDocPropertyTag
         | Kind::JSDocNullableType
         | Kind::JSDocNonNullableType
@@ -1993,10 +1969,10 @@ pub fn try_get_property_name_of_binding_or_assignment_element(
     }
 
     let target = get_target_of_binding_or_assignment_element(binding_element);
-    if let Some(target) = target {
-        if is_property_name(target) {
-            return Some(target);
-        }
+    if let Some(target) = target
+        && is_property_name(target)
+    {
+        return Some(target);
     }
     None
 }

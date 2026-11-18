@@ -1,3 +1,8 @@
+#![expect(
+    clippy::redundant_pub_crate,
+    reason = "Only the public API is re-exported; implementation helpers remain crate-private."
+)]
+
 use tsrs_ast::{self as ast, Kind, Node};
 use tsrs_core::{P, Tristate};
 use tsrs_scanner as scanner;
@@ -254,7 +259,7 @@ pub(crate) fn is_type_annotation_context(context: &FormattingContext) -> bool {
 }
 
 // rulecontext.go:212
-pub(crate) fn is_optional_property_context(context: &FormattingContext) -> bool {
+fn is_optional_property_context(context: &FormattingContext) -> bool {
     ast::is_property_declaration(context.context_node())
         && ast::has_question_token(context.context_node())
 }
@@ -296,13 +301,13 @@ pub(crate) fn is_multiline_block_context(context: &FormattingContext) -> bool {
 }
 
 // rulecontext.go:244
-pub(crate) fn is_single_line_block_context(context: &FormattingContext) -> bool {
+fn is_single_line_block_context(context: &FormattingContext) -> bool {
     is_block_context(context)
         && (context.context_node_all_on_same_line() || context.context_node_block_is_on_one_line())
 }
 
 // rulecontext.go:248
-pub(crate) fn is_block_context(context: &FormattingContext) -> bool {
+fn is_block_context(context: &FormattingContext) -> bool {
     node_is_block_context(context.context_node())
 }
 
@@ -313,7 +318,7 @@ pub(crate) fn is_before_block_context(context: &FormattingContext) -> bool {
 
 // rulecontext.go:257
 // IMPORTANT!!! This method must return true ONLY for nodes with open and close braces as immediate children
-pub(crate) fn node_is_block_context(node: P<Node>) -> bool {
+fn node_is_block_context(node: P<Node>) -> bool {
     if node_is_type_script_decl_with_block_context(node) {
         // This means we are in a context that looks like a block to the user, but in the grammar is actually not a node (it's a class, module, enum, object type literal, etc).
         return true;
@@ -366,7 +371,7 @@ pub(crate) fn is_type_script_decl_with_block_context(context: &FormattingContext
 }
 
 // rulecontext.go:312
-pub(crate) fn node_is_type_script_decl_with_block_context(node: P<Node>) -> bool {
+fn node_is_type_script_decl_with_block_context(node: P<Node>) -> bool {
     matches!(
         node.kind(),
         Kind::ClassDeclaration
@@ -430,12 +435,12 @@ pub(crate) fn is_object_context(context: &FormattingContext) -> bool {
 }
 
 // rulecontext.go:375
-pub(crate) fn is_function_call_context(context: &FormattingContext) -> bool {
+fn is_function_call_context(context: &FormattingContext) -> bool {
     context.context_node().kind() == Kind::CallExpression
 }
 
 // rulecontext.go:379
-pub(crate) fn is_new_context(context: &FormattingContext) -> bool {
+fn is_new_context(context: &FormattingContext) -> bool {
     context.context_node().kind() == Kind::NewExpression
 }
 
@@ -534,7 +539,7 @@ pub(crate) fn is_end_of_decorator_context_on_same_line(context: &FormattingConte
 }
 
 // rulecontext.go:454
-pub(crate) fn node_is_in_decorator_context(mut node: Option<P<Node>>) -> bool {
+fn node_is_in_decorator_context(mut node: Option<P<Node>>) -> bool {
     while let Some(n) = node {
         if !ast::is_expression(n) {
             break;
@@ -579,10 +584,7 @@ pub(crate) fn is_constructor_signature_context(context: &FormattingContext) -> b
 }
 
 // rulecontext.go:482
-pub(crate) fn is_type_argument_or_parameter_or_assertion(
-    token: TextRangeWithKind,
-    parent: P<Node>,
-) -> bool {
+fn is_type_argument_or_parameter_or_assertion(token: TextRangeWithKind, parent: P<Node>) -> bool {
     if token.kind != Kind::LessThanToken && token.kind != Kind::GreaterThanToken {
         return false;
     }
@@ -653,7 +655,7 @@ pub(crate) fn is_not_statement_condition_context(context: &FormattingContext) ->
 }
 
 // rulecontext.go:538
-pub(crate) fn is_statement_condition_context(context: &FormattingContext) -> bool {
+fn is_statement_condition_context(context: &FormattingContext) -> bool {
     matches!(
         context.context_node().kind(),
         Kind::IfStatement

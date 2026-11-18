@@ -7,7 +7,7 @@ use rayon::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsrs_ast::{
     self as ast, CommentDirectiveKind, Diagnostic, DiagnosticExt, FileReference, Kind, Node,
-    SourceFile, SourceFileMetaData, compare_diagnostics, equal_diagnostics,
+    NodeFactory, SourceFile, SourceFileMetaData, compare_diagnostics, equal_diagnostics,
     equal_diagnostics_no_related_info, new_compiler_diagnostic, new_diagnostic,
 };
 use tsrs_core::tspath::{self, ComparePathsOptions, Path};
@@ -20,43 +20,43 @@ use tsrs_module::{
     self as module, ModeAwareCache, ResolvedModule, ResolvedTypeReferenceDirective, Resolver,
     ResolverOptions,
 };
-use tsrs_tsoptions::{self as tsoptions, ParsedCommandLine};
+use tsrs_tsoptions::{self as tsoptions, ParsedCommandLine, outputpaths};
 
-use crate::checkerpool::checkerPool;
+use crate::checkerpool::CheckerPoolImpl;
 use crate::emitter::source_file_may_be_emitted;
 use crate::file_include::{self, FileIncludeReason};
 use crate::fileloader::str_slice;
 use crate::fileloader::{
-    DuplicateSourceFile, LibFile, get_default_resolution_mode_for_file,
-    get_emit_syntax_for_usage_location_worker, get_mode_for_usage_location,
-    process_all_program_files, processedFiles,
+    DuplicateSourceFile, LibFile, ProcessedFiles, get_default_resolution_mode_for_file,
+    get_emit_syntax_for_usage_location_worker, get_mode_for_usage_location, new_synthetic_import,
+    process_all_program_files,
 };
 use crate::host::CompilerHost;
-use crate::includeprocessor::includeProcessor;
-use crate::outputpaths;
-use crate::processing_diagnostic::{includeExplainingDiagnostic, processingDiagnostic};
-use crate::projectreferencefilemapper::projectReferenceFileMapper;
+use crate::includeprocessor::IncludeProcessor;
+use crate::processing_diagnostic::{IncludeExplainingDiagnostic, ProcessingDiagnostic};
+use crate::projectreferencefilemapper::ProjectReferenceFileMapper;
 use tsrs_core::collections::Set;
 use tsrs_module::ResolutionHost;
 use tsrs_module::symlinks::{self, KnownSymlinks};
 use tsrs_tsoptions::SourceOutputAndProjectReference;
 
-pub type CreateModuleResolver = Arc<dyn Fn(ResolverOptions) -> Box<dyn Resolver> + Send + Sync>;
+pub type CreateModuleResolver =
+    Arc<dyn Fn(ResolverOptions<'static>) -> Box<dyn Resolver> + Send + Sync>;
 
 // Go `ProgramFactories.CreateCheckerPool func(*Program) CheckerPool`.
 pub type CreateCheckerPool = Arc<dyn Fn(&'static Program) -> Box<dyn CheckerPool> + Send + Sync>;
 
 // Go `ProgramOptions` (= ProgramConfig + ProgramHosts + ProgramFactories, flattened; tracing is not ported).
 pub struct ProgramOptions {
-    pub config: P<ParsedCommandLine>,
+    pub(crate) config: P<ParsedCommandLine>,
     pub use_source_of_project_reference: bool,
     pub single_threaded: Tristate,
     pub typings_location: String,
-    pub project_name: String,
+    pub(crate) project_name: String,
     // SkipModuleResolution avoids all module and type reference resolution while
     // still collecting import metadata needed for emit.
     pub skip_module_resolution: bool,
-    pub host: Arc<dyn CompilerHost>,
+    pub(crate) host: Arc<dyn CompilerHost>,
     pub create_checker_pool: Option<CreateCheckerPool>,
     pub create_module_resolver: Option<CreateModuleResolver>,
     /// tsrs-only: whether the type-check pass frees the tree of each leaf file once it is checked (fileregions.rs;
@@ -80,10 +80,8 @@ pub struct ProgramOptions {
     /// tsrs-only: what the file loader allocates goes to these regions (programregions.rs), which the caller frees
     /// once nothing uses the program's processed-file and resolution data (watch mode, `tsc -b`).
     pub regions: Option<std::sync::Arc<crate::programregions::ProgramRegions>>,
-    /// tsrs-only: `reuse_program` may keep the file loader's synthetic imports (JSX runtime, import helpers) of the
-    /// edited file. Their parent is this program's version of the file, so the caller must keep it alive while any
-    /// program reused from this one lives (watch mode keeps the full build's files). The language server frees it
-    /// with this program, so it leaves this off and gets Go's full rebuild.
+    /// tsrs-only: `reuse_program` may replace a file that has synthetic imports (JSX runtime, import helpers) when
+    /// its new version needs the same ones. Off, an edit of such a file is Go's full rebuild.
     pub reuse_synthetic_imports: bool,
 }
 
@@ -110,7 +108,7 @@ impl ProgramOptions {
     }
 
     // Go `ProgramOptions{ProgramConfig: config, Host: host, CreateCheckerPool: ..., CreateModuleResolver: ...}`.
-    pub fn from_config(
+    fn from_config(
         config: ProgramConfig,
         host: Arc<dyn CompilerHost>,
         create_checker_pool: Option<CreateCheckerPool>,
@@ -131,7 +129,7 @@ impl ProgramOptions {
             canonical_diagnostics: true,
             checker_regions: false,
             checker_diagnostic_regions: false,
-            regions: None,
+            regions: config.regions.map(|_| Arc::default()),
             reuse_synthetic_imports: false,
         }
     }
@@ -151,13 +149,13 @@ impl ProgramOptions {
 
 #[derive(Clone)]
 pub struct ProgramConfig {
-    pub config: P<ParsedCommandLine>,
-    pub use_source_of_project_reference: bool,
-    pub single_threaded: Tristate,
-    pub typings_location: String,
-    pub project_name: String,
-    pub skip_module_resolution: bool,
-    pub regions: Option<std::sync::Arc<crate::programregions::ProgramRegions>>,
+    pub(crate) config: P<ParsedCommandLine>,
+    use_source_of_project_reference: bool,
+    single_threaded: Tristate,
+    typings_location: String,
+    project_name: String,
+    pub(crate) skip_module_resolution: bool,
+    pub(crate) regions: Option<std::sync::Arc<crate::programregions::ProgramRegions>>,
 }
 
 impl ProgramConfig {
@@ -174,7 +172,7 @@ impl ProgramConfig {
 }
 
 // program.go:91
-pub(crate) struct packageNamesInfo {
+pub struct PackageNamesInfo {
     resolved: Set<String>,
     unresolved: Set<String>,
     deep_import_packages: Set<String>,
@@ -187,8 +185,8 @@ pub(crate) struct packageNamesInfo {
     clippy::large_enum_variant,
     reason = "one per program; the built-in pool, the usual variant, is reached on every checker request and stays inline"
 )]
-enum programCheckerPool {
-    Compiler(checkerPool),
+enum ProgramCheckerPool {
+    Compiler(CheckerPoolImpl),
     External(Box<dyn CheckerPool>),
 }
 
@@ -196,12 +194,12 @@ pub struct Program {
     pub(crate) opts: ProgramConfig,
     host: Arc<dyn CompilerHost>,
     resolution_host: &'static dyn ResolutionHost,
-    pub(crate) resolution_data: P<module::ResolutionData>,
+    pub resolution_data: P<module::ResolutionData>,
     // Always set once the program is constructed (see `init_checker_pool`).
-    checker_pool: OnceLock<programCheckerPool>,
-    arkts_build_checker_pool: OnceLock<checkerPool>,
-    arkts_linter_checker_pool: OnceLock<checkerPool>,
-    pub(crate) include_processor: includeProcessor,
+    checker_pool: OnceLock<ProgramCheckerPool>,
+    arkts_build_checker_pool: OnceLock<CheckerPoolImpl>,
+    arkts_linter_checker_pool: OnceLock<CheckerPoolImpl>,
+    pub(crate) include_processor: IncludeProcessor,
     module_resolution_error: Option<String>,
 
     pub(crate) compare_paths_options: ComparePathsOptions,
@@ -210,9 +208,9 @@ pub struct Program {
     // the rest is shared by the programs ReuseProgram derives from this one, as Go's shallow struct copy shares it.
     pub(crate) files: &'static [P<SourceFile>],
     pub(crate) files_by_path: FxHashMap<Path, P<SourceFile>>,
-    processed: &'static processedFiles,
-    project_reference_file_mapper: &'static projectReferenceFileMapper,
-    processing_diagnostics: Mutex<Vec<processingDiagnostic>>,
+    processed: &'static ProcessedFiles,
+    project_reference_file_mapper: &'static ProjectReferenceFileMapper,
+    processing_diagnostics: Mutex<Vec<ProcessingDiagnostic>>,
 
     uses_uri_style_node_core_modules: Tristate,
 
@@ -229,7 +227,7 @@ pub struct Program {
     known_symlinks: OnceLock<P<KnownSymlinks>>,
 
     // Used by auto-imports
-    package_names: OnceLock<Arc<packageNamesInfo>>,
+    package_names: OnceLock<Arc<PackageNamesInfo>>,
 
     // Used by workspace/symbol
     has_ts_file: OnceLock<bool>,
@@ -249,7 +247,7 @@ pub struct Program {
     pub(crate) tsgo_check_slots: OnceLock<FxHashMap<P<SourceFile>, (u32, u32)>>,
     // tsrs-only: the import graph those slots are computed from (`checkerpool::get_import_adjacency`), which a program
     // made by `reuse_program` takes over: it has the same files at the same indices with the same imports.
-    pub(crate) tsgo_import_adjacency: OnceLock<Arc<[Vec<usize>]>>,
+    pub tsgo_import_adjacency: OnceLock<Arc<[Vec<usize>]>>,
     // tsrs-only: `ProgramOptions::checker_recycling`.
     pub(crate) checker_recycling: bool,
     canonical_diagnostics: bool,
@@ -259,6 +257,9 @@ pub struct Program {
     pub(crate) checker_diagnostic_regions: bool,
     // tsrs-only: `ProgramOptions::reuse_synthetic_imports`.
     reuse_synthetic_imports: bool,
+    // tsrs-only: the file loader's synthetic imports of the files `reuse_program` replaced since the full build
+    // (parented to the full build's versions), to the ones made for this program's versions.
+    replaced_synthetic_imports: FxHashMap<P<Node>, P<Node>>,
     // tsrs-only: the address of the program `reuse_program` made this one from, 0 for a program built in full
     // (`is_reuse_of`). An address, not a reference: the watch frees that program once this one has replaced it.
     reused_from: usize,
@@ -269,8 +270,8 @@ pub struct Program {
 }
 
 impl std::ops::Deref for Program {
-    type Target = processedFiles;
-    fn deref(&self) -> &processedFiles {
+    type Target = ProcessedFiles;
+    fn deref(&self) -> &ProcessedFiles {
         self.processed
     }
 }
@@ -282,7 +283,7 @@ impl Program {
             && self.compiler_checker_pool().is_some()
     }
 
-    pub fn file_exists(&self, path: &str) -> bool {
+    pub(crate) fn file_exists(&self, path: &str) -> bool {
         self.host.fs().file_exists(path)
     }
 
@@ -319,7 +320,7 @@ impl Program {
         }
     }
 
-    fn new_resolver(&self) -> module::DefaultResolver {
+    fn new_resolver(&self) -> module::DefaultResolver<'static> {
         self.resolution_data
             .get()
             .new_resolver(self.project_reference_file_mapper.resolution_host(self.resolution_host))
@@ -327,14 +328,14 @@ impl Program {
 
     // GetRedirectTargets returns the list of file paths that redirect to the given path.
     // These are files from the same package (same name@version) installed in different locations.
-    pub fn get_redirect_targets(&self, path: &Path) -> &[String] {
+    pub(crate) fn get_redirect_targets(&self, path: &Path) -> &[String] {
         self.redirect_targets_map.get(path).map_or(&[] as &[String], std::vec::Vec::as_slice)
     }
 
     // gets the original file that was included in program
     // this returns original source file name when including output of project reference
     // otherwise same name
-    pub fn get_source_of_project_reference_if_output_included(
+    pub(crate) fn get_source_of_project_reference_if_output_included(
         &self,
         file_name: &str,
         path: &Path,
@@ -346,7 +347,7 @@ impl Program {
     }
 
     // program.go:209
-    pub fn get_project_reference_from_source(
+    pub(crate) fn get_project_reference_from_source(
         &self,
         path: &Path,
     ) -> Option<P<SourceOutputAndProjectReference>> {
@@ -359,23 +360,18 @@ impl Program {
     }
 
     // program.go:218
-    pub fn get_project_reference_from_output_dts(
+    pub(crate) fn get_project_reference_from_output_dts(
         &self,
         path: &Path,
     ) -> Option<P<SourceOutputAndProjectReference>> {
         self.project_reference_file_mapper.get_project_reference_from_output_dts(path)
     }
 
-    // program.go:222
-    pub fn get_resolved_project_reference_for(
-        &self,
-        path: &Path,
-    ) -> (Option<P<ParsedCommandLine>>, bool) {
-        self.project_reference_file_mapper.get_resolved_reference_for(path)
-    }
-
     // program.go:226
-    pub fn get_redirect_for_resolution(&self, file: P<SourceFile>) -> Option<P<ParsedCommandLine>> {
+    pub(crate) fn get_redirect_for_resolution(
+        &self,
+        file: P<SourceFile>,
+    ) -> Option<P<ParsedCommandLine>> {
         self.project_reference_file_mapper
             .get_redirect_parsed_command_line_for_resolution(file.file_name(), file.path())
     }
@@ -461,10 +457,10 @@ impl Program {
 
             return self.get_source_file_for_resolved_module(&file_name);
         }
-        if allow_non_ts_extensions {
-            if let Some(extensionless) = self.get_source_file_for_resolved_module(&file_name) {
-                return Some(extensionless);
-            }
+        if allow_non_ts_extensions
+            && let Some(extensionless) = self.get_source_file_for_resolved_module(&file_name)
+        {
+            return Some(extensionless);
         }
 
         // Only try adding extensions from the first supported group (which should be .ts/.tsx/.d.ts)
@@ -488,7 +484,7 @@ impl Program {
 // (mimalloc `no_thp`, notes/mem-no-thp.md) the parallel parse is bound by page-fault contention, not threads (vscode
 // on 64 vCPUs: 0.124 s at 32 threads, 0.131 s at 64), and every allocating thread keeps its own partly filled
 // allocator pages and arena chunk tail (64 -> 32 threads: -0.09 GiB peak). RAYON_NUM_THREADS still sets the count
-// exactly, as before (bench/run.py's single-threaded counter uses 1).
+// exactly, as before (single-threaded runs with `node bench/bench.mjs count` use 1).
 const PARSE_THREAD_CAP: usize = 32;
 
 /// Runs worker jobs on the calling thread for threadless targets.
@@ -529,7 +525,7 @@ pub fn new_program(opts: ProgramOptions) -> &'static Program {
             .is_true();
     let (mut processed, resolution_data, module_resolution_error) =
         process_all_program_files(&opts, single_threaded);
-    let project_reference_file_mapper: &'static projectReferenceFileMapper =
+    let project_reference_file_mapper: &'static ProjectReferenceFileMapper =
         processed.project_reference_file_mapper.take().unwrap();
     let processing_diagnostics =
         std::mem::take(&mut processed.file_include_data.processing_diagnostics);
@@ -547,7 +543,7 @@ pub fn new_program(opts: ProgramOptions) -> &'static Program {
         checker_pool: OnceLock::new(),
         arkts_build_checker_pool: OnceLock::new(),
         arkts_linter_checker_pool: OnceLock::new(),
-        include_processor: includeProcessor::default(),
+        include_processor: IncludeProcessor::default(),
         module_resolution_error,
         files,
         files_by_path,
@@ -576,6 +572,7 @@ pub fn new_program(opts: ProgramOptions) -> &'static Program {
         checker_regions: opts.checker_regions,
         checker_diagnostic_regions: opts.checker_diagnostic_regions,
         reuse_synthetic_imports: opts.reuse_synthetic_imports,
+        replaced_synthetic_imports: FxHashMap::default(),
         reused_from: 0,
         own_region: None,
     };
@@ -639,8 +636,8 @@ pub struct SharedProgramData {
 /// See `SharedProgramData`.
 pub fn shared_program_data(program: &'static Program) -> SharedProgramData {
     SharedProgramData {
-        processed: std::ptr::from_ref::<processedFiles>(program.processed) as usize,
-        mapper: std::ptr::from_ref::<projectReferenceFileMapper>(
+        processed: std::ptr::from_ref::<ProcessedFiles>(program.processed) as usize,
+        mapper: std::ptr::from_ref::<ProjectReferenceFileMapper>(
             program.project_reference_file_mapper,
         ) as usize,
     }
@@ -652,10 +649,10 @@ impl SharedProgramData {
     pub unsafe fn free(self) {
         // SAFETY: the file loader leaked the mapper from a `Box`, and nothing refers to it (this function's contract).
         unsafe {
-            free_project_reference_file_mapper(self.mapper as *mut projectReferenceFileMapper);
+            free_project_reference_file_mapper(self.mapper as *mut ProjectReferenceFileMapper);
         };
         // SAFETY: `new_program` leaked `processed` from a `Box`, and nothing refers to it (this function's contract).
-        drop(unsafe { Box::from_raw(self.processed as *mut processedFiles) });
+        drop(unsafe { Box::from_raw(self.processed as *mut ProcessedFiles) });
     }
 }
 
@@ -663,7 +660,7 @@ impl SharedProgramData {
 ///
 /// # Safety
 /// `mapper` came from `Box::leak` in the file loader, and nothing refers to it or its hosts any more.
-pub(crate) unsafe fn free_project_reference_file_mapper(mapper: *mut projectReferenceFileMapper) {
+pub unsafe fn free_project_reference_file_mapper(mapper: *mut ProjectReferenceFileMapper) {
     // SAFETY: `mapper` is a live leaked `Box` (this function's contract).
     let (dts_faking_host, loader_host) =
         unsafe { ((*mapper).dts_faking_host.get().copied(), (*mapper).loader_host) };
@@ -714,6 +711,7 @@ impl Program {
                 create_module_resolver,
             );
             opts.canonical_diagnostics = self.canonical_diagnostics;
+            opts.reuse_synthetic_imports = self.reuse_synthetic_imports;
             (new_program(opts), new_file, false)
         }
     }
@@ -736,7 +734,9 @@ impl Program {
         let new_file;
         let mut old_supplemental_files: &[P<SourceFile>] = &[];
         let mut new_supplemental_files: Vec<P<SourceFile>> = Vec::new();
-        if !old_file.content_mapper().is_empty() {
+        if old_file.content_mapper().is_empty() {
+            new_file = new_host.get_source_file(old_file.parse_options().clone());
+        } else {
             // Content-mapped files are produced by running an external transform, which a plain reparse can't
             // reproduce. Re-run the transform through the host; any failure (or a missing file) falls back to
             // a full rebuild so the file loader's failure policy runs.
@@ -755,8 +755,6 @@ impl Program {
                     new_supplemental_files = files.supplemental;
                 }
             }
-        } else {
-            new_file = new_host.get_source_file(old_file.parse_options().clone());
         }
 
         // If this file is part of a package redirect group (same package installed in multiple
@@ -804,6 +802,17 @@ impl Program {
             let _scope = own_region.as_ref().map(tsrs_core::arena::Region::enter);
             self.resolution_data.clone_data()
         };
+        let mut replaced_synthetic_imports = self.replaced_synthetic_imports.clone();
+        for &file in std::iter::once(&new_file_some).chain(&new_supplemental_files) {
+            // In the file's memory: the nodes live as long as their parent.
+            let _owner = tsrs_core::arena::enter_owner(file.addr());
+            let helpers = self.import_helpers_import_specifiers.get(file.path()).copied();
+            let jsx = self.jsx_runtime_import_specifiers.get(file.path()).map(|jsx| jsx.specifier);
+            for import in helpers.into_iter().chain(jsx) {
+                let own = new_synthetic_import(&NodeFactory::default(), import.text(), file);
+                replaced_synthetic_imports.insert(import, own);
+            }
+        }
         let mut result = Program {
             opts: self.opts.clone(),
             resolution_host: crate::projectreferencefilemapper::resolution_host_for(Arc::clone(
@@ -812,9 +821,9 @@ impl Program {
             host: new_host,
             resolution_data,
             checker_pool: OnceLock::new(),
-        arkts_build_checker_pool: OnceLock::new(),
-        arkts_linter_checker_pool: OnceLock::new(),
-            include_processor: includeProcessor::default(),
+            arkts_build_checker_pool: OnceLock::new(),
+            arkts_linter_checker_pool: OnceLock::new(),
+            include_processor: IncludeProcessor::default(),
             module_resolution_error: None,
             compare_paths_options: self.compare_paths_options.clone(),
             files: self.files,
@@ -845,6 +854,7 @@ impl Program {
             checker_regions: self.checker_regions,
             checker_diagnostic_regions: self.checker_diagnostic_regions,
             reuse_synthetic_imports: self.reuse_synthetic_imports,
+            replaced_synthetic_imports,
             reused_from: std::ptr::from_ref(self) as usize,
             own_region,
         };
@@ -881,12 +891,17 @@ impl Program {
         self.reused_from == std::ptr::from_ref(other) as usize
     }
 
+    // This program's node for the file loader's synthetic import `import`.
+    fn synthetic_import(&self, import: P<Node>) -> P<Node> {
+        self.replaced_synthetic_imports.get(&import).copied().unwrap_or(import)
+    }
+
     // program.go:443
     // `previous`: the pool of the program this one reuses (`reuse_program`), whose file assignment it may take over.
     fn init_checker_pool(
         &'static self,
         create: Option<CreateCheckerPool>,
-        previous: Option<&checkerPool>,
+        previous: Option<&CheckerPoolImpl>,
     ) {
         assert!(
             self.finished_processing,
@@ -894,31 +909,31 @@ impl Program {
         );
 
         let pool = match create {
-            Some(create) => programCheckerPool::External(create(self)),
-            None => programCheckerPool::Compiler(checkerPool::new(self, previous)),
+            Some(create) => ProgramCheckerPool::External(create(self)),
+            None => ProgramCheckerPool::Compiler(CheckerPoolImpl::new(self, previous)),
         };
         assert!(self.checker_pool.set(pool).is_ok(), "checker pool initialized twice");
     }
 
     // program.go:458
     // GetCheckerPool returns the checker pool associated with this program.
-    pub fn get_checker_pool(&self) -> &dyn CheckerPool {
+    fn get_checker_pool(&self) -> &dyn CheckerPool {
         match self.checker_pool.get().unwrap() {
-            programCheckerPool::Compiler(pool) => pool,
-            programCheckerPool::External(pool) => &**pool,
+            ProgramCheckerPool::Compiler(pool) => pool,
+            ProgramCheckerPool::External(pool) => &**pool,
         }
     }
 
     // Go `p.compilerCheckerPool` (nil when the program was created with `CreateCheckerPool`).
-    pub(crate) fn compiler_checker_pool(&self) -> Option<&checkerPool> {
+    pub fn compiler_checker_pool(&self) -> Option<&CheckerPoolImpl> {
         match self.checker_pool.get() {
-            Some(programCheckerPool::Compiler(pool)) => Some(pool),
+            Some(ProgramCheckerPool::Compiler(pool)) => Some(pool),
             _ => None,
         }
     }
 
     // The built-in pool, for the CLI's statistics; panics on a program with an external pool.
-    pub(crate) fn pool(&self) -> &checkerPool {
+    pub fn pool(&self) -> &CheckerPoolImpl {
         self.compiler_checker_pool().expect("program uses an external checker pool")
     }
 
@@ -940,6 +955,8 @@ impl Program {
                 equal_module_specifiers(n1, n2)
                     && self.get_mode_for_usage_location(file1, n1)
                         == self.get_mode_for_usage_location(file2, n2)
+                    && n1.parent().is_some_and(ast::is_source_phase_import)
+                        == n2.parent().is_some_and(ast::is_source_phase_import)
             })
             && equal_func(
                 file1.module_augmentations(),
@@ -969,10 +986,9 @@ impl Program {
     // resolution (the clone keeps the file's), as it keeps the file's other imports. Go builds the program again
     // whenever either version has one (program.go:389), so every edit of a file with JSX (`react-jsx`) or under
     // `importHelpers` is a full build. tsrs-only, with `reuse_synthetic_imports`: they are kept when `new_file` needs
-    // the same ones. The synthetic nodes' parent stays the old version of the file, which only lends them its path,
-    // options and implied format, the same as the new version's (`can_replace_file_in_program` compares the parse
-    // options). The JSX runtime comes from the options and the file's pragmas; whether the file needs the helpers
-    // module, from the options and whether it is a module, which `can_replace_file_in_program` also compares.
+    // the same ones, and the new program gets nodes of its own for them (`replaced_synthetic_imports`). The JSX
+    // runtime comes from the options and the file's pragmas; whether the file needs the helpers module, from the
+    // options and whether it is a module, which `can_replace_file_in_program` also compares.
     fn can_keep_synthetic_imports(&self, old_file: P<SourceFile>, new_file: P<SourceFile>) -> bool {
         let old_helpers = self.import_helpers_import_specifiers.contains_key(old_file.path());
         let new_helpers = self.needs_import_helpers_import_specifier(new_file);
@@ -1006,13 +1022,9 @@ impl Program {
         }
         let is_java_script_file = ast::is_source_file_js(file);
         let is_external_module_file = ast::is_external_module(file);
-        if !is_java_script_file
+        !(!is_java_script_file
             && (file.is_declaration_file.get()
-                || (!options_for_file.get_isolated_modules() && !is_external_module_file))
-        {
-            return false;
-        }
-        true
+                || (!options_for_file.get_isolated_modules() && !is_external_module_file)))
     }
 
     // program.go:494
@@ -1052,21 +1064,9 @@ impl Program {
 
     // GetContentMapper returns the content mapper that produced the given source file, or nil if the
     // file was not produced by a content mapper.
-    // program.go:525
-    pub fn get_content_mapper(
-        &self,
-        file: P<SourceFile>,
-    ) -> Option<&'static tsrs_contentmapper::Mapper> {
-        if file.content_mapper().is_empty() {
-            return None;
-        }
-        let mapper = self.opts.config.get().get_content_mapper_for_file_name(file.file_name());
-        mapper.filter(|mapper| mapper.identity() == file.content_mapper())
-    }
 
-    // program.go:536
-    pub fn content_mapper_extensions(&self) -> Vec<String> {
-        self.opts.config.content_mapper_extensions()
+    pub(crate) fn content_mapper_extension_rewrites(&self) -> Vec<tspath::ExtensionRewrite> {
+        self.opts.config.content_mapper_extension_rewrites().to_vec()
     }
 
     // program.go:537
@@ -1130,17 +1130,13 @@ impl Program {
         unresolved_imports
     }
 
-    pub fn checker_count(&self) -> usize {
-        self.pool().checker_count()
-    }
-
     pub(crate) fn processing_diagnostics(
         &self,
-    ) -> std::sync::MutexGuard<'_, Vec<processingDiagnostic>> {
+    ) -> std::sync::MutexGuard<'_, Vec<ProcessingDiagnostic>> {
         self.processing_diagnostics.lock().unwrap()
     }
 
-    pub(crate) fn add_processing_diagnostic(&self, d: processingDiagnostic) {
+    fn add_processing_diagnostic(&self, d: ProcessingDiagnostic) {
         self.processing_diagnostics.lock().unwrap().push(d);
     }
 
@@ -1159,11 +1155,17 @@ impl Program {
         let unbound: Vec<P<SourceFile>> =
             self.files.iter().copied().filter(|f| !f.is_bound()).collect();
         if self.single_threaded() {
+            let _regions = crate::programregions::enter(self.opts.regions.as_deref());
             // Go's single-threaded work group runs queued functions last-queued first, so files bind in reverse
             // program order. The order is observable: the binder assigns symbol ids (private names).
             unbound.into_iter().rev().for_each(crate::fileregions::bind);
         } else {
-            worker_pool().install(|| unbound.into_par_iter().for_each(crate::fileregions::bind));
+            worker_pool().install(|| {
+                unbound.into_par_iter().for_each(|file| {
+                    let _regions = crate::programregions::enter(self.opts.regions.as_deref());
+                    crate::fileregions::bind(file);
+                });
+            });
         }
     }
 
@@ -1181,13 +1183,6 @@ impl Program {
         if let Some(pool) = self.compiler_checker_pool() {
             pool.for_each_checker_parallel(cb);
         }
-    }
-
-    /// The index (as passed to `for_each_checker_parallel`) of the checker the pool assigned `file` to, i.e. the
-    /// checker `for_each_checker_group` runs it on. Creates the checkers on first use. None when the program has no
-    /// checker pool of its own or `file` is not one of its files.
-    pub fn checker_index_of_file(&self, file: P<SourceFile>) -> Option<usize> {
-        self.compiler_checker_pool()?.checker_index_of_file(file)
     }
 
     /// Runs `cb` for every file of `files` with the file's checker, one task per checker, each visiting its files in
@@ -1240,18 +1235,14 @@ impl Program {
         self.get_resolved_module_by_path(file.path(), module_reference, mode)
     }
 
-    pub(crate) fn get_resolved_module_by_path(
+    fn get_resolved_module_by_path(
         &self,
         path: &Path,
         module_reference: &str,
         mode: ResolutionMode,
     ) -> Option<P<ResolvedModule>> {
         let resolutions = self.resolved_modules.get(path)?;
-        // Keys hold `&'static str`; a borrowed name cannot build a lookup key, and per-file caches are small.
-        resolutions
-            .iter()
-            .find(|(k, _)| k.name == module_reference && k.mode == mode)
-            .map(|(_, v)| *v)
+        tsrs_module::mode_aware_cache_get(resolutions, module_reference, mode).copied()
     }
 
     pub fn get_resolved_module_from_module_specifier(
@@ -1263,6 +1254,9 @@ impl Program {
             ast::is_string_literal_like(module_specifier),
             "moduleSpecifier must be a StringLiteralLike"
         );
+        if module_specifier.parent().is_some_and(ast::is_source_phase_import) {
+            return None;
+        }
         let mode = self.get_mode_for_usage_location(file, module_specifier);
         self.get_resolved_module(file, module_specifier.text(), mode)
     }
@@ -1276,7 +1270,7 @@ impl Program {
     }
 
     // GetPackagesMap returns a lazily-cached map of package names to whether they bundle types.
-    pub fn get_packages_map(&self) -> &FxHashMap<String, bool> {
+    pub(crate) fn get_packages_map(&self) -> &FxHashMap<String, bool> {
         self.packages_map.get_or_init(|| {
             let mut packages_map: FxHashMap<String, bool> = FxHashMap::default();
             #[expect(
@@ -1612,10 +1606,10 @@ impl Program {
     }
 
     fn can_include_bind_and_check_diagnostics(&self, source_file: P<SourceFile>) -> bool {
-        if let Some(directive) = source_file.check_js_directive.get() {
-            if !directive.enabled {
-                return false;
-            }
+        if let Some(directive) = source_file.check_js_directive.get()
+            && !directive.enabled
+        {
+            return false;
         }
 
         if matches!(
@@ -1640,7 +1634,7 @@ impl Program {
         let options = self.options();
 
         let source_file = self.opts.config.config_file.as_ref().map(|c| c.source_file);
-        let config_file_path = source_file.map(|f| f.file_name().to_string()).unwrap_or_default();
+        let config_file_path = source_file.map_or_default(|f| f.file_name().to_string());
 
         let compiler_options_property_syntax: Option<P<Node>> =
             tsoptions::for_each_ts_config_prop_array(source_file, "compilerOptions", Some);
@@ -1743,7 +1737,7 @@ impl Program {
                         true,
                         name,
                         "",
-                        &diagnostics::Option_0_has_been_removed_Please_remove_it_from_your_configuration,
+                        &diagnostics::OPTION_0_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION,
                         &[&name]
                     )
                 } else {
@@ -1751,12 +1745,12 @@ impl Program {
                         false,
                         name,
                         "",
-                        &diagnostics::Option_0_1_has_been_removed_Please_remove_it_from_your_configuration,
+                        &diagnostics::OPTION_0_1_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION,
                         &[&name, &value]
                     )
                 };
                 if !use_instead.is_empty() {
-                    diag.add_message_chain(new_compiler_diagnostic(&diagnostics::Use_0_instead, &[&use_instead]));
+                    diag.add_message_chain(new_compiler_diagnostic(&diagnostics::USE_0_INSTEAD, &[&use_instead]));
                 }
             }};
         }
@@ -1795,14 +1789,14 @@ impl Program {
         if options.module == ModuleKind::AMD {
             create_removed_option_diagnostic!("module", "AMD", String::new());
         }
-        if options.module == ModuleKind::System {
+        if options.module == ModuleKind::SYSTEM {
             create_removed_option_diagnostic!("module", "System", String::new());
         }
         if options.module == ModuleKind::UMD {
             create_removed_option_diagnostic!("module", "UMD", String::new());
         }
 
-        if options.module_resolution == ModuleResolutionKind::Classic {
+        if options.module_resolution == ModuleResolutionKind::CLASSIC {
             create_removed_option_diagnostic!("moduleResolution", "Classic", String::new());
         }
 
@@ -1822,7 +1816,7 @@ impl Program {
             );
         }
 
-        if options.module_resolution == ModuleResolutionKind::Node10 {
+        if options.module_resolution == ModuleResolutionKind::NODE10 {
             create_removed_option_diagnostic!("moduleResolution", "node10", String::new());
         }
 
@@ -1834,7 +1828,7 @@ impl Program {
             && !options.get_strict_option_value(options.strict_null_checks)
         {
             create_diagnostic_for_option_name!(
-                &diagnostics::Option_0_cannot_be_specified_without_specifying_option_1,
+                &diagnostics::OPTION_0_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION_1,
                 "strictPropertyInitialization",
                 "strictNullChecks"
             );
@@ -1843,7 +1837,7 @@ impl Program {
             && !options.get_strict_option_value(options.strict_null_checks)
         {
             create_diagnostic_for_option_name!(
-                &diagnostics::Option_0_cannot_be_specified_without_specifying_option_1,
+                &diagnostics::OPTION_0_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION_1,
                 "exactOptionalPropertyTypes",
                 "strictNullChecks"
             );
@@ -1852,14 +1846,14 @@ impl Program {
         if options.isolated_declarations.is_true() {
             if options.get_allow_js() {
                 create_diagnostic_for_option_name!(
-                    &diagnostics::Option_0_cannot_be_specified_with_option_1,
+                    &diagnostics::OPTION_0_CANNOT_BE_SPECIFIED_WITH_OPTION_1,
                     "allowJs",
                     "isolatedDeclarations"
                 );
             }
             if !options.get_emit_declarations() {
                 create_diagnostic_for_option_name!(
-                    &diagnostics::Option_0_cannot_be_specified_without_specifying_option_1_or_option_2,
+                    &diagnostics::OPTION_0_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION_1_OR_OPTION_2,
                     "isolatedDeclarations",
                     "declaration",
                     "composite"
@@ -1870,14 +1864,14 @@ impl Program {
         if options.inline_source_map.is_true() {
             if options.source_map.is_true() {
                 create_diagnostic_for_option_name!(
-                    &diagnostics::Option_0_cannot_be_specified_with_option_1,
+                    &diagnostics::OPTION_0_CANNOT_BE_SPECIFIED_WITH_OPTION_1,
                     "sourceMap",
                     "inlineSourceMap"
                 );
             }
             if !options.map_root.is_empty() {
                 create_diagnostic_for_option_name!(
-                    &diagnostics::Option_0_cannot_be_specified_with_option_1,
+                    &diagnostics::OPTION_0_CANNOT_BE_SPECIFIED_WITH_OPTION_1,
                     "mapRoot",
                     "inlineSourceMap"
                 );
@@ -1887,14 +1881,14 @@ impl Program {
         if options.composite.is_true() {
             if options.declaration.is_false() {
                 create_diagnostic_for_option_name!(
-                    &diagnostics::Composite_projects_may_not_disable_declaration_emit,
+                    &diagnostics::COMPOSITE_PROJECTS_MAY_NOT_DISABLE_DECLARATION_EMIT,
                     "declaration",
                     ""
                 );
             }
             if options.incremental.is_false() {
                 create_diagnostic_for_option_name!(
-                    &diagnostics::Composite_projects_may_not_disable_incremental_compilation,
+                    &diagnostics::COMPOSITE_PROJECTS_MAY_NOT_DISABLE_INCREMENTAL_COMPILATION,
                     "declaration",
                     ""
                 );
@@ -1907,7 +1901,7 @@ impl Program {
         {
             create_compiler_options_diagnostic(
                 &mut diags,
-                &diagnostics::Option_incremental_is_only_valid_with_a_known_configuration_file_like_tsconfig_json_or_when_tsBuildInfoFile_is_explicitly_provided,
+                &diagnostics::OPTION_INCREMENTAL_IS_ONLY_VALID_WITH_A_KNOWN_CONFIGURATION_FILE_LIKE_TSCONFIG_JSON_OR_WHEN_TS_BUILD_INFO_FILE_IS_EXPLICITLY_PROVIDED,
                 &[],
             );
         }
@@ -1929,10 +1923,10 @@ impl Program {
                 if source_file_may_be_emitted(file, self, false, false)
                     && !root_paths.contains(root_path)
                 {
-                    self.add_processing_diagnostic(processingDiagnostic::explaining(includeExplainingDiagnostic {
+                    self.add_processing_diagnostic(ProcessingDiagnostic::explaining(IncludeExplainingDiagnostic {
                         file: Some(file.path().clone()),
                         diagnostic_reason: None,
-                        message: &diagnostics::File_0_is_not_listed_within_the_file_list_of_project_1_Projects_must_list_all_files_or_use_an_include_pattern,
+                        message: &diagnostics::FILE_0_IS_NOT_LISTED_WITHIN_THE_FILE_LIST_OF_PROJECT_1_PROJECTS_MUST_LIST_ALL_FILES_OR_USE_AN_INCLUDE_PATTERN,
                         args: vec![file.file_name().to_string(), config_file_path.clone()],
                     }));
                 }
@@ -2038,7 +2032,8 @@ impl Program {
             };
 
         if let Some(paths) = &options.paths {
-            for (key, value) in paths {
+            let paths_base_path = options.get_paths_base_path(self.get_current_directory());
+            for (key, value) in paths.iter() {
                 // !!! This code does not handle cases where where the path mappings have the wrong types,
                 // as that information is mostly lost during the parsing process.
                 if !has_zero_or_one_asterisk_character(key) {
@@ -2046,7 +2041,7 @@ impl Program {
                         &mut diags,
                         true,
                         key,
-                        &diagnostics::Pattern_0_can_have_at_most_one_Asterisk_character,
+                        &diagnostics::PATTERN_0_CAN_HAVE_AT_MOST_ONE_ASTERISK_CHARACTER,
                         &[&key],
                     );
                 }
@@ -2055,14 +2050,14 @@ impl Program {
                         &mut diags,
                         false,
                         key,
-                        &diagnostics::Substitutions_for_pattern_0_should_be_an_array,
+                        &diagnostics::SUBSTITUTIONS_FOR_PATTERN_0_SHOULD_BE_AN_ARRAY,
                         &[&key],
                     ),
                     Some(value) if value.is_empty() => create_diagnostic_for_option_paths(
                         &mut diags,
                         false,
                         key,
-                        &diagnostics::Substitutions_for_pattern_0_shouldn_t_be_an_empty_array,
+                        &diagnostics::SUBSTITUTIONS_FOR_PATTERN_0_SHOULDN_T_BE_AN_EMPTY_ARRAY,
                         &[&key],
                     ),
                     Some(_) => {}
@@ -2073,7 +2068,7 @@ impl Program {
                             &mut diags,
                             key,
                             i,
-                            &diagnostics::Substitution_0_in_pattern_1_can_have_at_most_one_Asterisk_character,
+                            &diagnostics::SUBSTITUTION_0_IN_PATTERN_1_CAN_HAVE_AT_MOST_ONE_ASTERISK_CHARACTER,
                             &[&subst, &key],
                         );
                     }
@@ -2082,8 +2077,19 @@ impl Program {
                             &mut diags,
                             key,
                             i,
-                            &diagnostics::Non_relative_paths_are_not_allowed_Did_you_forget_a_leading_Slash,
+                            &diagnostics::NON_RELATIVE_PATHS_ARE_NOT_ALLOWED_DID_YOU_FORGET_A_LEADING_SLASH,
                             &[],
+                        );
+                    } else if tspath::is_network_path(&tspath::get_normalized_absolute_path(
+                        subst,
+                        &paths_base_path,
+                    )) {
+                        create_diagnostic_for_option_path_key_value(
+                            &mut diags,
+                            key,
+                            i,
+                            &diagnostics::NETWORK_PATH_0_IS_NOT_SUPPORTED,
+                            &[subst],
                         );
                     }
                 }
@@ -2095,14 +2101,14 @@ impl Program {
         {
             if options.inline_sources.is_true() {
                 create_diagnostic_for_option_name!(
-                    &diagnostics::Option_0_can_only_be_used_when_either_option_inlineSourceMap_or_option_sourceMap_is_provided,
+                    &diagnostics::OPTION_0_CAN_ONLY_BE_USED_WHEN_EITHER_OPTION_INLINE_SOURCE_MAP_OR_OPTION_SOURCE_MAP_IS_PROVIDED,
                     "inlineSources",
                     ""
                 );
             }
             if !options.source_root.is_empty() {
                 create_diagnostic_for_option_name!(
-                    &diagnostics::Option_0_can_only_be_used_when_either_option_inlineSourceMap_or_option_sourceMap_is_provided,
+                    &diagnostics::OPTION_0_CAN_ONLY_BE_USED_WHEN_EITHER_OPTION_INLINE_SOURCE_MAP_OR_OPTION_SOURCE_MAP_IS_PROVIDED,
                     "sourceRoot",
                     ""
                 );
@@ -2115,7 +2121,7 @@ impl Program {
         {
             // Error to specify --mapRoot without --sourcemap
             create_diagnostic_for_option_name!(
-                &diagnostics::Option_0_cannot_be_specified_without_specifying_option_1_or_option_2,
+                &diagnostics::OPTION_0_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION_1_OR_OPTION_2,
                 "mapRoot",
                 "sourceMap",
                 "declarationMap"
@@ -2124,7 +2130,7 @@ impl Program {
 
         if !options.declaration_dir.is_empty() && !options.get_emit_declarations() {
             create_diagnostic_for_option_name!(
-                &diagnostics::Option_0_cannot_be_specified_without_specifying_option_1_or_option_2,
+                &diagnostics::OPTION_0_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION_1_OR_OPTION_2,
                 "declarationDir",
                 "declaration",
                 "composite"
@@ -2133,7 +2139,7 @@ impl Program {
 
         if options.declaration_map.is_true() && !options.get_emit_declarations() {
             create_diagnostic_for_option_name!(
-                &diagnostics::Option_0_cannot_be_specified_without_specifying_option_1_or_option_2,
+                &diagnostics::OPTION_0_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION_1_OR_OPTION_2,
                 "declarationMap",
                 "declaration",
                 "composite"
@@ -2142,24 +2148,24 @@ impl Program {
 
         if options.lib.is_some() && options.no_lib.is_true() {
             create_diagnostic_for_option_name!(
-                &diagnostics::Option_0_cannot_be_specified_with_option_1,
+                &diagnostics::OPTION_0_CANNOT_BE_SPECIFIED_WITH_OPTION_1,
                 "lib",
                 "noLib"
             );
         }
 
-        if options.isolated_modules.is_true() || options.verbatim_module_syntax.is_true() {
-            if options.preserve_const_enums.is_false() {
-                create_diagnostic_for_option_name!(
-                    &diagnostics::Option_preserveConstEnums_cannot_be_disabled_when_0_is_enabled,
-                    if options.verbatim_module_syntax.is_true() {
-                        "verbatimModuleSyntax"
-                    } else {
-                        "isolatedModules"
-                    },
-                    "preserveConstEnums"
-                );
-            }
+        if (options.isolated_modules.is_true() || options.verbatim_module_syntax.is_true())
+            && options.preserve_const_enums.is_false()
+        {
+            create_diagnostic_for_option_name!(
+                &diagnostics::OPTION_PRESERVE_CONST_ENUMS_CANNOT_BE_DISABLED_WHEN_0_IS_ENABLED,
+                if options.verbatim_module_syntax.is_true() {
+                    "verbatimModuleSyntax"
+                } else {
+                    "isolatedModules"
+                },
+                "preserveConstEnums"
+            );
         }
 
         self.program_diagnostics.append(&mut diags);
@@ -2177,7 +2183,7 @@ impl Program {
                 && self.files.iter().any(|f| tspath::get_root_length(f.file_name()) > 1)
             {
                 create_diagnostic_for_option_name!(
-                    &diagnostics::Cannot_find_the_common_subdirectory_path_for_the_input_files,
+                    &diagnostics::CANNOT_FIND_THE_COMMON_SUBDIRECTORY_PATH_FOR_THE_INPUT_FILES,
                     "outDir",
                     ""
                 );
@@ -2235,16 +2241,16 @@ impl Program {
                     true,
                     option1,
                     option2,
-                    &diagnostics::The_common_source_directory_of_0_is_1_The_rootDir_setting_must_be_explicitly_set_to_this_or_another_path_to_adjust_your_output_s_file_layout,
+                    &diagnostics::THE_COMMON_SOURCE_DIRECTORY_OF_0_IS_1_THE_ROOT_DIR_SETTING_MUST_BE_EXPLICITLY_SET_TO_THIS_OR_ANOTHER_PATH_TO_ADJUST_YOUR_OUTPUT_S_FILE_LAYOUT,
                     &[&base, &relative]
                 );
-                diag.add_message_chain(new_compiler_diagnostic(&diagnostics::Visit_https_Colon_Slash_Slashaka_ms_Slashts6_for_migration_information, &[]));
+                diag.add_message_chain(new_compiler_diagnostic(&diagnostics::VISIT_HTTPS_COLON_SLASH_SLASHAKA_MS_SLASHTS6_FOR_MIGRATION_INFORMATION, &[]));
             }
         }
 
         if options.check_js.is_true() && !options.get_allow_js() {
             create_diagnostic_for_option_name!(
-                &diagnostics::Option_0_cannot_be_specified_without_specifying_option_1,
+                &diagnostics::OPTION_0_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION_1,
                 "checkJs",
                 "allowJs"
             );
@@ -2252,7 +2258,7 @@ impl Program {
 
         if options.emit_declaration_only.is_true() && !options.get_emit_declarations() {
             create_diagnostic_for_option_name!(
-                &diagnostics::Option_0_cannot_be_specified_without_specifying_option_1_or_option_2,
+                &diagnostics::OPTION_0_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION_1_OR_OPTION_2,
                 "emitDeclarationOnly",
                 "declaration",
                 "composite"
@@ -2263,25 +2269,25 @@ impl Program {
             && options.experimental_decorators.is_false_or_unknown()
         {
             create_diagnostic_for_option_name!(
-                &diagnostics::Option_0_cannot_be_specified_without_specifying_option_1,
+                &diagnostics::OPTION_0_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION_1,
                 "emitDecoratorMetadata",
                 "experimentalDecorators"
             );
         }
 
         let jsx_is_react_jsx =
-            options.jsx == JsxEmit::ReactJSX || options.jsx == JsxEmit::ReactJSXDev;
+            options.jsx == JsxEmit::REACT_JSX || options.jsx == JsxEmit::REACT_JSX_DEV;
         if !options.jsx_factory.is_empty() {
             if !options.react_namespace.is_empty() {
                 create_diagnostic_for_option_name!(
-                    &diagnostics::Option_0_cannot_be_specified_with_option_1,
+                    &diagnostics::OPTION_0_CANNOT_BE_SPECIFIED_WITH_OPTION_1,
                     "reactNamespace",
                     "jsxFactory"
                 );
             }
             if jsx_is_react_jsx {
                 create_diagnostic_for_option_name!(
-                    &diagnostics::Option_0_cannot_be_specified_when_option_jsx_is_1,
+                    &diagnostics::OPTION_0_CANNOT_BE_SPECIFIED_WHEN_OPTION_JSX_IS_1,
                     "jsxFactory",
                     options.jsx.string()
                 );
@@ -2289,7 +2295,7 @@ impl Program {
             if tsrs_parser::parse_isolated_entity_name(&options.jsx_factory).is_none() {
                 create_option_value_diagnostic!(
                     "jsxFactory",
-                    &diagnostics::Invalid_value_for_jsxFactory_0_is_not_a_valid_identifier_or_qualified_name,
+                    &diagnostics::INVALID_VALUE_FOR_JSX_FACTORY_0_IS_NOT_A_VALID_IDENTIFIER_OR_QUALIFIED_NAME,
                     &[&options.jsx_factory]
                 );
             }
@@ -2301,7 +2307,7 @@ impl Program {
         {
             create_option_value_diagnostic!(
                 "reactNamespace",
-                &diagnostics::Invalid_value_for_reactNamespace_0_is_not_a_valid_identifier,
+                &diagnostics::INVALID_VALUE_FOR_REACT_NAMESPACE_0_IS_NOT_A_VALID_IDENTIFIER,
                 &[&options.react_namespace]
             );
         }
@@ -2309,14 +2315,14 @@ impl Program {
         if !options.jsx_fragment_factory.is_empty() {
             if options.jsx_factory.is_empty() {
                 create_diagnostic_for_option_name!(
-                    &diagnostics::Option_0_cannot_be_specified_without_specifying_option_1,
+                    &diagnostics::OPTION_0_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION_1,
                     "jsxFragmentFactory",
                     "jsxFactory"
                 );
             }
             if jsx_is_react_jsx {
                 create_diagnostic_for_option_name!(
-                    &diagnostics::Option_0_cannot_be_specified_when_option_jsx_is_1,
+                    &diagnostics::OPTION_0_CANNOT_BE_SPECIFIED_WHEN_OPTION_JSX_IS_1,
                     "jsxFragmentFactory",
                     options.jsx.string()
                 );
@@ -2324,7 +2330,7 @@ impl Program {
             if tsrs_parser::parse_isolated_entity_name(&options.jsx_fragment_factory).is_none() {
                 create_option_value_diagnostic!(
                     "jsxFragmentFactory",
-                    &diagnostics::Invalid_value_for_jsxFragmentFactory_0_is_not_a_valid_identifier_or_qualified_name,
+                    &diagnostics::INVALID_VALUE_FOR_JSX_FRAGMENT_FACTORY_0_IS_NOT_A_VALID_IDENTIFIER_OR_QUALIFIED_NAME,
                     &[&options.jsx_fragment_factory]
                 );
             }
@@ -2332,15 +2338,15 @@ impl Program {
 
         if !options.react_namespace.is_empty() && jsx_is_react_jsx {
             create_diagnostic_for_option_name!(
-                &diagnostics::Option_0_cannot_be_specified_when_option_jsx_is_1,
+                &diagnostics::OPTION_0_CANNOT_BE_SPECIFIED_WHEN_OPTION_JSX_IS_1,
                 "reactNamespace",
                 options.jsx.string()
             );
         }
 
-        if !options.jsx_import_source.is_empty() && options.jsx == JsxEmit::React {
+        if !options.jsx_import_source.is_empty() && options.jsx == JsxEmit::REACT {
             create_diagnostic_for_option_name!(
-                &diagnostics::Option_0_cannot_be_specified_when_option_jsx_is_1,
+                &diagnostics::OPTION_0_CANNOT_BE_SPECIFIED_WHEN_OPTION_JSX_IS_1,
                 "jsxImportSource",
                 options.jsx.string()
             );
@@ -2355,7 +2361,7 @@ impl Program {
         {
             create_option_value_diagnostic!(
                 "allowImportingTsExtensions",
-                &diagnostics::Option_allowImportingTsExtensions_can_only_be_used_when_one_of_noEmit_emitDeclarationOnly_or_rewriteRelativeImportExtensions_is_set,
+                &diagnostics::OPTION_ALLOW_IMPORTING_TS_EXTENSIONS_CAN_ONLY_BE_USED_WHEN_ONE_OF_NO_EMIT_EMIT_DECLARATION_ONLY_OR_REWRITE_RELATIVE_IMPORT_EXTENSIONS_IS_SET,
                 &[]
             );
         }
@@ -2365,7 +2371,7 @@ impl Program {
             && !module_resolution_supports_package_json_exports_and_imports(module_resolution)
         {
             create_diagnostic_for_option_name!(
-                &diagnostics::Option_0_can_only_be_used_when_moduleResolution_is_set_to_node16_nodenext_or_bundler,
+                &diagnostics::OPTION_0_CAN_ONLY_BE_USED_WHEN_MODULE_RESOLUTION_IS_SET_TO_NODE16_NODENEXT_OR_BUNDLER,
                 "resolvePackageJsonExports",
                 ""
             );
@@ -2374,7 +2380,7 @@ impl Program {
             && !module_resolution_supports_package_json_exports_and_imports(module_resolution)
         {
             create_diagnostic_for_option_name!(
-                &diagnostics::Option_0_can_only_be_used_when_moduleResolution_is_set_to_node16_nodenext_or_bundler,
+                &diagnostics::OPTION_0_CAN_ONLY_BE_USED_WHEN_MODULE_RESOLUTION_IS_SET_TO_NODE16_NODENEXT_OR_BUNDLER,
                 "resolvePackageJsonImports",
                 ""
             );
@@ -2383,28 +2389,28 @@ impl Program {
             && !module_resolution_supports_package_json_exports_and_imports(module_resolution)
         {
             create_diagnostic_for_option_name!(
-                &diagnostics::Option_0_can_only_be_used_when_moduleResolution_is_set_to_node16_nodenext_or_bundler,
+                &diagnostics::OPTION_0_CAN_ONLY_BE_USED_WHEN_MODULE_RESOLUTION_IS_SET_TO_NODE16_NODENEXT_OR_BUNDLER,
                 "customConditions",
                 ""
             );
         }
 
-        if module_resolution == ModuleResolutionKind::Bundler
+        if module_resolution == ModuleResolutionKind::BUNDLER
             && !emit_module_kind_is_non_node_esm(module_kind)
-            && module_kind != ModuleKind::Preserve
-            && module_kind != ModuleKind::CommonJS
+            && module_kind != ModuleKind::PRESERVE
+            && module_kind != ModuleKind::COMMON_JS
         {
             create_option_value_diagnostic!(
                 "moduleResolution",
-                &diagnostics::Option_0_can_only_be_used_when_module_is_set_to_preserve_commonjs_or_es2015_or_later,
+                &diagnostics::OPTION_0_CAN_ONLY_BE_USED_WHEN_MODULE_IS_SET_TO_PRESERVE_COMMONJS_OR_ES2015_OR_LATER,
                 &[&"bundler"]
             );
         }
 
-        if ModuleKind::Node16 <= module_kind
-            && module_kind <= ModuleKind::NodeNext
-            && !(ModuleResolutionKind::Node16 <= module_resolution
-                && module_resolution <= ModuleResolutionKind::NodeNext)
+        if ModuleKind::NODE16 <= module_kind
+            && module_kind <= ModuleKind::NODE_NEXT
+            && !(ModuleResolutionKind::NODE16 <= module_resolution
+                && module_resolution <= ModuleResolutionKind::NODE_NEXT)
         {
             let module_kind_name = module_kind.string();
             let module_resolution_name =
@@ -2414,17 +2420,17 @@ impl Program {
                 };
             create_option_value_diagnostic!(
                 "moduleResolution",
-                &diagnostics::Option_moduleResolution_must_be_set_to_0_or_left_unspecified_when_option_module_is_set_to_1,
+                &diagnostics::OPTION_MODULE_RESOLUTION_MUST_BE_SET_TO_0_OR_LEFT_UNSPECIFIED_WHEN_OPTION_MODULE_IS_SET_TO_1,
                 &[&module_resolution_name, &module_kind_name]
             );
-        } else if ModuleResolutionKind::Node16 <= module_resolution
-            && module_resolution <= ModuleResolutionKind::NodeNext
-            && !(ModuleKind::Node16 <= module_kind && module_kind <= ModuleKind::NodeNext)
+        } else if ModuleResolutionKind::NODE16 <= module_resolution
+            && module_resolution <= ModuleResolutionKind::NODE_NEXT
+            && !(ModuleKind::NODE16 <= module_kind && module_kind <= ModuleKind::NODE_NEXT)
         {
             let module_resolution_name = module_resolution.string();
             create_option_value_diagnostic!(
                 "module",
-                &diagnostics::Option_module_must_be_set_to_0_when_option_moduleResolution_is_set_to_1,
+                &diagnostics::OPTION_MODULE_MUST_BE_SET_TO_0_WHEN_OPTION_MODULE_RESOLUTION_IS_SET_TO_1,
                 &[&module_resolution_name, &module_resolution_name]
             );
         }
@@ -2437,6 +2443,16 @@ impl Program {
         if !options.no_emit.is_true() && !options.suppress_output_path_check.is_true() {
             let mut emit_files_seen: FxHashSet<String> = FxHashSet::default();
             let mut emit_file_names: Vec<String> = Vec::new();
+            let external_output_source_files: Vec<P<SourceFile>> = self
+                .source_files()
+                .iter()
+                .copied()
+                .filter(|source_file| {
+                    !source_file.content_mapper().is_empty()
+                        && !self.is_source_file_from_external_library(*source_file)
+                        && self.get_project_reference_from_source(source_file.path()).is_none()
+                })
+                .collect();
             tsoptions::outputpaths::for_each_emitted_file(
                 &*self,
                 &options,
@@ -2445,9 +2461,11 @@ impl Program {
                     emit_file_names.push(paths.source_map_file_path().to_string());
                     emit_file_names.push(paths.declaration_file_path().to_string());
                     emit_file_names.push(paths.declaration_map_path().to_string());
+                    emit_file_names.push(paths.external_output_file_path().to_string());
                     false
                 },
                 &self.get_source_files_to_emit(None, false, false),
+                &external_output_source_files,
                 false,
             );
             emit_file_names.push(self.opts.config.get_build_info_file_name());
@@ -2461,23 +2479,23 @@ impl Program {
                 // Report error if the output overwrites input file
                 if self.files_by_path().contains_key(&emit_file_path) {
                     let diag = new_compiler_diagnostic(
-                        &diagnostics::Cannot_write_file_0_because_it_would_overwrite_input_file,
+                        &diagnostics::CANNOT_WRITE_FILE_0_BECAUSE_IT_WOULD_OVERWRITE_INPUT_FILE,
                         &[emit_file_name],
                     );
                     if config_file_path.is_empty() {
                         // The program is from either an inferred project or an external project
                         diag.add_message_chain(new_compiler_diagnostic(
-                            &diagnostics::Adding_a_tsconfig_json_file_will_help_organize_projects_that_contain_both_TypeScript_and_JavaScript_files_Learn_more_at_https_Colon_Slash_Slashaka_ms_Slashtsconfig,
+                            &diagnostics::ADDING_A_TSCONFIG_JSON_FILE_WILL_HELP_ORGANIZE_PROJECTS_THAT_CONTAIN_BOTH_TYPE_SCRIPT_AND_JAVA_SCRIPT_FILES_LEARN_MORE_AT_HTTPS_COLON_SLASH_SLASHAKA_MS_SLASHTSCONFIG,
                             &[],
                         ));
                     }
                     self.block_emitting_of_file(emit_file_name, diag);
                 }
 
-                let emit_file_key = if !self.host().fs().use_case_sensitive_file_names() {
-                    tspath::to_file_name_lower_case(&emit_file_path)
-                } else {
+                let emit_file_key = if self.host().fs().use_case_sensitive_file_names() {
                     emit_file_path.as_str().to_string()
+                } else {
+                    tspath::to_file_name_lower_case(&emit_file_path)
                 };
 
                 // Report error if multiple files write into same file
@@ -2485,7 +2503,7 @@ impl Program {
                     // Already seen the same emit file - report error
                     self.block_emitting_of_file(
                         emit_file_name,
-                        new_compiler_diagnostic(&diagnostics::Cannot_write_file_0_because_it_would_be_overwritten_by_multiple_input_files, &[emit_file_name]),
+                        new_compiler_diagnostic(&diagnostics::CANNOT_WRITE_FILE_0_BECAUSE_IT_WOULD_BE_OVERWRITTEN_BY_MULTIPLE_INPUT_FILES, &[emit_file_name]),
                     );
                 }
             }
@@ -2518,10 +2536,10 @@ impl Program {
 
     // program.go:1402
     fn verify_project_references(&mut self) {
-        let build_info_file_name = if !self.options().suppress_output_path_check.is_true() {
-            self.opts.config.get_build_info_file_name()
-        } else {
+        let build_info_file_name = if self.options().suppress_output_path_check.is_true() {
             String::new()
+        } else {
+            self.opts.config.get_build_info_file_name()
         };
         let mut program_diagnostics = Vec::new();
         let mut emit_blocking = Vec::new();
@@ -2541,25 +2559,24 @@ impl Program {
             // !!! Deprecated in 5.0 and removed since 5.5
             // verifyRemovedProjectReference(ref, parent, index);
             let Some(config) = config else {
-                create_diagnostic_for_reference(parent, index, &diagnostics::File_0_not_found, &[&ref_.path]);
+                create_diagnostic_for_reference(parent, index, &diagnostics::FILE_0_NOT_FOUND, &[&ref_.path]);
                 return true;
             };
             let ref_options = config.compiler_options().unwrap();
-            if !ref_options.composite.is_true() || ref_options.no_emit.is_true() {
-                if !parent.file_names().is_empty() {
+            if (!ref_options.composite.is_true() || ref_options.no_emit.is_true())
+                && !parent.file_names().is_empty() {
                     if !ref_options.composite.is_true() {
-                        create_diagnostic_for_reference(parent, index, &diagnostics::Referenced_project_0_must_have_setting_composite_Colon_true, &[&ref_.path]);
+                        create_diagnostic_for_reference(parent, index, &diagnostics::REFERENCED_PROJECT_0_MUST_HAVE_SETTING_COMPOSITE_COLON_TRUE, &[&ref_.path]);
                     }
                     if ref_options.no_emit.is_true() {
-                        create_diagnostic_for_reference(parent, index, &diagnostics::Referenced_project_0_may_not_disable_emit, &[&ref_.path]);
+                        create_diagnostic_for_reference(parent, index, &diagnostics::REFERENCED_PROJECT_0_MAY_NOT_DISABLE_EMIT, &[&ref_.path]);
                     }
                 }
-            }
             if !build_info_file_name.is_empty() && build_info_file_name == config.get_build_info_file_name() {
                 create_diagnostic_for_reference(
                     parent,
                     index,
-                    &diagnostics::Cannot_write_file_0_because_it_will_overwrite_tsbuildinfo_file_generated_by_referenced_project_1,
+                    &diagnostics::CANNOT_WRITE_FILE_0_BECAUSE_IT_WILL_OVERWRITE_TSBUILDINFO_FILE_GENERATED_BY_REFERENCED_PROJECT_1,
                     &[&build_info_file_name, &ref_.path],
                 );
                 emit_blocking.push(build_info_file_name.clone());
@@ -2651,10 +2668,11 @@ impl Program {
         };
         // The declaration transform runs in a scratch region of its own, freed once its diagnostics are collected
         // (notes/mem-emit-regions.md; the diagnostics themselves escape it).
-        let emit_resolver = c.get_emit_resolver();
         let region = tsrs_core::arena::Region::new_scratch(64 << 10);
         let diagnostics = {
             let _scratch = region.enter_scratch();
+            let emit_context = tsrs_printer::new_scratch_emit_context();
+            let emit_resolver = c.new_emit_resolver(emit_context);
             let checker_slot = P::new(tsrs_checker::CheckerSlot::default());
             let host = crate::emithost::new_emit_host(self, emit_resolver, checker_slot);
             checker_slot
@@ -2673,7 +2691,8 @@ impl Program {
     }
 
     // program.go:1488
-    fn get_semantic_diagnostics_with_checker(
+    /// Collects a file's semantic diagnostics using an exclusively borrowed checker for this program.
+    pub fn get_semantic_diagnostics_with_checker(
         &'static self,
         ctx: &Context,
         c: &mut Checker,
@@ -2768,7 +2787,7 @@ impl Program {
                     Some(new_diagnostic(
                         Some(source_file),
                         directive.loc,
-                        &diagnostics::Unused_ts_expect_error_directive,
+                        &diagnostics::UNUSED_TS_EXPECT_ERROR_DIRECTIVE,
                         &[],
                     ))
                 } else {
@@ -2906,11 +2925,6 @@ impl Program {
             .map_or(0, |pool| f(&pool.state().retired.lock().unwrap()) as usize)
     }
 
-    // program.go:1743
-    pub fn program(&self) -> &Program {
-        self
-    }
-
     /// Go returns the struct by value (sharing its strings); a reference here, so the hot callers (module mode
     /// lookups during checking) do not copy two strings.
     pub fn get_source_file_meta_data(&self, path: &Path) -> &SourceFileMetaData {
@@ -2929,7 +2943,7 @@ impl Program {
         )
     }
 
-    pub fn get_emit_syntax_for_usage_location(
+    pub(crate) fn get_emit_syntax_for_usage_location(
         &self,
         source_file: P<SourceFile>,
         location: P<Node>,
@@ -3043,7 +3057,7 @@ impl Program {
                 },
                 self.get_current_directory(),
                 self.use_case_sensitive_file_names(),
-                Some(&|source_files: &[String], root_directory: &str| {
+                Some(&mut |source_files: &[String], root_directory: &str| {
                     self.check_source_files_belong_to_path(source_files, root_directory)
                 }),
             )
@@ -3081,10 +3095,10 @@ impl Program {
                     &tspath::get_normalized_absolute_path(file, self.get_current_directory()),
                     self.use_case_sensitive_file_names(),
                 );
-                self.add_processing_diagnostic(processingDiagnostic::explaining(includeExplainingDiagnostic {
+                self.add_processing_diagnostic(ProcessingDiagnostic::explaining(IncludeExplainingDiagnostic {
                     file: Some(Path::from(absolute_source_file_path)),
                     diagnostic_reason: None,
-                    message: &diagnostics::File_0_is_not_under_rootDir_1_rootDir_is_expected_to_contain_all_source_files,
+                    message: &diagnostics::FILE_0_IS_NOT_UNDER_ROOT_DIR_1_ROOT_DIR_IS_EXPECTED_TO_CONTAIN_ALL_SOURCE_FILES,
                     args: vec![file.clone(), root_directory.to_string()],
                 }));
                 all_files_belong_to_path = false;
@@ -3093,7 +3107,7 @@ impl Program {
         all_files_belong_to_path
     }
 
-    pub fn to_path(&self, filename: &str) -> Path {
+    fn to_path(&self, filename: &str) -> Path {
         tspath::to_path(
             filename,
             self.get_current_directory(),
@@ -3106,7 +3120,10 @@ impl Program {
         self.get_source_file_by_path(&path)
     }
 
-    pub fn get_source_file_for_resolved_module(&self, file_name: &str) -> Option<P<SourceFile>> {
+    pub(crate) fn get_source_file_for_resolved_module(
+        &self,
+        file_name: &str,
+    ) -> Option<P<SourceFile>> {
         let file = self.get_source_file(file_name);
         if file.is_none() {
             let filename = self.get_parse_file_redirect(file_name);
@@ -3190,7 +3207,7 @@ impl Program {
             *files_explained += 1;
         };
 
-        let mut redirect_files: Vec<&crate::fileloader::redirectsFile> =
+        let mut redirect_files: Vec<&crate::fileloader::RedirectsFile> =
             self.redirect_files_by_path.values().collect();
         redirect_files.sort_by_key(|r| r.index);
 
@@ -3256,7 +3273,7 @@ impl Program {
         ref_: P<FileReference>,
         source_file: P<SourceFile>,
     ) -> ResolutionMode {
-        if ref_.resolution_mode != ModuleKind::None {
+        if ref_.resolution_mode != ModuleKind::NONE {
             return ref_.resolution_mode;
         }
         self.get_default_resolution_mode_for_file(source_file)
@@ -3268,13 +3285,15 @@ impl Program {
 
     pub fn get_jsx_runtime_import_specifier(&self, path: &Path) -> (String, Option<P<Node>>) {
         match self.jsx_runtime_import_specifiers.get(path) {
-            Some(result) => (result.module_reference.clone(), Some(result.specifier)),
+            Some(result) => {
+                (result.module_reference.clone(), Some(self.synthetic_import(result.specifier)))
+            }
             None => (String::new(), None),
         }
     }
 
     pub fn get_import_helpers_import_specifier(&self, path: &Path) -> Option<P<Node>> {
-        self.import_helpers_import_specifiers.get(path).copied()
+        self.import_helpers_import_specifiers.get(path).map(|&s| self.synthetic_import(s))
     }
 
     pub fn source_file_may_be_emitted(
@@ -3301,10 +3320,10 @@ impl Program {
     }
 
     // program.go:2234
-    fn collect_package_names(&self) -> &packageNamesInfo {
+    fn collect_package_names(&self) -> &PackageNamesInfo {
         self.package_names.get_or_init(|| {
             let resolver = self.new_resolver();
-            let mut package_names = packageNamesInfo {
+            let mut package_names = PackageNamesInfo {
                 resolved: Set::default(),
                 unresolved: Set::default(),
                 deep_import_packages: Set::default(),
@@ -3319,7 +3338,9 @@ impl Program {
                     continue;
                 }
                 'imports: for &imp in file.imports() {
-                    if tspath::is_external_module_name_relative(imp.text()) {
+                    if imp.parent().is_some_and(ast::is_source_phase_import)
+                        || tspath::is_external_module_name_relative(imp.text())
+                    {
                         continue;
                     }
                     if self.resolved_modules.contains_key(file.path()) {
@@ -3338,15 +3359,12 @@ impl Program {
                                 // 2. GetPackageScopeForPath - get name from package.json in the package directory
                                 if let Some(package_scope) = resolver
                                     .get_package_scope_for_path(resolved_module.resolved_file_name)
+                                    && package_scope.exists()
+                                    && let Some(scope_name) = package_scope
+                                        .contents
+                                        .and_then(|c| c.get().name.get_value())
                                 {
-                                    if package_scope.exists() {
-                                        if let Some(scope_name) = package_scope
-                                            .contents
-                                            .and_then(|c| c.get().name.get_value())
-                                        {
-                                            name.clone_from(scope_name);
-                                        }
-                                    }
+                                    name.clone_from(scope_name);
                                 }
                             }
                             if name.is_empty() {
@@ -3362,22 +3380,16 @@ impl Program {
                                 // These are imports like "lodash/fp" where the package has no exports
                                 // map, so auto-import can only find them via recursive directory search.
                                 let (_, rest) = module::parse_package_name(imp.text());
-                                if !rest.is_empty() {
-                                    if let Some(scope) = resolver.get_package_scope_for_path(
+                                if !rest.is_empty()
+                                    && let Some(scope) = resolver.get_package_scope_for_path(
                                         resolved_module.resolved_file_name,
-                                    ) {
-                                        if scope.exists()
-                                            && !scope
-                                                .contents
-                                                .is_some_and(|c| c.exports.is_present())
-                                        {
-                                            package_names.deep_import_packages.add(
-                                                module::get_package_name_from_types_package_name(
-                                                    &name,
-                                                ),
-                                            );
-                                        }
-                                    }
+                                    )
+                                    && scope.exists()
+                                    && !scope.contents.is_some_and(|c| c.exports.is_present())
+                                {
+                                    package_names.deep_import_packages.add(
+                                        module::get_package_name_from_types_package_name(&name),
+                                    );
                                 }
                             }
                             continue 'imports;
@@ -3407,7 +3419,7 @@ impl Program {
         }
         // `UpdateProgram` hands the cache to the next program version, which shares `processed`: in the language
         // server it lives in the region that owns `processed` (the full build's), not in this version's.
-        let _region = tsrs_core::arena::enter_owner(std::ptr::from_ref::<processedFiles>(
+        let _region = tsrs_core::arena::enter_owner(std::ptr::from_ref::<ProcessedFiles>(
             self.processed,
         ) as usize);
         *self.known_symlinks.get_or_init(|| {
@@ -3478,7 +3490,7 @@ impl Program {
                         .resolve_package_directory(
                             dep,
                             &package_json_name,
-                            ModuleKind::CommonJS,
+                            ModuleKind::COMMON_JS,
                             None,
                         )
                         .filter(|r| r.is_resolved() && !r.original_path.is_empty())
@@ -3500,7 +3512,7 @@ impl Program {
         })
     }
 
-    pub fn for_each_resolved_module(
+    fn for_each_resolved_module(
         &self,
         callback: &mut dyn FnMut(&ResolvedModule, &str, ResolutionMode, &Path),
         file: Option<P<SourceFile>>,
@@ -3514,7 +3526,7 @@ impl Program {
         );
     }
 
-    pub fn for_each_resolved_type_reference_directive(
+    fn for_each_resolved_type_reference_directive(
         &self,
         callback: &mut dyn FnMut(&ResolvedTypeReferenceDirective, &str, ResolutionMode, &Path),
         file: Option<P<SourceFile>>,
@@ -3671,31 +3683,32 @@ fn get_additional_js_syntactic_diagnostics(
     file: P<SourceFile>,
     options: &CompilerOptions,
 ) -> Vec<P<Diagnostic>> {
-    if options.experimental_decorators.is_true() {
-        return Vec::new();
-    }
-    let mut diags = Vec::new();
     // Parameter decorators are only valid with experimentalDecorators. Without it,
     // the checker would report this, but the checker doesn't run on unchecked JS files.
     fn walk(node: P<Node>, file: P<SourceFile>, diags: &mut Vec<P<Diagnostic>>) -> bool {
         if !node.subtree_facts().intersects(ast::SubtreeFacts::ContainsDecorators) {
             return false;
         }
-        if node.kind() == Kind::Parameter && ast::has_decorators(node) {
-            if let Some(decorator) =
+        if node.kind() == Kind::Parameter
+            && ast::has_decorators(node)
+            && let Some(decorator) =
                 node.modifier_nodes().iter().copied().find(|n| ast::is_decorator(*n))
-            {
-                diags.push(new_diagnostic(
-                    Some(file),
-                    decorator.loc(),
-                    &diagnostics::Decorators_are_not_valid_here,
-                    &[],
-                ));
-            }
+        {
+            diags.push(new_diagnostic(
+                Some(file),
+                decorator.loc(),
+                &diagnostics::DECORATORS_ARE_NOT_VALID_HERE,
+                &[],
+            ));
         }
         node.for_each_child(&mut |child| walk(child, file, diags));
         false
     }
+
+    if options.experimental_decorators.is_true() {
+        return Vec::new();
+    }
+    let mut diags = Vec::new();
     file.as_node().for_each_child(&mut |child| walk(child, file, &mut diags));
     diags
 }
@@ -3717,13 +3730,13 @@ fn has_zero_or_one_asterisk_character(str: &str) -> bool {
 fn module_resolution_supports_package_json_exports_and_imports(
     module_resolution: ModuleResolutionKind,
 ) -> bool {
-    module_resolution >= ModuleResolutionKind::Node16
-        && module_resolution <= ModuleResolutionKind::NodeNext
-        || module_resolution == ModuleResolutionKind::Bundler
+    module_resolution >= ModuleResolutionKind::NODE16
+        && module_resolution <= ModuleResolutionKind::NODE_NEXT
+        || module_resolution == ModuleResolutionKind::BUNDLER
 }
 
 fn emit_module_kind_is_non_node_esm(module_kind: ModuleKind) -> bool {
-    module_kind >= ModuleKind::ES2015 && module_kind <= ModuleKind::ESNext
+    module_kind >= ModuleKind::ES2015 && module_kind <= ModuleKind::ES_NEXT
 }
 
 fn is_comment_or_blank_line(text: &str, pos: usize) -> bool {
@@ -3869,99 +3882,106 @@ fn plain_js_errors() -> &'static FxHashSet<i32> {
     SET.get_or_init(|| {
         [
             // binder errors
-            &diagnostics::Cannot_redeclare_block_scoped_variable_0,
-            &diagnostics::A_module_cannot_have_multiple_default_exports,
-            &diagnostics::Another_export_default_is_here,
-            &diagnostics::The_first_export_default_is_here,
-            &diagnostics::Identifier_expected_0_is_a_reserved_word_at_the_top_level_of_a_module,
-            &diagnostics::Identifier_expected_0_is_a_reserved_word_in_strict_mode_Modules_are_automatically_in_strict_mode,
-            &diagnostics::Identifier_expected_0_is_a_reserved_word_that_cannot_be_used_here,
-            &diagnostics::X_constructor_is_a_reserved_word,
-            &diagnostics::X_delete_cannot_be_called_on_an_identifier_in_strict_mode,
-            &diagnostics::Code_contained_in_a_class_is_evaluated_in_JavaScript_s_strict_mode_which_does_not_allow_this_use_of_0_For_more_information_see_https_Colon_Slash_Slashdeveloper_mozilla_org_Slashen_US_Slashdocs_SlashWeb_SlashJavaScript_SlashReference_SlashStrict_mode,
-            &diagnostics::Invalid_use_of_0_Modules_are_automatically_in_strict_mode,
-            &diagnostics::Invalid_use_of_0_in_strict_mode,
-            &diagnostics::A_label_is_not_allowed_here,
-            &diagnostics::X_with_statements_are_not_allowed_in_strict_mode,
+            &diagnostics::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE_0,
+            &diagnostics::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS,
+            &diagnostics::ANOTHER_EXPORT_DEFAULT_IS_HERE,
+            &diagnostics::THE_FIRST_EXPORT_DEFAULT_IS_HERE,
+            &diagnostics::IDENTIFIER_EXPECTED_0_IS_A_RESERVED_WORD_AT_THE_TOP_LEVEL_OF_A_MODULE,
+            &diagnostics::IDENTIFIER_EXPECTED_0_IS_A_RESERVED_WORD_IN_STRICT_MODE_MODULES_ARE_AUTOMATICALLY_IN_STRICT_MODE,
+            &diagnostics::IDENTIFIER_EXPECTED_0_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE,
+            &diagnostics::X_CONSTRUCTOR_IS_A_RESERVED_WORD,
+            &diagnostics::X_DELETE_CANNOT_BE_CALLED_ON_AN_IDENTIFIER_IN_STRICT_MODE,
+            &diagnostics::CODE_CONTAINED_IN_A_CLASS_IS_EVALUATED_IN_JAVA_SCRIPT_S_STRICT_MODE_WHICH_DOES_NOT_ALLOW_THIS_USE_OF_0_FOR_MORE_INFORMATION_SEE_HTTPS_COLON_SLASH_SLASHDEVELOPER_MOZILLA_ORG_SLASHEN_US_SLASHDOCS_SLASH_WEB_SLASH_JAVA_SCRIPT_SLASH_REFERENCE_SLASH_STRICT_MODE,
+            &diagnostics::INVALID_USE_OF_0_MODULES_ARE_AUTOMATICALLY_IN_STRICT_MODE,
+            &diagnostics::INVALID_USE_OF_0_IN_STRICT_MODE,
+            &diagnostics::A_LABEL_IS_NOT_ALLOWED_HERE,
+            &diagnostics::X_WITH_STATEMENTS_ARE_NOT_ALLOWED_IN_STRICT_MODE,
             // grammar errors
-            &diagnostics::A_break_statement_can_only_be_used_within_an_enclosing_iteration_or_switch_statement,
-            &diagnostics::A_break_statement_can_only_jump_to_a_label_of_an_enclosing_statement,
-            &diagnostics::A_class_declaration_without_the_default_modifier_must_have_a_name,
-            &diagnostics::A_class_member_cannot_have_the_0_keyword,
-            &diagnostics::A_comma_expression_is_not_allowed_in_a_computed_property_name,
-            &diagnostics::A_continue_statement_can_only_be_used_within_an_enclosing_iteration_statement,
-            &diagnostics::A_continue_statement_can_only_jump_to_a_label_of_an_enclosing_iteration_statement,
-            &diagnostics::A_default_clause_cannot_appear_more_than_once_in_a_switch_statement,
-            &diagnostics::A_default_export_must_be_at_the_top_level_of_a_file_or_module_declaration,
-            &diagnostics::A_definite_assignment_assertion_is_not_permitted_in_this_context,
-            &diagnostics::A_destructuring_declaration_must_have_an_initializer,
-            &diagnostics::A_get_accessor_cannot_have_parameters,
-            &diagnostics::A_rest_element_cannot_contain_a_binding_pattern,
-            &diagnostics::A_rest_element_cannot_have_a_property_name,
-            &diagnostics::A_rest_element_cannot_have_an_initializer,
-            &diagnostics::A_rest_element_must_be_last_in_a_destructuring_pattern,
-            &diagnostics::A_rest_parameter_cannot_have_an_initializer,
-            &diagnostics::A_rest_parameter_must_be_last_in_a_parameter_list,
-            &diagnostics::A_rest_parameter_or_binding_pattern_may_not_have_a_trailing_comma,
-            &diagnostics::A_return_statement_cannot_be_used_inside_a_class_static_block,
-            &diagnostics::A_set_accessor_cannot_have_rest_parameter,
-            &diagnostics::A_set_accessor_must_have_exactly_one_parameter,
-            &diagnostics::An_export_declaration_can_only_be_used_at_the_top_level_of_a_module,
-            &diagnostics::An_export_declaration_cannot_have_modifiers,
-            &diagnostics::An_import_declaration_can_only_be_used_at_the_top_level_of_a_module,
-            &diagnostics::An_import_declaration_cannot_have_modifiers,
-            &diagnostics::An_object_member_cannot_be_declared_optional,
-            &diagnostics::Argument_of_dynamic_import_cannot_be_spread_element,
-            &diagnostics::Cannot_assign_to_private_method_0_Private_methods_are_not_writable,
-            &diagnostics::Cannot_redeclare_identifier_0_in_catch_clause,
-            &diagnostics::Catch_clause_variable_cannot_have_an_initializer,
-            &diagnostics::Class_decorators_can_t_be_used_with_static_private_identifier_Consider_removing_the_experimental_decorator,
-            &diagnostics::Classes_can_only_extend_a_single_class,
-            &diagnostics::Classes_may_not_have_a_field_named_constructor,
-            &diagnostics::Did_you_mean_to_use_a_Colon_An_can_only_follow_a_property_name_when_the_containing_object_literal_is_part_of_a_destructuring_pattern,
-            &diagnostics::Duplicate_label_0,
-            &diagnostics::Dynamic_imports_can_only_accept_a_module_specifier_and_an_optional_set_of_attributes_as_arguments,
-            &diagnostics::X_for_await_loops_cannot_be_used_inside_a_class_static_block,
-            &diagnostics::JSX_attributes_must_only_be_assigned_a_non_empty_expression,
-            &diagnostics::JSX_elements_cannot_have_multiple_attributes_with_the_same_name,
-            &diagnostics::JSX_expressions_may_not_use_the_comma_operator_Did_you_mean_to_write_an_array,
-            &diagnostics::JSX_property_access_expressions_cannot_include_JSX_namespace_names,
-            &diagnostics::Jump_target_cannot_cross_function_boundary,
-            &diagnostics::Line_terminator_not_permitted_before_arrow,
-            &diagnostics::Modifiers_cannot_appear_here,
-            &diagnostics::Only_a_single_variable_declaration_is_allowed_in_a_for_in_statement,
-            &diagnostics::Only_a_single_variable_declaration_is_allowed_in_a_for_of_statement,
-            &diagnostics::Private_identifiers_are_not_allowed_outside_class_bodies,
-            &diagnostics::Private_identifiers_are_only_allowed_in_class_bodies_and_may_only_be_used_as_part_of_a_class_member_declaration_property_access_or_on_the_left_hand_side_of_an_in_expression,
-            &diagnostics::Property_0_is_not_accessible_outside_class_1_because_it_has_a_private_identifier,
-            &diagnostics::Tagged_template_expressions_are_not_permitted_in_an_optional_chain,
-            &diagnostics::The_left_hand_side_of_a_for_of_statement_may_not_be_async,
-            &diagnostics::The_variable_declaration_of_a_for_in_statement_cannot_have_an_initializer,
-            &diagnostics::The_variable_declaration_of_a_for_of_statement_cannot_have_an_initializer,
-            &diagnostics::Trailing_comma_not_allowed,
-            &diagnostics::Variable_declaration_list_cannot_be_empty,
-            &diagnostics::X_0_and_1_operations_cannot_be_mixed_without_parentheses,
-            &diagnostics::X_0_expected,
-            &diagnostics::X_0_is_not_a_valid_meta_property_for_keyword_1_Did_you_mean_2,
-            &diagnostics::X_0_list_cannot_be_empty,
-            &diagnostics::X_0_modifier_already_seen,
-            &diagnostics::X_0_modifier_cannot_appear_on_a_constructor_declaration,
-            &diagnostics::X_0_modifier_cannot_appear_on_a_module_or_namespace_element,
-            &diagnostics::X_0_modifier_cannot_appear_on_a_parameter,
-            &diagnostics::X_0_modifier_cannot_appear_on_class_elements_of_this_kind,
-            &diagnostics::X_0_modifier_cannot_be_used_here,
-            &diagnostics::X_0_modifier_must_precede_1_modifier,
-            &diagnostics::X_0_declarations_can_only_be_declared_inside_a_block,
-            &diagnostics::X_0_declarations_must_be_initialized,
-            &diagnostics::X_extends_clause_already_seen,
-            &diagnostics::X_let_is_not_allowed_to_be_used_as_a_name_in_let_or_const_declarations,
-            &diagnostics::Class_constructor_may_not_be_a_generator,
-            &diagnostics::Class_constructor_may_not_be_an_accessor,
-            &diagnostics::X_await_expressions_are_only_allowed_within_async_functions_and_at_the_top_levels_of_modules,
-            &diagnostics::X_await_using_statements_are_only_allowed_within_async_functions_and_at_the_top_levels_of_modules,
-            &diagnostics::Private_field_0_must_be_declared_in_an_enclosing_class,
+            &diagnostics::A_BREAK_STATEMENT_CAN_ONLY_BE_USED_WITHIN_AN_ENCLOSING_ITERATION_OR_SWITCH_STATEMENT,
+            &diagnostics::A_BREAK_STATEMENT_CAN_ONLY_JUMP_TO_A_LABEL_OF_AN_ENCLOSING_STATEMENT,
+            &diagnostics::A_CLASS_DECLARATION_WITHOUT_THE_DEFAULT_MODIFIER_MUST_HAVE_A_NAME,
+            &diagnostics::A_CLASS_MEMBER_CANNOT_HAVE_THE_0_KEYWORD,
+            &diagnostics::A_COMMA_EXPRESSION_IS_NOT_ALLOWED_IN_A_COMPUTED_PROPERTY_NAME,
+            &diagnostics::A_CONTINUE_STATEMENT_CAN_ONLY_BE_USED_WITHIN_AN_ENCLOSING_ITERATION_STATEMENT,
+            &diagnostics::A_CONTINUE_STATEMENT_CAN_ONLY_JUMP_TO_A_LABEL_OF_AN_ENCLOSING_ITERATION_STATEMENT,
+            &diagnostics::A_DEFAULT_CLAUSE_CANNOT_APPEAR_MORE_THAN_ONCE_IN_A_SWITCH_STATEMENT,
+            &diagnostics::A_DEFAULT_EXPORT_MUST_BE_AT_THE_TOP_LEVEL_OF_A_FILE_OR_MODULE_DECLARATION,
+            &diagnostics::A_DEFERRED_IMPORT_MUST_SPECIFY_A_NAMESPACE_BINDING,
+            &diagnostics::A_DEFINITE_ASSIGNMENT_ASSERTION_IS_NOT_PERMITTED_IN_THIS_CONTEXT,
+            &diagnostics::A_DESTRUCTURING_DECLARATION_MUST_HAVE_AN_INITIALIZER,
+            &diagnostics::A_GET_ACCESSOR_CANNOT_HAVE_PARAMETERS,
+            &diagnostics::A_REST_ELEMENT_CANNOT_CONTAIN_A_BINDING_PATTERN,
+            &diagnostics::A_REST_ELEMENT_CANNOT_HAVE_A_PROPERTY_NAME,
+            &diagnostics::A_REST_ELEMENT_CANNOT_HAVE_AN_INITIALIZER,
+            &diagnostics::A_REST_ELEMENT_MUST_BE_LAST_IN_A_DESTRUCTURING_PATTERN,
+            &diagnostics::A_REST_PARAMETER_CANNOT_HAVE_AN_INITIALIZER,
+            &diagnostics::A_REST_PARAMETER_MUST_BE_LAST_IN_A_PARAMETER_LIST,
+            &diagnostics::A_REST_PARAMETER_OR_BINDING_PATTERN_MAY_NOT_HAVE_A_TRAILING_COMMA,
+            &diagnostics::A_RETURN_STATEMENT_CANNOT_BE_USED_INSIDE_A_CLASS_STATIC_BLOCK,
+            &diagnostics::A_SET_ACCESSOR_CANNOT_HAVE_REST_PARAMETER,
+            &diagnostics::A_SET_ACCESSOR_MUST_HAVE_EXACTLY_ONE_PARAMETER,
+            &diagnostics::A_SOURCE_PHASE_IMPORT_MUST_SPECIFY_A_LOCAL_BINDING,
+            &diagnostics::AN_EXPORT_DECLARATION_CAN_ONLY_BE_USED_AT_THE_TOP_LEVEL_OF_A_MODULE,
+            &diagnostics::AN_EXPORT_DECLARATION_CANNOT_HAVE_MODIFIERS,
+            &diagnostics::AN_IMPORT_DECLARATION_CAN_ONLY_BE_USED_AT_THE_TOP_LEVEL_OF_A_MODULE,
+            &diagnostics::AN_IMPORT_DECLARATION_CANNOT_HAVE_MODIFIERS,
+            &diagnostics::AN_OBJECT_MEMBER_CANNOT_BE_DECLARED_OPTIONAL,
+            &diagnostics::ARGUMENT_OF_DYNAMIC_IMPORT_CANNOT_BE_SPREAD_ELEMENT,
+            &diagnostics::CANNOT_ASSIGN_TO_PRIVATE_METHOD_0_PRIVATE_METHODS_ARE_NOT_WRITABLE,
+            &diagnostics::CANNOT_REDECLARE_IDENTIFIER_0_IN_CATCH_CLAUSE,
+            &diagnostics::CATCH_CLAUSE_VARIABLE_CANNOT_HAVE_AN_INITIALIZER,
+            &diagnostics::CLASS_DECORATORS_CAN_T_BE_USED_WITH_STATIC_PRIVATE_IDENTIFIER_CONSIDER_REMOVING_THE_EXPERIMENTAL_DECORATOR,
+            &diagnostics::CLASSES_CAN_ONLY_EXTEND_A_SINGLE_CLASS,
+            &diagnostics::CLASSES_MAY_NOT_HAVE_A_FIELD_NAMED_CONSTRUCTOR,
+            &diagnostics::DID_YOU_MEAN_TO_USE_A_COLON_AN_CAN_ONLY_FOLLOW_A_PROPERTY_NAME_WHEN_THE_CONTAINING_OBJECT_LITERAL_IS_PART_OF_A_DESTRUCTURING_PATTERN,
+            &diagnostics::DUPLICATE_LABEL_0,
+            &diagnostics::DYNAMIC_IMPORTS_CAN_ONLY_ACCEPT_A_MODULE_SPECIFIER_AND_AN_OPTIONAL_SET_OF_ATTRIBUTES_AS_ARGUMENTS,
+            &diagnostics::X_FOR_AWAIT_LOOPS_CANNOT_BE_USED_INSIDE_A_CLASS_STATIC_BLOCK,
+            &diagnostics::JSX_ATTRIBUTES_MUST_ONLY_BE_ASSIGNED_A_NON_EMPTY_EXPRESSION,
+            &diagnostics::JSX_ELEMENTS_CANNOT_HAVE_MULTIPLE_ATTRIBUTES_WITH_THE_SAME_NAME,
+            &diagnostics::JSX_EXPRESSIONS_MAY_NOT_USE_THE_COMMA_OPERATOR_DID_YOU_MEAN_TO_WRITE_AN_ARRAY,
+            &diagnostics::JSX_PROPERTY_ACCESS_EXPRESSIONS_CANNOT_INCLUDE_JSX_NAMESPACE_NAMES,
+            &diagnostics::JUMP_TARGET_CANNOT_CROSS_FUNCTION_BOUNDARY,
+            &diagnostics::LINE_TERMINATOR_NOT_PERMITTED_BEFORE_ARROW,
+            &diagnostics::MODIFIERS_CANNOT_APPEAR_HERE,
+            &diagnostics::NAMED_AND_NAMESPACE_IMPORTS_ARE_NOT_ALLOWED_IN_A_SOURCE_PHASE_IMPORT,
+            &diagnostics::ONLY_A_SINGLE_VARIABLE_DECLARATION_IS_ALLOWED_IN_A_FOR_IN_STATEMENT,
+            &diagnostics::ONLY_A_SINGLE_VARIABLE_DECLARATION_IS_ALLOWED_IN_A_FOR_OF_STATEMENT,
+            &diagnostics::OPTIONAL_CHAINING_CANNOT_BE_USED_WITH_IMPORT_SOURCE,
+            &diagnostics::PRIVATE_IDENTIFIERS_ARE_NOT_ALLOWED_OUTSIDE_CLASS_BODIES,
+            &diagnostics::PRIVATE_IDENTIFIERS_ARE_ONLY_ALLOWED_IN_CLASS_BODIES_AND_MAY_ONLY_BE_USED_AS_PART_OF_A_CLASS_MEMBER_DECLARATION_PROPERTY_ACCESS_OR_ON_THE_LEFT_HAND_SIDE_OF_AN_IN_EXPRESSION,
+            &diagnostics::PROPERTY_0_IS_NOT_ACCESSIBLE_OUTSIDE_CLASS_1_BECAUSE_IT_HAS_A_PRIVATE_IDENTIFIER,
+            &diagnostics::SOURCE_PHASE_IMPORTS_ARE_NOT_ALLOWED_ON_STATEMENTS_THAT_COMPILE_TO_COMMON_JS_REQUIRE_CALLS,
+            &diagnostics::SOURCE_PHASE_IMPORTS_ARE_ONLY_SUPPORTED_WHEN_THE_MODULE_OPTION_IS_SET_TO_ESNEXT_NODENEXT_OR_PRESERVE,
+            &diagnostics::TAGGED_TEMPLATE_EXPRESSIONS_ARE_NOT_PERMITTED_IN_AN_OPTIONAL_CHAIN,
+            &diagnostics::THE_LEFT_HAND_SIDE_OF_A_FOR_OF_STATEMENT_MAY_NOT_BE_ASYNC,
+            &diagnostics::THE_VARIABLE_DECLARATION_OF_A_FOR_IN_STATEMENT_CANNOT_HAVE_AN_INITIALIZER,
+            &diagnostics::THE_VARIABLE_DECLARATION_OF_A_FOR_OF_STATEMENT_CANNOT_HAVE_AN_INITIALIZER,
+            &diagnostics::TRAILING_COMMA_NOT_ALLOWED,
+            &diagnostics::VARIABLE_DECLARATION_LIST_CANNOT_BE_EMPTY,
+            &diagnostics::X_0_AND_1_OPERATIONS_CANNOT_BE_MIXED_WITHOUT_PARENTHESES,
+            &diagnostics::X_0_EXPECTED,
+            &diagnostics::X_0_IS_NOT_A_VALID_META_PROPERTY_FOR_KEYWORD_IMPORT_DID_YOU_MEAN_META_DEFER_OR_SOURCE,
+            &diagnostics::X_0_IS_NOT_A_VALID_META_PROPERTY_FOR_KEYWORD_1_DID_YOU_MEAN_2,
+            &diagnostics::X_0_LIST_CANNOT_BE_EMPTY,
+            &diagnostics::X_0_MODIFIER_ALREADY_SEEN,
+            &diagnostics::X_0_MODIFIER_CANNOT_APPEAR_ON_A_CONSTRUCTOR_DECLARATION,
+            &diagnostics::X_0_MODIFIER_CANNOT_APPEAR_ON_A_MODULE_OR_NAMESPACE_ELEMENT,
+            &diagnostics::X_0_MODIFIER_CANNOT_APPEAR_ON_A_PARAMETER,
+            &diagnostics::X_0_MODIFIER_CANNOT_APPEAR_ON_CLASS_ELEMENTS_OF_THIS_KIND,
+            &diagnostics::X_0_MODIFIER_CANNOT_BE_USED_HERE,
+            &diagnostics::X_0_MODIFIER_MUST_PRECEDE_1_MODIFIER,
+            &diagnostics::X_0_DECLARATIONS_CAN_ONLY_BE_DECLARED_INSIDE_A_BLOCK,
+            &diagnostics::X_0_DECLARATIONS_MUST_BE_INITIALIZED,
+            &diagnostics::X_EXTENDS_CLAUSE_ALREADY_SEEN,
+            &diagnostics::X_LET_IS_NOT_ALLOWED_TO_BE_USED_AS_A_NAME_IN_LET_OR_CONST_DECLARATIONS,
+            &diagnostics::CLASS_CONSTRUCTOR_MAY_NOT_BE_A_GENERATOR,
+            &diagnostics::CLASS_CONSTRUCTOR_MAY_NOT_BE_AN_ACCESSOR,
+            &diagnostics::X_AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS_OF_MODULES,
+            &diagnostics::X_AWAIT_USING_STATEMENTS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS_OF_MODULES,
+            &diagnostics::PRIVATE_FIELD_0_MUST_BE_DECLARED_IN_AN_ENCLOSING_CLASS,
             // Type errors
-            &diagnostics::This_condition_will_always_return_0_since_JavaScript_compares_objects_by_reference_not_value,
+            &diagnostics::THIS_CONDITION_WILL_ALWAYS_RETURN_0_SINCE_JAVA_SCRIPT_COMPARES_OBJECTS_BY_REFERENCE_NOT_VALUE,
         ]
         .iter()
         .map(|m| m.code())
@@ -3976,6 +3996,10 @@ impl tsoptions::outputpaths::OutputPathsHost for Program {
 
     fn content_mapper_extensions(&self) -> Vec<String> {
         self.opts.config.content_mapper_extensions()
+    }
+
+    fn content_mapper_extension_rewrites(&self) -> Vec<tspath::ExtensionRewrite> {
+        Program::content_mapper_extension_rewrites(self)
     }
 
     fn get_current_directory(&self) -> &str {

@@ -1,4 +1,4 @@
-import { defineConfig } from "vite-plus";
+import { defineConfig, lazyPlugins } from "vite-plus";
 import { prepareAssets } from "./scripts/prepare-assets.mjs";
 import { upstreamWebsite } from "./scripts/upstream-website.mjs";
 import { fileURLToPath } from "node:url";
@@ -22,7 +22,7 @@ export default defineConfig({
       },
     ],
   },
-  plugins: [
+  plugins: lazyPlugins(() => [
     upstreamWebsite(),
     {
       name: "playground-assets",
@@ -33,20 +33,16 @@ export default defineConfig({
           for (const id of artifact.moduleIds) {
             if (
               /\/typescript\/lib\/(?:typescript|tsserverlibrary)\.js/.test(id) ||
-              id.includes("/vs/language/typescript/")
+              id.includes("/vs/language/typescript/") ||
+              id.includes("/vs/languages/features/typescript/")
             )
               throw new Error(`JavaScript TypeScript runtime must not be bundled: ${id}`);
           }
         }
       },
     },
-  ],
+  ]),
   worker: { format: "es" },
   build: { assetsInlineLimit: 0 },
-  lint: {
-    ignorePatterns: ["vendor/**", "public/**", "src/generated/**"],
-    options: { typeAware: true, typeCheck: true },
-  },
-  fmt: { ignorePatterns: ["vendor/**", "public/**", "src/generated/**"] },
   test: { include: ["src/**/*.test.ts"], testTimeout: 30_000 },
 });

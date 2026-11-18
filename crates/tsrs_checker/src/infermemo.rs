@@ -55,7 +55,7 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum InferMemoMode {
+pub enum InferMemoMode {
     Off,
     On,
     Shadow,
@@ -129,8 +129,8 @@ struct Entry {
     steps: u32,
 }
 
-pub(crate) struct InferMemo {
-    pub(crate) mode: InferMemoMode,
+pub struct InferMemo {
+    mode: InferMemoMode,
     entries: FxHashMap<Box<[u32]>, Entry>,
     /// Targets of walks that took at least `min_steps()` steps: only walks to these are keyed, looked up and measured.
     long_targets: FxHashSet<P<Type>>,

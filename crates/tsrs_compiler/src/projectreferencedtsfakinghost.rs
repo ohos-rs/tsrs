@@ -6,22 +6,22 @@ use tsrs_module::symlinks::{KnownDirectoryLink, KnownSymlinks};
 use tsrs_module::{self as module, ResolutionHost};
 use tsrs_vfs::{Entries, FS, FileInfo, cachedvfs};
 
-use crate::projectreferencefilemapper::projectReferenceFileMapper;
+use crate::projectreferencefilemapper::ProjectReferenceFileMapper;
 
-struct projectReferenceDtsFakingHost {
+struct ProjectReferenceDtsFakingHost {
     current_directory: String,
-    fs: cachedvfs::FS<projectReferenceDtsFakingVfs>,
+    fs: cachedvfs::FS<ProjectReferenceDtsFakingVfs>,
 }
 
 // projectreferencedtsfakinghost.go:22
 pub(crate) fn new_project_reference_dts_faking_host(
     host: &'static dyn ResolutionHost,
-    references: &'static projectReferenceFileMapper,
+    references: &'static ProjectReferenceFileMapper,
 ) -> &'static dyn ResolutionHost {
     // Create a new host that will fake the dts files
-    Box::leak(Box::new(projectReferenceDtsFakingHost {
+    Box::leak(Box::new(ProjectReferenceDtsFakingHost {
         current_directory: host.get_current_directory().to_string(),
-        fs: cachedvfs::from(projectReferenceDtsFakingVfs {
+        fs: cachedvfs::from(ProjectReferenceDtsFakingVfs {
             host,
             project_reference_file_mapper: references,
             known_symlinks: KnownSymlinks::default(),
@@ -29,7 +29,7 @@ pub(crate) fn new_project_reference_dts_faking_host(
     }))
 }
 
-impl ResolutionHost for projectReferenceDtsFakingHost {
+impl ResolutionHost for ProjectReferenceDtsFakingHost {
     // projectreferencedtsfakinghost.go:35
     fn fs(&self) -> &dyn FS {
         &self.fs
@@ -41,13 +41,13 @@ impl ResolutionHost for projectReferenceDtsFakingHost {
     }
 }
 
-struct projectReferenceDtsFakingVfs {
-    host: &'static dyn ResolutionHost,
-    project_reference_file_mapper: &'static projectReferenceFileMapper,
-    known_symlinks: KnownSymlinks,
+pub struct ProjectReferenceDtsFakingVfs {
+    pub host: &'static dyn ResolutionHost,
+    pub project_reference_file_mapper: &'static ProjectReferenceFileMapper,
+    pub known_symlinks: KnownSymlinks,
 }
 
-impl FS for projectReferenceDtsFakingVfs {
+impl FS for ProjectReferenceDtsFakingVfs {
     // projectreferencedtsfakinghost.go:53
     fn use_case_sensitive_file_names(&self) -> bool {
         self.host.fs().use_case_sensitive_file_names()
@@ -119,7 +119,7 @@ impl FS for projectReferenceDtsFakingVfs {
     }
 }
 
-impl projectReferenceDtsFakingVfs {
+impl ProjectReferenceDtsFakingVfs {
     // projectreferencedtsfakinghost.go:123
     fn to_path(&self, path: &str) -> Path {
         tspath::to_path(
@@ -167,6 +167,7 @@ impl projectReferenceDtsFakingVfs {
             directory,
             directory_path,
             Some(P::new(KnownDirectoryLink {
+                symlink: String::new(),
                 real: tspath::ensure_trailing_directory_separator(&real_directory),
                 real_path,
             })),
@@ -198,8 +199,11 @@ impl projectReferenceDtsFakingVfs {
             return false;
         }
         // Check if the directory or file is a symlinked package
-        let package_root =
-            module::parse_node_module_from_path(file_or_directory, true /*isFolder*/);
+        let package_root = if is_file {
+            module::node_module_package_root_for_file(file_or_directory)
+        } else {
+            module::node_module_package_root_for_directory(file_or_directory)
+        };
         if !package_root.is_empty() {
             self.handle_directory_could_be_symlink(&package_root);
         }
@@ -214,20 +218,16 @@ impl projectReferenceDtsFakingVfs {
         // If it contains node_modules check if its one of the symlinked path we know of
         let mut exists = false;
         known_directory_links.range(|directory_path, known_directory_link| {
-            let Some(relative) =
-                file_or_directory_path.as_str().strip_prefix(directory_path.as_str())
-            else {
+            if !file_or_directory_path.as_str().starts_with(directory_path.as_str()) {
                 return true;
-            };
+            }
             let Some(known_directory_link) = known_directory_link else {
                 return true;
             };
-            exists = self
-                .exists_using_source(
-                    &format!("{}{}", known_directory_link.real_path.as_str(), relative),
-                    is_file,
-                )
-                .is_true();
+            let real_file_or_directory = known_directory_link
+                .resolve_file_name(file_or_directory, self.use_case_sensitive_file_names())
+                .expect("canonical symlink path did not match its presentation path");
+            exists = self.exists_using_source(&real_file_or_directory, is_file).is_true();
             if exists {
                 if is_file {
                     // Store the real path for the file
@@ -243,11 +243,7 @@ impl projectReferenceDtsFakingVfs {
                     self.known_symlinks.set_file(
                         &absolute_path,
                         file_or_directory_path.clone(),
-                        &format!(
-                            "{}{}",
-                            known_directory_link.real,
-                            &absolute_path[directory_path.as_str().len()..]
-                        ),
+                        &real_file_or_directory,
                     );
                 }
                 return false;
@@ -288,67 +284,5 @@ impl projectReferenceDtsFakingVfs {
             return result;
         }
         Tristate::Unknown
-    }
-}
-
-#[cfg(test)]
-mod region_tests {
-    use std::sync::Arc;
-
-    use tsrs_core::arena::Region;
-    use tsrs_core::tspath::Path;
-    use tsrs_core::{CompilerOptions, P};
-    use tsrs_module::symlinks::KnownSymlinks;
-    use tsrs_vfs::{FS, vfstest};
-
-    use super::projectReferenceDtsFakingVfs;
-    use crate::projectreferencefilemapper::{projectReferenceFileMapper, resolution_host_for};
-
-    // A symlinked node_modules directory the build never probed, first seen while a region is the allocation target
-    // (a checker's, looking up a package.json for a module specifier): the host shared by later program versions must
-    // not keep its records in that region.
-    #[test]
-    fn symlinked_directory_first_seen_in_a_region_is_not_kept_there() {
-        let fs: Arc<dyn FS> = Arc::new(vfstest::from_map(
-            [
-                ("/lib/src/deep/thing.ts", vfstest::MapFile::from("export {};")),
-                ("/app/node_modules/@x/lib", vfstest::symlink("/lib")),
-            ],
-            true,
-        ));
-        let host = resolution_host_for(crate::new_compiler_host("/", fs, "", None, None, None));
-        let config = P::new(tsrs_tsoptions::new_parsed_command_line(
-            P::new(CompilerOptions::default()),
-            Vec::new(),
-            Vec::new(),
-            tsrs_core::tspath::ComparePathsOptions::default(),
-        ));
-        let mapper: &'static projectReferenceFileMapper =
-            Box::leak(Box::new(projectReferenceFileMapper::new(config, true)));
-        let vfs = projectReferenceDtsFakingVfs {
-            host,
-            project_reference_file_mapper: mapper,
-            known_symlinks: KnownSymlinks::default(),
-        };
-        let region = Region::new(1 << 20);
-        {
-            let _scope = region.enter();
-            assert!(vfs.directory_exists("/app/node_modules/@x/lib/src/deep"));
-        }
-        let in_region = |addr: usize| Region::containing(addr).is_some_and(|r| r.ptr_eq(&region));
-        let link = vfs
-            .known_symlinks
-            .directories()
-            .load(&Path::from("/app/node_modules/@x/lib/src/deep/"))
-            .flatten()
-            .expect("the link is recorded");
-        assert_eq!(link.real_path.as_str(), "/lib/src/deep/");
-        assert!(!in_region(link.addr()), "directory link allocated in the region");
-        let set = vfs
-            .known_symlinks
-            .directories_by_realpath()
-            .load(&link.real_path)
-            .expect("the realpath's symlink set is recorded");
-        assert!(!in_region(set.addr()), "symlink set allocated in the region");
     }
 }

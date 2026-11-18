@@ -15,14 +15,14 @@ use tsrs_modulespecifiers::{self as modulespecifiers, ModuleSpecifierEnding};
 use tsrs_scanner as scanner;
 
 use super::export::{Export, ExportID, ModuleID};
-use super::fix::{Fix, existingImport};
+use super::fix::{ExistingImport, Fix};
 use super::registry::{ProjectID, Registry, RegistryBucket};
 use super::util::add_package_json_dependencies;
 use crate::lsutil;
 
 // view.go:21
 pub struct View {
-    pub(crate) registry: Option<Arc<Registry>>,
+    registry: Option<Arc<Registry>>,
     pub(crate) importing_file: P<SourceFile>,
     pub(crate) importing_file_path: Path,
     pub(crate) program: &'static Program,
@@ -31,12 +31,12 @@ pub struct View {
     // keeps the checker's address (see `checker()`).
     checker: NonNull<Checker>,
     pub(crate) preferences: modulespecifiers::UserPreferences,
-    pub(crate) project_id: ProjectID,
+    project_id: ProjectID,
 
     allowed_endings: OnceCell<Vec<ModuleSpecifierEnding>>,
     pub(crate) conditions: Set<String>,
     pub(crate) should_use_uri_style_node_core_modules: Tristate,
-    existing_imports: OnceCell<Rc<FxHashMap<ModuleID, Vec<existingImport>>>>,
+    existing_imports: OnceCell<Rc<FxHashMap<ModuleID, Vec<ExistingImport>>>>,
     should_use_require_for_fixes: OnceCell<bool>,
 }
 
@@ -110,7 +110,7 @@ impl View {
     }
 
     // view.go:83
-    pub fn search(&self, query: &str, kind: QueryKind) -> Vec<Arc<Export>> {
+    pub(crate) fn search(&self, query: &str, kind: QueryKind) -> Vec<Arc<Export>> {
         let search_fn = |bucket: &RegistryBucket| -> Vec<Arc<Export>> {
             let Some(index) = &bucket.index else {
                 return Vec::new();
@@ -126,7 +126,7 @@ impl View {
     }
 
     // view.go:100
-    pub fn search_by_export_id(&self, id: &ExportID) -> Vec<Arc<Export>> {
+    pub(crate) fn search_by_export_id(&self, id: &ExportID) -> Vec<Arc<Export>> {
         let search = |bucket: &RegistryBucket| -> Vec<Arc<Export>> {
             let Some(index) = &bucket.index else {
                 return Vec::new();
@@ -149,7 +149,7 @@ impl View {
             let exports = search_fn(bucket);
             results.reserve(exports.len());
             results.extend(exports.into_iter().filter_map(|e| {
-                if e.module_id.0 == self.importing_file.path().as_str() {
+                if e.module_id.as_file() == Some(self.importing_file.path().as_str()) {
                     // Don't auto-import from the importing file itself
                     return None;
                 }
@@ -176,12 +176,11 @@ impl View {
             },
         );
         // If we found at least one package.json, also include packages directly imported by the project
-        if let Some(allowed) = &mut allowed_packages {
-            if let Some(bucket) = registry.projects.get(&self.project_id) {
-                if let Some(resolved) = &bucket.resolved_package_names {
-                    allowed.union(resolved);
-                }
-            }
+        if let Some(allowed) = &mut allowed_packages
+            && let Some(bucket) = registry.projects.get(&self.project_id)
+            && let Some(resolved) = &bucket.resolved_package_names
+        {
+            allowed.union(resolved);
         }
 
         let mut exclude_packages: Set<String> = Set::new();
@@ -197,10 +196,10 @@ impl View {
                         }
                         // If allowedPackages is nil, no package.json was found, so include all packages.
                         // Otherwise, only include packages that are dependencies or directly imported.
-                        if let Some(allowed) = &allowed_packages {
-                            if !allowed.has(&e.package_name) {
-                                return None;
-                            }
+                        if let Some(allowed) = &allowed_packages
+                            && !allowed.has(&e.package_name)
+                        {
+                            return None;
                         }
                         Some(e)
                     }));
@@ -220,24 +219,25 @@ impl View {
     }
 
     // view.go:180
-    pub fn get_completions(
+    pub(crate) fn get_completions(
         &self,
         prefix: &str,
         position: lsproto::Position,
         for_jsx: bool,
         is_type_only_location: bool,
     ) -> Vec<FixAndExport> {
-        let results = self.search(prefix, QueryKind::WordPrefix);
-
         #[derive(Clone, PartialEq, Eq, Hash)]
-        struct exportGroupKey {
+        struct ExportGroupKey {
             target: ExportID,
             name: String,
             ambient_module_or_package_name: String,
         }
+
+        let results = self.search(prefix, QueryKind::WordPrefix);
+
         // Go map (random iteration order); groups are kept in first-seen order.
         let mut grouped: indexmap::IndexMap<
-            exportGroupKey,
+            ExportGroupKey,
             Vec<Arc<Export>>,
             rustc_hash::FxBuildHasher,
         > = indexmap::IndexMap::default();
@@ -257,22 +257,22 @@ impl View {
                 target = e.target.clone();
             }
             let ambient = e.ambient_module_name();
-            let mut key = exportGroupKey {
+            let mut key = ExportGroupKey {
                 target,
                 name,
-                ambient_module_or_package_name: if !ambient.is_empty() {
-                    ambient.to_string()
-                } else {
+                ambient_module_or_package_name: if ambient.is_empty() {
                     e.package_name.clone()
+                } else {
+                    ambient.to_string()
                 },
             };
-            if e.package_name == "@types/node" || e.path.contains("/node_modules/@types/node/") {
-                if tsrs_core::is_unprefixed_node_core_module(&key.ambient_module_or_package_name) {
-                    // Group URI-style and non-URI style node core modules together so the ranking logic
-                    // is allowed to drop one if an explicit preference is detected.
-                    key.ambient_module_or_package_name =
-                        format!("node:{}", key.ambient_module_or_package_name);
-                }
+            if (e.package_name == "@types/node" || e.path.contains("/node_modules/@types/node/"))
+                && tsrs_core::is_unprefixed_node_core_module(&key.ambient_module_or_package_name)
+            {
+                // Group URI-style and non-URI style node core modules together so the ranking logic
+                // is allowed to drop one if an explicit preference is detected.
+                key.ambient_module_or_package_name =
+                    format!("node:{}", key.ambient_module_or_package_name);
             }
             if let Some(existing) = grouped.get_mut(&key) {
                 for element in existing.iter_mut() {
@@ -281,6 +281,7 @@ impl View {
                         (*element) = Arc::new(Export {
                             export_id: e.export_id.clone(),
                             module_file_name: e.module_file_name.clone(),
+                            unresolved_module_specifier: e.unresolved_module_specifier.clone(),
                             package_name: e.package_name.clone(),
                             is_type_only: e.is_type_only || ex.is_type_only,
                             syntax: e.syntax.min(ex.syntax),
@@ -327,7 +328,7 @@ impl View {
 
     pub(crate) fn existing_imports_cell(
         &self,
-    ) -> &OnceCell<Rc<FxHashMap<ModuleID, Vec<existingImport>>>> {
+    ) -> &OnceCell<Rc<FxHashMap<ModuleID, Vec<ExistingImport>>>> {
         &self.existing_imports
     }
 
@@ -347,6 +348,6 @@ pub enum QueryKind {
 // view.go:175
 #[derive(Clone)]
 pub struct FixAndExport {
-    pub fix: Arc<Fix>,
-    pub export: Arc<Export>,
+    pub(crate) fix: Arc<Fix>,
+    pub(crate) export: Arc<Export>,
 }

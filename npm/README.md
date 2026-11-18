@@ -1,21 +1,44 @@
 # npm packaging
 
+Install tsrs and enable its opt-in fast preset:
+
+```sh
+pnpm add -D tsrs
+pnpm exec tsrs --noEmit --fast
+```
+
+`--fast` enables adaptive checker counts, lazy members and additional caches. It can change diagnostics and
+exit status in known cases; see [fast mode](#compiler-defaults-and-fast-mode) for details.
+
 tsrs ships on npm the way TypeScript 7 ships its native compiler (`typescript@7` / `@typescript/typescript-<os>-<arch>`):
 
 | package | contents |
 | --- | --- |
-| `tsrs` | `bin/tsrs` (Node launcher), `lib/` (binary lookup, `version.cjs`), `dist/` + `vendor/` (the `unstable/*` JS API, see below), `optionalDependencies` on every platform package |
+| `tsrs` | `bin/tsrs` (Node launcher), `bin/tsrs-lint` (the same launcher with `--lint`), `lib/` (binary lookup, `version.cjs`), `dist/` + `vendor/` (the JavaScript API, see below), `optionalDependencies` on every platform package |
 | `@tsrs/<os>-<arch>[-<libc>]` | the `tsrs` binary and default TypeScript libraries for one platform, with `os`/`cpu` (and `libc: glibc` or `musl` on Linux) so package managers install only the matching one |
 | `@tsrs/wasm` | the WebAssembly module (`npm/tsrs-wasm`, notes/wasm-build.md): a `tsrs-wasm` command and a `tsc()` API for Node 22+ and browsers, single-threaded; no platform packages |
 
-Platforms since 0.14.0: `darwin-arm64`, `linux-x64-gnu`, `linux-arm64-gnu`, `linux-x64-musl` and `linux-arm64-musl`
-(earlier releases use unsuffixed GNU names; `darwin-x64` was published up to 0.2.1). The release workflow now also
-builds `win32-x64`; releases through 0.18.0 do not contain that platform package.
+Native platforms: `darwin-arm64`, `darwin-x64`, `linux-x64-gnu`, `linux-arm64-gnu`, `linux-x64-musl`,
+`linux-arm64-musl`, `win32-x64` and `win32-arm64`. Intel macOS and Windows x64 joined the current platform set in
+0.20.0, Windows ARM64 in 0.25.0.
+See the [compatibility table](../docs/COMPATIBILITY.md#what-it-does-and-doesnt-do) for platform limitations.
 
 The main package name is set in `npm/tsrs/package.json`; platform packages are `@tsrs/<os>-<cpu>` with `-gnu` or
 `-musl` on Linux. The launcher derives that name from the current platform, architecture and libc at runtime.
 
 The repository's root `README.md` is also the main package README. `npm/build.mjs` copies it into the staged package.
+
+## Compiler defaults and fast mode
+
+Since 0.20.0, tsrs uses the pinned TypeScript checker defaults. `--fast` or `TSRS_FAST=1` opts into
+adaptive checker counts, lazy members, additional caches and eligible memory-saving modes; `--fast false`
+overrides the environment preset. Known cases can change diagnostics and exit status, resource use and compiler
+counters; switching modes can invalidate incremental caches. The launcher forwards CLI arguments and environment
+variables to the compiler. See the [main README](../README.md#fast-mode) and
+[performance options](../docs/USAGE.md#performance-options) for side effects and per-feature overrides.
+
+Default mode preserves TypeScript's checker behavior, including its known diagnostic sensitivity to changes
+in checker count or file order. This sensitivity is inherited from TypeScript itself.
 
 ## How the launcher finds the binary
 
@@ -25,7 +48,7 @@ The repository's root `README.md` is also the main package README. `npm/build.mj
 extensionless ES module in a `"type": "module"` package. `npm/sdk/smoke-consumer.mjs --node <path>` checks the
 launcher and the JS API on each given Node; 16.20.0, 18, 20, 22 and 24 pass.)
 
-1. `TSRS_BINARY` set: run that file (for local builds: `TSRS_BINARY=$PWD/target/release/tsrs pnpm exec tsrs ...`).
+1. `TSRS_BINARY` set: run that file (for local builds: `TSRS_BINARY=$PWD/target/debug/tsrs pnpm exec tsrs ...`).
 2. Otherwise resolve `@tsrs/<process.platform>-<process.arch>[-<libc>]/package.json` from the launcher's own location (with
    pnpm that is the sibling link in `node_modules/.pnpm/<main>/node_modules/`), and run `tsrs`/`tsrs.exe` next to it.
    Linux libc detection follows Oxc's ldd/report probes to choose `-gnu` or `-musl`.
@@ -39,41 +62,42 @@ launcher and the JS API on each given Node; 16.20.0, 18, 20, 22 and 24 pass.)
 
 ## Versions
 
-One source of truth, the workspace `Cargo.toml`:
+Cargo and all ten npm packages share the TypeScript-aligned version `7.1.0-beta.tsrs1`. The prefix identifies
+TypeScript `7.1.0-beta`; `tsrs1` is the unpadded tsrs revision. The next fix is `7.1.0-beta.tsrs2`. Stable
+TypeScript `7.1.0` uses `7.1.0-tsrs1`. These are SemVer prereleases and publish under npm's `next` tag.
 
-```toml
-[workspace.package]
-version = "0.10.0"
+SemVer compares `tsrsN` as text: `tsrs10` sorts before `tsrs9`. Release checks reject that transition, so after
+`tsrs9` a new TypeScript version is required for further sequential revisions.
 
-[workspace.metadata.typescript]
-version = "7.1.0-dev.20260929"                         # the TypeScript version the port follows
-commit = "b85298b6a81f772d080b0455de0ca9d744cd6fd6"    # and its commit (CI checks out its tsc/testdata)
-nightly = "7.1.0-dev.20260930.4"                      # npm nightly used for the compiler's reported version
+`cargo-release-oxc` manages the explicit published crate versions and their workspace dependency versions in
+`Cargo.toml`, along with the private root `package.json`. `npm/build.mjs` copies the same version into the main,
+native platform and WebAssembly package manifests; their checked-in npm manifests hold placeholders.
+`[workspace.package] version` supplies the default for unpublished support crates.
+
+The exact reference remains in `[workspace.metadata.typescript]`: `version` identifies the supported TypeScript
+release, `commit` pins its source and `nightly` identifies the matching npm compiler package. Generated npm
+manifests expose the version and commit as `tsrs.typescriptVersion` and `tsrs.typescriptCommit`.
+`tsrs --version` and `tsrs-wasm --version` report both the compiler compatibility version and the tsrs package version:
+
+```
+Version 7.1.0-beta (tsrs 7.1.0-beta.tsrs1, microsoft/TypeScript@3e9236361fa9)
 ```
 
-npm version: `<version>-ts<typescript version>` = `0.10.0-ts7.1.0-dev.20260929`, for every package including
-`@tsrs/wasm` (`npm/tsrs-wasm/package.json` holds a placeholder that `npm/build.mjs` replaces). `tsrs --version`
-and `tsrs-wasm --version` include the package version, embedded at build time by `crates/tsrs_execute/build.rs`.
-The example package version below illustrates the format; read `Cargo.toml` for the current version:
+See [versioning and releases](../docs/RELEASING_CRATES.md#versioning) for nightly ordering, revision limits and
+migration from the previous `<tsrs version>-ts<TypeScript version>` format.
 
-```
-Version 7.1.0-dev.20260930.4 (tsrs 0.10.0-ts7.1.0-dev.20260929, microsoft/TypeScript@b85298b6a81f)
-```
-
-To release a fix on the same TypeScript commit, bump `[workspace.package] version`; after porting a newer TypeScript
-commit, update `[workspace.metadata.typescript]`, including the matching npm `nightly`.
-
-Source builds default to `7.1.0-dev` unless `TSRS_TS_VERSION` is set. Release builds stamp the nightly as the
-compiler version so `.tsbuildinfo` files and `typesVersions` agree with the reference compiler.
+Source builds default to `7.1.0-beta` unless `TSRS_TS_VERSION` is set. Release builds stamp the matching TypeScript
+npm package version so `.tsbuildinfo` files and `typesVersions` agree with the reference compiler.
 
 ## Building packages locally
 
-Use pnpm 12.10.1, pinned in the root `package.json`, for the build tooling, packing and publishing.
+Use Vite+ from the repository root to select the pinned Node.js and pnpm versions. Build a dev binary for local
+package checks; the release workflow builds optimized binaries separately.
 
 ```sh
-cargo build --release -p tsrs_cli
-pnpm install --frozen-lockfile     # build-only compiler for the JS API
-node npm/build.mjs --binary aarch64-apple-darwin=target/release/tsrs --pack
+vp install --frozen-lockfile
+cargo build --profile dev -p tsrs_cli --features noembed
+vp run npm:build --binary aarch64-apple-darwin=target/debug/tsrs --pack
 # -> npm/dist/tsrs-darwin-arm64-<version>.tgz, npm/dist/tsrs-<version>.tgz, npm/dist/packages.json
 ```
 
@@ -92,36 +116,54 @@ pnpm add -D tsrs@file:/abs/npm/dist/tsrs-<version>.tgz \
 `@tsrs/darwin-arm64` at the tarball reproduces the registry layout exactly, but changing `overrides` makes
 pnpm re-resolve the whole lockfile.)
 
-## JS API (`unstable/*` exports)
+## JS API (`sync`, `async`, `ast`, and related exports)
 
-`npm/tsrs/src`, `npm/tsrs/vendor` (vscode-jsonrpc, MIT, with its license) and `npm/tsrs/test` are TypeScript 7's JS API
-package (`packages/typescript` in microsoft/TypeScript) at the pinned commit, copied by `npm/sdk/sync-upstream.mjs`
+`npm/tsrs/src`, `npm/tsrs/schemas`, `npm/tsrs/vendor` (vscode-jsonrpc, MIT, with its license) and `npm/tsrs/test` are TypeScript 7's JS API
+package (`packages/typescript` in microsoft/TypeScript) at the SDK commit, copied by `npm/sdk/sync-upstream.mjs`
 (byte for byte, except a few listed test edits; `npm/tsrs/UPSTREAM.json` holds the commit and sha256 of every file).
-After bumping `[workspace.metadata.typescript]`, check out that commit as `ts-ref` and rerun it;
-`node npm/sdk/sync-upstream.mjs --check` fails if the copy drifted.
+The SDK and compiler both follow `3e9236361fa9` (TypeScript 7.1 beta). The completed
+[#623 source upgrade](../notes/typescript-623-ports.md) and
+[beta follow-up](../notes/typescript-7.1-beta-ports.md) record the migration.
+
+The package exports `tsrs/sync`, `tsrs/async`, `tsrs/ast`, `tsrs/vscode` and related upstream beta subpaths,
+plus the `tsconfig` and `jsconfig` JSON schemas. Deprecated SDK aliases are removed; package builds strip
+internal declarations and validate the emitted declarations. The API includes typed paths, an enum-valued
+`caseSensitivity` handshake, and project checker queries for merged symbols, declaration/node symbols and parents.
+Sync generator instances are single-use, including across completed batch calls. `TS_API_TIMING_DIR` enables
+timing collection in either client and writes one JSON snapshot on `close()`. See
+[Node API usage and migration](../docs/NODE_API.md#javascript-api) for the supported entry points and examples.
+
+The VS Code module loader resolves imports from the selected package manifest. tsrs supplies the loader and SDK
+types; the VS Code extension runtime and its initialization/restart lifecycle are separate.
+
+When explicitly advancing the TypeScript source pin, follow the [reference workflow](../CONTRIBUTING.md#reference-compiler)
+and run `vp run sdk:sync --source-commit <sha>`. `vp run sdk:sync --check` verifies the revision recorded in
+`UPSTREAM.json` and fails if the copy drifted.
 
 ```sh
-pnpm install --frozen-lockfile                        # build-only tools: typescript@7 (compiler), @types/node, tinybench
-node npm/build.mjs --sdk-only              # npm/tsrs/src -> npm/tsrs/dist (also part of every package build)
-cd npm/tsrs && TSRS_BINARY=/path/to/server node --conditions @typescript/source --test 'test/**/*.test.ts'
-node npm/sdk/smoke-consumer.mjs            # after build.mjs --pack: offline install into a temp consumer, typecheck, sync+async compile
-node npm/sdk/method-coverage.mjs --server tsgo=/path/to/pinned/tsgo --server tsrs=target/release/tsrs  # -> npm/sdk/METHODS.md
+vp install --frozen-lockfile
+vp run npm:build --sdk-only                # npm/tsrs/src -> npm/tsrs/dist
+(cd npm/tsrs && TSRS_BINARY=/path/to/server node --conditions @typescript/source --test 'test/**/*.test.ts')
+vp run sdk:smoke                          # after npm:build --pack: installed-package CLI and API checks
+vp run sdk:coverage --server tsgo=/path/to/pinned/tsgo --server tsrs=target/debug/tsrs  # -> npm/sdk/METHODS.md
 ```
 
-The tests and the inventory can run against a tsgo built from the pinned commit (`cd ts-ref/tsc && go build -o
-/tmp/tsgo ./cmd/tsc`) as the reference server. The SDK spawns `getExePath()` (so `TSRS_BINARY` applies) unless the
-caller passes `tsserverPath`.
+The tests and the inventory can run against a tsgo built and verified using the
+[reference compiler workflow](../CONTRIBUTING.md#reference-compiler). The SDK spawns `getExePath()`
+(so `TSRS_BINARY` applies) unless the caller passes `tsserverPath`.
 
-Deliberate patches (the only differences from the pinned sources; each patch file explains itself, and
+Deliberate patches (the only differences from the recorded SDK sources; each patch file explains itself, and
 `sync-upstream.mjs` applies them strictly and records the original sha256 in `UPSTREAM.json` `patchedFiles`):
 
 - `npm/sdk/patches/async-client-connection-loss.patch` (`src/api/async/client.ts`): upstream, if the server dies or
   closes the connection while the async client is open, in-flight and queued requests never settle. Now every
   pending and later request rejects with an `Error` whose message starts with `API server connection lost: `.
-  A normal `close()` is unchanged; `close()` after a crash rejects promptly with that error if it had snapshots to
-  release.
+  The patch preserves upstream's idempotent `close()` and timing-dump behavior; `close()` after a crash rejects
+  promptly with that error if it had snapshots to release.
 - `npm/sdk/patches/vscode-jsonrpc-send-request-write-error.patch` (vendored vscode-jsonrpc 9.0.2): a request written
   to a dead server also became an unhandled rejection that terminated Node; the request's own rejection is kept.
+- `npm/sdk/patches/vscode-jsonrpc-msgpack-version.patch`: keeps tsrs's existing vendored development dependency
+  adjustment when the upstream SDK copy advances.
 
 The sync client is unpatched: after a server crash its next call throws at once with the raw pipe error.
 `npm/sdk/smoke/consumer.mjs` kills the real server with work in flight to cover all of this (the unpatched
@@ -130,46 +172,53 @@ package hangs those requests and crashes on the unhandled rejection).
 Wire contract the server has to speak (from the pinned `tsc/cmd/tsc/api.go`, `tsc/internal/ipc`, `src/api/options.ts`):
 
 - argv: `--api [--async] --cwd <dir> --useCaseSensitiveFileNames=<bool> [--callbacks=<names>] [--timing]
-  [--runExternalCode] [--pipe <path>]` (`--pipe` only on Windows for the sync client). stdout carries only protocol
-  bytes; stderr is inherited.
+  [--runExternalCode] [--pipe <path>]` (`--pipe` only on Windows for the spawned sync client). On Unix, the optional
+  `--pipe` argument names a new private directory and the client connects to `<path>/socket`; on Windows it names a
+  current-user-only named pipe. stdout carries only protocol bytes; stderr is inherited.
 - sync: every message is a MessagePack 3-array `[uint8 type, bin method, bin payload]`; types 1 request, 2 callback
   response, 3 callback error (client to server), 4 response, 5 error, 6 callback call (server to client). Payloads are
   JSON text, except binary responses (`getSourceFile` and friends: the AST encoding, protocol version 9 in the top
   byte of the metadata word).
 - async: JSON-RPC 2.0 with `Content-Length` framing; filesystem callbacks are server-to-client requests.
 - handshake: the first request is `initialize` with params `null`; the result is
-  `{"useCaseSensitiveFileNames": <bool>, "currentDirectory": "<cwd>"}`. There is no version negotiation: client and
-  server must come from the same commit.
+  `{"caseSensitivity": <0 or 1>, "currentDirectory": "<cwd>"}` (`0` is insensitive, `1` is sensitive).
+  There is no version negotiation: client and server must come from the same commit.
 
 ## Releasing
 
-To prepare a release, bump `[workspace.package] version` in `Cargo.toml`, refresh `Cargo.lock`, set the root
-`package.json` version to the output of `node npm/build.mjs --print-version`, and add `docs/releases/<workspace version>.md`.
-`.github/workflows/release.yml` publishes when that root package version is bumped on `main`:
+Run [Prepare Release](../.github/workflows/prepare_release.yml) from `main` with the next version, such as
+`7.1.0-beta.tsrs2`. It uses `cargo release-oxc update` to bump Cargo and npm together, updates `Cargo.lock`,
+validates crate archives and opens a PR with release notes in `docs/releases/<version>.md`.
+Merging the coordinated version bump triggers crate and npm publishing. For local commands and publisher setup,
+see [the release guide](../docs/RELEASING_CRATES.md).
+
+The [npm release workflow](../.github/workflows/release.yml):
 
 1. checks the root package version against `Cargo.toml`, requires release notes, and runs `cargo check`;
-2. builds PGO release binaries (`release` profile, trained by `.github/scripts/pgo-train.sh`) for macOS arm64 and Linux
-   x64 and arm64 GNU (`ubuntu-22.04`), and a Windows x64 PGO binary trained on the conformance suite and a CLI project;
+2. builds PGO release binaries (`release` profile, trained by `.github/scripts/pgo-train.sh`) for macOS arm64 (`macos-latest`),
+   macOS x64 (`macos-26-intel`, with native PGO training and installed-package smoke tests), and Linux x64 and arm64 GNU
+   (`ubuntu-22.04`), and Windows x64 (`windows-latest`) and ARM64 (`windows-11-arm`, linked with `rust-lld`) PGO
+   binaries trained on the conformance suite, a CLI project and the lint fixtures;
    on GNU, BOLT-optimizes them and runs the conformance and fourslash gates on the
    BOLT-optimized binaries (`.github/scripts/bolt.sh`); smoke-runs the native ones (`--version`, exit code 2 on a type
    error) and the installed package (`npm/sdk/smoke-consumer.mjs`);
-   musl x64/arm64 uses static `dist` builds with Zig 0.13.0 and cargo-zigbuild 0.23.4;
+   musl x64/arm64 uses static release builds with Zig 0.13.0 and cargo-zigbuild 0.24.0;
 3. builds the WebAssembly module (`tools/wasm/build.sh`, binaryen 133), runs `pnpm test` in `npm/tsrs-wasm`, packs
    `@tsrs/wasm` with `npm/build.mjs --wasm`, installs that tarball and runs it (`--version` must name the
    release version, exit code 2 on a type error), and uploads it as the `npm-wasm` artifact;
 4. assembles and packs the native packages with `npm/build.mjs`, uploads the tarballs as the `npm-packages` artifact,
    and publishes the platform packages, then the main package, then `@tsrs/wasm`, with
-   `--access public --tag latest` using npm trusted publishing (skipping versions already published or staged, so a
+   `--access public --tag next` using npm trusted publishing (skipping versions already published or staged, so a
    failed run can be re-run). The publish job allows 90 minutes. Before publishing the main package, waits up to
    30 minutes for every optional dependency's exact version metadata and tarball to be available on npm, including
    platform packages skipped on a re-run.
    Dry runs skip this check. Releases publish directly, without a staged approval step.
-5. waits for all published packages to be available on npm, creates the GitHub release tagged `v<workspace version>`
-   with the version alone as its title and `docs/releases/<workspace version>.md` as its notes, then deploys the
-   browser playground.
+5. waits for all published packages and their `next` tags to be available on npm, creates a GitHub prerelease
+   tagged `v<version>` with the version alone as its title and `docs/releases/<version>.md` as its notes,
+   then deploys the browser playground.
 
 The conformance and Go fourslash gates run on the GNU Linux release runners (`bolt.sh`), with Fourslash driving
-the BOLT-optimized `fourslash_server` task binary. Unix PGO training uses the same Go harness. The macOS binary gets only the
+the BOLT-optimized `fourslash_server` task binary. Unix PGO training uses the same Go harness. The macOS binaries get only the
 smoke tests; Windows gets CLI smoke tests in the release job. The broader WebAssembly differential gate (`tools/wasm/gate.sh`) is
 available locally; the release's WebAssembly package checks remain active.
 
@@ -178,9 +227,9 @@ available locally; the release's WebAssembly package checks remain active.
 What maintainers must configure before the first release:
 
 - The `@tsrs` npm org and each package must exist. Configure a GitHub Actions trusted publisher for `tsrs`,
-  `@tsrs/wasm` and each platform package, including `@tsrs/win32-x64`: owner `oxc-project`, repository `tsrs`, workflow
-  filename `release.yml`, no environment name, with direct publishing allowed.
-- The publish job uses pnpm 12.10.1 and `id-token: write` to authenticate through GitHub Actions OIDC. No registry publish
+  `@tsrs/wasm` and each platform package, including `@tsrs/darwin-x64` and `@tsrs/win32-x64`: owner `oxc-project`,
+  repository `tsrs`, workflow filename `release.yml`, no environment name, with direct publishing allowed.
+- The publish job uses pnpm 12.15.0 and `id-token: write` to authenticate through GitHub Actions OIDC. No registry publish
   token or repository secret is required. See [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/)
   for configuration and first-publish validation requirements.
 - Provenance: npm only accepts `--provenance` from public repositories. The workflow adds `--provenance` automatically
@@ -188,21 +237,22 @@ What maintainers must configure before the first release:
 - GNU binaries are built on Ubuntu 22.04, so they need glibc >= 2.35 at most (a build on Debian 12 needed 2.34).
   Musl binaries are statically linked for Alpine/musl.
 
-`.github/workflows/ci.yml` runs on pushes to main, pull requests into main, merge groups and manual dispatch. Its three
-Linux jobs run Clippy/source checks and Rust checks/unit tests, build the compiler and conformance runner with the dev
-profile, and run compiler conformance in both checker modes and regression cases. Fourslash has its own job with
-the server framing checks, gate checks, and Go subprocess suite.
+`.github/workflows/ci.yml` runs on pushes to main, pull requests into main, merge groups and manual dispatch.
+Its Linux jobs run Clippy/source checks and workspace integration checks, build the compiler and conformance
+runner with the `ci` profile, and compare compiler conformance in both checker modes plus regression cases.
+Separate jobs cover determinism, ThreadSanitizer, Node API clients, Windows checks and the Go Fourslash suite.
+See [contributing](../CONTRIBUTING.md#landing-changes) for the gate details.
 
 Auxiliary workflows saved as `.github/workflows/*.yml.bak` are disabled; their local tools remain available.
 
 ## Adopting it in a pnpm workspace
 
-After a release is on npm (version below as an example):
+After a release is on npm:
 
 ```sh
 # 1. Add it next to the TypeScript compiler. If the workspace sets pnpm's minimumReleaseAge, either wait or list
 #    the main package and the platform packages in minimumReleaseAgeExclude.
-pnpm add -D tsrs@0.10.0-ts7.1.0-dev.20260929
+pnpm add -D tsrs
 #    Review the pnpm-lock.yaml diff: a non-frozen install can re-resolve unrelated entries.
 
 # 2. Run it.
@@ -213,9 +263,10 @@ pnpm exec tsrs -p path/to/project --noEmit --extendedDiagnostics
 #    (`--noEmit` for a typecheck-only script).
 ```
 
-Without `--checkers`, tsrs picks its checker count per machine (tsgo defaults to 4): every core up to 16, then the
-greater of 16 and half the cores, capped at 32; a program with fewer than 32 type-checked files per checker gets
-fewer, down to 4, and never more checkers than files. `--build` uses 4 per project; `--singleThreaded` uses one.
+Without `--checkers`, tsrs 0.20.0 and later use four checkers, as tsgo does, capped by file count. With `--fast`
+or `TSRS_FAST=1`, the count adapts to the machine: every core up to 16, then the greater of 16 and half the cores,
+clamped to 4–32; a program with fewer than 32 type-checked files per checker gets fewer, down to 4, and never more
+checkers than files. `--build` uses 4 per project in both modes; `--singleThreaded` uses one.
 `GOMEMLIMIT` has no effect on tsrs.
 `--extendedDiagnostics` uses tsgo's counter labels; `Memory used` is the process RSS and `Memory allocs` is always 0.
 Compilation timings are collected only when `--diagnostics` or `--extendedDiagnostics` is enabled. Pass the flag on
@@ -225,3 +276,10 @@ the command line to include config-read timing.
 
 - Gate the macOS release binary on the conformance suite too (the Linux builds already run it in `bolt.sh`).
 - Optionally target an older glibc for Linux (e.g. `cargo zigbuild --target x86_64-unknown-linux-gnu.2.17`).
+
+## Type-aware linting
+
+`tsrs --lint` runs the type-aware linter that oxlint drives (tsgolint's headless protocol; all pinned tsgolint rules,
+see [progress](../crates/tsrs_lint/tests/baselines/PROGRESS.md)). The `tsrs-lint` command is the launcher with `--lint`
+added, so `OXLINT_TSGOLINT_PATH=node_modules/.bin/tsrs-lint oxlint --type-aware` uses it: oxlint runs `<path> headless ...`,
+which the bare `tsrs` would read as a root file.

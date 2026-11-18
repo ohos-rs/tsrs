@@ -10,13 +10,19 @@ macro_rules! preds {
 }
 
 // rules.go:10
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Only the public API is re-exported; implementation helpers remain crate-private."
+)]
 pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
     let mut all_tokens: Vec<Kind> =
-        Vec::with_capacity((Kind::LastToken as usize) - (Kind::FirstToken as usize) + 1);
-    all_tokens.extend(((Kind::FirstToken as i16)..=(Kind::LastToken as i16)).filter_map(|token| {
-        let token = Kind::from_i16(token);
-        if token != Kind::EndOfFile { Some(token) } else { None }
-    }));
+        Vec::with_capacity((Kind::LAST_TOKEN as usize) - (Kind::FIRST_TOKEN as usize) + 1);
+    all_tokens.extend(((Kind::FIRST_TOKEN as i16)..=(Kind::LAST_TOKEN as i16)).filter_map(
+        |token| {
+            let token = Kind::from_i16(token);
+            if token == Kind::EndOfFile { None } else { Some(token) }
+        },
+    ));
 
     let any_token_except = |tokens: &[Kind]| -> TokenRange {
         let mut new_tokens: Vec<Kind> = Vec::with_capacity(all_tokens.len());
@@ -37,9 +43,9 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
     let any_token_including_multiline_comments =
         token_range_from_ex(&all_tokens, &[Kind::EndOfFile]);
     let any_token_including_eof = token_range_from_ex(&all_tokens, &[Kind::EndOfFile]);
-    let keywords = token_range_from_range(Kind::FirstKeyword, Kind::LastKeyword);
+    let keywords = token_range_from_range(Kind::FIRST_KEYWORD, Kind::LAST_KEYWORD);
     let binary_operators =
-        token_range_from_range(Kind::FirstBinaryOperator, Kind::LastBinaryOperator);
+        token_range_from_range(Kind::FIRST_BINARY_OPERATOR, Kind::LAST_BINARY_OPERATOR);
     let binary_keyword_operators: Vec<Kind> = vec![
         Kind::InKeyword,
         Kind::InstanceOfKeyword,
@@ -126,7 +132,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             &any_token,
             &comments,
             any_context(),
-            RuleAction::StopProcessingSpaceActions,
+            RuleAction::STOP_PROCESSING_SPACE_ACTIONS,
             &[],
         ),
         rule(
@@ -134,7 +140,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             Kind::SingleLineCommentTrivia,
             &any_token,
             any_context(),
-            RuleAction::StopProcessingSpaceActions,
+            RuleAction::STOP_PROCESSING_SPACE_ACTIONS,
             &[],
         ),
         rule(
@@ -146,7 +152,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 &is_not_binary_op_context,
                 &is_not_type_annotation_context
             ],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         rule(
@@ -158,7 +164,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 &is_not_binary_op_context,
                 &is_next_token_parent_not_jsx_namespaced_name
             ],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         rule(
@@ -170,7 +176,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 &is_not_binary_op_context,
                 &is_not_type_annotation_context
             ],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         // insert space after '?' only when it is used in conditional operator
@@ -179,7 +185,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             Kind::QuestionToken,
             &any_token,
             preds![&is_non_jsx_same_line_token_context, &is_conditional_operator_context],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         // in other cases there should be no space between '?' and next token
@@ -188,7 +194,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             Kind::QuestionToken,
             &any_token,
             preds![&is_non_jsx_same_line_token_context, &is_non_optional_property_context],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         rule(
@@ -196,7 +202,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             &any_token,
             [Kind::DotToken, Kind::QuestionDotToken],
             preds![&is_non_jsx_same_line_token_context, &is_not_property_access_on_integer_literal],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         rule(
@@ -204,7 +210,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             [Kind::DotToken, Kind::QuestionDotToken],
             &any_token,
             preds![&is_non_jsx_same_line_token_context],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         rule(
@@ -212,7 +218,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             Kind::ImportKeyword,
             Kind::OpenParenToken,
             preds![&is_non_jsx_same_line_token_context, &is_import_type_context],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         // Special handling of unary operators.
@@ -223,7 +229,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             &unary_prefix_operators,
             &unary_prefix_expressions,
             preds![&is_non_jsx_same_line_token_context, &is_not_binary_op_context],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         rule(
@@ -231,7 +237,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             Kind::PlusPlusToken,
             &unary_preincrement_expressions,
             preds![&is_non_jsx_same_line_token_context],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         rule(
@@ -239,7 +245,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             Kind::MinusMinusToken,
             &unary_predecrement_expressions,
             preds![&is_non_jsx_same_line_token_context],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         rule(
@@ -247,7 +253,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             &unary_postincrement_expressions,
             Kind::PlusPlusToken,
             preds![&is_non_jsx_same_line_token_context, &is_not_statement_condition_context],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         rule(
@@ -255,7 +261,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             &unary_postdecrement_expressions,
             Kind::MinusMinusToken,
             preds![&is_non_jsx_same_line_token_context, &is_not_statement_condition_context],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         // More unary operator special-casing.
@@ -268,7 +274,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             Kind::PlusPlusToken,
             Kind::PlusToken,
             preds![&is_non_jsx_same_line_token_context, &is_binary_op_context],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         rule(
@@ -276,7 +282,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             Kind::PlusToken,
             Kind::PlusToken,
             preds![&is_non_jsx_same_line_token_context, &is_binary_op_context],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         rule(
@@ -284,7 +290,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             Kind::PlusToken,
             Kind::PlusPlusToken,
             preds![&is_non_jsx_same_line_token_context, &is_binary_op_context],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         rule(
@@ -292,7 +298,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             Kind::MinusMinusToken,
             Kind::MinusToken,
             preds![&is_non_jsx_same_line_token_context, &is_binary_op_context],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         rule(
@@ -300,7 +306,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             Kind::MinusToken,
             Kind::MinusToken,
             preds![&is_non_jsx_same_line_token_context, &is_binary_op_context],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         rule(
@@ -308,7 +314,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             Kind::MinusToken,
             Kind::MinusMinusToken,
             preds![&is_non_jsx_same_line_token_context, &is_binary_op_context],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         rule(
@@ -316,7 +322,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             Kind::CloseBraceToken,
             [Kind::CommaToken, Kind::SemicolonToken],
             preds![&is_non_jsx_same_line_token_context],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         // For functions and control block place } on a new line []ast.Kind{multi-line rule}
@@ -325,7 +331,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             &any_token_including_multiline_comments,
             Kind::CloseBraceToken,
             preds![&is_multiline_block_context],
-            RuleAction::InsertNewLine,
+            RuleAction::INSERT_NEW_LINE,
             &[],
         ),
         // Space/new line after }.
@@ -334,7 +340,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             Kind::CloseBraceToken,
             &any_token_except(&[Kind::CloseParenToken]),
             preds![&is_non_jsx_same_line_token_context, &is_after_code_block_context],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         // Special case for (}, else) and (}, while) since else & while tokens are not part of the tree which makes SpaceAfterCloseBrace rule not applied
@@ -344,7 +350,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             Kind::CloseBraceToken,
             Kind::ElseKeyword,
             preds![&is_non_jsx_same_line_token_context],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         rule(
@@ -352,7 +358,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             Kind::CloseBraceToken,
             Kind::WhileKeyword,
             preds![&is_non_jsx_same_line_token_context],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         rule(
@@ -360,7 +366,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             Kind::OpenBraceToken,
             Kind::CloseBraceToken,
             preds![&is_non_jsx_same_line_token_context, &is_object_context],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         // Add a space after control dec context if the next character is an open bracket ex: 'if (false)[]ast.Kind{a, b} = []ast.Kind{1, 2};' -> 'if (false) []ast.Kind{a, b} = []ast.Kind{1, 2};'
@@ -369,7 +375,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             Kind::CloseParenToken,
             Kind::OpenBracketToken,
             preds![&is_control_decl_context],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         rule(
@@ -377,7 +383,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             Kind::FunctionKeyword,
             Kind::AsteriskToken,
             preds![&is_function_declaration_or_function_expression_context],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         rule(
@@ -385,7 +391,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             Kind::AsteriskToken,
             Kind::Identifier,
             preds![&is_function_declaration_or_function_expression_context],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         rule(
@@ -393,7 +399,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             Kind::FunctionKeyword,
             &any_token,
             preds![&is_function_decl_context],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         // Insert new line after { and before } in multi-line contexts.
@@ -402,7 +408,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             Kind::OpenBraceToken,
             &any_token,
             preds![&is_multiline_block_context],
-            RuleAction::InsertNewLine,
+            RuleAction::INSERT_NEW_LINE,
             &[],
         ),
         // For get/set members, we check for (identifier,identifier) since get/set don't have tokens and they are represented as just an identifier token.
@@ -414,7 +420,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             [Kind::GetKeyword, Kind::SetKeyword],
             Kind::Identifier,
             preds![&is_function_decl_context],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         rule(
@@ -422,7 +428,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             Kind::YieldKeyword,
             Kind::AsteriskToken,
             preds![&is_non_jsx_same_line_token_context, &is_yield_or_yield_star_with_operand],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         rule(
@@ -430,7 +436,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             [Kind::YieldKeyword, Kind::AsteriskToken],
             &any_token,
             preds![&is_non_jsx_same_line_token_context, &is_yield_or_yield_star_with_operand],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         rule(
@@ -438,7 +444,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             Kind::ReturnKeyword,
             Kind::SemicolonToken,
             preds![&is_non_jsx_same_line_token_context],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         rule(
@@ -454,7 +460,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             ],
             &any_token,
             preds![&is_non_jsx_same_line_token_context],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         rule(
@@ -462,7 +468,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             [Kind::LetKeyword, Kind::ConstKeyword],
             &any_token,
             preds![&is_non_jsx_same_line_token_context, &is_start_of_variable_declaration_list],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         rule(
@@ -474,7 +480,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 &is_function_call_or_new_context,
                 &is_previous_token_not_comma
             ],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         // Special case for binary operators (that are keywords). For these we have to add a space and shouldn't follow any user options.
@@ -483,7 +489,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             &any_token,
             &binary_keyword_operators,
             preds![&is_non_jsx_same_line_token_context, &is_binary_op_context],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         rule(
@@ -491,7 +497,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             &binary_keyword_operators,
             &any_token,
             preds![&is_non_jsx_same_line_token_context, &is_binary_op_context],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         rule(
@@ -499,7 +505,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             Kind::VoidKeyword,
             &any_token,
             preds![&is_non_jsx_same_line_token_context, &is_void_op_context],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         // Async-await
@@ -508,7 +514,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             Kind::AsyncKeyword,
             Kind::OpenParenToken,
             preds![&is_arrow_function_context, &is_non_jsx_same_line_token_context],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         rule(
@@ -516,7 +522,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             Kind::AsyncKeyword,
             [Kind::FunctionKeyword, Kind::Identifier],
             preds![&is_non_jsx_same_line_token_context],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         // Template string
@@ -525,7 +531,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             [Kind::Identifier, Kind::CloseParenToken],
             [Kind::NoSubstitutionTemplateLiteral, Kind::TemplateHead],
             preds![&is_non_jsx_same_line_token_context],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         // JSX opening elements
@@ -534,7 +540,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             &any_token,
             Kind::Identifier,
             preds![&is_next_token_parent_jsx_attribute, &is_non_jsx_same_line_token_context],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         rule(
@@ -542,7 +548,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             &any_token,
             Kind::SlashToken,
             preds![&is_jsx_self_closing_element_context, &is_non_jsx_same_line_token_context],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         rule(
@@ -550,7 +556,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             Kind::SlashToken,
             Kind::GreaterThanToken,
             preds![&is_jsx_self_closing_element_context, &is_non_jsx_same_line_token_context],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         rule(
@@ -558,7 +564,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             &any_token,
             Kind::EqualsToken,
             preds![&is_jsx_attribute_context, &is_non_jsx_same_line_token_context],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         rule(
@@ -566,7 +572,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             Kind::EqualsToken,
             &any_token,
             preds![&is_jsx_attribute_context, &is_non_jsx_same_line_token_context],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         rule(
@@ -574,7 +580,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             Kind::Identifier,
             Kind::ColonToken,
             preds![&is_next_token_parent_jsx_namespaced_name],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         rule(
@@ -582,7 +588,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             Kind::ColonToken,
             Kind::Identifier,
             preds![&is_next_token_parent_jsx_namespaced_name],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         // TypeScript-specific rules
@@ -592,7 +598,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             [Kind::ModuleKeyword, Kind::RequireKeyword],
             Kind::OpenParenToken,
             preds![&is_non_jsx_same_line_token_context],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         // Add a space around certain TypeScript keywords
@@ -627,7 +633,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             ],
             &any_token,
             preds![&is_non_jsx_same_line_token_context],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         rule(
@@ -635,7 +641,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             &any_token,
             [Kind::ExtendsKeyword, Kind::ImplementsKeyword, Kind::FromKeyword],
             preds![&is_non_jsx_same_line_token_context],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         // Treat string literals in module names as identifiers, and add a space between the literal and the opening Brace braces, e.g.: module "m2" {
@@ -644,7 +650,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             Kind::StringLiteral,
             Kind::OpenBraceToken,
             preds![&is_module_decl_context],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         // Lambda expressions
@@ -653,7 +659,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             &any_token,
             Kind::EqualsGreaterThanToken,
             preds![&is_non_jsx_same_line_token_context],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         rule(
@@ -661,7 +667,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             Kind::EqualsGreaterThanToken,
             &any_token,
             preds![&is_non_jsx_same_line_token_context],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         // Optional parameters and let args
@@ -670,7 +676,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             Kind::DotDotDotToken,
             Kind::Identifier,
             preds![&is_non_jsx_same_line_token_context],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         rule(
@@ -678,7 +684,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             Kind::QuestionToken,
             [Kind::CloseParenToken, Kind::CommaToken],
             preds![&is_non_jsx_same_line_token_context, &is_not_binary_op_context],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         // Remove spaces in empty interface literals. e.g.: x: {}
@@ -687,7 +693,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             Kind::OpenBraceToken,
             Kind::CloseBraceToken,
             preds![&is_non_jsx_same_line_token_context, &is_object_type_context],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         // generics and type assertions
@@ -699,7 +705,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 &is_non_jsx_same_line_token_context,
                 &is_type_argument_or_parameter_or_assertion_context
             ],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         rule(
@@ -710,7 +716,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 &is_non_jsx_same_line_token_context,
                 &is_type_argument_or_parameter_or_assertion_context
             ],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         rule(
@@ -721,7 +727,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 &is_non_jsx_same_line_token_context,
                 &is_type_argument_or_parameter_or_assertion_context
             ],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         rule(
@@ -732,7 +738,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 &is_non_jsx_same_line_token_context,
                 &is_type_argument_or_parameter_or_assertion_context
             ],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         rule(
@@ -750,7 +756,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 &is_not_function_decl_context, /*To prevent an interference with the SpaceBeforeOpenParenInFuncDecl rule*/
                 &is_non_type_assertion_context,
             ],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         // decorators
@@ -759,7 +765,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             [Kind::CloseParenToken, Kind::Identifier],
             Kind::AtToken,
             preds![&is_non_jsx_same_line_token_context],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         rule(
@@ -767,7 +773,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             Kind::AtToken,
             &any_token,
             preds![&is_non_jsx_same_line_token_context],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         // Insert space after @ in decorator
@@ -790,7 +796,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 Kind::AsteriskToken,
             ],
             preds![&is_end_of_decorator_context_on_same_line],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         rule(
@@ -798,7 +804,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             &any_token,
             Kind::ExclamationToken,
             preds![&is_non_jsx_same_line_token_context, &is_non_null_assertion_context],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         rule(
@@ -806,7 +812,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             Kind::NewKeyword,
             Kind::OpenParenToken,
             preds![&is_non_jsx_same_line_token_context, &is_constructor_signature_context],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         rule(
@@ -814,7 +820,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             Kind::LessThanToken,
             Kind::LessThanToken,
             preds![&is_non_jsx_same_line_token_context],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
     ];
@@ -830,7 +836,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 is_option_enabled(insert_space_after_constructor_option),
                 &is_non_jsx_same_line_token_context
             ],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         rule(
@@ -841,7 +847,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 is_option_disabled_or_undefined(insert_space_after_constructor_option),
                 &is_non_jsx_same_line_token_context
             ],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         rule(
@@ -855,7 +861,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 &is_next_token_not_close_bracket,
                 &is_next_token_not_close_paren
             ],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         rule(
@@ -867,7 +873,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 &is_non_jsx_same_line_token_context,
                 &is_non_jsx_element_or_fragment_context
             ],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         // Insert space after function keyword for anonymous functions
@@ -881,7 +887,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 ),
                 &is_function_decl_context
             ],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         rule(
@@ -894,7 +900,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 ),
                 &is_function_decl_context
             ],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         // Insert space after keywords in control flow statements
@@ -906,7 +912,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 is_option_enabled(insert_space_after_keywords_in_control_flow_statements_option),
                 &is_control_decl_context
             ],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         rule(
@@ -919,7 +925,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 ),
                 &is_control_decl_context
             ],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         // Insert space after opening and before closing nonempty parenthesis
@@ -933,7 +939,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 ),
                 &is_non_jsx_same_line_token_context
             ],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         rule(
@@ -946,7 +952,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 ),
                 &is_non_jsx_same_line_token_context
             ],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         rule(
@@ -959,7 +965,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 ),
                 &is_non_jsx_same_line_token_context
             ],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         rule(
@@ -967,7 +973,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             Kind::OpenParenToken,
             Kind::CloseParenToken,
             preds![&is_non_jsx_same_line_token_context],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         rule(
@@ -980,7 +986,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 ),
                 &is_non_jsx_same_line_token_context
             ],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         rule(
@@ -993,7 +999,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 ),
                 &is_non_jsx_same_line_token_context
             ],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         // Insert space after opening and before closing nonempty brackets
@@ -1007,7 +1013,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 ),
                 &is_non_jsx_same_line_token_context
             ],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         rule(
@@ -1020,7 +1026,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 ),
                 &is_non_jsx_same_line_token_context
             ],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         rule(
@@ -1028,7 +1034,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             Kind::OpenBracketToken,
             Kind::CloseBracketToken,
             preds![&is_non_jsx_same_line_token_context],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         rule(
@@ -1041,7 +1047,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 ),
                 &is_non_jsx_same_line_token_context
             ],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         rule(
@@ -1054,7 +1060,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 ),
                 &is_non_jsx_same_line_token_context
             ],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         // Insert a space after { and before } in single-line contexts, but remove space from empty object literals {}.
@@ -1068,7 +1074,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 ),
                 &is_brace_wrapped_context
             ],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         rule(
@@ -1081,7 +1087,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 ),
                 &is_brace_wrapped_context
             ],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         rule(
@@ -1089,7 +1095,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             Kind::OpenBraceToken,
             Kind::CloseBraceToken,
             preds![&is_non_jsx_same_line_token_context, &is_object_context],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         rule(
@@ -1102,7 +1108,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 ),
                 &is_non_jsx_same_line_token_context
             ],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         rule(
@@ -1115,7 +1121,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 ),
                 &is_non_jsx_same_line_token_context
             ],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         // Insert a space after opening and before closing empty brace brackets
@@ -1126,7 +1132,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             preds![is_option_enabled(
                 insert_space_after_opening_and_before_closing_empty_braces_option
             )],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         rule(
@@ -1139,7 +1145,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 ),
                 &is_non_jsx_same_line_token_context
             ],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         // Insert space after opening and before closing template string braces
@@ -1153,7 +1159,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 ),
                 &is_non_jsx_text_context
             ],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[RuleFlags::CanDeleteNewLines],
         ),
         rule(
@@ -1166,7 +1172,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 ),
                 &is_non_jsx_same_line_token_context
             ],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         rule(
@@ -1179,7 +1185,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 ),
                 &is_non_jsx_text_context
             ],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[RuleFlags::CanDeleteNewLines],
         ),
         rule(
@@ -1192,7 +1198,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 ),
                 &is_non_jsx_same_line_token_context
             ],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         // No space after { and before } in JSX expression
@@ -1207,7 +1213,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 &is_non_jsx_same_line_token_context,
                 &is_jsx_expression_context
             ],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         rule(
@@ -1221,7 +1227,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 &is_non_jsx_same_line_token_context,
                 &is_jsx_expression_context
             ],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         rule(
@@ -1235,7 +1241,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 &is_non_jsx_same_line_token_context,
                 &is_jsx_expression_context
             ],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         rule(
@@ -1249,7 +1255,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 &is_non_jsx_same_line_token_context,
                 &is_jsx_expression_context
             ],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         // Insert space after semicolon in for statement
@@ -1262,7 +1268,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 &is_non_jsx_same_line_token_context,
                 &is_for_context
             ],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         rule(
@@ -1276,7 +1282,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 &is_non_jsx_same_line_token_context,
                 &is_for_context
             ],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         // Insert space before and after binary operators
@@ -1289,7 +1295,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 &is_non_jsx_same_line_token_context,
                 &is_binary_op_context
             ],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         rule(
@@ -1301,7 +1307,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 &is_non_jsx_same_line_token_context,
                 &is_binary_op_context
             ],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         rule(
@@ -1315,7 +1321,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 &is_non_jsx_same_line_token_context,
                 &is_binary_op_context
             ],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         rule(
@@ -1329,7 +1335,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 &is_non_jsx_same_line_token_context,
                 &is_binary_op_context
             ],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         rule(
@@ -1341,7 +1347,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 &is_non_jsx_same_line_token_context,
                 &is_function_decl_context
             ],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         rule(
@@ -1353,7 +1359,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 &is_non_jsx_same_line_token_context,
                 &is_function_decl_context
             ],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         // Open Brace braces after control block
@@ -1366,7 +1372,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 &is_control_decl_context,
                 &is_before_multiline_block_context
             ],
-            RuleAction::InsertNewLine,
+            RuleAction::INSERT_NEW_LINE,
             &[RuleFlags::CanDeleteNewLines],
         ),
         // Open Brace braces after function
@@ -1380,7 +1386,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 &is_function_decl_context,
                 &is_before_multiline_block_context
             ],
-            RuleAction::InsertNewLine,
+            RuleAction::INSERT_NEW_LINE,
             &[RuleFlags::CanDeleteNewLines],
         ),
         // Open Brace braces after TypeScript module/class/interface
@@ -1393,7 +1399,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 &is_type_script_decl_with_block_context,
                 &is_before_multiline_block_context
             ],
-            RuleAction::InsertNewLine,
+            RuleAction::INSERT_NEW_LINE,
             &[RuleFlags::CanDeleteNewLines],
         ),
         rule(
@@ -1405,7 +1411,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 &is_non_jsx_same_line_token_context,
                 &is_type_assertion_context
             ],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         rule(
@@ -1417,7 +1423,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 &is_non_jsx_same_line_token_context,
                 &is_type_assertion_context
             ],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         rule(
@@ -1429,7 +1435,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 &is_non_jsx_same_line_token_context,
                 &is_type_annotation_context
             ],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         rule(
@@ -1441,7 +1447,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 &is_non_jsx_same_line_token_context,
                 &is_type_annotation_context
             ],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         rule(
@@ -1452,7 +1458,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 option_equals(semicolon_option, SemicolonPreference::Remove),
                 &is_semicolon_deletion_context
             ],
-            RuleAction::DeleteToken,
+            RuleAction::DELETE_TOKEN,
             &[],
         ),
         rule(
@@ -1463,7 +1469,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 option_equals(semicolon_option, SemicolonPreference::Insert),
                 &is_semicolon_insertion_context
             ],
-            RuleAction::InsertTrailingSemicolon,
+            RuleAction::INSERT_TRAILING_SEMICOLON,
             &[],
         ),
     ];
@@ -1476,7 +1482,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             &any_token,
             Kind::SemicolonToken,
             preds![&is_non_jsx_same_line_token_context],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         rule(
@@ -1491,7 +1497,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 &is_not_format_on_enter,
                 &is_same_line_token_or_before_block_context
             ],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[RuleFlags::CanDeleteNewLines],
         ),
         rule(
@@ -1507,7 +1513,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 &is_not_format_on_enter,
                 &is_same_line_token_or_before_block_context
             ],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[RuleFlags::CanDeleteNewLines],
         ),
         rule(
@@ -1522,7 +1528,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 &is_not_format_on_enter,
                 &is_same_line_token_or_before_block_context
             ],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[RuleFlags::CanDeleteNewLines],
         ),
         rule(
@@ -1530,7 +1536,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             &any_token,
             Kind::CommaToken,
             preds![&is_non_jsx_same_line_token_context],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         // No space before and after indexer `x[]ast.Kind{}`
@@ -1539,7 +1545,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             &any_token_except(&[Kind::AsyncKeyword, Kind::CaseKeyword]),
             Kind::OpenBracketToken,
             preds![&is_non_jsx_same_line_token_context],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         rule(
@@ -1550,7 +1556,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 &is_non_jsx_same_line_token_context,
                 &is_not_before_block_in_function_declaration_context
             ],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         rule(
@@ -1558,7 +1564,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             Kind::SemicolonToken,
             &any_token,
             preds![&is_non_jsx_same_line_token_context],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         // Remove extra space between for and await
@@ -1567,7 +1573,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             Kind::ForKeyword,
             Kind::AwaitKeyword,
             preds![&is_non_jsx_same_line_token_context],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         // Remove extra spaces between ... and type name in tuple spread
@@ -1576,7 +1582,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             Kind::DotDotDotToken,
             &type_names,
             preds![&is_non_jsx_same_line_token_context],
-            RuleAction::DeleteSpace,
+            RuleAction::DELETE_SPACE,
             &[],
         ),
         // Add a space between statements. All keywords except (do,else,case) has open/close parens after them.
@@ -1590,7 +1596,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
                 &is_non_jsx_element_or_fragment_context,
                 &is_not_for_context
             ],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
         // This low-pri rule takes care of "try {", "catch {" and "finally {" in case the rule SpaceBeforeOpenBraceInControl didn't execute on FormatOnEnter.
@@ -1599,7 +1605,7 @@ pub(crate) fn get_all_rules() -> Vec<RuleSpec> {
             [Kind::TryKeyword, Kind::CatchKeyword, Kind::FinallyKeyword],
             Kind::OpenBraceToken,
             preds![&is_non_jsx_same_line_token_context],
-            RuleAction::InsertSpace,
+            RuleAction::INSERT_SPACE,
             &[],
         ),
     ];

@@ -17,33 +17,33 @@ use tsrs_core::context::{Context, ContextError};
 // Waiting for "ready" is cancelable through the context like Go's select on ctx.Done().)
 
 // dynamic_queue.go:17
-pub(crate) struct dynamicQueue<T> {
-    inner: Arc<dynamicQueueInner<T>>,
+pub struct DynamicQueue<T> {
+    inner: Arc<DynamicQueueInner<T>>,
 }
 
-struct dynamicQueueInner<T> {
-    state: Mutex<dynamicQueueState<T>>,
+struct DynamicQueueInner<T> {
+    state: Mutex<DynamicQueueState<T>>,
     ready: Condvar,
 }
 
 // dynamic_queue.go:22
-pub(crate) struct dynamicQueueState<T> {
+pub struct DynamicQueueState<T> {
     items: VecDeque<T>,
 }
 
 // dynamic_queue.go:26
-pub(crate) fn new_dynamic_queue<T: Send + 'static>() -> dynamicQueue<T> {
-    dynamicQueue {
-        inner: Arc::new(dynamicQueueInner {
-            state: Mutex::new(dynamicQueueState { items: VecDeque::new() }),
+pub fn new_dynamic_queue<T: Send + 'static>() -> DynamicQueue<T> {
+    DynamicQueue {
+        inner: Arc::new(DynamicQueueInner {
+            state: Mutex::new(DynamicQueueState { items: VecDeque::new() }),
             ready: Condvar::new(),
         }),
     }
 }
 
-impl<T: Send + 'static> dynamicQueue<T> {
+impl<T: Send + 'static> DynamicQueue<T> {
     // dynamic_queue.go:35
-    pub(crate) fn put(&self, ctx: &Context, item: T) -> Result<(), ContextError> {
+    pub fn put(&self, ctx: &Context, item: T) -> Result<(), ContextError> {
         if let Some(err) = ctx.err() {
             return Err(err);
         }
@@ -57,7 +57,7 @@ impl<T: Send + 'static> dynamicQueue<T> {
     }
 
     // dynamic_queue.go:50
-    pub(crate) fn get(&self, ctx: &Context) -> Result<T, ContextError> {
+    pub fn get(&self, ctx: &Context) -> Result<T, ContextError> {
         if let Some(err) = ctx.err() {
             return Err(err);
         }
@@ -76,7 +76,7 @@ impl<T: Send + 'static> dynamicQueue<T> {
     }
 
     // dynamic_queue.go:76
-    pub(crate) fn get_any(&self, _ctx: &Context) -> MutexGuard<'_, dynamicQueueState<T>> {
+    pub fn get_any(&self, _ctx: &Context) -> MutexGuard<'_, DynamicQueueState<T>> {
         // The state is only ever held for a push or a pop, so taking it never waits on another caller for
         // long; Go's select on ctx.Done() is the check before taking it (Put/Get) and the ready wait below.
         self.inner.state.lock().unwrap()
@@ -86,7 +86,7 @@ impl<T: Send + 'static> dynamicQueue<T> {
     fn get_ready(
         &self,
         ctx: &Context,
-    ) -> Result<MutexGuard<'_, dynamicQueueState<T>>, ContextError> {
+    ) -> Result<MutexGuard<'_, DynamicQueueState<T>>, ContextError> {
         let inner = &self.inner;
         let notifier = Arc::clone(&self.inner);
         wait_until(
@@ -101,8 +101,8 @@ impl<T: Send + 'static> dynamicQueue<T> {
         )
     }
 
-    #[cfg(test)]
-    pub(crate) fn len(&self) -> usize {
+    #[expect(clippy::len_without_is_empty, reason = "Public for the integration tests.")]
+    pub fn len(&self) -> usize {
         self.inner.state.lock().unwrap().items.len()
     }
 }

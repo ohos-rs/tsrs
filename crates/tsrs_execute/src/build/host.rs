@@ -1,12 +1,13 @@
 // Port of execute/build/host.go.
 
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::{Duration, SystemTime};
 
 use rustc_hash::FxHashMap;
 use tsrs_ast::{SourceFile, SourceFileParseOptions};
 use tsrs_compiler::CompilerHost;
 use tsrs_core::P;
+use tsrs_core::collections::SyncMap;
 use tsrs_core::tspath::{self, Path};
 use tsrs_diagnostics::Message;
 use tsrs_incremental::{BuildInfo, BuildInfoReader};
@@ -14,12 +15,12 @@ use tsrs_tsoptions::{self as tsoptions, CompilerOptionsValue, ParseConfigHost, P
 use tsrs_vfs::FS;
 
 use super::orchestrator::Orchestrator;
-use super::parsecache::parseCache;
+use super::parsecache::ParseCache;
 use crate::tsc::ExtendedConfigCache;
 
-pub(crate) type mTimeCache = Arc<Mutex<FxHashMap<Path, Option<SystemTime>>>>;
+pub type MTimeCache = Arc<SyncMap<Path, Option<SystemTime>>>;
 
-pub(crate) struct host {
+pub struct HostImpl {
     pub(crate) orchestrator: OnceLock<&'static Orchestrator>,
     pub(crate) host: Arc<dyn CompilerHost>,
     // The caching filesystem under `host` (Go `o.host.host.FS().(*cachedvfs.FS)`), cleared by `resetCaches`.
@@ -27,12 +28,13 @@ pub(crate) struct host {
 
     // Caches that last only for build cycle and then cleared out
     pub(crate) extended_config_cache: Mutex<Arc<ExtendedConfigCache>>,
-    pub(crate) source_files: parseCache<SourceFileParseOptions, Option<P<SourceFile>>>,
+    pub(crate) source_files: ParseCache<SourceFileParseOptions, Option<P<SourceFile>>>,
     pub(crate) config_times: Mutex<FxHashMap<Path, Duration>>,
 
     // caches that stay as long as they are needed
-    pub(crate) resolved_references: parseCache<Path, Option<P<ParsedCommandLine>>>,
-    pub(crate) m_times: Mutex<mTimeCache>,
+    pub(crate) resolved_references: ParseCache<Path, Option<P<ParsedCommandLine>>>,
+    // Read by every builder for every input and output; written only when a build or watch cycle starts over.
+    pub(crate) m_times: RwLock<MTimeCache>,
 
     // tsrs-only, watch mode: every parsed file and the modification time it was read at, kept across build cycles
     // (`get_watch_source_file`).
@@ -44,7 +46,7 @@ pub(crate) struct host {
     pub(crate) watch_file_regions: crate::watchmem::FileRegions,
 }
 
-impl host {
+impl HostImpl {
     // tsrs-only: Go's watch mode reparses every file each cycle (`resetCaches` drops the parse cache, which keeps only
     // declaration and JSON files within a cycle). A watch session here keeps every parsed file and reuses it while the
     // file's text is unchanged, as the non-build watcher does (watcher.rs `watchCompilerHost`): the same text and
@@ -98,27 +100,24 @@ impl host {
     }
 
     // host.go:118
-    pub(crate) fn load_or_store_m_time(
+    fn load_or_store_m_time(
         &self,
         file: &str,
-        old_cache: Option<&mTimeCache>,
+        old_cache: Option<&MTimeCache>,
         store: bool,
     ) -> Option<SystemTime> {
         let path = self.o().to_path(file);
-        let m_times = self.m_times.lock().unwrap().clone();
-        if let Some(existing) = m_times.lock().unwrap().get(&path) {
-            return *existing;
+        let m_times = self.m_times.read().unwrap().clone();
+        if let Some(existing) = m_times.load(&path) {
+            return existing;
         }
-        let mut found = None;
-        if let Some(old_cache) = old_cache {
-            found = old_cache.lock().unwrap().get(&path).copied();
-        }
-        let mut m_time = match found {
+        let found = old_cache.and_then(|old_cache| old_cache.load(&path));
+        let m_time = match found {
             Some(m_time) => m_time,
             None => tsrs_incremental::get_m_time(&*self.host, file),
         };
         if store {
-            m_time = *m_times.lock().unwrap().entry(path).or_insert(m_time);
+            return m_times.load_or_store(path, m_time).0;
         }
         m_time
     }
@@ -126,15 +125,14 @@ impl host {
     // host.go:137
     pub(crate) fn store_m_time(&self, file: &str, m_time: SystemTime) {
         let path = self.o().to_path(file);
-        self.m_times.lock().unwrap().lock().unwrap().insert(path, Some(m_time));
+        self.m_times.read().unwrap().store(path, Some(m_time));
     }
 
     // host.go:142
-    pub(crate) fn store_m_time_from_old_cache(&self, file: &str, old_cache: &mTimeCache) {
+    pub(crate) fn store_m_time_from_old_cache(&self, file: &str, old_cache: &MTimeCache) {
         let path = self.o().to_path(file);
-        let m_time = old_cache.lock().unwrap().get(&path).copied();
-        if let Some(m_time) = m_time {
-            self.m_times.lock().unwrap().lock().unwrap().insert(path, m_time);
+        if let Some(m_time) = old_cache.load(&path) {
+            self.m_times.read().unwrap().store(path, m_time);
         }
     }
 
@@ -149,7 +147,7 @@ impl host {
     }
 }
 
-impl ParseConfigHost for host {
+impl ParseConfigHost for HostImpl {
     fn fs(&self) -> &dyn FS {
         self.host.fs()
     }
@@ -159,7 +157,7 @@ impl ParseConfigHost for host {
     }
 }
 
-impl CompilerHost for host {
+impl CompilerHost for HostImpl {
     fn fs(&self) -> &dyn FS {
         self.host.fs()
     }
@@ -248,7 +246,7 @@ impl CompilerHost for host {
                     }
                     _ => None,
                 };
-                let this: &'static host = o.host();
+                let this: &'static HostImpl = o.host();
                 let extended_config_cache = self.extended_config_cache.lock().unwrap().clone();
                 let (command_line, _) = tsoptions::get_parsed_command_line_of_config_file_path(
                     file_name,
@@ -267,7 +265,7 @@ impl CompilerHost for host {
     }
 }
 
-impl BuildInfoReader for host {
+impl BuildInfoReader for HostImpl {
     // host.go:99
     fn read_build_info(&self, config: &ParsedCommandLine) -> Option<BuildInfo> {
         let o = self.o();
@@ -283,9 +281,9 @@ impl BuildInfoReader for host {
 }
 
 // `incremental.Host` over the orchestrator's host (Go passes `orchestrator.host` itself).
-pub(crate) struct incrementalHost(pub(crate) &'static host);
+pub struct IncrementalHost(pub(crate) &'static HostImpl);
 
-impl tsrs_incremental::Host for incrementalHost {
+impl tsrs_incremental::Host for IncrementalHost {
     fn fs(&self) -> &dyn FS {
         self.0.host.fs()
     }
