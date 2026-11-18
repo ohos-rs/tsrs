@@ -212,12 +212,13 @@ func parseFlags(flags string) ast.ExternalModuleIndicatorOptions {
 }
 
 func parse(path string, flags string) (*ast.SourceFile, bool) {
-	text, ok := osvfs.FS().ReadFile(path)
+	fileName := tspath.RootedFilePathFromAbsolute(path)
+	text, ok := osvfs.FS().ReadFile(fileName)
 	if !ok {
 		return nil, false
 	}
-	opts := ast.SourceFileParseOptions{FileName: path, Path: tspath.Path(path), ExternalModuleIndicatorOptions: parseFlags(flags)}
-	return parser.ParseSourceFile(opts, text, core.EnsureScriptKindFromFileName(path)), true
+	opts := ast.SourceFileParseOptions{FileName: fileName, PathKey: tspath.PathKey(fileName), ExternalModuleIndicatorOptions: parseFlags(flags)}
+	return parser.ParseSourceFile(opts, text, core.EnsureScriptKindFromFileName(fileName)), true
 }
 
 func dump(path string, flags string) (string, error) {
@@ -297,7 +298,7 @@ var jsxOptionValues = map[string]bool{"react-jsx": true, "react-jsxdev": true}
 // Materializes the units of one test case under dir. Unit names are sanitized to stay inside dir and
 // prefixed with their index so that repeated names do not collide.
 func split(outDir string, casePath string, w *bufio.Writer) {
-	content, ok := osvfs.FS().ReadFile(casePath)
+	content, ok := osvfs.FS().ReadFile(tspath.RootedFilePathFromAbsolute(casePath))
 	if !ok {
 		fmt.Fprintln(os.Stderr, "cannot read", casePath)
 		return
@@ -391,18 +392,20 @@ func main() {
 		in.Buffer(make([]byte, 1<<20), 1<<20)
 		type input struct {
 			path, text string
+			fileName   tspath.RootedFilePath
 			opts       ast.SourceFileParseOptions
 		}
 		var inputs []input
 		total := 0
 		for in.Scan() {
 			path, flags := splitLine(in.Text())
-			text, ok := osvfs.FS().ReadFile(path)
+			fileName := tspath.RootedFilePathFromAbsolute(path)
+			text, ok := osvfs.FS().ReadFile(fileName)
 			if !ok {
 				continue
 			}
 			total += len(text)
-			inputs = append(inputs, input{path, text, ast.SourceFileParseOptions{FileName: path, Path: tspath.Path(path), ExternalModuleIndicatorOptions: parseFlags(flags)}})
+			inputs = append(inputs, input{path, text, fileName, ast.SourceFileParseOptions{FileName: fileName, PathKey: tspath.PathKey(fileName), ExternalModuleIndicatorOptions: parseFlags(flags)}})
 		}
 		rounds := 1
 		if len(os.Args) > 2 {
@@ -412,7 +415,7 @@ func main() {
 			start := time.Now()
 			nodes := 0
 			for _, in := range inputs {
-				f := parser.ParseSourceFile(in.opts, in.text, core.EnsureScriptKindFromFileName(in.path))
+				f := parser.ParseSourceFile(in.opts, in.text, core.EnsureScriptKindFromFileName(in.fileName))
 				nodes += f.NodeCount
 			}
 			el := time.Since(start)
