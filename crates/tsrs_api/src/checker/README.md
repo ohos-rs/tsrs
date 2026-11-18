@@ -76,8 +76,8 @@ client path. These four methods are not in the pinned-base Go golden fixtures be
 
 What `Tested` does **not** mean yet (open gaps, for the integration lead):
 
-* `pinned_go_differential` compares 71 results with `testdata/go_probe/go_probe_b85298b6.jsonl`. The
-  file is recorded from pinned Go's `Session.HandleRequest` (built from b85298b6, go1.27.1). Regenerate
+* `pinned_go_differential` compares 71 results with `testdata/go_probe/go_probe_3e923636.jsonl`. The
+  file is recorded from pinned Go's `Session.HandleRequest` (built from 3e923636, go1.27.0). Regenerate
   it with `testdata/go_probe/regen.sh`. The script checks that `ts-ref` is clean and at the commit pinned
   in `Cargo.toml`, copies `zz_tsrs_probe_test.go` into it for the run only, and removes it again,
   failing if the checkout is not clean afterwards. Fixture and needles are shared with the Rust side
@@ -101,7 +101,7 @@ What `Tested` does **not** mean yet (open gaps, for the integration lead):
   `Session` run; the broad upstream client suite belongs to the parity lane.
 * `session_responses_match_pinned_go` (checker/session_tests.rs) runs through core's real `Session`, with
   codec node handles, source-file descriptors and leases. It compares 84 full responses with
-  `testdata/go_probe/go_shapes_b85298b6.jsonl`, recorded by `TestTsrsCheckerShapes` in the same probe.
+  `testdata/go_probe/go_shapes_3e923636.jsonl`, recorded by `TestTsrsCheckerShapes` in the same probe.
   All 84 match after normalizing per-process counters: type, signature and symbol ids, source-file node
   ids, and the symbol id embedded in `__@iterator@<id>` names. Node handles, content hashes, flags and
   error texts are compared as is. It pins:

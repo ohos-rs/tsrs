@@ -384,6 +384,7 @@ pub fn dump_fields(n: &Node, d: &mut Dumper) {
         }
         NodeData::ImportClause(x) => {
             d.field_kind("PhaseModifier", x.phase_modifier());
+            d.field_bool("IsLazy", x.is_lazy());
         }
         NodeData::ImportSpecifier(x) => {
             d.field_bool("IsTypeOnly", x.is_type_only());

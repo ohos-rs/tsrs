@@ -1045,7 +1045,7 @@ fn uint64_handles_above_2_pow_53_are_looked_up_exactly() {
 }
 
 /// Full type responses (objectFlags included) for the cases in `testdata/go_probe/flags/cases.txt`, compared
-/// with `go_flags_b85298b6.jsonl` recorded by `TestTsrsCheckerFlags` (same fixtures, same request order).
+/// with `go_flags_3e923636.jsonl` recorded by `TestTsrsCheckerFlags` (same fixtures, same request order).
 #[test]
 fn type_flags_and_tuple_targets_match_pinned_go() {
     const CASES: &str = include_str!(concat!(
@@ -1054,7 +1054,7 @@ fn type_flags_and_tuple_targets_match_pinned_go() {
     ));
     const GOLDEN: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/src/checker/testdata/go_probe/go_flags_b85298b6.jsonl"
+        "/src/checker/testdata/go_probe/go_flags_3e923636.jsonl"
     ));
     let files = [
         (
